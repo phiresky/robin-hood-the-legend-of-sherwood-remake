@@ -2,7 +2,7 @@
 
 pub use robin_engine::sim_timeline::*;
 
-use crate::host::Host;
+use crate::host::{ApplicationContext, Host, HostAudio, HostEffectBatches, HostFrontend};
 use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::PlayerInput;
@@ -23,18 +23,7 @@ pub fn run_engine_frame_core(
 ) -> robin_engine::engine::SimulationFrameOutput {
     host.sync_sound_listener();
     let camera_before = engine.director_camera_frame();
-    let output = engine
-        .advance_frame(assets, frame)
-        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
-    if let Some(failure) = &output.spellforge_abort {
-        tracing::error!(
-            kind = ?failure.kind,
-            invocation = ?failure.invocation,
-            traceback = ?failure.traceback,
-            message = %failure.message,
-            "Spellforge mission aborted; ending the mission and multiplayer session"
-        );
-    }
+    let output = execute_frame(engine, assets, frame);
     apply_engine_side_effects(
         host,
         display,
@@ -55,6 +44,27 @@ pub fn run_engine_frame_core(
         engine.director_camera_frame(),
         engine.director_camera_view_size(),
     );
+    output
+}
+
+/// The deterministic boundary has no host, display, audio or transport access.
+fn execute_frame(
+    engine: &mut Engine,
+    assets: &LevelAssets,
+    frame: robin_engine::engine::SimulationFrameInput,
+) -> robin_engine::engine::SimulationFrameOutput {
+    let output = engine
+        .advance_frame(assets, frame)
+        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
+    if let Some(failure) = &output.spellforge_abort {
+        tracing::error!(
+            kind = ?failure.kind,
+            invocation = ?failure.invocation,
+            traceback = ?failure.traceback,
+            message = %failure.message,
+            "Spellforge mission aborted; ending the mission and multiplayer session"
+        );
+    }
     output
 }
 
@@ -108,21 +118,55 @@ pub fn run_post_initialize_stage(
 /// Replay already-recorded post-hourglass developer actions before admitting
 /// new live RPC work at the same boundary.
 pub fn run_post_external_action_stage(
-    host: &mut Host,
-    display: &mut HostDisplayState,
+    frontend: &mut HostFrontend,
+    audio: &mut HostAudio,
+    effects: &mut HostEffectBatches,
+    application_context: &ApplicationContext,
+    local_seat: robin_engine::player_command::PlayerId,
     assets: &LevelAssets,
     engine: &mut Engine,
     dev: &mut DevState,
     actions: &[robin_engine::engine::ExternalAction],
 ) {
-    run_engine_frame_core(
-        host,
-        display,
-        assets,
+    audio.sound.set_listen_point(
+        frontend.viewport.sound_listen_point(),
+        frontend.viewport.zoom_factor,
+    );
+    let camera_before = engine.director_camera_frame();
+    let output = execute_frame(
         engine,
-        dev,
+        assets,
         robin_engine::engine::SimulationFrameInput::no_hourglass()
             .with_post_external_actions(actions.to_vec()),
+    );
+    // Match the ordinary frame boundary order, including empty batches (noise
+    // display lifetime advances once per batch), before admitting live RPCs.
+    for events in [
+        Some(output.events),
+        Some(output.post_boundary_events),
+        output.post_initialize_events,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let side_effects = prepare_display_effects(
+            &mut frontend.engine_display,
+            &mut frontend.input,
+            dev,
+            events.into_side_effects(),
+        );
+        frontend.apply_side_effects(
+            side_effects,
+            audio,
+            effects,
+            application_context,
+            local_seat,
+        );
+    }
+    frontend.viewport.advance_director_camera(
+        camera_before,
+        engine.director_camera_frame(),
+        engine.director_camera_view_size(),
     );
 }
 
@@ -161,16 +205,27 @@ fn apply_engine_side_effects(
     host: &mut Host,
     display: &mut HostDisplayState,
     dev: &mut DevState,
-    mut side_effects: robin_engine::engine::SideEffects,
+    side_effects: robin_engine::engine::SideEffects,
 ) -> GameCode {
+    let side_effects =
+        prepare_display_effects(display, &mut host.frontend.input, dev, side_effects);
+    host.apply_side_effects(side_effects)
+}
+
+fn prepare_display_effects(
+    display: &mut HostDisplayState,
+    input: &mut robin_engine::engine::InputState,
+    dev: &mut DevState,
+    mut side_effects: robin_engine::engine::SideEffects,
+) -> robin_engine::engine::SideEffects {
     for event in side_effects.host_events.drain(..) {
-        display.apply_host_event(&mut host.frontend.input, event);
+        display.apply_host_event(input, event);
     }
     if let Some(top_left) = display.take_pending_minimap_position() {
         side_effects.pending_minimap_position = Some(top_left);
     }
     if side_effects.ui_has_focus {
-        host.frontend.input.has_focus = false;
+        input.has_focus = false;
     }
     for noise in side_effects.displayed_noises.drain(..) {
         dev.add_noise_to_display(noise);
@@ -179,5 +234,41 @@ fn apply_engine_side_effects(
     for (show, restore_position) in side_effects.pending_minimap_display_maps.drain(..) {
         display.display_minimap(show, restore_position);
     }
-    host.apply_side_effects(side_effects)
+    side_effects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deterministic_execution_has_no_host_effect_authority() {
+        let _: fn(
+            &mut Engine,
+            &LevelAssets,
+            robin_engine::engine::SimulationFrameInput,
+        ) -> robin_engine::engine::SimulationFrameOutput = execute_frame;
+    }
+
+    #[test]
+    fn display_preparation_consumes_focus_and_preserves_queued_host_effects() {
+        let mut display = HostDisplayState::default();
+        let mut input = robin_engine::engine::InputState::default();
+        input.has_focus = true;
+        let mut dev = DevState::default();
+        let prepared = prepare_display_effects(
+            &mut display,
+            &mut input,
+            &mut dev,
+            robin_engine::engine::SideEffects {
+                ui_has_focus: true,
+                pending_show_console: true,
+                ..Default::default()
+            },
+        );
+        assert!(!input.has_focus);
+        assert!(prepared.pending_show_console);
+        assert!(prepared.ui_has_focus);
+        assert_eq!(dev.noise_display_start_radius, 7);
+    }
 }

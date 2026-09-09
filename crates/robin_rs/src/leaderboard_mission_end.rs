@@ -1513,7 +1513,7 @@ impl MissionEndTask<Arc<[u8]>> for BrowserReplayExportTask {
 
 impl MissionEndReplayExporter for ActiveMissionReplayExporter {
     fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
-        let snapshot = crate::http_server::active_replay_snapshot()?;
+        let snapshot = crate::replay_service::process().snapshot()?;
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);

@@ -121,14 +121,13 @@ fn attach_snapshot_spellforge_runtime(
 /// transport reconnect loops are active. Both abandon the old prediction
 /// future and wait for an authoritative replacement snapshot.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn drain_net_inputs(
+pub(super) fn drain_net_inputs(
     host: &mut Host,
     manager: &mut engine_manager_api::EngineManager,
     current_frame: u32,
-    pending_inputs: &mut std::collections::BTreeMap<TimelineFrame, Vec<PlayerInput>>,
+    network: &mut super::runtime::reconciliation::NetworkReconciliation,
     assets: &mut Arc<LevelAssets>,
     rewind_buffer: &mut RewindBuffer,
-    peer_hashes: &mut std::collections::BTreeMap<u32, u64>,
 ) -> NetDrainResult {
     use crate::multiplayer::NetEvent;
 
@@ -137,9 +136,7 @@ pub(crate) fn drain_net_inputs(
         // return.  Pending should be empty in single-player but is
         // safe to flush.
         return NetDrainResult {
-            inputs: pending_inputs
-                .remove(&TimelineFrame::from_wire(current_frame))
-                .unwrap_or_default(),
+            inputs: network.take_inputs(TimelineFrame::from_wire(current_frame)),
             rewrote_sim_state: false,
             admission_events: Vec::new(),
             pause_simulation: false,
@@ -190,10 +187,7 @@ pub(crate) fn drain_net_inputs(
                     continue;
                 }
                 if target_frame >= effective_frame {
-                    pending_inputs
-                        .entry(TimelineFrame::from_wire(target_frame))
-                        .or_default()
-                        .push(input);
+                    network.queue_input(TimelineFrame::from_wire(target_frame), input);
                 } else {
                     tracing::info!(
                         local_frame = effective_frame,
@@ -225,8 +219,7 @@ pub(crate) fn drain_net_inputs(
                 // occur before Disconnected and are removed here; events from
                 // the replacement stream arrive afterward.
                 late_inputs.clear();
-                pending_inputs.clear();
-                peer_hashes.clear();
+                network.abandon_prediction();
                 *rewind_buffer = RewindBuffer::new();
                 latest_host_clock_sample = None;
                 rewrote_sim_state = true;
@@ -306,8 +299,7 @@ pub(crate) fn drain_net_inputs(
                                 if replacing_prediction_future {
                                     *rewind_buffer = RewindBuffer::new();
                                     rewind_buffer.seed_initial_anchor(frame, &manager.engine);
-                                    pending_inputs.clear();
-                                    peer_hashes.clear();
+                                    network.abandon_prediction();
                                     rewrote_sim_state = true;
                                 }
                             } else {
@@ -346,14 +338,10 @@ pub(crate) fn drain_net_inputs(
                                         );
                                         *rewind_buffer = RewindBuffer::new();
                                         rewind_buffer.seed_initial_anchor(frame, &manager.engine);
-                                        if replacing_prediction_future {
-                                            pending_inputs.clear();
-                                            peer_hashes.clear();
-                                        } else {
-                                            let adopted = TimelineFrame::from_wire(frame);
-                                            pending_inputs.retain(|&queued, _| queued >= adopted);
-                                            peer_hashes.retain(|&f, _| f >= frame);
-                                        }
+                                        network.adopt_snapshot(
+                                            TimelineFrame::from_wire(frame),
+                                            replacing_prediction_future,
+                                        );
                                         rewrote_sim_state = true;
                                         if let Some(net) = host.transport.net() {
                                             net.send_ready_to_sim(frame).unwrap_or_else(|error| {
@@ -413,14 +401,10 @@ pub(crate) fn drain_net_inputs(
                                 }
                                 *rewind_buffer = RewindBuffer::new();
                                 rewind_buffer.seed_initial_anchor(frame, &manager.engine);
-                                if replacing_prediction_future {
-                                    pending_inputs.clear();
-                                    peer_hashes.clear();
-                                } else {
-                                    let adopted = TimelineFrame::from_wire(frame);
-                                    pending_inputs.retain(|&queued, _| queued >= adopted);
-                                    peer_hashes.retain(|&f, _| f >= frame);
-                                }
+                                network.adopt_snapshot(
+                                    TimelineFrame::from_wire(frame),
+                                    replacing_prediction_future,
+                                );
                                 rewrote_sim_state = true;
                             }
                             Err(error) => panic!(
@@ -440,7 +424,7 @@ pub(crate) fn drain_net_inputs(
                 ms_until_next_frame,
             } => {
                 if let Some(hash) = hash {
-                    peer_hashes.insert(frame, hash);
+                    network.admit_remote_hash(frame, hash);
                 }
                 if let (Some(clock_frame), Some(ms_until_next_frame)) =
                     (clock_frame, ms_until_next_frame)
@@ -461,9 +445,8 @@ pub(crate) fn drain_net_inputs(
                 if effective_frame != frame {
                     effective_frame = frame;
                     let adopted = TimelineFrame::from_wire(frame);
-                    pending_inputs.retain(|&queued, _| queued >= adopted);
+                    network.adopt_snapshot(adopted, false);
                     rewind_buffer.clear_recent_checkpoints();
-                    peer_hashes.retain(|&f, _| f >= frame);
                     rewrote_sim_state = true;
                 }
                 admission_events.push(MultiplayerAdmissionEvent::BeginSim {
@@ -680,7 +663,7 @@ pub(crate) fn drain_net_inputs(
                     panic!("failed to request multiplayer snapshot reconnect: {error}")
                 });
             host.transport.await_authoritative_snapshot();
-            pending_inputs.clear();
+            network.discard_pending_inputs();
             admission_events.push(MultiplayerAdmissionEvent::Disconnected);
             tracing::warn!(
                 %reason,
@@ -783,16 +766,14 @@ pub(crate) fn drain_net_inputs(
                     panic!("fatal multiplayer readiness publication failure: {error}")
                 });
             host.transport.await_authoritative_snapshot();
-            pending_inputs.clear();
+            network.discard_pending_inputs();
         }
     }
 
     // 3. Return inputs scheduled for this frame.  The caller applies
     //    them to the live engine and folds them into `frame_cmds` so
     //    the recorder + rewind buffer capture them.
-    let mut due_inputs = pending_inputs
-        .remove(&TimelineFrame::from_wire(effective_frame))
-        .unwrap_or_default();
+    let mut due_inputs = network.take_inputs(TimelineFrame::from_wire(effective_frame));
     canonicalize_player_input_order(&mut due_inputs);
 
     NetDrainResult {
@@ -824,20 +805,7 @@ pub(super) fn drain_mission_network(
     if let Some(net) = host.transport.net() {
         net.publish_frame(current_frame);
     }
-    let mut drain = drain_net_inputs(
-        host,
-        manager,
-        current_frame,
-        &mut timeline.pending_inputs,
-        assets,
-        &mut timeline.rewind_buffer,
-        &mut timeline.peer_hashes,
-    );
-    if drain.rewrote_sim_state
-        && let Some(checker) = timeline.rollback_checker.as_mut()
-    {
-        checker.reset();
-    }
+    let mut drain = timeline.drain_network_inputs(host, manager, assets);
     if let Some(rollback) = drain.rollback.clone() {
         timeline.invalidate_local_mp_hashes_after(rollback.earliest_frame);
         timeline.last_mp_rollback = Some(rollback);
@@ -891,9 +859,7 @@ pub(super) fn drain_mission_network(
     drain.pause_simulation = admission_pause || host.transport.reconnecting() || clock_pause;
 
     if host.transport.net().is_some() && (checkpoint_always || drain.rewrote_sim_state) {
-        timeline
-            .rewind_buffer
-            .checkpoint_recent(timeline.frame_number(), &manager.engine);
+        timeline.checkpoint_history(&manager.engine);
     }
     drain
 }
@@ -1159,14 +1125,16 @@ pub(super) async fn setup_multiplayer_session(
                             %content_identity_sha256,
                             "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
                         );
-                        host.frontend.pending_console_output.push(format!(
-                            "Browser join code (expires after 30 minutes if unused): {}",
-                            ticket.encode()
-                        ));
                         host.frontend
-                            .pending_console_output
-                            .push(format!("Browser join link: {share_url}"));
-                        host.frontend.pending_console_output.push(format!(
+                            .diagnostics_mut()
+                            .queue_console_output(format!(
+                                "Browser join code (expires after 30 minutes if unused): {}",
+                                ticket.encode()
+                            ));
+                        host.frontend
+                            .diagnostics_mut()
+                            .queue_console_output(format!("Browser join link: {share_url}"));
+                        host.frontend.diagnostics_mut().queue_console_output(format!(
                             "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
                             ticket.payload().relay_url
                         ));
@@ -1720,8 +1688,7 @@ mod tests {
             })
             .expect("queue snapshot");
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
         let drain = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1729,7 +1696,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
 
         assert!(drain.rewrote_sim_state);
@@ -1756,8 +1722,7 @@ mod tests {
             })
             .expect("queue mid-mission snapshot");
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
 
         let drain = drain_net_inputs(
             &mut host,
@@ -1766,7 +1731,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
         assert_eq!(drain.adopted_frame, Some(32));
         assert!(matches!(
@@ -1792,11 +1756,12 @@ mod tests {
             })
             .expect("queue reconnect snapshot");
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::from([(36, 0x0BAD_5EED)]);
-        let mut pending = std::collections::BTreeMap::from([(
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
+        pending.admit_remote_hash(36, 0x0BAD_5EED);
+        pending.queue_input(
             super::TimelineFrame::from_wire(36),
-            vec![PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown)],
-        )]);
+            PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),
+        );
 
         let drain = drain_net_inputs(
             &mut host,
@@ -1805,7 +1770,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
 
         assert_eq!(drain.adopted_frame, Some(30));
@@ -1815,10 +1779,15 @@ mod tests {
             "controls stay disabled until the ready barrier releases"
         );
         assert!(
-            pending.is_empty(),
+            pending.pending_frame_count() == 0,
             "old predicted inputs must not cross sessions"
         );
-        assert!(hashes.is_empty(), "old peer hashes must not cross sessions");
+        assert!(
+            pending
+                .take_due_comparisons(robin_engine::replay::TimelineFrame::from_wire(100))
+                .is_empty(),
+            "old peer hashes must not cross sessions"
+        );
         assert_eq!(rewind.oldest_reachable_frame(), Some(30));
         assert!(rewind.restore_recent(30, RestorePolicy::Exact).is_some());
         assert!(matches!(
@@ -1840,7 +1809,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
         assert!(!host.transport.reconnecting());
     }
@@ -1854,10 +1822,9 @@ mod tests {
             &mut host,
             &mut manager,
             0,
-            &mut std::collections::BTreeMap::new(),
+            &mut super::super::runtime::reconciliation::NetworkReconciliation::default(),
             &mut assets,
             &mut RewindBuffer::new(),
-            &mut std::collections::BTreeMap::new(),
         );
     }
 
@@ -1869,8 +1836,7 @@ mod tests {
             .send(NetEvent::Fatal("test transport failure".into()))
             .expect("queue fatal event");
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
         let _ = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1878,7 +1844,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
     }
 
@@ -1890,8 +1855,7 @@ mod tests {
             .send(NetEvent::LeaderboardCoSignRequest(request))
             .unwrap();
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
         let _ = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1899,7 +1863,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
 
         let net = host.transport.net().unwrap();
@@ -1921,8 +1884,7 @@ mod tests {
             .send(NetEvent::RankedCoSignContext(context.clone()))
             .unwrap();
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
         let _ = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1930,7 +1892,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
 
         let net = host.transport.net().unwrap();
@@ -1952,8 +1913,7 @@ mod tests {
                 .unwrap();
         }
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
         let _ = drain_net_inputs(
             &mut host,
             &mut manager,
@@ -1961,7 +1921,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
     }
 
@@ -1992,8 +1951,7 @@ mod tests {
                 input: PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),
             })
             .expect("queue stale input");
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
 
         let drain = drain_net_inputs(
             &mut host,
@@ -2002,11 +1960,10 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
 
         assert!(host.transport.reconnecting());
-        assert!(pending.is_empty());
+        assert!(pending.pending_frame_count() == 0);
         assert_eq!(
             drain.admission_events,
             [MultiplayerAdmissionEvent::Disconnected]
@@ -2034,8 +1991,7 @@ mod tests {
                 input: PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),
             })
             .expect("queue stale peer input");
-        let mut hashes = std::collections::BTreeMap::new();
-        let mut pending = std::collections::BTreeMap::new();
+        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
 
         let drain = drain_net_inputs(
             &mut host,
@@ -2044,7 +2000,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
 
         assert!(host.transport.reconnecting());
@@ -2077,7 +2032,6 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
         assert!(repeated.admission_events.is_empty());
         assert!(
@@ -2102,11 +2056,10 @@ mod tests {
             &mut pending,
             &mut assets,
             &mut rewind,
-            &mut hashes,
         );
         assert!(frozen.inputs.is_empty());
         assert!(frozen.rollback.is_none());
-        assert!(pending.is_empty());
+        assert!(pending.pending_frame_count() == 0);
         assert_eq!(
             robin_engine::replay::state_hash(&manager.engine),
             published_hash

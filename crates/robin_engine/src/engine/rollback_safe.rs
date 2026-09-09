@@ -225,16 +225,34 @@ pub enum SnapshotRestoreError {
 /// directly — the safety invariant is between the crate and its
 /// downstream consumers, not a per-module check.
 #[doc = include_str!("../../tests/contracts/engine_capabilities.md")]
-#[derive(serde::Serialize, robin_state_hash_derive::StateHash)]
+#[cfg_attr(
+    not(feature = "original-parity"),
+    doc = "Ordinary builds cannot acquire Original reconstruction authority:\n```compile_fail,E0599\nuse robin_engine::engine::Engine;\nlet _ = Engine::parity_replay_setup;\n```"
+)]
+#[derive(serde::Serialize)]
 #[serde(transparent)]
 pub struct Engine {
     inner: EngineInner,
+    /// Process-local, single-use authority minted only by fresh construction.
+    /// It is deliberately absent from snapshots and the simulation hash.
+    #[serde(skip)]
+    bootstrap_open: bool,
+}
+
+// Preserve the historical transparent facade hash exactly. Deriving StateHash
+// with a skipped authority field would append a skipped-field marker, changing
+// every replay hash despite this process-local flag not being simulation state.
+impl robin_util::state_hash::StateHash for Engine {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        robin_util::state_hash::StateHash::state_hash(&self.inner, state);
+    }
 }
 
 impl Clone for Engine {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone_authoritative_state(),
+            bootstrap_open: false,
         }
     }
 }
@@ -244,7 +262,10 @@ impl<'de> serde::Deserialize<'de> for Engine {
     where
         D: serde::Deserializer<'de>,
     {
-        super::snapshot::deserialize_engine_inner(deserializer).map(|inner| Self { inner })
+        super::snapshot::deserialize_engine_inner(deserializer).map(|inner| Self {
+            inner,
+            bootstrap_open: false,
+        })
     }
 }
 
@@ -260,6 +281,7 @@ impl Engine {
     pub fn from_persisted_state(state: super::PersistedEngineState) -> Self {
         Self {
             inner: state.into_engine_inner(),
+            bootstrap_open: false,
         }
     }
 
@@ -369,7 +391,10 @@ impl Engine {
             .spellforge
             .validate_snapshot()
             .map_err(|error| format!("invalid Spellforge snapshot: {error}"))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            bootstrap_open: false,
+        })
     }
 
     /// Return the exact Spellforge package embedded in this authoritative
@@ -389,20 +414,11 @@ impl Engine {
 /// Explicit capability for parity-tool reconstruction before/during replay.
 ///
 /// This borrow is deliberately not serializable: it is a short-lived setup
-/// authority over an `Engine`, not simulation state. Normal game code should
-/// never acquire it.
+/// authority over an `Engine`, not simulation state. Its private owner can
+/// only be acquired when the explicit `original-parity` feature is enabled
+/// (or inside engine unit tests). Ordinary client builds cannot construct it.
 #[must_use = "parity replay setup must be used immediately and not retained"]
 pub struct ParityReplaySetup<'a> {
-    engine: &'a mut Engine,
-}
-
-/// Explicit capability for the one-shot mission bootstrap boundary.
-///
-/// Startup script extensions and campaign counters run here before the first
-/// authoritative frame. They are intentionally unavailable as ordinary
-/// `Engine` mutators.
-#[must_use = "mission setup must be completed before frame advancement"]
-pub struct MissionSetup<'a> {
     engine: &'a mut Engine,
 }
 
@@ -537,15 +553,32 @@ impl HostConsoleDispatch<'_> {
     }
 }
 
+/// How a newly assembled mission enters runtime. A lost Sherwood mission enters
+/// debriefing without starting the campaign clock, but still closes bootstrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MissionBootstrapCompletion {
+    StartClock,
+    DebriefOnly,
+}
+
 impl Engine {
-    /// Open the capability used exclusively by Original parity replay tools.
-    pub fn parity_replay_setup(&mut self) -> ParityReplaySetup<'_> {
-        ParityReplaySetup { engine: self }
+    /// Complete fresh mission bootstrap exactly once. Only pre-hourglass setup
+    /// admissions may precede this boundary. Original save capture may import
+    /// a nonzero initial frame before entry; the authority tracks this process'
+    /// lifecycle, not the imported absolute frame number. Cloning, decoding,
+    /// or restoring a running engine never recreates bootstrap authority.
+    pub fn finish_mission_bootstrap(&mut self, completion: MissionBootstrapCompletion) {
+        assert!(self.bootstrap_open, "mission bootstrap authority is closed");
+        self.bootstrap_open = false;
+        if completion == MissionBootstrapCompletion::StartClock {
+            self.campaign_reset_mission_length();
+        }
     }
 
-    /// Open the one-shot mission bootstrap capability.
-    pub fn mission_setup(&mut self) -> MissionSetup<'_> {
-        MissionSetup { engine: self }
+    /// Open the capability used exclusively by Original parity replay tools.
+    #[cfg(any(test, feature = "original-parity"))]
+    pub fn parity_replay_setup(&mut self) -> ParityReplaySetup<'_> {
+        ParityReplaySetup { engine: self }
     }
 
     /// Open the host-only developer-console capability.
@@ -3019,6 +3052,10 @@ impl Engine {
     /// This remains crate-internal until every authoritative v48 section is
     /// represented by the coordinator.
     pub(crate) fn install_legacy_adoption_inner(&mut self, inner: EngineInner) {
+        // Preserve, never mint, the receiving process' bootstrap authority.
+        // Original viewport capture imports its initial save before mission
+        // entry, whereas a live replay/save replacement has already closed
+        // this authority at bootstrap completion or its first hourglass.
         self.inner = inner;
     }
 
@@ -3444,7 +3481,10 @@ impl Engine {
         inner
             .world
             .validate_level_attachments(assets, inner.script_domains.zones.scripts.len());
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            bootstrap_open: true,
+        })
     }
 
     /// Test-only shortcut: build an `Engine` with an empty fixture
@@ -3680,6 +3720,9 @@ impl Engine {
         frame: SimulationFrameInput,
         command_batch_mode: SelectionCommandBatchMode,
     ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        if frame.run_hourglass {
+            self.bootstrap_open = false;
+        }
         self.require_live_campaign("advancing a simulation frame");
 
         if let Some(failure) = self.inner.scripts.spellforge.failure.clone() {
@@ -3990,14 +4033,15 @@ impl Engine {
 
     // ── Setup / lifecycle ──────────────────────────────────────────
 
-    /// Run a host-side mission-script extension against live script effects
+    /// Test-fixture adapter for a mission-script extension against live effects
     /// while the Engine-owned simulation RNG is installed.
     ///
-    /// Spellforge startup is outside the normal engine tick but its native
+    /// Production startup is owned by engine construction. Fixture native
     /// shims can still draw from `sim_rng`; using this boundary advances the
     /// one authoritative stream instead of panicking for lack of a scope or
     /// inventing a second RNG. The closure must not retain the host reference.
-    fn with_mission_script_effects_and_rng<R>(
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn test_with_mission_script_effects_and_rng<R>(
         &mut self,
         assets: &LevelAssets,
         f: impl FnOnce(
@@ -4369,7 +4413,10 @@ impl Engine {
         inner.post_load_fixups(display);
         post_fixup_observer(&inner);
         inner.queue_update_information_bars();
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            bootstrap_open: false,
+        })
     }
 
     /// Prepare an exact authoritative network snapshot as a complete
@@ -4381,7 +4428,10 @@ impl Engine {
         snapshot: Engine,
         assets: &LevelAssets,
     ) -> Result<Self, SnapshotRestoreError> {
-        Self::prepare_snapshot(snapshot, assets).map(|inner| Self { inner })
+        Self::prepare_snapshot(snapshot, assets).map(|inner| Self {
+            inner,
+            bootstrap_open: false,
+        })
     }
 
     fn prepare_snapshot(
@@ -4851,33 +4901,6 @@ impl ParityReplaySetup<'_> {
     }
 }
 
-impl MissionSetup<'_> {
-    /// Run a startup extension against the mission script while the
-    /// authoritative RNG scope is installed.
-    pub fn with_script_effects_and_rng<R>(
-        &mut self,
-        assets: &LevelAssets,
-        f: impl FnOnce(
-            &crate::sim_rng::SimulationContext,
-            Option<(
-                &mut crate::natives::ScriptEffects,
-                &mut crate::natives::ScriptState,
-                &mut crate::engine::ScriptDomains,
-                &crate::natives::AttachedScriptBindings,
-                &crate::natives::NativeSessionCapabilities<'_>,
-            )>,
-        ) -> R,
-    ) -> R {
-        self.engine.with_mission_script_effects_and_rng(assets, f)
-    }
-
-    /// Reset Original's mission-length accumulator immediately before the
-    /// mission begins.
-    pub fn reset_mission_length(&mut self) {
-        self.engine.campaign_reset_mission_length();
-    }
-}
-
 impl Deref for Engine {
     type Target = EngineInner;
 
@@ -4897,6 +4920,160 @@ impl Deref for Engine {
 mod tests {
     use super::*;
     use crate::engine::SimCommand;
+
+    #[test]
+    fn bootstrap_authority_is_not_snapshot_state() {
+        let (mut engine, assets) = frame_api_fixture();
+        assert!(engine.bootstrap_open);
+        assert!(!engine.clone().bootstrap_open);
+        let decoded = Engine::decode_native_snapshot(&engine.encode_native_snapshot()).unwrap();
+        assert!(!decoded.bootstrap_open);
+        let restored = Engine::from_persisted_state(engine.capture_persisted_state().unwrap());
+        assert!(!restored.bootstrap_open);
+        // Adoption must also close authority when handed a freshly constructed
+        // engine directly, rather than relying on the decoder to have done so.
+        let (fresh, _) = frame_api_fixture();
+        let adopted = Engine::adopt_authoritative_snapshot(fresh, &assets).unwrap();
+        assert!(!adopted.bootstrap_open);
+        let (fresh, _) = frame_api_fixture();
+        let restored = Engine::restore_from_snapshot(
+            &mut super::super::HostDisplayState::default(),
+            fresh,
+            &assets,
+        )
+        .unwrap();
+        assert!(!restored.bootstrap_open);
+        let bytes = serde_json::to_vec(&engine).unwrap();
+        let decoded: Engine = serde_json::from_slice(&bytes).unwrap();
+        assert!(!decoded.bootstrap_open);
+        let hash = crate::replay::state_hash(&engine);
+        assert_eq!(hash, crate::replay::state_hash(&engine.inner));
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+        assert_eq!(crate::replay::state_hash(&engine), hash);
+        assert_eq!(serde_json::to_vec(&engine).unwrap(), bytes);
+    }
+
+    #[test]
+    fn bootstrap_allows_pre_frame_zero_setup_admission() {
+        let (mut engine, assets) = frame_api_fixture();
+        engine
+            .advance_frame(&assets, SimulationFrameInput::no_hourglass())
+            .unwrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+        assert!(!engine.bootstrap_open);
+    }
+
+    #[test]
+    fn debrief_completion_preserves_clock_snapshot_and_hash() {
+        let (mut engine, _) = frame_api_fixture();
+        engine
+            .inner
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::MissionLength, 23);
+        let bytes = serde_json::to_vec(&engine).unwrap();
+        let hash = crate::replay::state_hash(&engine);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::DebriefOnly);
+        assert!(!engine.bootstrap_open);
+        assert_eq!(
+            engine.campaign().values[crate::campaign::CampaignValue::MissionLength],
+            23
+        );
+        assert_eq!(serde_json::to_vec(&engine).unwrap(), bytes);
+        assert_eq!(crate::replay::state_hash(&engine), hash);
+        for completion in [
+            MissionBootstrapCompletion::StartClock,
+            MissionBootstrapCompletion::DebriefOnly,
+        ] {
+            let json = serde_json::to_string(&completion).unwrap();
+            assert_eq!(
+                serde_json::from_str::<MissionBootstrapCompletion>(&json).unwrap(),
+                completion
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn debrief_completion_cannot_later_start_clock() {
+        let (mut engine, _) = frame_api_fixture();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::DebriefOnly);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn bootstrap_cannot_be_finished_twice() {
+        let (mut engine, _) = frame_api_fixture();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn bootstrap_cannot_be_reopened_by_clone() {
+        let (engine, _) = frame_api_fixture();
+        engine
+            .clone()
+            .finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn bootstrap_cannot_be_reopened_by_deserialization() {
+        let (engine, _) = frame_api_fixture();
+        let mut decoded: Engine =
+            serde_json::from_value(serde_json::to_value(engine).unwrap()).unwrap();
+        decoded.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn bootstrap_cannot_be_reopened_by_snapshot_adoption() {
+        let (engine, assets) = frame_api_fixture();
+        Engine::adopt_authoritative_snapshot(engine, &assets)
+            .unwrap()
+            .finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn first_hourglass_closes_bootstrap_even_without_explicit_finish() {
+        let (mut engine, assets) = frame_api_fixture();
+        engine
+            .advance_frame(&assets, SimulationFrameInput::new(Vec::new()))
+            .unwrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
+
+    #[test]
+    fn bootstrap_accepts_an_imported_nonzero_initial_frame() {
+        let (mut engine, _) = frame_api_fixture();
+        let mut imported = engine.inner.clone_authoritative_state();
+        imported.control.frame_counter = 98_765;
+        imported
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::MissionLength, 23);
+        engine.install_legacy_adoption_inner(imported);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+        assert_eq!(engine.frame_counter(), 98_765);
+        assert_eq!(
+            engine.campaign().values[crate::campaign::CampaignValue::MissionLength],
+            0
+        );
+        assert!(!engine.bootstrap_open);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn legacy_adoption_cannot_reopen_finished_bootstrap() {
+        let (mut engine, _) = frame_api_fixture();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+        let (fresh, _) = frame_api_fixture();
+        engine.install_legacy_adoption_inner(fresh.inner);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+    }
 
     fn frame_api_fixture() -> (Engine, LevelAssets) {
         let mut assets = LevelAssets::new();
@@ -5025,7 +5202,13 @@ mod tests {
             },
         ));
         assert_eq!(id.index(), 0, "fixture must occupy live arena slot zero");
-        (Engine { inner }, id)
+        (
+            Engine {
+                inner,
+                bootstrap_open: false,
+            },
+            id,
+        )
     }
 
     fn assert_typed_sentinel_snapshot(engine: &Engine, id: EntityId) {
@@ -6264,7 +6447,11 @@ mod tests {
             .script_domains
             .mission_ui
             .men_to_blazon_conversion_mode = true;
-        let state = Engine { inner }.parity_engine_state();
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_engine_state();
 
         assert_eq!(state.next_creation_order, 417);
         assert_eq!(state.chorus_timer, 23);
@@ -6302,7 +6489,11 @@ mod tests {
             fx: Default::default(),
         }));
 
-        let state = Engine { inner }.parity_entity_runtime_state(id, &LevelAssets::new());
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_entity_runtime_state(id, &LevelAssets::new());
 
         assert_eq!(
             parity_position_sprite(&state),
@@ -6332,7 +6523,11 @@ mod tests {
             },
         ));
 
-        let state = Engine { inner }.parity_entity_runtime_state(id, &LevelAssets::new());
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_entity_runtime_state(id, &LevelAssets::new());
 
         assert_eq!(
             parity_position_sprite(&state),
@@ -6400,7 +6595,10 @@ mod tests {
             ..LevelAssets::new()
         };
 
-        let mut engine = Engine { inner };
+        let mut engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
         let before_refresh = engine.parity_entity_runtime_state(id, &assets);
         engine
             .parity_replay_setup()
@@ -6468,7 +6666,10 @@ mod tests {
             },
             ..LevelAssets::new()
         };
-        let mut engine = Engine { inner };
+        let mut engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
         let gameplay_position = engine.inner.world.entities[id]
             .as_ref()
             .expect("test entity must remain occupied")
@@ -6570,7 +6771,11 @@ mod tests {
                 fx: Default::default(),
             }));
 
-            let state = Engine { inner }.parity_entity_runtime_state(id, &assets);
+            let state = Engine {
+                inner,
+                bootstrap_open: false,
+            }
+            .parity_entity_runtime_state(id, &assets);
             assert_eq!(
                 state["position"]["obstacle"],
                 serde_json::json!({ "kind": "projection", "index": expected_ordinal })
@@ -6591,7 +6796,11 @@ mod tests {
         ui.quit_mission_enabled = false;
 
         assert_eq!(
-            Engine { inner }.parity_game_ui_state(),
+            Engine {
+                inner,
+                bootstrap_open: false
+            }
+            .parity_game_ui_state(),
             serde_json::json!({
                 "campaign_map": true,
                 "campaign_map_displayed": true,
@@ -6611,7 +6820,10 @@ mod tests {
         inner.players.seats[0].locker_active = false;
         inner.players.seats[0].selected_action = crate::profiles::Action::Bow;
 
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
         assert_eq!(
             engine.parity_messenger_controller_state(),
             serde_json::json!({ "view_locked": true, "selected_action": 1 })
@@ -6632,7 +6844,11 @@ mod tests {
         };
 
         assert_eq!(
-            Engine { inner }.parity_shield_controller_state(),
+            Engine {
+                inner,
+                bootstrap_open: false
+            }
+            .parity_shield_controller_state(),
             serde_json::json!({
                 "is_protected": false,
                 "protected_pc": { "kind": "pc", "index": 7 },
@@ -6667,7 +6883,10 @@ mod tests {
         source.timer = 11;
         source.active = true;
         inner.feedback.sound_sim.sources.sources_push_some(source);
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         let state = engine.parity_sound_sources_state();
         assert!(state[0].is_null());
@@ -6711,7 +6930,11 @@ mod tests {
                 finish_frame: 91,
             });
 
-        let state = Engine { inner }.parity_sound_completion_frontier_state();
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_sound_completion_frontier_state();
         assert_eq!(state[0]["source_index"], 1);
         assert_eq!(state[0]["finish_frame"], 73);
         assert_eq!(state[1]["source_index"], 0);
@@ -6768,7 +6991,10 @@ mod tests {
                 num_shooting_points: 1,
                 num_owners: 0,
             });
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         let state = engine.parity_ai_global_state();
         assert_eq!(state["stupid_soldiers_cheat"], true);
@@ -6805,7 +7031,11 @@ mod tests {
         inner.world.pc_ids = vec![first, second];
         inner.world.original_pc_registry_ids = vec![second, first];
 
-        let state = Engine { inner }.parity_pc_registry_state();
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_pc_registry_state();
         assert_eq!(state[0]["kind"], "pc");
         assert_eq!(state[0]["index"], second.index());
         assert_eq!(state[1]["index"], first.index());
@@ -6832,7 +7062,10 @@ mod tests {
                 "fallback".into(),
                 Some(crate::pc_status::SpecialPeasantName::B),
             ));
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         let state = engine.parity_engine_runtime_roots_state(&MenuText);
         assert_eq!(state["timer_elements"].as_array().unwrap().len(), 0);
@@ -6877,7 +7110,10 @@ mod tests {
             ..Default::default()
         };
         inner.script_domains.interactables.doors.push(door);
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         let state = engine.parity_world_interactables_state(&LevelAssets::new());
         assert_eq!(state["patches"][0]["active"], true);
@@ -6937,7 +7173,11 @@ mod tests {
             },
         );
 
-        let state = Engine { inner }.parity_world_interactables_state(&LevelAssets::new());
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_world_interactables_state(&LevelAssets::new());
         assert_eq!(state["lifts"][0]["sector"], 47);
         assert_eq!(state["lifts"][0]["occupants_pc"], 2);
         assert_eq!(state["lifts"][0]["occupants"], 3);
@@ -7002,7 +7242,11 @@ mod tests {
         let mut assets = LevelAssets::new();
         std::sync::Arc::make_mut(&mut assets.scripts.zone_grid_indices).push(0);
 
-        let state = Engine { inner }.parity_world_interactables_state(&assets);
+        let state = Engine {
+            inner,
+            bootstrap_open: false,
+        }
+        .parity_world_interactables_state(&assets);
         assert_eq!(
             state["buildings"][0]["occupants"][0]["index"],
             second.index()
@@ -7061,7 +7305,10 @@ mod tests {
                 11.0,
                 2,
             ));
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         let state = engine.parity_repulsive_points_state();
         assert_eq!(state["next_id"], 42);
@@ -7118,7 +7365,10 @@ mod tests {
         titbit.frame_count = 10;
         titbit.display_order = 11.5;
         titbit.blinking = true;
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         let state = engine.parity_titbit_manager_state();
         assert_eq!(state["current_id"], 1);
@@ -7149,7 +7399,10 @@ mod tests {
     fn diagnostic_snapshot_omits_only_nonserializable_original_rng_replay() {
         let mut inner = EngineInner::new();
         inner.control.rng = SimulationRng::with_original_replay(vec![11, 22]);
-        let engine = Engine { inner };
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         assert!(serde_json::to_value(&engine).is_err());
         let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
@@ -7186,7 +7439,10 @@ mod tests {
             },
         };
         let id = inner.add_entity(crate::element::Entity::Projectile(projectile));
-        let mut engine = Engine { inner };
+        let mut engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
 
         assert_eq!(
             engine
@@ -7328,7 +7584,15 @@ mod tests {
         ));
         let sequence_id = inner.orders.sequence_manager.launch_sequence(sequence);
 
-        (Engine { inner }, assets, program, sequence_id)
+        (
+            Engine {
+                inner,
+                bootstrap_open: false,
+            },
+            assets,
+            program,
+            sequence_id,
+        )
     }
 
     fn decoded_engine(engine: &Engine) -> Engine {
@@ -7522,6 +7786,7 @@ mod tests {
 
         let source = Engine {
             inner: source_inner,
+            bootstrap_open: false,
         };
 
         let json = serde_json::to_string(&source).expect("serialize");
@@ -7542,12 +7807,16 @@ mod tests {
         let mut live_inner = EngineInner::new();
         live_inner.feedback.cutscene_camera.level_size =
             crate::coordinates::MapSize::new(1234.0, 5678.0);
-        let live = Engine { inner: live_inner };
+        let live = Engine {
+            inner: live_inner,
+            bootstrap_open: false,
+        };
 
         let mut malformed_inner = EngineInner::new();
         malformed_inner.world.fast_grid_mut().line_active.push(true);
         let malformed = Engine {
             inner: malformed_inner,
+            bootstrap_open: false,
         };
 
         let mut display = crate::engine::HostDisplayState::default();
@@ -7573,6 +7842,7 @@ mod tests {
     fn try_restore_rejects_world_parallel_mismatch_before_mutating_live_engine() {
         let live = Engine {
             inner: EngineInner::new(),
+            bootstrap_open: false,
         };
         let mut malformed_inner = EngineInner::new();
         malformed_inner
@@ -7582,6 +7852,7 @@ mod tests {
             .push(crate::sector::ScriptSectorData::new());
         let malformed = Engine {
             inner: malformed_inner,
+            bootstrap_open: false,
         };
 
         let mut display = crate::engine::HostDisplayState::default();
@@ -7737,7 +8008,10 @@ mod tests {
 
         let mut live_inner = EngineInner::new();
         live_inner.control.frame_counter = 77;
-        let live = Engine { inner: live_inner };
+        let live = Engine {
+            inner: live_inner,
+            bootstrap_open: false,
+        };
         let before_hash = crate::replay::state_hash(&live);
 
         let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)
@@ -7759,6 +8033,7 @@ mod tests {
         assets.scripts.mission_name = Some("different_mission".to_owned());
         let live = Engine {
             inner: EngineInner::new(),
+            bootstrap_open: false,
         };
 
         let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)
@@ -7778,10 +8053,14 @@ mod tests {
         assets.entities.mobile_element_count = 1;
         let snapshot = Engine {
             inner: EngineInner::new(),
+            bootstrap_open: false,
         };
         let mut live_inner = EngineInner::new();
         live_inner.control.frame_counter = 91;
-        let live = Engine { inner: live_inner };
+        let live = Engine {
+            inner: live_inner,
+            bootstrap_open: false,
+        };
         let before_hash = crate::replay::state_hash(&live);
 
         let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)
@@ -7809,11 +8088,15 @@ mod tests {
             .corrupt_visible_region_for_test();
         let snapshot = Engine {
             inner: malformed_inner,
+            bootstrap_open: false,
         };
 
         let mut live_inner = EngineInner::new();
         live_inner.control.frame_counter = 92;
-        let live = Engine { inner: live_inner };
+        let live = Engine {
+            inner: live_inner,
+            bootstrap_open: false,
+        };
         let before_hash = crate::replay::state_hash(&live);
 
         let error = Engine::adopt_authoritative_snapshot(snapshot, &assets)

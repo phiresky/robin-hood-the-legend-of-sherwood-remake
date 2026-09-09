@@ -42,7 +42,10 @@ case "$1" in
         cargo test --locked -p robin_run_protocol -p robin_replay_format -p robin_official_content -p robin_ranked_verification -p robin_identity_signer
         ;;
     services)
-        cargo test --locked -p robin_highscores -p robin_manifest_tool -p robin_replay_verifier
+        # Prove the production API lacks raw fixture access before opting in.
+        cargo check --locked -p robin_highscores --lib --bins --no-default-features
+        cargo test --locked -p robin_highscores --doc --no-default-features
+        cargo test --locked -p robin_highscores -p robin_manifest_tool -p robin_replay_verifier --features robin_highscores/test-support
         ;;
     parity) cargo test --locked -p robin_parity ;;
     client)

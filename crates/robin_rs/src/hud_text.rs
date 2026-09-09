@@ -485,7 +485,7 @@ pub fn render_transient_message(renderer: &mut Renderer, fonts: &HudFonts, text:
 /// Render the AI speech-log overlay.  Walks
 /// `AiGlobalState::screen_remarks` and draws each `(prefix) Remark` line
 /// in a horizontally-centred band starting at `y=30`, stepping 16 px
-/// per entry. Gated on `host.frontend.info_displayed` (toggled by the bound
+/// per entry. Gated on `host.frontend.diagnostics().info_displayed()` (toggled by the bound
 /// `DisplayInfo` / `RequestInfo` key). The timer-decrement + eviction
 /// half lives in engine `tick_screen_remarks` so the list shrinks even
 /// when the overlay is hidden.

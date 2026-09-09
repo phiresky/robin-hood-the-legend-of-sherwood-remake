@@ -3,8 +3,8 @@
 use super::flow::MissionServices;
 use super::headless::{HeadlessMission, HeadlessMissionOutcome, HeadlessPolicy};
 use super::interactive::{
-    InteractiveFrontend, InteractiveFrontendAssembly, InteractiveMission,
-    InteractiveRendererAssembly, MissionRendererConfig,
+    InteractiveFrontendAssembly, InteractiveMission, InteractiveRendererAssembly,
+    MissionRendererConfig,
 };
 use super::replay_init::init_replay_and_rollback;
 use super::runtime::{
@@ -89,68 +89,57 @@ pub(super) struct MissionBootstrap {
     pub(super) host: Host,
     pub(super) game: Game,
     pub(super) loaded: LoadedMissionCore,
-    lifecycle: MissionBootstrapLifecycle,
-    restart_save_started: bool,
-    restart_save_identity: Option<crate::save_file::ReplaySaveIdentity>,
+    restart_save: RestartSaveState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum MissionBootstrapPhase {
-    LevelInitialized,
-    SpellforgeStarted,
-    AudioPrepared,
-    CampaignClockStarted,
-    EntryPrepared,
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+enum RestartSaveState {
+    #[default]
+    Absent,
+    Pending(super::runtime::BootstrapSaveBoundary),
+    Completed(super::runtime::BootstrapSaveBoundary),
 }
 
-impl MissionBootstrapPhase {
-    const fn can_advance_to(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::LevelInitialized, Self::SpellforgeStarted)
-                | (Self::SpellforgeStarted, Self::AudioPrepared)
-                | (Self::AudioPrepared, Self::CampaignClockStarted)
-                | (Self::CampaignClockStarted, Self::EntryPrepared)
-        )
-    }
-}
-
-/// Runtime-enforced bootstrap state machine. The trace is diagnostic process
-/// state only; deterministic save data remains entirely in the Engine.
-struct MissionBootstrapLifecycle {
-    phase: MissionBootstrapPhase,
-    trace: Vec<MissionBootstrapPhase>,
-}
-
-impl MissionBootstrapLifecycle {
-    fn new() -> Self {
-        Self {
-            phase: MissionBootstrapPhase::LevelInitialized,
-            trace: vec![MissionBootstrapPhase::LevelInitialized],
+impl RestartSaveState {
+    fn observe_completion(
+        &mut self,
+        result: anyhow::Result<crate::savegame::SaveWriteStatus>,
+    ) -> bool {
+        let Self::Pending(boundary) = *self else {
+            panic!("Restart completion requires an admitted pending save");
+        };
+        match result {
+            Ok(crate::savegame::SaveWriteStatus::Queued) => false,
+            Ok(crate::savegame::SaveWriteStatus::Completed) => {
+                *self = Self::Completed(boundary);
+                true
+            }
+            Err(error) => {
+                tracing::error!(
+                    "Restart save publication failed; no replay save marker: {error:#}"
+                );
+                *self = Self::Absent;
+                true
+            }
         }
     }
+}
 
-    fn require(&self, expected: MissionBootstrapPhase) {
-        assert_eq!(self.phase, expected);
+/// Audio preparation grants the only owner that can complete mission entry.
+/// The simulation stays boxed through each consuming frontend handoff.
+struct AudioPreparedBootstrap(Box<MissionBootstrap>);
+
+impl Serialize for AudioPreparedBootstrap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.spec.serialize(serializer)
     }
+}
 
-    fn advance(&mut self, expected: MissionBootstrapPhase, next: MissionBootstrapPhase) {
-        self.require(expected);
-        assert!(
-            expected.can_advance_to(next),
-            "invalid mission bootstrap transition: {expected:?} -> {next:?}"
-        );
-        self.phase = next;
-        self.trace.push(next);
-    }
-
-    fn phase(&self) -> MissionBootstrapPhase {
-        self.phase
-    }
-
-    #[cfg(test)]
-    fn trace(&self) -> &[MissionBootstrapPhase] {
-        &self.trace
+impl<'de> Deserialize<'de> for AudioPreparedBootstrap {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "mission bootstrap requires live resource preparation",
+        ))
     }
 }
 
@@ -180,21 +169,15 @@ impl MissionBootstrap {
             host,
             game,
             loaded,
-            lifecycle: MissionBootstrapLifecycle::new(),
-            restart_save_started: false,
-            restart_save_identity: None,
+            restart_save: RestartSaveState::Absent,
         };
         bootstrap.install_mission_assets(args);
         bootstrap
     }
 
-    /// Run required Spellforge startup after SCB `Initialize` in the engine
-    /// constructor and before audio/replay construction.
-    pub(super) fn start_required_spellforge(
-        &mut self,
-    ) -> Result<(), crate::lua_session::SpellforgeSessionError> {
-        self.lifecycle
-            .require(MissionBootstrapPhase::LevelInitialized);
+    /// Initialize has already run in engine construction. Report that fact;
+    /// this is not another fallible startup stage.
+    fn report_spellforge_startup(&self) {
         if let Some(lua) = self.host.scripting.lua_session.as_ref() {
             tracing::info!(
                 "Lua: deterministic runtime active for mission '{}' (seed={}); Initialize is owned by the engine callback driver",
@@ -202,21 +185,14 @@ impl MissionBootstrap {
                 self.loaded.engine_rng_seed,
             );
         }
-        self.lifecycle.advance(
-            MissionBootstrapPhase::LevelInitialized,
-            MissionBootstrapPhase::SpellforgeStarted,
-        );
-        Ok(())
     }
 
-    pub(super) fn prepare_audio(
-        &mut self,
+    fn prepare_audio(
+        mut self: Box<Self>,
         backend: Option<&mut crate::audio_backend::KiraAudioBackend>,
         profiles: &ProfileManager,
-    ) -> Result<(), String> {
-        self.lifecycle
-            .require(MissionBootstrapPhase::SpellforgeStarted);
-        setup_mission_audio(
+    ) -> Result<AudioPreparedBootstrap, (Box<Self>, String)> {
+        if let Err(error) = setup_mission_audio(
             &mut self.host,
             backend,
             &self.loaded.engine,
@@ -224,36 +200,46 @@ impl MissionBootstrap {
             profiles,
             self.spec.location,
             &self.game.global_options.sound_directory,
-        )?;
-        self.lifecycle.advance(
-            MissionBootstrapPhase::SpellforgeStarted,
-            MissionBootstrapPhase::AudioPrepared,
-        );
-        Ok(())
+        ) {
+            return Err((self, error));
+        }
+        Ok(AudioPreparedBootstrap(self))
     }
 
     /// Start the campaign segment clock after the lost-Sherwood gate, matching
     /// the original `GameLoop` boundary.
-    pub(super) fn start_campaign_clock(&mut self) {
-        self.lifecycle.require(MissionBootstrapPhase::AudioPrepared);
-        self.loaded.engine.mission_setup().reset_mission_length();
-        self.lifecycle.advance(
-            MissionBootstrapPhase::AudioPrepared,
-            MissionBootstrapPhase::CampaignClockStarted,
-        );
+    fn start_campaign_clock(&mut self) {
+        self.loaded
+            .engine
+            .finish_mission_bootstrap(engine_api::MissionBootstrapCompletion::StartClock);
+    }
+
+    fn prepare_interactive_entry(
+        &mut self,
+        callbacks: &mut RustCallbacks,
+        args: &crate::main_entry::CliArgs,
+    ) {
+        // A lost Sherwood campaign still needs a runtime for debriefing and
+        // network/HTTP draining, but must not start play time or restart state.
+        if !(self.game.is_sherwood && self.loaded.engine.campaign().get_ares() == 0) {
+            self.start_campaign_clock();
+            self.setup_restart_or_sherwood(callbacks, args);
+        } else {
+            self.loaded
+                .engine
+                .finish_mission_bootstrap(engine_api::MissionBootstrapCompletion::DebriefOnly);
+        }
     }
 
     /// Capture the pristine restart state for a tactical mission. Fresh
     /// Sherwood sessions leave the campaign map closed, matching the original
     /// original-game session startup; the player opens it from the HQ widget. This must
     /// be the last setup stage before replay/runtime construction.
-    pub(super) fn setup_restart_or_sherwood(
+    fn setup_restart_or_sherwood(
         &mut self,
         callbacks: &mut RustCallbacks,
         args: &crate::main_entry::CliArgs,
     ) {
-        self.lifecycle
-            .require(MissionBootstrapPhase::CampaignClockStarted);
         let playing_back = args.replay_data.is_some() || args.replay.is_some();
         // Playback pins its frame-0 save markers in TimelineRuntime and replays
         // load-back records from those immutable snapshots. It must not create
@@ -261,7 +247,7 @@ impl MissionBootstrap {
         if !playing_back && !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-            self.restart_save_started = match callbacks.save_manager.write_restart_save_background(
+            self.restart_save = match callbacks.save_manager.write_restart_save_background(
                 &mut self.host,
                 &self.game,
                 &self.loaded.engine,
@@ -269,66 +255,42 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                Ok(
-                    crate::savegame::SaveWriteStatus::Queued
-                    | crate::savegame::SaveWriteStatus::Completed,
-                ) => {
-                    self.restart_save_identity = callbacks.save_manager.restart_session_identity();
-                    true
+                Ok(status) => {
+                    let boundary = super::runtime::BootstrapSaveBoundary::capture(
+                        &self.loaded.engine,
+                        &self.host,
+                        &self.game,
+                        callbacks.save_manager.restart_session_identity(),
+                    );
+                    match status {
+                        crate::savegame::SaveWriteStatus::Queued => {
+                            RestartSaveState::Pending(boundary)
+                        }
+                        crate::savegame::SaveWriteStatus::Completed => {
+                            RestartSaveState::Completed(boundary)
+                        }
+                    }
                 }
                 Err(error) => {
                     tracing::error!("Restart save could not start: {error:#}");
-                    false
+                    RestartSaveState::Absent
                 }
             };
         }
-        self.lifecycle.advance(
-            MissionBootstrapPhase::CampaignClockStarted,
-            MissionBootstrapPhase::EntryPrepared,
-        );
     }
 
-    /// Admit an already-lost Sherwood mission into the outer frame driver
-    /// without crossing either post-gate initialization boundary.
-    ///
-    /// The frame-owned lost-campaign debriefing needs a complete runtime so
-    /// network/HTTP/replay services keep draining. Advancing only the type-
-    /// state markers lets that runtime be constructed while deliberately not
-    /// starting play time and not creating restart/Sherwood entry state.
-    pub(super) fn defer_lost_sherwood_entry(&mut self) {
-        self.lifecycle.require(MissionBootstrapPhase::AudioPrepared);
-        assert!(self.game.is_sherwood, "only Sherwood entry can be deferred");
-        assert_eq!(
-            self.loaded.engine.campaign().get_ares(),
-            0,
-            "only an already-lost campaign can defer Sherwood entry"
-        );
-        self.lifecycle.advance(
-            MissionBootstrapPhase::AudioPrepared,
-            MissionBootstrapPhase::CampaignClockStarted,
-        );
-        self.lifecycle.advance(
-            MissionBootstrapPhase::CampaignClockStarted,
-            MissionBootstrapPhase::EntryPrepared,
-        );
-    }
-
-    pub(super) fn finish_interactive(
-        self,
-        frontend: InteractiveFrontend,
-        args: &crate::main_entry::CliArgs,
-    ) -> InteractiveMission {
-        assert_eq!(self.spec.frontend, MissionFrontendKind::Interactive);
-        self.lifecycle.require(MissionBootstrapPhase::EntryPrepared);
-        let wait_for_multiplayer_start = self.host.transport.net().is_some();
-        InteractiveMission {
-            runtime: self.finish_runtime(
-                args,
-                FrameContract::Graphical,
-                wait_for_multiplayer_start,
-            ),
-            frontend,
-            campaign_transition: None,
+    /// Resolve persistence before opening recorder frame zero. Polling uses
+    /// the normal runtime pacing hook: native serialization stays on its worker
+    /// while the dedicated game thread waits, and the browser yields its loop.
+    async fn complete_restart_save(&mut self, callbacks: &mut RustCallbacks) {
+        if !matches!(self.restart_save, RestartSaveState::Pending(_)) {
+            return;
+        }
+        while !self
+            .restart_save
+            .observe_completion(callbacks.save_manager.try_finish_background())
+        {
+            crate::window::sleep_ms(1).await;
         }
     }
 
@@ -346,22 +308,6 @@ impl MissionBootstrap {
                 .ranked_admission
                 .sign_before_frame_zero(custom_package_present)
                 .await;
-        }
-    }
-
-    pub(super) fn finish_headless(
-        self,
-        args: &crate::main_entry::CliArgs,
-        policy: HeadlessPolicy,
-    ) -> HeadlessMission {
-        assert_eq!(self.spec.frontend, MissionFrontendKind::Headless);
-        self.lifecycle
-            .require(MissionBootstrapPhase::CampaignClockStarted);
-        let wait_for_multiplayer_start = self.host.transport.net().is_some();
-        HeadlessMission {
-            modals: super::session_policy::SessionModalScheduler::default(),
-            runtime: self.finish_runtime(args, FrameContract::Headless, wait_for_multiplayer_start),
-            policy,
         }
     }
 
@@ -433,10 +379,6 @@ impl MissionBootstrap {
         contract: FrameContract,
         wait_for_multiplayer_start: bool,
     ) -> MissionRuntime {
-        assert!(matches!(
-            self.lifecycle.phase(),
-            MissionBootstrapPhase::CampaignClockStarted | MissionBootstrapPhase::EntryPrepared
-        ));
         let mission_assets = self
             .game
             .mission_assets()
@@ -483,23 +425,20 @@ impl MissionBootstrap {
             self.host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
-        // Entry eligibility is insufficient: capture/indexing can fail, and
-        // headless startup can skip restart creation entirely. Only an admitted
-        // background save represents a frame-0 payload that can later be loaded.
-        timeline.register_bootstrap_save(
-            &self.loaded.engine,
-            &self.host,
-            &self.game,
-            self.restart_save_started,
-            self.restart_save_identity,
-        );
+        timeline.register_bootstrap_save(match self.restart_save {
+            RestartSaveState::Absent => None,
+            RestartSaveState::Completed(boundary) => Some(boundary),
+            RestartSaveState::Pending(_) => panic!("runtime opened before Restart save completion"),
+        });
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
             .host
             .application_context()
             .active_profile_snapshot()
             .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-            .unwrap_or(true);
+            .unwrap_or_else(|error| {
+                panic!("mission visual setup requires an active profile: {error}")
+            });
         let visual_ambiance = if dynamic_visuals {
             manager.engine.weather().ambiance
         } else {
@@ -523,14 +462,76 @@ impl MissionBootstrap {
     fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
         self.loaded.engine.into_campaign_and_simulation()
     }
+}
+
+impl AudioPreparedBootstrap {
+    fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
+        self.0.into_campaign_and_simulation()
+    }
+
+    fn finish_interactive(
+        self,
+        frontend: InteractiveFrontendAssembly,
+        width: u32,
+        height: u32,
+        args: &crate::main_entry::CliArgs,
+    ) -> InteractiveMission {
+        let bootstrap = self.0;
+        assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Interactive);
+        let frontend = frontend.finish(width, height);
+        let wait_for_multiplayer_start = bootstrap.host.transport.net().is_some();
+        InteractiveMission {
+            runtime: bootstrap.finish_runtime(
+                args,
+                FrameContract::Graphical,
+                wait_for_multiplayer_start,
+            ),
+            frontend,
+            campaign_transition: None,
+        }
+    }
+
+    fn finish_headless(
+        self,
+        args: &crate::main_entry::CliArgs,
+        policy: HeadlessPolicy,
+    ) -> HeadlessMission {
+        let mut bootstrap = self.0;
+        assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Headless);
+        // Match graphical assembly's hashed name registration and seat
+        // snapshot boundary without constructing presentation resources.
+        let mut localized_names = std::array::from_fn(|_| None);
+        super::setup::register_mission_peasant_names(
+            &mut localized_names,
+            &mut bootstrap.loaded.engine,
+            &bootstrap.loaded.assets,
+        );
+        setup_local_seat_and_multiplayer_snapshot(
+            &mut bootstrap.loaded.engine,
+            &mut bootstrap.host,
+            &bootstrap.loaded.assets,
+            args,
+        );
+        bootstrap.start_campaign_clock();
+        let wait_for_multiplayer_start = bootstrap.host.transport.net().is_some();
+        HeadlessMission {
+            modals: super::session_policy::SessionModalScheduler::default(),
+            runtime: bootstrap.finish_runtime(
+                args,
+                FrameContract::Headless,
+                wait_for_multiplayer_start,
+            ),
+            policy,
+        }
+    }
 
     /// Frontend resources may be consumed on failure, but mission ownership
     /// must remain available for the caller's campaign recovery path.
     async fn retain_during_frontend_assembly(
-        mut self: Box<Self>,
-        assemble: impl AsyncFnOnce(&mut Self) -> Result<InteractiveFrontendAssembly, String>,
-    ) -> (Box<Self>, Result<InteractiveFrontendAssembly, String>) {
-        let result = assemble(&mut self).await;
+        mut self,
+        assemble: impl AsyncFnOnce(&mut MissionBootstrap) -> Result<InteractiveFrontendAssembly, String>,
+    ) -> (Self, Result<InteractiveFrontendAssembly, String>) {
+        let result = assemble(&mut self.0).await;
         (self, result)
     }
 }
@@ -800,7 +801,8 @@ impl InteractiveLoadStage {
             &mut host,
             &game,
             args.replay.is_none() && args.replay_data.is_none(),
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
         Ok(InteractiveLoadStart::Ready(Self {
             loading,
             host,
@@ -872,35 +874,61 @@ impl InteractiveLoadStage {
 }
 
 /// Owns the post-level-load state until renderer/frontend construction is
-/// complete. Its methods are intentionally ordered and guarded by
-/// `MissionBootstrapPhase`.
-struct LoadedInteractiveStage {
+/// complete. Only successful audio preparation grants frontend assembly.
+struct LoadedInteractiveStage<Bootstrap = Box<MissionBootstrap>> {
     // The bootstrap includes the complete simulation. Keep ownership on the
     // heap across consuming async frontend stages rather than embedding it in
     // every nested future and its returned result.
-    bootstrap: Box<MissionBootstrap>,
+    bootstrap: Bootstrap,
     process: MissionProcessResources<DecodingInterfaceResources>,
     loading: MissionLoadingScreen,
 }
 
 impl LoadedInteractiveStage {
-    fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
-        self.bootstrap.into_campaign_and_simulation()
-    }
-    fn prepare_audio(&mut self, profiles: &ProfileManager) -> Result<(), String> {
+    fn prepare_audio(
+        mut self,
+        profiles: &ProfileManager,
+    ) -> Result<LoadedInteractiveStage<AudioPreparedBootstrap>, (Box<MissionBootstrap>, String)>
+    {
         self.loading
             .status("Loading mission audio...", LOADING_AUDIO_PROGRESS);
-        self.bootstrap
-            .prepare_audio(self.process.audio_backend.as_mut(), profiles)
+        let bootstrap = self
+            .bootstrap
+            .prepare_audio(self.process.audio_backend.as_mut(), profiles)?;
+        Ok(LoadedInteractiveStage {
+            bootstrap,
+            process: self.process,
+            loading: self.loading,
+        })
+    }
+}
+
+impl LoadedInteractiveStage<AudioPreparedBootstrap> {
+    // Loading renderers/resource managers also make this handoff substantial.
+    // Do not embed it in the complete mission builder's future merely because
+    // the simulation and inner GPU upload are already boxed.
+    fn assemble_frontend<'a>(
+        self,
+        window: &'a mut GameWindow,
+        profiles: &'a ProfileManager,
+        args: &'a crate::main_entry::CliArgs,
+    ) -> futures::future::LocalBoxFuture<
+        'a,
+        (
+            AudioPreparedBootstrap,
+            Result<InteractiveFrontendAssembly, String>,
+        ),
+    > {
+        Box::pin(self.assemble_frontend_inner(window, profiles, args))
     }
 
-    async fn assemble_frontend(
+    async fn assemble_frontend_inner(
         self,
         window: &mut GameWindow,
         profiles: &ProfileManager,
         args: &crate::main_entry::CliArgs,
     ) -> (
-        Box<MissionBootstrap>,
+        AudioPreparedBootstrap,
         Result<InteractiveFrontendAssembly, String>,
     ) {
         let Self {
@@ -921,97 +949,109 @@ impl LoadedInteractiveStage {
     // stack required to construct and poll graphical startup.
     fn assemble_process_frontend<'a>(
         bootstrap: &'a mut MissionBootstrap,
-        mut process: MissionProcessResources<DecodingInterfaceResources>,
-        mut loading: MissionLoadingScreen,
+        process: MissionProcessResources<DecodingInterfaceResources>,
+        loading: MissionLoadingScreen,
         window: &'a mut GameWindow,
         profiles: &'a ProfileManager,
         args: &'a crate::main_entry::CliArgs,
     ) -> futures::future::LocalBoxFuture<'a, Result<InteractiveFrontendAssembly, String>> {
-        Box::pin(async move {
-            let LoadedInteractiveResources {
+        Box::pin(Self::assemble_process_frontend_inner(
+            bootstrap, process, loading, window, profiles, args,
+        ))
+    }
+
+    async fn assemble_process_frontend_inner(
+        bootstrap: &mut MissionBootstrap,
+        mut process: MissionProcessResources<DecodingInterfaceResources>,
+        mut loading: MissionLoadingScreen,
+        window: &mut GameWindow,
+        profiles: &ProfileManager,
+        args: &crate::main_entry::CliArgs,
+    ) -> Result<InteractiveFrontendAssembly, String> {
+        let LoadedInteractiveResources {
+            level_descriptors,
+            hud_fonts,
+        } = pre_decode_maps_and_resources(
+            Some(window),
+            &mut loading.renderer,
+            &mut bootstrap.loaded.engine,
+            profiles,
+            &bootstrap.host,
+            &bootstrap.game,
+        )?;
+        let short_briefings = process
+            .resolve_short_briefings(level_descriptors.as_ref())
+            .map_err(|error| error.to_string())?;
+
+        let mut timer = super::setup::PhaseTimer::new("frontend assembly");
+        let (renderer_config, prepared_renderer) = loading.close_before_renderer();
+        let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
+            window,
+            renderer_config,
+            prepared_renderer,
+        );
+        timer.step("game renderer construction");
+
+        // Deferred-terrain join: this is the first point that needs the
+        // decoded pixels, so the decode overlapped everything since the
+        // mission header was read. A decode failure aborts the mission
+        // launch here (the engine's campaign is recovered by the caller).
+        let (background, minimap) = match bootstrap.loaded.pending_terrain.take() {
+            Some(pending) => {
+                let decoded = pending.join().await;
+                let background = decoded.background?;
+                if let Some(bg) = background.as_ref() {
+                    assert_eq!(
+                        (bg.width as f32, bg.height as f32),
+                        bootstrap.loaded.bg_pixel_dims,
+                        "background map header dimensions diverge from decoded bitmap"
+                    );
+                }
+                timer.step("terrain decode join");
+                (background, decoded.minimap)
+            }
+            None => (
+                bootstrap.loaded.pre_decoded_background.take(),
+                bootstrap.loaded.pre_decoded_minimap.take(),
+            ),
+        };
+        let ambience_backgrounds =
+            std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_backgrounds);
+        let ambience_minimaps = std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_minimaps);
+        renderer.upload_maps(
+            &bootstrap.loaded.engine,
+            &mut bootstrap.host,
+            background,
+            minimap,
+            ambience_backgrounds,
+            ambience_minimaps,
+        );
+        timer.step("map upload");
+
+        // Interface pre-decode join: `load_mission_sprites` and the in-game
+        // menus consume these managers next.
+        let (text, cursor, menu_res, audio_backend) = process.collect().await;
+        timer.step("interface decode join");
+
+        renderer.assemble_process_frontend(
+            window,
+            &mut bootstrap.host,
+            &bootstrap.game,
+            &mut bootstrap.loaded.engine,
+            &bootstrap.loaded.assets,
+            text,
+            cursor,
+            menu_res,
+            audio_backend,
+            LoadedInteractiveResources {
                 level_descriptors,
                 hud_fonts,
-            } = pre_decode_maps_and_resources(
-                Some(window),
-                &mut loading.renderer,
-                &mut bootstrap.loaded.engine,
-                profiles,
-                &bootstrap.host,
-                &bootstrap.game,
-            )?;
-            let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref());
-
-            let mut timer = super::setup::PhaseTimer::new("frontend assembly");
-            let (renderer_config, prepared_renderer) = loading.close_before_renderer();
-            let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
-                window,
-                renderer_config,
-                prepared_renderer,
-            );
-            timer.step("game renderer construction");
-
-            // Deferred-terrain join: this is the first point that needs the
-            // decoded pixels, so the decode overlapped everything since the
-            // mission header was read. A decode failure aborts the mission
-            // launch here (the engine's campaign is recovered by the caller).
-            let (background, minimap) = match bootstrap.loaded.pending_terrain.take() {
-                Some(pending) => {
-                    let decoded = pending.join().await;
-                    let background = decoded.background?;
-                    if let Some(bg) = background.as_ref() {
-                        assert_eq!(
-                            (bg.width as f32, bg.height as f32),
-                            bootstrap.loaded.bg_pixel_dims,
-                            "background map header dimensions diverge from decoded bitmap"
-                        );
-                    }
-                    timer.step("terrain decode join");
-                    (background, decoded.minimap)
-                }
-                None => (
-                    bootstrap.loaded.pre_decoded_background.take(),
-                    bootstrap.loaded.pre_decoded_minimap.take(),
-                ),
-            };
-            let ambience_backgrounds =
-                std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_backgrounds);
-            let ambience_minimaps =
-                std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_minimaps);
-            renderer.upload_maps(
-                &bootstrap.loaded.engine,
-                &mut bootstrap.host,
-                background,
-                minimap,
-                ambience_backgrounds,
-                ambience_minimaps,
-            );
-            timer.step("map upload");
-
-            // Interface pre-decode join: `load_mission_sprites` and the in-game
-            // menus consume these managers next.
-            let (text, cursor, menu_res, audio_backend) = process.collect().await;
-            timer.step("interface decode join");
-
-            renderer.assemble_process_frontend(
-                window,
-                &mut bootstrap.host,
-                &bootstrap.game,
-                &mut bootstrap.loaded.engine,
-                &bootstrap.loaded.assets,
-                text,
-                cursor,
-                menu_res,
-                audio_backend,
-                LoadedInteractiveResources {
-                    level_descriptors,
-                    hud_fonts,
-                },
-                short_briefings,
-                args,
-                bootstrap.spec.mission_idx,
-                bootstrap.spec.location,
-            )
-        })
+            },
+            short_briefings,
+            args,
+            bootstrap.spec.mission_idx,
+            bootstrap.spec.location,
+        )
     }
 }
 
@@ -1119,7 +1159,7 @@ impl HeadlessLoadStage {
         );
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
-        let resources = MissionEngineResources::load(&host)?;
+        let resources = MissionEngineResources::load(&host).map_err(|error| error.to_string())?;
         Ok(Self {
             host,
             game,
@@ -1274,7 +1314,7 @@ impl HeadlessMissionBuilder {
     ) -> HeadlessBuildOutcome {
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
-            crate::http_server::peek_pending_replay_mission_id().is_some(),
+            crate::replay_service::process().pending_mission().is_some(),
         ) {
             return HeadlessBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
@@ -1325,7 +1365,7 @@ impl HeadlessMissionBuilder {
             }
             Ok(stage) => stage,
         };
-        let mut bootstrap = match loading.load_level(
+        let bootstrap = match loading.load_level(
             campaign,
             profiles,
             mission_idx,
@@ -1354,41 +1394,19 @@ impl HeadlessMissionBuilder {
                 Ok(robin_engine::game_operation::GameCode::Quit),
             ));
         }
-        if let Err(error) = bootstrap.start_required_spellforge() {
-            let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-            return HeadlessBuildOutcome::Finished(MissionOutcome::from_engine(
-                campaign,
-                rng_seed,
-                sim_config,
-                Err(error.to_string()),
-            ));
-        }
-        if let Err(error) = bootstrap.prepare_audio(None, profiles) {
-            let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-            return HeadlessBuildOutcome::Finished(MissionOutcome::from_engine(
-                campaign,
-                rng_seed,
-                sim_config,
-                Err(error),
-            ));
-        }
-        // Graphical frontend assembly registers these campaign-owned names
-        // after audio preparation and before seat/bootstrap snapshots. The
-        // CPU-loaded pool is sufficient; headless must not construct a UI or
-        // skip this hashed state merely because it does not render portraits.
-        let mut localized_names = std::array::from_fn(|_| None);
-        super::setup::register_mission_peasant_names(
-            &mut localized_names,
-            &mut bootstrap.loaded.engine,
-            &bootstrap.loaded.assets,
-        );
-        setup_local_seat_and_multiplayer_snapshot(
-            &mut bootstrap.loaded.engine,
-            &mut bootstrap.host,
-            &bootstrap.loaded.assets,
-            args,
-        );
-        bootstrap.start_campaign_clock();
+        bootstrap.report_spellforge_startup();
+        let bootstrap = match Box::new(bootstrap).prepare_audio(None, profiles) {
+            Ok(bootstrap) => bootstrap,
+            Err((bootstrap, error)) => {
+                let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
+                return HeadlessBuildOutcome::Finished(MissionOutcome::from_engine(
+                    campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error),
+                ));
+            }
+        };
         let mission = bootstrap.finish_headless(args, HeadlessPolicy::replay_runner());
         HeadlessBuildOutcome::Ready(BuiltHeadlessMission { mission })
     }
@@ -1420,7 +1438,7 @@ impl InteractiveMissionBuilder {
 
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
-            crate::http_server::peek_pending_replay_mission_id().is_some(),
+            crate::replay_service::process().pending_mission().is_some(),
         ) {
             return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
@@ -1600,30 +1618,25 @@ impl InteractiveMissionBuilder {
         };
         timer.step("level load");
 
-        if let Err(error) = stage.bootstrap.start_required_spellforge() {
-            let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
-            return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
-                campaign,
-                rng_seed,
-                sim_config,
-                Err(error.to_string()),
-            ));
-        }
+        stage.bootstrap.report_spellforge_startup();
         timer.step("spellforge startup");
         stage
             .bootstrap
             .sign_ranked_session_before_frame_zero(args)
             .await;
         timer.step("ranked genesis signing");
-        if let Err(error) = stage.prepare_audio(profiles) {
-            let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
-            return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
-                campaign,
-                rng_seed,
-                sim_config,
-                Err(error),
-            ));
-        }
+        let stage = match stage.prepare_audio(profiles) {
+            Ok(stage) => stage,
+            Err((bootstrap, error)) => {
+                let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
+                return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
+                    campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error),
+                ));
+            }
+        };
         timer.step("audio prepare");
         let (mut bootstrap, frontend) = stage.assemble_frontend(window, profiles, args).await;
         let frontend = match frontend {
@@ -1640,18 +1653,10 @@ impl InteractiveMissionBuilder {
         };
         timer.step("frontend assembly");
 
-        let lost_sherwood =
-            bootstrap.game.is_sherwood && bootstrap.loaded.engine.campaign().get_ares() == 0;
-        if lost_sherwood {
-            bootstrap.defer_lost_sherwood_entry();
-        } else {
-            bootstrap.start_campaign_clock();
-            bootstrap.setup_restart_or_sherwood(callbacks, args);
-        }
-        let frontend = frontend.finish(window.width, window.height);
-        timer.step("HUD sprite finish");
-        let mission = bootstrap.finish_interactive(frontend, args);
-        timer.step("runtime + replay init");
+        bootstrap.0.prepare_interactive_entry(callbacks, args);
+        bootstrap.0.complete_restart_save(callbacks).await;
+        let mission = bootstrap.finish_interactive(frontend, window.width, window.height, args);
+        timer.step("mission entry + HUD finish + runtime/replay init");
         timer.total();
         InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
             mission,
@@ -1664,8 +1669,8 @@ impl InteractiveMissionBuilder {
 #[cfg(test)]
 mod tests {
     use super::{
-        MissionBootstrapLifecycle, MissionBootstrapPhase, MissionFrontendKind, MissionSpec,
-        MultiplayerSetupFailurePolicy, built_in_mission_assets_for_loaded_level,
+        AudioPreparedBootstrap, MissionFrontendKind, MissionSpec, MultiplayerSetupFailurePolicy,
+        RestartSaveState, built_in_mission_assets_for_loaded_level,
     };
     use robin_engine::campaign::{Campaign, CampaignValue};
     use robin_engine::game_operation::GameCode;
@@ -1731,7 +1736,9 @@ mod tests {
         // distinct proto and map names so saves must retain the loaded map.
         let fixture = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
             .expect("fixture campaign");
-        let campaign = fixture.campaign().clone();
+        let mut campaign = fixture.campaign().clone();
+        campaign.values[CampaignValue::MissionLength] = 23;
+        campaign.set_ares(0);
         let profile = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).missions[0];
         profile.id = 1;
         profile.mission_filename = "Mission".into();
@@ -1786,7 +1793,7 @@ mod tests {
 
     #[test]
     fn frontend_retention_future_does_not_embed_the_simulation_owner() {
-        let bootstrap = Box::new(scratch_bootstrap_fixture());
+        let bootstrap = AudioPreparedBootstrap(Box::new(scratch_bootstrap_fixture()));
         let future = bootstrap
             .retain_during_frontend_assembly(async |_| Err("assembly rejected".to_owned()));
         assert!(
@@ -1797,12 +1804,99 @@ mod tests {
     }
 
     #[test]
-    fn consuming_frontend_failure_retains_the_original_campaign_and_simulation() {
+    fn production_frontend_futures_keep_simulation_and_upload_owners_boxed() {
+        use super::{DecodingInterfaceResources, MissionProcessResources};
+        use super::{LoadedInteractiveStage, MissionBootstrap, MissionLoadingScreen};
+        use crate::main_entry::CliArgs;
+        use crate::window::GameWindow;
+        use robin_engine::profiles::ProfileManager;
+
+        // Infer the concrete future from the actual production function, not
+        // a smaller stand-in closure. No GPU is needed to inspect its layout.
+        fn upload_size<F: Future>(
+            _: impl FnOnce(
+                &'static mut MissionBootstrap,
+                MissionProcessResources<DecodingInterfaceResources>,
+                MissionLoadingScreen,
+                &'static mut GameWindow,
+                &'static ProfileManager,
+                &'static CliArgs,
+            ) -> F,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+        fn assembly_size<F: Future>(
+            _: impl FnOnce(
+                LoadedInteractiveStage<AudioPreparedBootstrap>,
+                &'static mut GameWindow,
+                &'static ProfileManager,
+                &'static CliArgs,
+            ) -> F,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+
+        type Stage = LoadedInteractiveStage<AudioPreparedBootstrap>;
+        let upload = upload_size(Stage::assemble_process_frontend);
+        assert_eq!(
+            upload,
+            std::mem::size_of::<
+                futures::future::LocalBoxFuture<
+                    'static,
+                    Result<super::InteractiveFrontendAssembly, String>,
+                >,
+            >()
+        );
+        let assembly = assembly_size(Stage::assemble_frontend);
+        assert_eq!(assembly, upload, "both production handoffs must be boxed");
+        // The real loading-screen/process handoff is about 29 KiB on native
+        // desktop builds. Budget one such construction, never an inline copy
+        // in every ancestor future (the source of the earlier stack overflow).
+        let assembly_construction = assembly_size(Stage::assemble_frontend_inner);
+        assert!(
+            assembly_construction < 32 * 1024,
+            "production assembly construction is {assembly_construction} bytes"
+        );
+        // Boxing still constructs this future once on the stack. Keep a
+        // separate budget for that real construction (before boxing).
+        let construction = upload_size(Stage::assemble_process_frontend_inner);
+        assert!(
+            construction < 128 * 1024,
+            "production upload future construction is {construction} bytes"
+        );
+    }
+
+    #[test]
+    fn audio_preparation_failure_returns_the_exact_unadvanced_mission() {
         let bootstrap = Box::new(scratch_bootstrap_fixture());
-        let expected_campaign = serde_json::to_value(bootstrap.loaded.engine.campaign()).unwrap();
         let original_allocation = bootstrap.loaded.engine.campaign().missions.as_ptr();
-        let expected_config = bootstrap.loaded.engine_sim_config;
-        let expected_seed = bootstrap.loaded.engine_rng_seed;
+        let expected = serde_json::to_value(bootstrap.loaded.engine.campaign()).unwrap();
+        let profiles = std::sync::Arc::clone(&bootstrap.loaded.assets.profile_manager);
+        let (bootstrap, error) = match bootstrap.prepare_audio(None, &profiles) {
+            Ok(_) => panic!("scratch host unexpectedly acquired resource authority"),
+            Err(failure) => failure,
+        };
+        assert!(!error.is_empty());
+        assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
+        let (campaign, _, _) = bootstrap.into_campaign_and_simulation();
+        assert_eq!(campaign.missions.as_ptr(), original_allocation);
+        assert_eq!(serde_json::to_value(campaign).unwrap(), expected);
+    }
+
+    #[test]
+    fn serialized_audio_stage_cannot_forge_preparation_authority() {
+        let prepared = AudioPreparedBootstrap(Box::new(scratch_bootstrap_fixture()));
+        let diagnostic = serde_json::to_string(&prepared).unwrap();
+        assert!(serde_json::from_str::<AudioPreparedBootstrap>(&diagnostic).is_err());
+    }
+
+    #[test]
+    fn consuming_frontend_failure_retains_the_original_campaign_and_simulation() {
+        let bootstrap = AudioPreparedBootstrap(Box::new(scratch_bootstrap_fixture()));
+        let expected_campaign = serde_json::to_value(bootstrap.0.loaded.engine.campaign()).unwrap();
+        let original_allocation = bootstrap.0.loaded.engine.campaign().missions.as_ptr();
+        let expected_config = bootstrap.0.loaded.engine_sim_config;
+        let expected_seed = bootstrap.0.loaded.engine_rng_seed;
         let (bootstrap, result) = futures::executor::block_on(
             bootstrap.retain_during_frontend_assembly(async |bootstrap| {
                 // Exercise the real non-GPU preparation failure: a scratch
@@ -1816,7 +1910,7 @@ mod tests {
         );
         assert!(result.is_err());
         assert_eq!(
-            bootstrap.loaded.engine.campaign().missions.as_ptr(),
+            bootstrap.0.loaded.engine.campaign().missions.as_ptr(),
             original_allocation
         );
         let (campaign, seed, config) = bootstrap.into_campaign_and_simulation();
@@ -1827,12 +1921,32 @@ mod tests {
     }
 
     #[test]
+    fn restart_completion_preserves_captured_boundary_and_failure_never_registers_it() {
+        let bootstrap = scratch_bootstrap_fixture();
+        let boundary = super::super::runtime::BootstrapSaveBoundary::capture(
+            &bootstrap.loaded.engine,
+            &bootstrap.host,
+            &bootstrap.game,
+            None,
+        );
+        let expected = serde_json::to_value(boundary).unwrap();
+        let mut successful = RestartSaveState::Pending(boundary);
+        assert!(!successful.observe_completion(Ok(crate::savegame::SaveWriteStatus::Queued)));
+        assert!(matches!(successful, RestartSaveState::Pending(_)));
+        assert!(successful.observe_completion(Ok(crate::savegame::SaveWriteStatus::Completed)));
+        let RestartSaveState::Completed(captured) = successful else {
+            panic!("successful completion lost its captured boundary");
+        };
+        assert_eq!(serde_json::to_value(captured).unwrap(), expected);
+
+        let mut failed = RestartSaveState::Pending(boundary);
+        assert!(failed.observe_completion(Err(anyhow::anyhow!("disk publication failed"))));
+        assert!(matches!(failed, RestartSaveState::Absent));
+    }
+
+    #[test]
     fn bootstrap_installs_save_assets_and_tracks_failed_restart_creation() {
         let mut bootstrap = scratch_bootstrap_fixture();
-        assert_eq!(
-            bootstrap.lifecycle.phase(),
-            MissionBootstrapPhase::LevelInitialized
-        );
         assert_eq!(
             bootstrap
                 .game
@@ -1861,23 +1975,26 @@ mod tests {
         )
         .unwrap();
         let mut callbacks = crate::main_entry::RustCallbacks::new(application_context).unwrap();
-        bootstrap.start_required_spellforge().unwrap();
-        bootstrap.lifecycle.advance(
-            MissionBootstrapPhase::SpellforgeStarted,
-            MissionBootstrapPhase::AudioPrepared,
-        );
-        bootstrap.start_campaign_clock();
-        bootstrap.setup_restart_or_sherwood(&mut callbacks, &crate::main_entry::CliArgs::default());
-        assert!(!bootstrap.restart_save_started);
+        bootstrap.prepare_interactive_entry(&mut callbacks, &crate::main_entry::CliArgs::default());
+        assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert_eq!(
-            bootstrap.lifecycle.phase(),
-            MissionBootstrapPhase::EntryPrepared
+            bootstrap.loaded.engine.campaign().values[CampaignValue::MissionLength],
+            0
         );
+
+        let mut lost = scratch_bootstrap_fixture();
+        lost.game.is_sherwood = true;
+        lost.prepare_interactive_entry(&mut callbacks, &crate::main_entry::CliArgs::default());
+        assert_eq!(
+            lost.loaded.engine.campaign().values[CampaignValue::MissionLength],
+            23
+        );
+        assert!(matches!(lost.restart_save, RestartSaveState::Absent));
     }
 
     #[test]
     fn replay_bootstrap_creates_no_restart_recording_or_autosave() {
-        let _spool = crate::http_server::replay_spool_test_lock();
+        let _spool = crate::replay_service::replay_spool_test_lock();
         let mut bootstrap = scratch_bootstrap_fixture();
         let directory = tempfile::tempdir().unwrap();
         let save_root = directory.path().to_string_lossy().into_owned();
@@ -1888,12 +2005,20 @@ mod tests {
             robin_engine::player_profile::DifficultyLevel::Medium,
         );
         players.set_active(player);
-        let context = crate::host::ApplicationContext::complete(
+        let files = std::sync::Arc::new(
+            robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+                robin_util::asset_fs::AssetVfs::default(),
+            ))
+            .snapshot(),
+        );
+        let context = crate::host::ApplicationContext::complete_with_localization_and_files(
             crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
             robin_engine::engine::GlobalOptions::default(),
             players,
             crate::key_config_store::KeyConfigStore::new(save_root),
             None,
+            crate::localization::LocalizationService::disabled(),
+            Some(files),
         )
         .unwrap();
         bootstrap.host =
@@ -1923,20 +2048,21 @@ mod tests {
             replay_data: Some(replay),
             ..Default::default()
         };
-        bootstrap.start_required_spellforge().unwrap();
-        bootstrap.lifecycle.advance(
-            MissionBootstrapPhase::SpellforgeStarted,
-            MissionBootstrapPhase::AudioPrepared,
-        );
-        bootstrap.start_campaign_clock();
-        let files_before = std::fs::read_dir(directory.path()).unwrap().count();
-        bootstrap.setup_restart_or_sherwood(&mut callbacks, &args);
-        assert!(!bootstrap.restart_save_started);
-        assert!(!callbacks.save_manager.has_restart_save());
+        let profiles = std::sync::Arc::clone(&bootstrap.loaded.assets.profile_manager);
+        let prepared = match Box::new(bootstrap).prepare_audio(None, &profiles) {
+            Ok(prepared) => prepared,
+            Err((_, error)) => panic!("initialized replay fixture must prepare audio: {error}"),
+        };
         assert_eq!(
-            bootstrap.lifecycle.phase(),
-            MissionBootstrapPhase::EntryPrepared
+            prepared.0.loaded.engine.campaign().values[CampaignValue::MissionLength],
+            23
         );
+        assert!(matches!(prepared.0.restart_save, RestartSaveState::Absent));
+        let mut bootstrap = *prepared.0;
+        let files_before = std::fs::read_dir(directory.path()).unwrap().count();
+        bootstrap.prepare_interactive_entry(&mut callbacks, &args);
+        assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
+        assert!(!callbacks.save_manager.has_restart_save());
         let replay = super::super::replay_init::init_replay_and_rollback(
             &bootstrap.loaded.replay_campaign,
             std::sync::Arc::new(bootstrap.loaded.assets),
@@ -1993,35 +2119,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(actual, Some(GameCode::Quit));
-    }
-
-    #[test]
-    fn interactive_bootstrap_lifecycle_preserves_original_order() {
-        use MissionBootstrapPhase as Phase;
-        let expected = [
-            Phase::LevelInitialized,
-            Phase::SpellforgeStarted,
-            Phase::AudioPrepared,
-            Phase::CampaignClockStarted,
-            Phase::EntryPrepared,
-        ];
-        let mut lifecycle = MissionBootstrapLifecycle::new();
-
-        for pair in expected.windows(2) {
-            lifecycle.advance(pair[0], pair[1]);
-        }
-
-        assert_eq!(lifecycle.trace(), expected);
-        assert_eq!(lifecycle.phase(), Phase::EntryPrepared);
-    }
-
-    #[test]
-    #[should_panic(expected = "invalid mission bootstrap transition")]
-    fn bootstrap_lifecycle_transition_method_rejects_ordering_shortcuts() {
-        use MissionBootstrapPhase as Phase;
-        let mut lifecycle = MissionBootstrapLifecycle::new();
-
-        lifecycle.advance(Phase::LevelInitialized, Phase::AudioPrepared);
     }
 
     #[test]

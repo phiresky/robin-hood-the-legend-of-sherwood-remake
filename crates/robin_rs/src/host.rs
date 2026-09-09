@@ -38,7 +38,6 @@ use crate::localization::{
     LanguageChange, LanguagePack, LanguageSelection, LocalizationPreferences, LocalizationService,
     PortTextKey,
 };
-use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
 use crate::spellforge_trust::{
@@ -46,12 +45,70 @@ use crate::spellforge_trust::{
 };
 
 const PANNEL_HEIGHT: f32 = engine_api::PANNEL_HEIGHT;
-const DISPLAY_INFO_SAMPLES: usize = 16;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct QueueStripAnimation {
     pub previous_count: usize,
     pub fall_offset: i32,
+}
+
+/// Identity of the UI source, never an arbitrary representative group member.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) enum QueueStripIdentity {
+    Pc(EntityId),
+    AlliedGroup(u32),
+    /// Unpinned selections have no persistent ID. Canonical membership keeps
+    /// reordering stable without carrying easing into an unrelated selection.
+    AlliedSelection(Vec<EntityId>),
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct QueueStripAnimations {
+    seat: Option<engine_player_command::PlayerId>,
+    entries: HashMap<QueueStripIdentity, QueueStripAnimation>,
+}
+
+impl QueueStripAnimations {
+    pub(crate) fn clear(&mut self) {
+        self.seat = None;
+        self.entries.clear();
+    }
+
+    pub(crate) fn prepare_fixed_tick(
+        &mut self,
+        seat: engine_player_command::PlayerId,
+        visible: impl IntoIterator<Item = (QueueStripIdentity, usize)>,
+    ) {
+        if self.seat != Some(seat) {
+            self.clear();
+            self.seat = Some(seat);
+        }
+        let mut remaining = std::mem::take(&mut self.entries);
+        for (identity, count) in visible {
+            let mut animation = remaining.remove(&identity).unwrap_or_default();
+            animation.prepare_fixed_tick(count);
+            assert!(
+                self.entries.insert(identity, animation).is_none(),
+                "visible queue strip identities must be unique"
+            );
+        }
+        // Entries absent from the visible portrait set are retired, including
+        // deleted groups, dead portraits and portraits paged off screen.
+    }
+
+    pub(crate) fn displayed_offset(
+        &self,
+        seat: engine_player_command::PlayerId,
+        identity: &QueueStripIdentity,
+        count: usize,
+    ) -> i32 {
+        if self.seat != Some(seat) {
+            return 0; // First capture for this seat has no previous queue.
+        }
+        self.entries
+            .get(identity)
+            .map_or(0, |entry| entry.displayed_offset(count))
+    }
 }
 
 impl QueueStripAnimation {
@@ -185,8 +242,8 @@ struct HostContextSnapshot {
 
 /// A presentation-only projection of profile preferences. Applying it never
 /// writes the running engine's sealed replay/multiplayer simulation config.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct FrontendPreferences {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FrontendPreferences {
     key_config: KeyConfig,
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
@@ -229,20 +286,39 @@ impl FrontendPreferences {
     }
 
     pub(crate) fn apply(self, frontend: &mut HostFrontend) -> FrontendPreferenceEffects {
-        frontend.key_config = self.key_config;
-        frontend.custom_key_config = self.custom_key_config;
-        frontend.control_tactical_units = self.control_tactical_units;
         frontend.planning.update_preference(self.plan_quick_actions);
-        frontend.touch_camera_gestures = self.touch_camera_gestures;
-        frontend.gameplay_config = self.gameplay_config;
-        frontend.native_refresh_presentation = self.native_refresh_presentation;
-        frontend.quick_action_cursor_pulse = self.quick_action_cursor_pulse;
-        frontend.diplomacy_visuals = self.diplomacy_visuals;
-        FrontendPreferenceEffects {
+        let effects = FrontendPreferenceEffects {
             cancel_planned_action: !frontend.planning.enabled(),
             native_refresh_presentation: self.native_refresh_presentation,
             release_tactical_control: !self.control_tactical_units,
-        }
+        };
+        frontend.preferences = self;
+        effects
+    }
+
+    pub fn key_config(&self) -> &KeyConfig {
+        &self.key_config
+    }
+    pub fn custom_key_config(&self) -> &KeyConfig {
+        &self.custom_key_config
+    }
+    pub fn gameplay_config(&self) -> robin_engine::gameplay_config::GameplayConfig {
+        self.gameplay_config
+    }
+    pub fn control_tactical_units(&self) -> bool {
+        self.control_tactical_units
+    }
+    pub fn touch_camera_gestures(&self) -> bool {
+        self.touch_camera_gestures
+    }
+    pub fn native_refresh_presentation(&self) -> bool {
+        self.native_refresh_presentation
+    }
+    pub fn quick_action_cursor_pulse(&self) -> bool {
+        self.quick_action_cursor_pulse
+    }
+    pub fn diplomacy_visuals(&self) -> bool {
+        self.diplomacy_visuals
     }
 }
 
@@ -1515,6 +1591,22 @@ impl Default for ViewportState {
 /// Local rendering and interaction state. Kept behind the small [`Host`]
 /// facade so it can be borrowed independently from transport, audio, and
 /// ordered post-tick work.
+///
+/// Profile settings are an immutable projection, not independent cached knobs:
+/// ```compile_fail,E0616
+/// let mut frontend = robin_rs::host::HostFrontend::default();
+/// frontend.preferences().control_tactical_units = true;
+/// ```
+/// Session planning policy cannot be replaced by an input consumer:
+/// ```compile_fail,E0616
+/// let mut frontend = robin_rs::host::HostFrontend::default();
+/// frontend.planning = Default::default();
+/// ```
+/// Draw-side diagnostics do not grant a sampling clock:
+/// ```compile_fail,E0596
+/// let frontend = robin_rs::host::HostFrontend::default();
+/// frontend.diagnostics().record_frame(100, 0);
+/// ```
 #[derive(Default)]
 pub struct HostFrontend {
     // ── Rendering / GPU surfaces ─────────────────────────────────
@@ -1523,50 +1615,32 @@ pub struct HostFrontend {
     pub engine_display: engine_api::HostDisplayState,
 
     // ── Input ────────────────────────────────────────────────────
+    /// Sampled input and cursor/selection presentation shared with the engine.
+    /// Pointer lifecycle changes belong to the named frontend operations below,
+    /// which also retire capture and gesture state.
+    // TODO: separate the remaining sampled-input and cursor-feedback domains;
+    // hiding these behind unrestricted mutable getters would not enforce that boundary.
     pub input: InputState,
 
     /// Paired pointer-event ownership, retired together at interaction resets.
-    pub pointer_capture: crate::frontend_input::FrontendPointerCapture,
+    pointer_sequence: crate::frontend_input::FrontendPointerSequence,
 
-    /// Active profile's opt-in tactical-unit control setting. Host-local
-    /// because resolved player commands, rather than UI preferences, cross
-    /// replay and multiplayer boundaries.
-    pub control_tactical_units: bool,
+    /// Atomic host-local profile projection. Resolved commands, not preferences,
+    /// cross replay and multiplayer boundaries.
+    preferences: FrontendPreferences,
 
     /// Planning preference, sticky touch mode and non-overridable session policy.
-    pub planning: crate::frontend_input::FrontendPlanning,
+    planning: crate::frontend_input::FrontendPlanning,
 
     /// Per-portrait cosmetic easing for the independent automatic queue strip.
-    pub queue_strip_animations: HashMap<EntityId, QueueStripAnimation>,
+    queue_strip_animations: QueueStripAnimations,
 
-    /// Active profile's local relationship colour/legend preference.
-    pub diplomacy_visuals: bool,
+    /// Entity-bound feedback is retired atomically at interaction boundaries.
+    interaction: FrontendInteraction,
 
-    /// Host-local presentation settings copied from the active profile.
-    /// Deterministic settings are separately mirrored into `SimConfig`.
-    pub gameplay_config: robin_engine::gameplay_config::GameplayConfig,
-
-    /// Host-local targeting prompt armed by the tactical patrol portrait button.
-    pub tactical_targeting: crate::frontend_targeting::TacticalTargeting,
-
-    /// Active profile's touch-camera gesture setting. Host-local because
-    /// camera pan/zoom/inertia never enters deterministic simulation state.
-    pub touch_camera_gestures: bool,
-
-    /// Opt-in display-rate re-presentation. Host-local and intentionally
-    /// absent from deterministic save/replay state.
-    pub native_refresh_presentation: bool,
-
-    /// Show the original cursor-shadow recording pulse while the manual
-    /// quick-action recorder is active. Cached from the profile so high-rate
-    /// presentation samples never clone or lock the full profile history.
-    pub quick_action_cursor_pulse: bool,
-
-    /// Last positive duration of a display-rate presentation sample, in
-    /// microseconds. The fixed-step presentation scheduler uses this host-only
-    /// observation to avoid beginning a vsync wait that would cross the
-    /// simulation deadline. Zero means no blocking sample has been observed.
-    pub native_refresh_present_cost_us: u64,
+    /// Live frame observations and deferred diagnostic output. Drawing borrows
+    /// these immutably; explicit update operations own sampling and consumption.
+    diagnostics: crate::frontend_diagnostics::FrontendDiagnostics,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -1582,25 +1656,6 @@ pub struct HostFrontend {
     /// freeze the ring).  Only `SelectionMarkRenderer` reads it —
     /// purely cosmetic, lives host-side.
     pub selection_mark: engine_markers::SelectionMark,
-
-    /// Entity whose vision cone is currently displayed as an overlay.
-    /// Set when the player alt-hovers an NPC (or an ally via a cheat).
-    ///
-    /// UI-mode state: read by the render-phase vision-cone overlay,
-    /// the alt-key UI handler, and the console cheats that target
-    /// "the NPC you're currently looking at" (Honolulu, Morpheus,
-    /// Hades, LastManStanding).  Not sim state: nothing inside the
-    /// tick reads it, so it's excluded from the rollback hash by
-    /// virtue of living on Host.
-    pub selected_view_element: Option<EntityId>,
-
-    // ── Trajectory preview (transient) ───────────────────────────
-    pub trajectory_preview: crate::frontend_preview::FrontendTrajectoryPreview,
-    /// Host-only explanation rendered at the current item target.
-    pub item_effect_preview: Option<ItemEffectPreview>,
-    /// Host-local titbit-like hover preview.  Currently only the
-    /// helper-needed jump ghost from the original mouse-hover path.
-    pub host_titbit_preview: Option<HostTitbitPreview>,
 
     // ── Assets that live only on the host side ───────────────────
     /// Decoded sprite frame bank. Host-only because `FrameHolder`
@@ -1620,17 +1675,6 @@ pub struct HostFrontend {
     /// the resource manager can resolve relative lookups.
     pub shipping: Option<Arc<ShippingDatadir>>,
 
-    /// Active key bindings for the current player profile. Host-only because
-    /// physical `winit` key codes and local input policy do not belong in the
-    /// deterministic, platform-neutral engine `PlayerProfile`.
-    pub key_config: KeyConfig,
-
-    /// User's custom key bindings (the "User Defined" slot in the
-    /// shortcuts menu). The active set is whatever the user picked
-    /// last (preset or custom), while this slot preserves their
-    /// personal bindings so the User Defined button can restore them.
-    pub custom_key_config: KeyConfig,
-
     /// Physical key bound to the `DisplayMap` shortcut.  The game loop
     /// reads this on each frame and emits a minimap-toggle command on
     /// key release.  `None` means no accelerator bound.  Lives host-side
@@ -1643,12 +1687,6 @@ pub struct HostFrontend {
     /// PC info hover popup (HP, equipment). Populated from sim's
     /// `SideEffects.overlay`.
     pub pc_info_overlay: PcInfoOverlay,
-    /// Mouse gesture / way-point tracker for "draw-path-to-target"
-    /// movement. Pure host UI state.
-    pub mouse_way: MouseWay,
-
-    /// Last released sword gesture for the optional, host-only coach overlay.
-    pub gesture_coach_feedback: Option<crate::mouse_way::GestureCoachFeedback>,
 
     // ── Pixel-level fade (script opcode `FADE_TO_BLACK`) ─────────
     /// Active fade-to-black ramp driven by the `FADE_TO_BLACK` script
@@ -1670,17 +1708,6 @@ pub struct HostFrontend {
     /// applies the historical 3x3 median filter to the captured frame.
     pub pending_print_screen: Option<PrintScreenRequest>,
 
-    /// Debug-info overlay toggle. Toggled by the bound `RequestInfo`
-    /// / `DisplayInfo` key (typically `Home`); read by the per-frame
-    /// debug-overlay renderer.  Not serialized — debug state, not sim
-    /// state.
-    pub info_displayed: bool,
-    /// Rolling frame-duration samples used by the DisplayInfo overlay.
-    pub display_info_frame_samples: [u32; DISPLAY_INFO_SAMPLES],
-    pub display_info_sample_cursor: usize,
-    pub display_info_last_tick_ms: u32,
-    pub display_info_max_pending_sounds: usize,
-
     /// Slow-motion pacing toggle. Toggled by `MSG_SLOW_MOTION` (the
     /// bound SlowMotion key — Pause by default).  Consumed by the
     /// frame pacing block at the bottom of `run_mission`: when set
@@ -1695,12 +1722,6 @@ pub struct HostFrontend {
     /// currently only tracks the flag for future consumers.  Not sim
     /// state — purely transient per-frame input gating.
     pub ui_focus: bool,
-
-    /// Deferred console-overlay output lines produced by host-side work
-    /// that can't reach the overlay directly. Drained by the overlay
-    /// at the start of each frame via
-    /// [`crate::console_overlay::ConsoleOverlay::drain_pending_host_output`].
-    pub pending_console_output: Vec<String>,
 
     // ── Persistent background decals ─
     /// Per-FX-entity persistent background decals replacing the legacy
@@ -1730,35 +1751,282 @@ pub enum InteractionReset {
     SnapshotRestored,
 }
 
-impl HostFrontend {
-    pub fn reset_interaction(&mut self, reason: InteractionReset) {
-        self.reset_pointer_sequence();
-        self.reset_targeting_preview();
-        if reason == InteractionReset::SnapshotRestored {
-            self.input = InputState::default();
-            self.planning.cancel_touch();
-            self.queue_strip_animations.clear();
-            self.selected_view_element = None;
-            self.selection_mark = engine_markers::SelectionMark::default();
-        }
-    }
+/// Private owner of entity-bound, transient interaction feedback. No mutable
+/// projection exposes the collection: callers must use the matching operation.
+/// Diagnostic serialization is allowed, but restoring feedback without its
+/// live input sequence and mission entity identities would be invalid.
+#[derive(Default)]
+struct FrontendInteraction {
+    tactical_targeting: crate::frontend_targeting::TacticalTargeting,
+    trajectory_preview: crate::frontend_preview::FrontendTrajectoryPreview,
+    /// Alt-hover vision cone and console target; never simulation state.
+    selected_view_element: Option<EntityId>,
+    item_effect_preview: Option<ItemEffectPreview>,
+    host_titbit_preview: Option<HostTitbitPreview>,
+    gesture_coach_feedback: Option<crate::mouse_way::GestureCoachFeedback>,
+}
 
-    fn reset_pointer_sequence(&mut self) {
-        self.input.reset_pointer_sequence();
-        self.pointer_capture.cancel_sequence();
-        self.input.portrait_action_countdown = 0;
-        self.input.portrait_action_pc = None;
-        self.mouse_way.clear();
-        self.viewport.cancel_touch_motion();
-        self.ui_focus = false;
+impl Serialize for FrontendInteraction {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("FrontendInteraction", 6)?;
+        state.serialize_field("tactical_targeting", &self.tactical_targeting)?;
+        state.serialize_field("trajectory_preview", &self.trajectory_preview)?;
+        state.serialize_field("selected_view_element", &self.selected_view_element)?;
+        state.serialize_field("has_item_effect", &self.item_effect_preview.is_some())?;
+        state.serialize_field("has_titbit", &self.host_titbit_preview.is_some())?;
+        state.serialize_field(
+            "has_gesture_feedback",
+            &self.gesture_coach_feedback.is_some(),
+        )?;
+        state.end()
     }
+}
 
-    fn reset_targeting_preview(&mut self) {
+impl<'de> Deserialize<'de> for FrontendInteraction {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "interaction feedback requires a live mission/input sequence",
+        ))
+    }
+}
+
+impl FrontendInteraction {
+    fn reset(&mut self, reason: InteractionReset) {
         self.tactical_targeting.cancel();
         self.trajectory_preview.reset_after_restore();
         self.item_effect_preview = None;
         self.host_titbit_preview = None;
         self.gesture_coach_feedback = None;
+        if reason == InteractionReset::SnapshotRestored {
+            self.selected_view_element = None;
+        }
+    }
+
+    fn invalidate_action(&mut self) {
+        self.trajectory_preview.invalidate_action();
+        self.host_titbit_preview = None;
+    }
+}
+
+impl HostFrontend {
+    pub fn selected_view_element(&self) -> Option<EntityId> {
+        self.interaction.selected_view_element
+    }
+    pub fn set_selected_view_element(&mut self, selected: Option<EntityId>) {
+        self.interaction.selected_view_element = selected;
+    }
+    pub fn trajectory_preview(&self) -> &crate::frontend_preview::FrontendTrajectoryPreview {
+        &self.interaction.trajectory_preview
+    }
+    pub(crate) fn apply_trajectory_preview(
+        &mut self,
+        preview: engine_api::input::TrajectoryPreview,
+    ) {
+        self.interaction.trajectory_preview.apply(preview);
+    }
+    pub(crate) fn reject_trajectory_hit(&mut self) {
+        self.interaction.trajectory_preview.reject_hit();
+    }
+    pub(crate) fn apply_trajectory_crumple_prediction(&mut self, predicted: bool) {
+        self.interaction
+            .trajectory_preview
+            .apply_crumple_prediction(predicted);
+    }
+    /// Begin a hover observation by retiring last frame's explanations. Geometry
+    /// and the hover timer retain their original, independently scoped lifetime.
+    pub(crate) fn observe_hover_feedback(
+        &mut self,
+        shift: bool,
+        action: robin_engine::profiles::Action,
+        mouse: MapPoint,
+    ) {
+        self.interaction.host_titbit_preview = None;
+        self.interaction.item_effect_preview = None;
+        self.interaction
+            .trajectory_preview
+            .observe_hover(shift, action, mouse);
+    }
+    pub(crate) fn advance_hover_markers(&mut self, display_delay: u32) {
+        self.interaction
+            .trajectory_preview
+            .advance_hover_markers(display_delay);
+    }
+    pub(crate) fn tick_trajectory_marks(
+        &mut self,
+        view: geo::Coord<f32>,
+        zoom: f32,
+        width: i32,
+        height: i32,
+        frame: u32,
+    ) {
+        self.interaction
+            .trajectory_preview
+            .tick_marks(view, zoom, width, height, frame);
+    }
+    pub fn tactical_targeting(&self) -> &crate::frontend_targeting::TacticalTargeting {
+        &self.interaction.tactical_targeting
+    }
+    pub fn arm_tactical_patrol(
+        &mut self,
+        soldiers: Vec<EntityId>,
+        formation: robin_engine::tactical_control::TacticalFormation,
+    ) {
+        self.interaction
+            .tactical_targeting
+            .arm_patrol(soldiers, formation);
+    }
+    pub fn resolve_tactical_target(
+        &mut self,
+        destination: MapPoint,
+    ) -> Option<engine_player_command::PlayerCommand> {
+        self.interaction
+            .tactical_targeting
+            .resolve_world_click(destination)
+    }
+    pub fn cancel_tactical_target(&mut self) -> bool {
+        self.interaction.tactical_targeting.cancel()
+    }
+    pub fn item_effect_preview(&self) -> Option<ItemEffectPreview> {
+        self.interaction.item_effect_preview
+    }
+    pub fn set_item_effect_preview(&mut self, preview: Option<ItemEffectPreview>) {
+        self.interaction.item_effect_preview = preview;
+    }
+    pub fn host_titbit_preview(&self) -> Option<HostTitbitPreview> {
+        self.interaction.host_titbit_preview
+    }
+    pub fn set_host_titbit_preview(&mut self, preview: Option<HostTitbitPreview>) {
+        self.interaction.host_titbit_preview = preview;
+    }
+    pub fn gesture_coach_feedback(&self) -> Option<crate::mouse_way::GestureCoachFeedback> {
+        self.interaction.gesture_coach_feedback
+    }
+    pub fn set_gesture_coach_feedback(
+        &mut self,
+        feedback: Option<crate::mouse_way::GestureCoachFeedback>,
+    ) {
+        self.interaction.gesture_coach_feedback = feedback;
+    }
+    pub(crate) fn queue_strip_animations(&self) -> &QueueStripAnimations {
+        &self.queue_strip_animations
+    }
+
+    pub(crate) fn prepare_queue_strip_animations(
+        &mut self,
+        seat: engine_player_command::PlayerId,
+        visible: impl IntoIterator<Item = (QueueStripIdentity, usize)>,
+    ) {
+        self.queue_strip_animations
+            .prepare_fixed_tick(seat, visible);
+    }
+
+    /// Profile settings can only be replaced as one projection. Callers cannot
+    /// update a cached scalar independently from the selected profile.
+    pub fn preferences(&self) -> &FrontendPreferences {
+        &self.preferences
+    }
+    pub fn diagnostics(&self) -> &crate::frontend_diagnostics::FrontendDiagnostics {
+        &self.diagnostics
+    }
+    pub fn diagnostics_mut(&mut self) -> &mut crate::frontend_diagnostics::FrontendDiagnostics {
+        &mut self.diagnostics
+    }
+    pub fn planning(&self) -> &crate::frontend_input::FrontendPlanning {
+        &self.planning
+    }
+    pub fn force_planning_off_for_session(&mut self) {
+        self.planning.force_off_for_session();
+    }
+    pub fn cancel_touch_planning(&mut self) {
+        self.planning.cancel_touch();
+    }
+    pub fn pointer_capture(&self) -> &crate::frontend_input::FrontendPointerCapture {
+        self.pointer_sequence.capture()
+    }
+    pub fn mouse_way(&self) -> &crate::mouse_way::MouseWay {
+        self.pointer_sequence.mouse_way()
+    }
+    pub fn add_gesture_point(&mut self, point: ScreenPoint) {
+        self.pointer_sequence.add_point(point);
+    }
+    pub fn clear_gesture(&mut self) {
+        self.pointer_sequence.clear_gesture();
+    }
+    pub fn advance_gesture_trail(&mut self, trail: &crate::mouse_trail::MouseTrailRenderer) {
+        self.pointer_sequence.advance_trail(trail);
+    }
+    pub fn begin_left_pointer(&mut self, point: ScreenPoint, clicks: u8) {
+        self.pointer_sequence
+            .begin_left(&mut self.input, point, clicks);
+    }
+    pub fn release_left_pointer(&mut self) -> bool {
+        self.pointer_sequence.release_left(&mut self.input)
+    }
+    pub fn begin_right_pointer(&mut self, clicks: u8) {
+        self.pointer_sequence.begin_right(&mut self.input, clicks);
+    }
+    pub fn release_right_pointer(&mut self) -> bool {
+        self.pointer_sequence.release_right(&mut self.input)
+    }
+    pub fn cancel_left_pointer(&mut self) {
+        self.pointer_sequence.cancel_left(&mut self.input);
+    }
+    pub fn begin_minimap_drag(&mut self, camera: bool) {
+        self.pointer_sequence.begin_minimap_drag(camera);
+    }
+    pub fn end_minimap_drag(&mut self) {
+        self.pointer_sequence.end_minimap_drag();
+    }
+    pub fn route_hud_event(&mut self, event: &crate::gfx_types::GameEvent, hit: bool) -> bool {
+        self.pointer_sequence.route_hud_event(event, hit)
+    }
+    /// Modal entry disarms the current drag without inventing a release.
+    pub fn reset_modal_input(&mut self) {
+        self.pointer_sequence.reset_modal(&mut self.input);
+        self.viewport.cancel_touch_motion();
+        self.ui_focus = false;
+    }
+    pub fn lose_pointer_focus(&mut self) {
+        self.reset_pointer_sequence();
+        // Unlike modal closure, focus loss abandons any pending release.
+        self.input.cancel_left_pointer();
+        self.interaction.invalidate_action();
+    }
+    /// Route a paired touch gesture against the current session planning policy.
+    /// Keeping both owners borrowed here prevents a caller replacing that policy
+    /// while preserving stale capture metadata.
+    pub fn route_touch_plan_event(
+        &mut self,
+        event: &crate::gfx_types::GameEvent,
+        admit_touch: bool,
+        hit_test: impl FnOnce(i32, i32) -> bool,
+    ) -> crate::frontend_input::TouchPlanRoute {
+        self.pointer_sequence.route_touch_plan_event(
+            &mut self.planning,
+            event,
+            admit_touch,
+            hit_test,
+        )
+    }
+
+    pub fn reset_interaction(&mut self, reason: InteractionReset) {
+        self.reset_pointer_sequence();
+        self.interaction.reset(reason);
+        if reason == InteractionReset::SnapshotRestored {
+            self.input = InputState::default();
+            self.planning.cancel_touch();
+            self.queue_strip_animations.clear();
+            self.selection_mark = engine_markers::SelectionMark::default();
+        }
+    }
+
+    fn reset_pointer_sequence(&mut self) {
+        self.pointer_sequence.reset(&mut self.input);
+        self.input.portrait_action_countdown = 0;
+        self.input.portrait_action_pc = None;
+        self.viewport.cancel_touch_motion();
+        self.ui_focus = false;
     }
 }
 
@@ -2697,20 +2965,47 @@ impl Host {
         // load.  They live host-side now — accumulated from per-tick
         // `SideEffects.pending_*` by `Host::apply_side_effects`.
         self.effects.clear();
-        self.frontend.pending_console_output.clear();
+        self.frontend.diagnostics_mut().clear_console_output();
         self.frontend.pending_print_screen = None;
     }
 
+    /// Apply engine outputs using only the frontend, audio and effect queues.
+    pub fn apply_side_effects(&mut self, fx: SideEffects) -> GameCode {
+        self.frontend.apply_side_effects(
+            fx,
+            &mut self.audio,
+            &mut self.effects,
+            &self.application_context,
+            self.transport.local_seat(),
+        )
+    }
+
+    pub fn sync_sound_listener(&mut self) {
+        self.audio.sound.set_listen_point(
+            self.frontend.viewport.sound_listen_point(),
+            self.frontend.viewport.zoom_factor,
+        );
+    }
+}
+
+impl HostFrontend {
     /// Apply the engine-local outputs of a tick.  Consumes the
     /// [`SideEffects`] struct by value so owned sub-vectors
     /// can be moved directly into host accumulators without clones.
     /// Returns the tick's game-state code.
-    pub fn apply_side_effects(&mut self, fx: SideEffects) -> GameCode {
+    pub(crate) fn apply_side_effects(
+        &mut self,
+        fx: SideEffects,
+        audio: &mut HostAudio,
+        effects: &mut HostEffectBatches,
+        application_context: &ApplicationContext,
+        local_seat: engine_player_command::PlayerId,
+    ) -> GameCode {
         if let Some(fade) = fx.fade_to_black {
-            self.frontend.fade_to_black = fade;
+            self.fade_to_black = fade;
         }
         if let Some(show) = fx.set_draw_hidden {
-            self.frontend.input.draw_hidden = show;
+            self.input.draw_hidden = show;
         }
         if fx.invalidate_trajectory_preview {
             // `SelectAction` trajectory cleanup: clear the jumper and
@@ -2720,8 +3015,7 @@ impl Host {
             // into the single host-side preview since there is only
             // ever one visible arc; clearing them together here is an
             // immediate wipe before the next mouse-update frame.
-            self.frontend.trajectory_preview.invalidate_action();
-            self.frontend.host_titbit_preview = None;
+            self.interaction.invalidate_action();
         }
         if fx.reset_input {
             // MSG_RESET_INPUT clears the rubber-band selection flags
@@ -2730,7 +3024,7 @@ impl Host {
             // input state armed.  Also zeroes the per-frame modifier
             // cache and the swordfight mouse-way polyline (modifier
             // keys, drag, UI focus, info overlay, mouse-way).
-            self.frontend.input.reset_modal_input();
+            self.reset_modal_input();
             // Reset does the swap `info_displayed = fps_cheat;
             // fps_cheat = false`: the FPS-cheat flag is consumed and
             // promoted into `info_displayed`, so toggling the FPS
@@ -2739,24 +3033,22 @@ impl Host {
             // `DevState::debug.fps_display`, which is not reachable
             // from here — hand off via a typed host signal for
             // the game-loop site that owns `&mut DevState` to apply.
-            self.effects.request_signal(HostSignal::PromoteFpsCheat);
-            self.frontend.ui_focus = false;
-            self.frontend.mouse_way.clear();
+            effects.request_signal(HostSignal::PromoteFpsCheat);
             // Zero the no-mouse-move accumulator so the
             // hover-trajectory gate (`TIME_TRAJECTORY_DISPLAY`)
             // doesn't re-arm immediately after a modal dialog or task
             // switch.
-            self.frontend.trajectory_preview.interrupt_hover();
+            self.interaction.trajectory_preview.interrupt_hover();
         }
         if fx.cancel_multi_selection {
-            self.frontend.input.cancel_selection_gestures();
+            self.input.cancel_selection_gestures();
         }
         if let Some(top_left) = fx.pending_minimap_position {
             // Write the new minimap top-left back to the active player
             // profile on every accepted move. Persist through this host's
             // explicit application context and save to disk; failures are
             // logged after the sim has already accepted the new position.
-            let context = self.application_context.clone();
+            let context = application_context.clone();
             context
                 .with_player_profiles_mut(|mgr| {
                     let profile = mgr
@@ -2770,14 +3062,14 @@ impl Host {
                 })
                 .unwrap_or_else(|error| panic!("failed to persist minimap position: {error}"));
         }
-        if fx.pending_swordfight_drag_ignore && self.frontend.input.is_dragging() {
+        if fx.pending_swordfight_drag_ignore && self.input.is_dragging() {
             // Selected PC left Swordfighting this tick; if a drag was
             // in flight, raise `IgnoreMouseEvent(true, true, true)` so
             // the drag doesn't bleed into a click-release or a
             // subsequent double-click.
-            self.frontend.input.ignore_mouse_event(true, true, true);
+            self.input.ignore_mouse_event(true, true, true);
         }
-        self.frontend.skip_render = fx.skip_render;
+        self.skip_render = fx.skip_render;
         // Dispatch sim-emitted sound commands onto the SoundManager.
         // Most variants queue into `SoundManager::pending_sounds` and
         // are played out by `SoundManager::hourglass`; the two that
@@ -2787,7 +3079,7 @@ impl Host {
         for cmd in fx.sounds {
             match cmd {
                 SoundCommand::StopExclamation { actor_id } => {
-                    self.audio
+                    audio
                         .deferred
                         .push(DeferredAudioRequest::StopExclamation(actor_id.index()));
                 }
@@ -2800,22 +3092,22 @@ impl Host {
                     actor_id,
                 } => {
                     if let Some(actor_id) = actor_id {
-                        let had_deferred_stop = self.audio.deferred.iter().any(|request| {
+                        let had_deferred_stop = audio.deferred.iter().any(|request| {
                             *request == DeferredAudioRequest::StopExclamation(actor_id.index())
                         });
                         if had_deferred_stop {
-                            self.audio.deferred.retain(|request| {
+                            audio.deferred.retain(|request| {
                                 *request != DeferredAudioRequest::StopExclamation(actor_id.index())
                             });
-                            self.audio.sound.drop_pending_exclamations(actor_id.index());
-                            self.audio
+                            audio.sound.drop_pending_exclamations(actor_id.index());
+                            audio
                                 .deferred
                                 .push(DeferredAudioRequest::StopExclamationChannel(
                                     actor_id.index(),
                                 ));
                         }
                     }
-                    self.audio.sound.play_exclamation(
+                    audio.sound.play_exclamation(
                         group,
                         profile_id,
                         exclamation_id,
@@ -2829,7 +3121,7 @@ impl Host {
                     position,
                     material,
                 } => {
-                    self.audio.sound.queue_fx(fx_id, position, material);
+                    audio.sound.queue_fx(fx_id, position, material);
                 }
                 SoundCommand::StrikeFx {
                     strike_kind,
@@ -2837,7 +3129,7 @@ impl Host {
                     weapon2,
                     position,
                 } => {
-                    self.audio
+                    audio
                         .sound
                         .queue_strike_fx(strike_kind, weapon1, weapon2, position);
                 }
@@ -2847,47 +3139,43 @@ impl Host {
                     armor,
                     position,
                 } => {
-                    self.audio
+                    audio
                         .sound
                         .queue_impact_fx(impact_kind, weapon, armor, position);
                 }
                 SoundCommand::Jingle(jingle) => {
-                    self.audio.sound.queue_jingle(jingle);
+                    audio.sound.queue_jingle(jingle);
                 }
                 SoundCommand::SetMusicMode(mode) => {
-                    self.audio.sound.set_music_mode(mode);
+                    audio.sound.set_music_mode(mode);
                 }
                 SoundCommand::ForceMusicMode(mode) => {
-                    self.audio.sound.force_music_mode(mode);
+                    audio.sound.force_music_mode(mode);
                 }
                 SoundCommand::PlayDelayedSource(idx) => {
-                    self.audio
+                    audio
                         .deferred
                         .push(DeferredAudioRequest::PlayDelayedSource(idx));
                 }
                 SoundCommand::ResumeAllSources { .. } => {
-                    if !self
-                        .audio
+                    if !audio
                         .deferred
                         .contains(&DeferredAudioRequest::ResumeAllSources)
                     {
-                        self.audio
-                            .deferred
-                            .push(DeferredAudioRequest::ResumeAllSources);
+                        audio.deferred.push(DeferredAudioRequest::ResumeAllSources);
                     }
                 }
                 SoundCommand::ActivateSource(idx) => {
-                    self.audio
+                    audio
                         .deferred
                         .push(DeferredAudioRequest::ActivateSource(idx));
                 }
                 SoundCommand::RefreshAmbienceSources => {
-                    if !self
-                        .audio
+                    if !audio
                         .deferred
                         .contains(&DeferredAudioRequest::RefreshAmbienceSources)
                     {
-                        self.audio
+                        audio
                             .deferred
                             .push(DeferredAudioRequest::RefreshAmbienceSources);
                     }
@@ -2896,14 +3184,14 @@ impl Host {
         }
         // Accumulate UI-request queues — the host drives the widgets
         // asynchronously so signals outlive a single tick.
-        self.effects.extend_dialogues(fx.pending_dialogues);
-        self.effects.extend_popup_texts(fx.pending_popup_texts);
-        self.effects.extend_debriefings(fx.pending_debriefings);
+        effects.extend_dialogues(fx.pending_dialogues);
+        effects.extend_popup_texts(fx.pending_popup_texts);
+        effects.extend_debriefings(fx.pending_debriefings);
         if fx.pending_sherwood_report {
-            self.effects.request_sherwood_report();
+            effects.request_sherwood_report();
         }
-        if self.transport.local_seat == engine_player_command::PlayerId::HOST {
-            self.effects.extend_trade_receipts(fx.trade_receipts);
+        if local_seat == engine_player_command::PlayerId::HOST {
+            effects.extend_trade_receipts(fx.trade_receipts);
         } else if !fx.trade_receipts.is_empty() {
             tracing::trace!(
                 count = fx.trade_receipts.len(),
@@ -2911,43 +3199,31 @@ impl Host {
             );
         }
         if fx.pending_show_console {
-            self.effects.request_signal(HostSignal::ShowConsole);
+            effects.request_signal(HostSignal::ShowConsole);
         }
         if fx.pending_silent_win_widget_swap {
-            self.effects.request_signal(HostSignal::SilentWinWidgetSwap);
+            effects.request_signal(HostSignal::SilentWinWidgetSwap);
         }
         if fx.pending_mission_state_notice {
-            self.effects.request_signal(HostSignal::MissionStateNotice);
-            self.effects.request_signal(HostSignal::MissionStatePopup);
+            effects.request_signal(HostSignal::MissionStateNotice);
+            effects.request_signal(HostSignal::MissionStatePopup);
         }
         if fx.pending_reset_input {
-            self.effects.request_signal(HostSignal::ResetInput);
+            effects.request_signal(HostSignal::ResetInput);
         }
-        self.frontend.ui_focus |= fx.ui_has_focus;
+        self.ui_focus |= fx.ui_has_focus;
         // Per-frame mark requests from sim-side Mark() calls (currently
         // scripted mission-team insertion → `EngineCommand::MarkPc`).
         // Accumulates with host-side mark sources (requirements-bar
         // hover, portrait guard hover); the render loop drains the
         // buffer right after the outline pass.
-        self.frontend
-            .input
-            .marked_pc_ids
-            .extend(fx.pending_mark_pc_ids);
+        self.input.marked_pc_ids.extend(fx.pending_mark_pc_ids);
         // Patch-effect background decal changes are accumulated across
         // frames until the next render pass drains them.
-        self.effects.background_blits.extend(fx.bg_blits);
+        effects.background_blits.extend(fx.bg_blits);
         fx.code
     }
 
-    pub fn sync_sound_listener(&mut self) {
-        self.audio.sound.set_listen_point(
-            self.frontend.viewport.sound_listen_point(),
-            self.frontend.viewport.zoom_factor,
-        );
-    }
-}
-
-impl HostFrontend {
     /// Mutable access to the frame holder before its opacity view is published.
     /// Post-publication mutations must use
     /// [`Self::rebind_frame_holder_shadow_color`] so the engine and renderer
@@ -3035,7 +3311,9 @@ impl HostFrontend {
     }
 
     pub fn install_trajectory_ground_mark_sprite(&mut self, data: &GroundMarkSpriteData) {
-        self.trajectory_preview.install_mark_sprite(data);
+        self.interaction
+            .trajectory_preview
+            .install_mark_sprite(data);
     }
 }
 
@@ -3265,6 +3543,90 @@ mod interaction_reset_tests {
     use super::*;
 
     #[test]
+    fn focus_loss_retires_both_buttons_captures_and_path_without_changing_planning() {
+        let mut frontend = HostFrontend::default();
+        frontend.planning.update_preference(true);
+        frontend.planning.toggle_touch();
+        frontend.begin_left_pointer(Default::default(), 2);
+        frontend.begin_right_pointer(2);
+        frontend.begin_minimap_drag(true);
+        frontend.add_gesture_point(Default::default());
+        frontend.route_hud_event(&crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1), true);
+        frontend.lose_pointer_focus();
+        assert!(!frontend.input.left_mouse_down());
+        assert!(!frontend.input.right_mouse_down);
+        assert!(!frontend.release_left_pointer());
+        assert!(!frontend.release_right_pointer());
+        assert!(!frontend.pointer_capture().minimap_drag_active());
+        assert!(frontend.mouse_way().is_empty());
+        assert!(!frontend.route_hud_event(&crate::gfx_types::GameEvent::MouseUp(0, 0, 1), false));
+        assert!(frontend.planning.touch_latched());
+    }
+
+    #[test]
+    fn modal_entry_cancels_captures_and_gesture_but_preserves_held_button_semantics() {
+        let mut frontend = HostFrontend::default();
+        frontend.begin_left_pointer(Default::default(), 1);
+        frontend.begin_right_pointer(2);
+        frontend.begin_minimap_drag(true);
+        frontend.add_gesture_point(Default::default());
+        frontend.input.is_alt = true;
+        frontend.reset_modal_input();
+        assert!(frontend.input.left_mouse_down());
+        assert!(!frontend.input.is_dragging());
+        assert!(!frontend.input.is_alt);
+        assert!(!frontend.pointer_capture().minimap_drag_active());
+        assert!(!frontend.release_right_pointer());
+        assert!(frontend.mouse_way().is_empty());
+    }
+
+    #[test]
+    fn modal_reset_preserves_view_target_but_snapshot_reset_retires_it() {
+        let mut frontend = HostFrontend::default();
+        let selected = EntityId::Soldier(robin_engine::entity_id::SoldierId(7));
+        frontend.set_selected_view_element(Some(selected));
+        frontend.arm_tactical_patrol(vec![selected], TacticalFormation::Line);
+        frontend.apply_trajectory_preview(engine_api::input::TrajectoryPreview::HitNoArc);
+        frontend.reset_interaction(InteractionReset::ModalClosed);
+        assert_eq!(frontend.selected_view_element(), Some(selected));
+        assert!(!frontend.tactical_targeting().is_armed());
+        assert!(!frontend.trajectory_preview().is_valid());
+        frontend.reset_interaction(InteractionReset::SnapshotRestored);
+        assert_eq!(frontend.selected_view_element(), None);
+    }
+
+    #[test]
+    fn hover_observation_retires_explanations_without_cancelling_targeting() {
+        let mut frontend = HostFrontend::default();
+        frontend.arm_tactical_patrol(Vec::new(), TacticalFormation::Line);
+        frontend.set_item_effect_preview(Some(ItemEffectPreview {
+            center: MapPoint::ZERO,
+            radius: None,
+            localization_key: "test",
+            fallback_text: "test",
+            blocked: false,
+        }));
+        frontend.set_host_titbit_preview(Some(HostTitbitPreview::JumpHelperGhost {
+            position: WorldPoint3D::new(0.0, 0.0, 0.0),
+            layer: 0,
+            sector_dir: 0,
+            display_order: 0.0,
+        }));
+        frontend.observe_hover_feedback(false, Default::default(), MapPoint::ZERO);
+        assert!(frontend.item_effect_preview().is_none());
+        assert!(frontend.host_titbit_preview().is_none());
+        assert!(frontend.tactical_targeting().is_armed());
+        assert_eq!(frontend.trajectory_preview().hover_ticks(), 1);
+    }
+
+    #[test]
+    fn interaction_diagnostics_cannot_restore_live_feedback() {
+        let feedback = FrontendInteraction::default();
+        let diagnostic = serde_json::to_vec(&feedback).unwrap();
+        assert!(serde_json::from_slice::<FrontendInteraction>(&diagnostic).is_err());
+    }
+
+    #[test]
     fn ready_context_rejects_bootstrap_and_its_serialized_form() {
         let bootstrap = ApplicationContext::default();
         let bytes = serde_json::to_vec(&bootstrap).unwrap();
@@ -3278,14 +3640,18 @@ mod interaction_reset_tests {
         host.frontend
             .input
             .press_left_pointer(Default::default(), 1);
-        host.frontend.pointer_capture.capture_touch_plan();
-        host.frontend.pointer_capture.right_button_down(2);
+        host.frontend.begin_right_pointer(2);
         host.frontend.planning.update_preference(true);
-        host.frontend.planning.toggle_touch();
+        host.frontend.route_touch_plan_event(
+            &crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1),
+            true,
+            |_, _| true,
+        );
         host.frontend
+            .interaction
             .trajectory_preview
             .apply(robin_engine::engine::input::TrajectoryPreview::HitNoArc);
-        host.frontend.item_effect_preview = Some(ItemEffectPreview {
+        host.frontend.interaction.item_effect_preview = Some(ItemEffectPreview {
             center: MapPoint::ZERO,
             radius: Some(20),
             localization_key: "test",
@@ -3293,6 +3659,7 @@ mod interaction_reset_tests {
             blocked: false,
         });
         host.frontend
+            .interaction
             .tactical_targeting
             .arm_patrol(Vec::new(), TacticalFormation::default());
         host.frontend.viewport.view_position = MapPoint::new(100.0, 200.0);
@@ -3302,12 +3669,12 @@ mod interaction_reset_tests {
         host.post_load_reset();
 
         assert!(!host.frontend.input.is_dragging());
-        assert!(!host.frontend.pointer_capture.touch_plan_captured());
-        assert!(!host.frontend.pointer_capture.take_right_double_click());
+        assert!(!host.frontend.pointer_capture().touch_plan_captured());
+        assert!(!host.frontend.release_right_pointer());
         assert!(!host.frontend.planning.touch_latched());
-        assert!(!host.frontend.trajectory_preview.is_valid());
-        assert!(!host.frontend.tactical_targeting.is_armed());
-        assert!(host.frontend.item_effect_preview.is_none());
+        assert!(!host.frontend.interaction.trajectory_preview.is_valid());
+        assert!(!host.frontend.interaction.tactical_targeting.is_armed());
+        assert!(host.frontend.interaction.item_effect_preview.is_none());
         assert_eq!(
             host.frontend.viewport.view_position,
             MapPoint::new(100.0, 200.0)
@@ -3325,15 +3692,18 @@ mod interaction_reset_tests {
         ] {
             let mut host = Host::scratch(640.0, 480.0);
             host.frontend.planning.update_preference(true);
-            host.frontend.planning.toggle_touch();
-            host.frontend.pointer_capture.capture_touch_plan();
+            host.frontend.route_touch_plan_event(
+                &crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1),
+                true,
+                |_, _| true,
+            );
             host.frontend
                 .input
                 .press_left_pointer(Default::default(), 1);
             host.frontend.viewport.begin_touch_transform(true);
             host.frontend.reset_interaction(reason);
             assert!(host.frontend.planning.touch_latched());
-            assert!(!host.frontend.pointer_capture.touch_plan_captured());
+            assert!(!host.frontend.pointer_capture().touch_plan_captured());
             assert!(!host.frontend.input.left_mouse_down());
             assert!(!host.frontend.viewport.advance_touch_inertia(100));
         }
@@ -3343,38 +3713,51 @@ mod interaction_reset_tests {
     fn action_and_input_effects_keep_their_distinct_preview_reset_scopes() {
         use robin_engine::engine::input::TrajectoryPreview;
         let mut host = Host::scratch(640.0, 480.0);
+        host.frontend.interaction.trajectory_preview.observe_hover(
+            false,
+            Default::default(),
+            MapPoint::ZERO,
+        );
+        host.frontend.interaction.trajectory_preview.observe_hover(
+            false,
+            Default::default(),
+            MapPoint::ZERO,
+        );
         host.frontend
-            .trajectory_preview
-            .observe_hover(false, Default::default(), MapPoint::ZERO);
-        host.frontend
-            .trajectory_preview
-            .observe_hover(false, Default::default(), MapPoint::ZERO);
-        host.frontend
+            .interaction
             .trajectory_preview
             .apply(TrajectoryPreview::HitNoArc);
         host.frontend
+            .interaction
             .tactical_targeting
             .arm_patrol(Vec::new(), TacticalFormation::Line);
         host.apply_side_effects(SideEffects {
             invalidate_trajectory_preview: true,
             ..Default::default()
         });
-        assert!(!host.frontend.trajectory_preview.is_valid());
-        assert_eq!(host.frontend.trajectory_preview.hover_ticks(), 2);
-        assert!(host.frontend.tactical_targeting.is_armed());
+        assert!(!host.frontend.interaction.trajectory_preview.is_valid());
+        assert_eq!(
+            host.frontend.interaction.trajectory_preview.hover_ticks(),
+            2
+        );
+        assert!(host.frontend.interaction.tactical_targeting.is_armed());
         host.frontend
+            .interaction
             .trajectory_preview
             .apply(TrajectoryPreview::HitNoArc);
         host.apply_side_effects(SideEffects {
             reset_input: true,
             ..Default::default()
         });
-        assert_eq!(host.frontend.trajectory_preview.hover_ticks(), 0);
-        assert!(host.frontend.trajectory_preview.is_valid());
-        assert!(host.frontend.tactical_targeting.is_armed());
+        assert_eq!(
+            host.frontend.interaction.trajectory_preview.hover_ticks(),
+            0
+        );
+        assert!(host.frontend.interaction.trajectory_preview.is_valid());
+        assert!(host.frontend.interaction.tactical_targeting.is_armed());
         host.post_load_reset();
-        assert!(!host.frontend.trajectory_preview.is_valid());
-        assert!(!host.frontend.tactical_targeting.is_armed());
+        assert!(!host.frontend.interaction.trajectory_preview.is_valid());
+        assert!(!host.frontend.interaction.tactical_targeting.is_armed());
     }
 }
 
@@ -3575,7 +3958,8 @@ mod application_context_tests {
         assert_eq!(
             easy_host
                 .frontend
-                .key_config
+                .preferences()
+                .key_config()
                 .get_binding("ZoomIn")
                 .unwrap()
                 .primary_key,
@@ -3584,7 +3968,8 @@ mod application_context_tests {
         assert_eq!(
             hard_host
                 .frontend
-                .key_config
+                .preferences()
+                .key_config()
                 .get_binding("ZoomIn")
                 .unwrap()
                 .primary_key,
@@ -3874,20 +4259,20 @@ mod application_context_tests {
         for frontend in [&startup.frontend, &live.frontend] {
             assert_eq!(
                 serde_json::to_value(FrontendPreferences::new(
-                    frontend.key_config.clone(),
-                    frontend.custom_key_config.clone(),
-                    frontend.gameplay_config,
+                    frontend.preferences().key_config().clone(),
+                    frontend.preferences().custom_key_config().clone(),
+                    frontend.preferences().gameplay_config(),
                     &profile.graphic_config,
                 ))
                 .unwrap(),
                 serde_json::to_value(context.host_snapshot().unwrap().preferences).unwrap(),
             );
-            assert!(!frontend.control_tactical_units);
+            assert!(!frontend.preferences().control_tactical_units());
             assert!(!frontend.planning.enabled());
-            assert!(!frontend.touch_camera_gestures);
-            assert!(frontend.native_refresh_presentation);
-            assert!(!frontend.quick_action_cursor_pulse);
-            assert!(frontend.diplomacy_visuals);
+            assert!(!frontend.preferences().touch_camera_gestures());
+            assert!(frontend.preferences().native_refresh_presentation());
+            assert!(!frontend.preferences().quick_action_cursor_pulse());
+            assert!(frontend.preferences().diplomacy_visuals());
         }
     }
 
@@ -4028,9 +4413,12 @@ mod application_context_tests {
             .unwrap();
 
         let host = Host::new(context.clone().try_into().unwrap(), 1280.0, 720.0).unwrap();
-        assert_eq!(host.frontend.key_config.key_type, active_keys.key_type);
         assert_eq!(
-            host.frontend.custom_key_config.key_type,
+            host.frontend.preferences().key_config().key_type,
+            active_keys.key_type
+        );
+        assert_eq!(
+            host.frontend.preferences().custom_key_config().key_type,
             custom_keys.key_type
         );
 

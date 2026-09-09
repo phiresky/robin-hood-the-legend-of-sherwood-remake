@@ -35,7 +35,7 @@ fn begin_interactive_frame(
     // - Inputs scheduled for `sim_frame` come back in the return
     //   value; we apply them and append to `frame.commands`.
     // - Authoritative state hashes from the host land in
-    //   `runtime.peer_hashes`, drained below alongside the per-25-frame
+    //   the timeline reconciliation owner, drained below alongside the per-25-frame
     //   sampling tick.
     // Publishes the current sim_frame to the server's broadcast
     // pump so peer-input target frames are stamped against a
@@ -455,7 +455,7 @@ pub(super) async fn collect_input_and_menus(
         ui.console_overlay.is_visible()
             || ui.pause_menu.is_some()
             || pause_closed_this_frame
-            || !host.frontend.touch_camera_gestures,
+            || !host.frontend.preferences().touch_camera_gestures(),
     );
 
     // ── Skip all sim-affecting input during replay / rewind ──

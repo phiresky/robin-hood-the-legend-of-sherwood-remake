@@ -1799,5 +1799,5 @@ fn sync_private_tree_bottom_up(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-support"))]
 mod tests;

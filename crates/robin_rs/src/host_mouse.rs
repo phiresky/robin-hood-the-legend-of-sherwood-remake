@@ -30,18 +30,19 @@ fn set_item_effect_preview(
     fallback_text: &'static str,
     blocked: bool,
 ) {
-    host.frontend.item_effect_preview = Some(ItemEffectPreview {
-        center,
-        radius,
-        localization_key,
-        fallback_text,
-        blocked,
-    });
+    host.frontend
+        .set_item_effect_preview(Some(ItemEffectPreview {
+            center,
+            radius,
+            localization_key,
+            fallback_text,
+            blocked,
+        }));
 }
 
 fn trajectory_landing(host: &Host, fallback: MapPoint) -> MapPoint {
     host.frontend
-        .trajectory_preview
+        .trajectory_preview()
         .points()
         .last()
         .map(|point| point.position.to_map())
@@ -61,7 +62,8 @@ pub(crate) fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, ce
         && item_preview_enabled(
             engine,
             host.frontend
-                .gameplay_config
+                .preferences()
+                .gameplay_config()
                 .item_previews
                 .stone_distraction_area,
         )
@@ -341,7 +343,7 @@ pub fn choose_mouse_pointer_for_no_action(
     if let Some(door_idx) = host.frontend.input.hovered_door_idx {
         host.frontend.input.increment_cursor_animation = false;
         host.frontend.input.selected_layer = mouse_sector_result.layer;
-        host.frontend.trajectory_preview.reject_hit();
+        host.frontend.reject_trajectory_hit();
         return engine.choose_door_cursor(Some(door_idx), None);
     }
 
@@ -397,7 +399,7 @@ pub fn choose_mouse_pointer_for_no_action(
                 // Motion area sector.
                 if st.is_motion() && st.is_area() {
                     // Reset trajectory for motion area navigation.
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                     if st.is_lift()
                         && let Some(lt) = sector.lift_type
                     {
@@ -479,7 +481,7 @@ pub fn choose_mouse_pointer_for_no_action(
                     host.frontend.input.selected_layer = mouse_sector_result.layer;
                     // Door-cursor pointer freezes the cursor animation.
                     host.frontend.input.increment_cursor_animation = false;
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                     // Snapshot door index before further borrows.
                     let door_idx = sector.door_index;
                     return engine.choose_door_cursor(door_idx, None);
@@ -487,7 +489,7 @@ pub fn choose_mouse_pointer_for_no_action(
 
                 // Jump sector.
                 if st.contains(engine_sector::SectorType::JUMP) {
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                     // Walk selected PCs, find the first with the
                     // Jump action, then return the nearest
                     // *reachable* jump line for that PC (or null,
@@ -559,13 +561,14 @@ pub fn choose_mouse_pointer_for_no_action(
                                 y: mid_y,
                                 z: mid_z,
                             };
-                            host.frontend.host_titbit_preview =
-                                Some(crate::host::HostTitbitPreview::JumpHelperGhost {
+                            host.frontend.set_host_titbit_preview(Some(
+                                crate::host::HostTitbitPreview::JumpHelperGhost {
                                     position,
                                     layer: line.layer,
                                     sector_dir,
                                     display_order: position.y + 0.01,
-                                });
+                                },
+                            ));
                         }
                     }
                     match height {
@@ -575,13 +578,13 @@ pub fn choose_mouse_pointer_for_no_action(
                             // the path Robin will take over the jump
                             // sector.
                             const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                            if host.frontend.trajectory_preview.hover_ticks()
+                            if host.frontend.trajectory_preview().hover_ticks()
                                 > TIME_TRAJECTORY_DISPLAY
-                                && !host.frontend.trajectory_preview.is_valid()
+                                && !host.frontend.trajectory_preview().is_valid()
                                 && let Some(line_idx) = jump_line_idx
                             {
                                 let preview = engine.compute_jump_preview(line_idx);
-                                host.frontend.trajectory_preview.apply(preview);
+                                host.frontend.apply_trajectory_preview(preview);
                             }
                             return if h >= 0.0 {
                                 RHMOUSE_JUMP_HIGH
@@ -671,16 +674,13 @@ pub fn update_mouse(
 ) -> i32 {
     use robin_engine::resource_ids::*;
 
-    host.frontend.host_titbit_preview = None;
-
     let cursor_action = if shift_held {
         engine.planned_action_for_seat(host.transport.local_seat())
     } else {
         engine.selected_action_for_seat(host.transport.local_seat())
     };
     host.frontend
-        .trajectory_preview
-        .observe_hover(shift_held, cursor_action, mouse_map);
+        .observe_hover_feedback(shift_held, cursor_action, mouse_map);
 
     // Per-frame clear of the UI-focus latch — the messenger resets
     // the flag every frame so it only stays true for the frame a
@@ -697,9 +697,7 @@ pub fn update_mouse(
     // preview, wipe any stale `valid_trajectory` flag from the prior
     // frame before any per-action branch recomputes.
     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-    host.frontend
-        .trajectory_preview
-        .advance_hover_markers(TIME_TRAJECTORY_DISPLAY);
+    host.frontend.advance_hover_markers(TIME_TRAJECTORY_DISPLAY);
 
     // Clear per-frame focus state.
     host.frontend.input.focused_entity_id = None;
@@ -708,7 +706,6 @@ pub fn update_mouse(
     host.frontend.input.mouse_shadow_color = 0;
     host.frontend.input.increment_cursor_animation = true;
     host.frontend.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
-    host.frontend.item_effect_preview = None;
 
     let mouse_map_pt = mouse_map;
 
@@ -816,7 +813,7 @@ pub fn update_mouse(
                 external_actions
                     .push(robin_engine::engine::ExternalAction::EzekielInstakill { target: id });
             } else {
-                host.frontend.selected_view_element = Some(id);
+                host.frontend.set_selected_view_element(Some(id));
             }
         }
         return RHMOUSE_VIEW;
@@ -914,16 +911,16 @@ fn cursor_for_bow(
             ) {
                 host.frontend.input.focused_entity_id = Some(target_id);
                 const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview.is_valid()
+                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                    && !host.frontend.trajectory_preview().is_valid()
                 {
-                    host.frontend.trajectory_preview.apply(
+                    host.frontend.apply_trajectory_preview(
                         engine.compute_planned_bow_trajectory_preview(assets, pc_id, target_id),
                     );
                 }
                 return RHMOUSE_BOW_YES_LONG;
             }
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
             return RHMOUSE_BOW_NO;
         }
 
@@ -932,7 +929,7 @@ fn cursor_for_bow(
         // focusable element, BOW_NO otherwise.  Opacity/shadow
         // are cleared.
         if engine.is_recording_macro() {
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
             host.frontend.input.mouse_opacity = 0;
             host.frontend.input.mouse_shadow_color = 0;
             if let Some(target_id) = engine.find_focusable_entity(
@@ -1042,15 +1039,15 @@ fn cursor_for_bow(
                     // once per hover (`valid_trajectory` guards
                     // re-computation).
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                    if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                        && !host.frontend.trajectory_preview.is_valid()
+                    if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                        && !host.frontend.trajectory_preview().is_valid()
                     {
-                        host.frontend.trajectory_preview.apply(
+                        host.frontend.apply_trajectory_preview(
                             engine.compute_trajectory_preview(assets, pc_id, target_id, shoot_mode),
                         );
                     }
                 } else {
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                 }
 
                 // Out of range overrides everything.
@@ -1060,13 +1057,13 @@ fn cursor_for_bow(
                     shadow_color = MOUSE_BOW_NO_COLOR;
                 }
             } else {
-                host.frontend.trajectory_preview.reject_hit();
+                host.frontend.reject_trajectory_hit();
             }
         } else {
             // In building/wall-ladder: no valid bow shot
             opacity = 50;
             shadow_color = MOUSE_BOW_NO_COLOR;
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
         }
 
         host.frontend.input.mouse_opacity = opacity;
@@ -1148,8 +1145,8 @@ fn cursor_for_apple(
                     // miss the target — see
                     // `compute_trajectory_preview`.
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                    if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                        && !host.frontend.trajectory_preview.is_valid()
+                    if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                        && !host.frontend.trajectory_preview().is_valid()
                         && let Some(pid) = pc_id
                     {
                         let preview = if shift_held {
@@ -1167,11 +1164,15 @@ fn cursor_for_apple(
                                 engine_weapons::ShootMode::Long,
                             )
                         };
-                        host.frontend.trajectory_preview.apply(preview);
+                        host.frontend.apply_trajectory_preview(preview);
                     }
                     if item_preview_enabled(
                         engine,
-                        host.frontend.gameplay_config.item_previews.apple_effect,
+                        host.frontend
+                            .preferences()
+                            .gameplay_config()
+                            .item_previews
+                            .apple_effect,
                     ) && let Some(center) = target_pos
                     {
                         let (key, text) = if engine
@@ -1192,13 +1193,13 @@ fn cursor_for_apple(
                         set_item_effect_preview(host, center, None, key, text, false);
                     }
                 } else {
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                 }
             } else {
-                host.frontend.trajectory_preview.reject_hit();
+                host.frontend.reject_trajectory_hit();
             }
         } else {
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
         }
         cursor
     }
@@ -1257,8 +1258,8 @@ fn cursor_for_stone(
                     cursor = RHMOUSE_STONE_YES;
 
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                    if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                        && !host.frontend.trajectory_preview.is_valid()
+                    if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                        && !host.frontend.trajectory_preview().is_valid()
                         && let Some(pid) = pc_id
                     {
                         let preview = if shift_held {
@@ -1276,12 +1277,13 @@ fn cursor_for_stone(
                                 engine_weapons::ShootMode::Long,
                             )
                         };
-                        host.frontend.trajectory_preview.apply(preview);
+                        host.frontend.apply_trajectory_preview(preview);
                     }
                     if item_preview_enabled(
                         engine,
                         host.frontend
-                            .gameplay_config
+                            .preferences()
+                            .gameplay_config()
                             .item_previews
                             .stone_direct_effect,
                     ) && let Some(center) = target_pos
@@ -1301,7 +1303,7 @@ fn cursor_for_stone(
                         );
                     }
                 } else {
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                 }
             } else {
                 let ground_allowed = engine.sim_config().item_gameplay.stone_ground_distraction
@@ -1319,8 +1321,8 @@ fn cursor_for_stone(
                 if ground_allowed {
                     cursor = RHMOUSE_STONE_YES;
                     const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                    if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                        && !host.frontend.trajectory_preview.is_valid()
+                    if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                        && !host.frontend.trajectory_preview().is_valid()
                         && let Some(pid) = pc_id
                     {
                         let preview = if shift_held {
@@ -1333,14 +1335,14 @@ fn cursor_for_stone(
                         } else {
                             engine.compute_trajectory_preview_ground(assets, pid, mouse_map_pt)
                         };
-                        host.frontend.trajectory_preview.apply(preview);
+                        host.frontend.apply_trajectory_preview(preview);
                     }
                 } else {
-                    host.frontend.trajectory_preview.reject_hit();
+                    host.frontend.reject_trajectory_hit();
                 }
             }
         } else {
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
         }
         cursor
     }
@@ -1375,8 +1377,8 @@ fn cursor_for_purse(
 
                 // Trajectory preview for ground throws.
                 const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview.is_valid()
+                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                    && !host.frontend.trajectory_preview().is_valid()
                     && let Some(pid) = pc_id
                 {
                     let preview = if shift_held {
@@ -1389,12 +1391,16 @@ fn cursor_for_purse(
                     } else {
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
-                    host.frontend.trajectory_preview.apply(preview);
+                    host.frontend.apply_trajectory_preview(preview);
                 }
                 if item_preview_enabled(
                     engine,
-                    host.frontend.gameplay_config.item_previews.purse_effect,
-                ) && host.frontend.trajectory_preview.is_valid()
+                    host.frontend
+                        .preferences()
+                        .gameplay_config()
+                        .item_previews
+                        .purse_effect,
+                ) && host.frontend.trajectory_preview().is_valid()
                 {
                     set_item_effect_preview(
                         host,
@@ -1402,14 +1408,14 @@ fn cursor_for_purse(
                         None,
                         "item_preview.purse.effect",
                         "Purse: 5 coins (£50); visible outdoor enemies need money interest",
-                        host.frontend.trajectory_preview.crumpled(),
+                        host.frontend.trajectory_preview().crumpled(),
                     );
                 }
             } else {
-                host.frontend.trajectory_preview.reject_hit();
+                host.frontend.reject_trajectory_hit();
             }
         } else {
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
         }
         cursor
     }
@@ -1472,8 +1478,8 @@ fn cursor_for_wasp_nest(
                 cursor = RHMOUSE_WASP_NEST_YES;
 
                 const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview.is_valid()
+                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                    && !host.frontend.trajectory_preview().is_valid()
                     && let Some(pid) = pc_id
                 {
                     let preview = if shift_held {
@@ -1486,12 +1492,16 @@ fn cursor_for_wasp_nest(
                     } else {
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
-                    host.frontend.trajectory_preview.apply(preview);
+                    host.frontend.apply_trajectory_preview(preview);
                 }
                 if item_preview_enabled(
                     engine,
-                    host.frontend.gameplay_config.item_previews.wasp_area,
-                ) && host.frontend.trajectory_preview.is_valid()
+                    host.frontend
+                        .preferences()
+                        .gameplay_config()
+                        .item_previews
+                        .wasp_area,
+                ) && host.frontend.trajectory_preview().is_valid()
                 {
                     let radius = if engine.sim_config().item_gameplay.wasp_reliable_acquisition {
                         robin_engine::gameplay_config::REBALANCED_WASP_ACQUISITION_RADIUS
@@ -1509,14 +1519,14 @@ fn cursor_for_wasp_nest(
                         Some(radius),
                         "item_preview.wasp.area",
                         text,
-                        host.frontend.trajectory_preview.crumpled(),
+                        host.frontend.trajectory_preview().crumpled(),
                     );
                 }
             } else {
-                host.frontend.trajectory_preview.reject_hit();
+                host.frontend.reject_trajectory_hit();
             }
         } else {
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
         }
         cursor
     }
@@ -1637,8 +1647,8 @@ fn cursor_for_net(
                 // render the arc preview when the mouse has been
                 // still long enough.
                 const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview.hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview.is_valid()
+                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                    && !host.frontend.trajectory_preview().is_valid()
                     && let Some(pid) = pc_id
                 {
                     let preview = if shift_held {
@@ -1651,25 +1661,30 @@ fn cursor_for_net(
                     } else {
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
-                    host.frontend.trajectory_preview.apply(preview);
+                    host.frontend.apply_trajectory_preview(preview);
                 }
                 let preview_capture = item_preview_enabled(
                     engine,
-                    host.frontend.gameplay_config.item_previews.net_capture_area,
+                    host.frontend
+                        .preferences()
+                        .gameplay_config()
+                        .item_previews
+                        .net_capture_area,
                 );
                 let preview_crumple = item_preview_enabled(
                     engine,
                     host.frontend
-                        .gameplay_config
+                        .preferences()
+                        .gameplay_config()
                         .item_previews
                         .net_crumple_prediction,
                 );
                 if (preview_capture || preview_crumple)
-                    && host.frontend.trajectory_preview.is_valid()
+                    && host.frontend.trajectory_preview().is_valid()
                 {
                     let landing = host
                         .frontend
-                        .trajectory_preview
+                        .trajectory_preview()
                         .points()
                         .last()
                         .map(|point| point.position);
@@ -1679,19 +1694,17 @@ fn cursor_for_net(
                                 assets,
                                 point,
                                 robin_engine::position_interface::Layer::new(
-                                    host.frontend.trajectory_preview.layer(),
+                                    host.frontend.trajectory_preview().layer(),
                                 ),
                             )
                         });
-                        host.frontend
-                            .trajectory_preview
-                            .apply_crumple_prediction(predicted);
+                        host.frontend.apply_trajectory_crumple_prediction(predicted);
                         predicted
                     } else {
                         // Preserve the original Easy-only trajectory tint;
                         // the capture-area switch must not silently enable
                         // enhanced crumple prediction on Medium or Hard.
-                        host.frontend.trajectory_preview.crumpled()
+                        host.frontend.trajectory_preview().crumpled()
                     };
                     let selective = engine.sim_config().item_gameplay.net_selective_immunity;
                     let (key, text) = match (preview_capture, preview_crumple, crumpled, selective)
@@ -1739,10 +1752,10 @@ fn cursor_for_net(
                     );
                 }
             } else {
-                host.frontend.trajectory_preview.reject_hit();
+                host.frontend.reject_trajectory_hit();
             }
         } else {
-            host.frontend.trajectory_preview.reject_hit();
+            host.frontend.reject_trajectory_hit();
         }
         cursor
     }
@@ -1787,7 +1800,11 @@ fn cursor_for_ale(
         if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
             if item_preview_enabled(
                 engine,
-                host.frontend.gameplay_config.item_previews.ale_effect,
+                host.frontend
+                    .preferences()
+                    .gameplay_config()
+                    .item_previews
+                    .ale_effect,
             ) {
                 let text = if engine.sim_config().item_gameplay.ale_reliable_distraction {
                     "Ale: zero-interest outdoor non-VIPs also accept at potency 20; authored/drunk behavior unchanged"

@@ -13,6 +13,9 @@
 //! side opens the stream and sends `Hello`; the host answers
 //! `Welcome` on the same stream.
 
+mod peer_sessions;
+use peer_sessions::PeerSessions;
+
 mod server_dispatch;
 #[cfg(test)]
 use server_dispatch::validate_server_gameplay_outbound;
@@ -376,9 +379,8 @@ impl ServerHandle {
         self.context
             .peers
             .lock()
-            .seats
-            .iter()
-            .map(|(seat, session)| (seat, &session.ranked_identity))
+            .sessions
+            .ranked_identities()
             .filter_map(|(seat, identity)| {
                 identity
                     .durable_public_key
@@ -395,11 +397,11 @@ impl ServerHandle {
         &self,
     ) -> Option<crate::leaderboard_ranked_session::RankedPreflightLobbyV1> {
         let peers = self.context.peers.lock();
-        let max_concurrent_players = u16::try_from(peers.expected_players).ok()?;
+        let max_concurrent_players = u16::try_from(peers.sessions.expected_players()).ok()?;
         let mut participant_public_keys = peers
-            .seats
-            .values()
-            .map(|session| &session.ranked_identity)
+            .sessions
+            .ranked_identities()
+            .map(|(_, identity)| identity)
             .map(|identity| identity.durable_public_key.map(PublicKey32::from_bytes))
             .collect::<Option<Vec<_>>>()?;
         participant_public_keys.push(PublicKey32::from_bytes(*self.host_key.public().as_bytes()));
@@ -500,13 +502,13 @@ impl ServerHandle {
 
 fn publish_context_continuation(context: &ServerContext) {
     let peers = context.peers.lock();
-    let owner_seats = peers.owner_seats();
+    let owner_seats = peers.sessions.owner_seats();
     publish_host_session_continuation(
         &context.campaign,
         HostSessionContinuation {
             host_endpoint_id: context.host_endpoint_id,
             session_id: context.session_id,
-            expected_players: peers.expected_players,
+            expected_players: peers.sessions.expected_players(),
             owner_seats,
             relay_url: context.relay_url.lock().clone(),
         },
@@ -523,35 +525,11 @@ impl Drop for ServerHandle {
 /// so the accept task, the outgoing pump, and each per-peer task can
 /// share access.
 struct ServerPeers {
-    /// Next [`PlayerId`] to assign to a new authenticated owner.
-    /// Starts at 1 — seat 0 is the host; released seats remain reserved.
-    next_seat: u8,
-    /// Authenticated sessions, including sessions whose writer is draining.
-    /// A disconnected reservation lives only in `disconnected_seats`.
-    seats: HashMap<u8, ServerSeat>,
-    disconnected_seats: HashMap<PeerOwner, u8>,
-    next_session_generation: u64,
-    expected_players: u32,
+    sessions: PeerSessions,
     readiness: ReadyBarrier,
     transitions: SnapshotTransitions,
     cosigns: CoSignTracker,
     admission: RankedAdmissionTracker,
-}
-
-/// One authenticated stream generation's metadata. Writer detachment is a
-/// separate transition from release: snapshot commits must retain ownership
-/// until continuation publication and stale reader teardown have completed.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct ServerSeat {
-    #[serde(skip)]
-    sender: Option<UnboundedSender<NetMsg>>,
-    nickname: String,
-    owner: PeerOwner,
-    ranked_identity: RankedPeerIdentity,
-    claim_kind: SeatClaimKind,
-    generation: u64,
-    ready_frame: Option<u32>,
-    sim_connected: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -655,127 +633,9 @@ fn peer_reader_dispatch_result(
 }
 
 impl ServerPeers {
-    fn authorize_session(
-        &self,
-        seat: PlayerId,
-        generation: u64,
-    ) -> Result<(), PeerDispatchFailure> {
-        let inactive = |kind| PeerDispatchFailure::Inactive {
-            seat,
-            generation,
-            kind,
-        };
-        let session = self
-            .seats
-            .get(&seat.0)
-            .ok_or_else(|| inactive(InactivePeerSession::Released))?;
-        if session.generation != generation {
-            return Err(inactive(InactivePeerSession::Superseded {
-                current_generation: session.generation,
-            }));
-        }
-        if session.sender.is_none() {
-            return Err(inactive(InactivePeerSession::Detached));
-        }
-        Ok(())
-    }
-
-    fn sender(&self, seat: &u8) -> Option<&UnboundedSender<NetMsg>> {
-        self.seats.get(seat)?.sender.as_ref()
-    }
-
-    fn senders(&self) -> impl Iterator<Item = (&u8, &UnboundedSender<NetMsg>)> {
-        self.seats
-            .iter()
-            .filter_map(|(seat, session)| session.sender.as_ref().map(|sender| (seat, sender)))
-    }
-
-    fn take_sender(&mut self, seat: &u8) -> Option<UnboundedSender<NetMsg>> {
-        self.seats.get_mut(seat)?.sender.take()
-    }
-
-    fn take_senders(&mut self) -> Vec<UnboundedSender<NetMsg>> {
-        self.seats
-            .values_mut()
-            .filter_map(|session| session.sender.take())
-            .collect()
-    }
-
-    fn sim_connected_seats(&self) -> impl Iterator<Item = &u8> {
-        self.seats
-            .iter()
-            .filter_map(|(seat, session)| session.sim_connected.then_some(seat))
-    }
-
-    fn is_sim_connected(&self, seat: &u8) -> bool {
-        self.seats
-            .get(seat)
-            .is_some_and(|session| session.sim_connected)
-    }
-
-    fn connect_sim_seat(&mut self, seat: u8) -> bool {
-        let session = self
-            .seats
-            .get_mut(&seat)
-            .expect("simulation connection requires an authenticated seat");
-        !std::mem::replace(&mut session.sim_connected, true)
-    }
-
-    fn generation(&self, seat: &u8) -> Option<&u64> {
-        self.seats.get(seat).map(|session| &session.generation)
-    }
-
-    fn ranked_identity(&self, seat: &u8) -> Option<&RankedPeerIdentity> {
-        self.seats.get(seat).map(|session| &session.ranked_identity)
-    }
-
-    fn nickname(&self, seat: &u8) -> Option<&String> {
-        self.seats.get(seat).map(|session| &session.nickname)
-    }
-
-    fn clear_ready(&mut self) {
-        for session in self.seats.values_mut() {
-            session.ready_frame = None;
-        }
-    }
-
-    fn record_ready(&mut self, seat: u8, frame: u32) -> Result<(), String> {
-        let session = self.seats.get_mut(&seat).ok_or_else(|| {
-            format!("peer seat {seat} sent ReadyToSim without an authenticated session")
-        })?;
-        session.ready_frame = Some(frame);
-        Ok(())
-    }
-
-    fn owner_seats(&self) -> HashMap<PeerOwner, u8> {
-        let mut owners = self.disconnected_seats.clone();
-        let mut occupied = owners.values().copied().collect::<HashSet<_>>();
-        assert_eq!(
-            occupied.len(),
-            owners.len(),
-            "duplicate retained seat ownership"
-        );
-        for (&seat, session) in &self.seats {
-            assert!(
-                occupied.insert(seat),
-                "active seat is also reserved for a disconnected owner"
-            );
-            assert_eq!(
-                owners.insert(session.owner, seat),
-                None,
-                "owner has multiple seat claims"
-            );
-        }
-        owners
-    }
-
     fn new(expected_players: u32) -> Self {
         Self {
-            next_seat: 1,
-            seats: HashMap::new(),
-            disconnected_seats: HashMap::new(),
-            next_session_generation: 1,
-            expected_players,
+            sessions: PeerSessions::new(expected_players),
             readiness: ReadyBarrier::default(),
             transitions: SnapshotTransitions::default(),
             cosigns: CoSignTracker::default(),
@@ -784,117 +644,13 @@ impl ServerPeers {
     }
 
     fn from_continuation(continuation: &HostSessionContinuation) -> Self {
-        let next_seat = continuation
-            .owner_seats
-            .values()
-            .copied()
-            .max()
-            .map_or(1, |seat| {
-                seat.checked_add(1).expect("multiplayer seat overflow")
-            });
         Self {
-            next_seat,
-            seats: HashMap::new(),
-            disconnected_seats: continuation.owner_seats.clone(),
-            next_session_generation: 1,
-            expected_players: continuation.expected_players,
+            sessions: PeerSessions::from_continuation(continuation),
             readiness: ReadyBarrier::default(),
             transitions: SnapshotTransitions::default(),
             cosigns: CoSignTracker::default(),
             admission: RankedAdmissionTracker::default(),
         }
-    }
-
-    fn owner_seat(&self, owner: PeerOwner) -> Option<u8> {
-        self.seats
-            .iter()
-            .find_map(|(&seat, session)| (session.owner == owner).then_some(seat))
-            .or_else(|| self.disconnected_seats.get(&owner).copied())
-    }
-
-    fn claim_seat(
-        &mut self,
-        owner: PeerOwner,
-        nickname: &str,
-        ranked_identity: RankedPeerIdentity,
-        sender: UnboundedSender<NetMsg>,
-    ) -> Result<SeatClaim, String> {
-        // Prepare all fallible counters before consuming a retained reservation
-        // or advancing allocation. Failed claims must leave ownership intact.
-        let generation = self.next_session_generation;
-        let next_generation = generation
-            .checked_add(1)
-            .ok_or_else(|| "multiplayer session generation overflow".to_string())?;
-        let (seat, kind) = if let Some(active) = self
-            .seats
-            .iter()
-            .find_map(|(&seat, session)| (session.owner == owner).then_some(seat))
-        {
-            assert!(
-                !self.disconnected_seats.contains_key(&owner),
-                "active owner also has a disconnected reservation"
-            );
-            (active, SeatClaimKind::ActiveReplacement)
-        } else if let Some(disconnected) = self.disconnected_seats.remove(&owner) {
-            assert!(
-                !self.seats.contains_key(&disconnected),
-                "retained seat already has an active owner"
-            );
-            (disconnected, SeatClaimKind::Reconnect)
-        } else {
-            if self.next_seat as u32 >= self.expected_players {
-                return Err(format!(
-                    "multiplayer session already has its configured {} players",
-                    self.expected_players
-                ));
-            }
-            let next = self.next_seat;
-            self.next_seat = next
-                .checked_add(1)
-                .ok_or_else(|| "multiplayer seat overflow".to_string())?;
-            (next, SeatClaimKind::Fresh)
-        };
-        self.next_session_generation = next_generation;
-        let sim_connected = self
-            .seats
-            .get(&seat)
-            .is_some_and(|session| session.sim_connected);
-        self.seats.insert(
-            seat,
-            ServerSeat {
-                sender: Some(sender),
-                nickname: nickname.to_owned(),
-                owner,
-                ranked_identity,
-                claim_kind: kind,
-                generation,
-                ready_frame: None,
-                sim_connected,
-            },
-        );
-        Ok(SeatClaim {
-            seat,
-            generation,
-            kind,
-        })
-    }
-
-    fn release_seat_if_owner(
-        &mut self,
-        seat: u8,
-        owner: PeerOwner,
-        generation: u64,
-    ) -> Option<bool> {
-        let session = self.seats.get(&seat)?;
-        if session.generation != generation || session.owner != owner {
-            return None;
-        }
-        let session = self
-            .seats
-            .remove(&seat)
-            .expect("matched active seat exists");
-        assert_eq!(self.disconnected_seats.insert(owner, seat), None);
-        Some(session.sim_connected)
     }
 
     /// Atomically retain the exact request before returning its one target's
@@ -905,7 +661,7 @@ impl ServerPeers {
         target: PlayerId,
         request: LeaderboardCoSignRequestV1,
     ) -> Result<UnboundedSender<NetMsg>, String> {
-        let sender = self.sender(&target.0).cloned().ok_or_else(|| {
+        let sender = self.sessions.sender(&target.0).cloned().ok_or_else(|| {
             format!("leaderboard co-sign target {target:?} is not an authenticated active peer")
         })?;
         self.cosigns.begin(target, request)?;
@@ -921,6 +677,7 @@ impl ServerPeers {
         response: &LeaderboardCoSignResponse,
     ) -> Result<(), String> {
         let expected_signer = self
+            .sessions
             .ranked_identity(&from.0)
             .and_then(|identity| identity.durable_public_key);
         self.cosigns.complete(from, expected_signer, response)
@@ -940,7 +697,7 @@ fn take_committed_snapshot_transition(
     Vec<UnboundedSender<NetMsg>>,
 )> {
     let id = peers.transitions.take_completed()?;
-    let senders = peers.take_senders();
+    let senders = peers.sessions.detach_all_writers();
     Some((id, senders))
 }
 
@@ -980,21 +737,20 @@ fn maybe_begin_sim_locked(
     peers: &mut ServerPeers,
 ) -> Result<Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)>, String> {
     let Some(begin_frame) = peers.readiness.candidate(
-        peers.expected_players,
-        peers.seats.values().map(|session| {
-            (
-                session.sim_connected,
-                session.sender.is_some(),
-                session.ready_frame,
-            )
-        }),
+        peers.sessions.expected_players(),
+        peers.sessions.readiness(),
     ) else {
         return Ok(None);
     };
     let start_epoch_ms = current_epoch_ms()?
         .checked_add(500)
         .ok_or_else(|| "multiplayer BeginSim timestamp exceeds the u64 Unix range".to_owned())?;
-    let senders = peers.senders().map(|(_, sender)| sender).cloned().collect();
+    let senders = peers
+        .sessions
+        .senders()
+        .map(|(_, sender)| sender)
+        .cloned()
+        .collect();
     peers.readiness.commit(begin_frame, start_epoch_ms);
     Ok(Some((begin_frame, start_epoch_ms, senders)))
 }
@@ -1429,7 +1185,14 @@ async fn run_server(
         }
     }
     *context.relay_url.lock() = endpoint.addr().relay_urls().next().cloned();
-    let _ = startup_tx.send(Ok((endpoint.id(), endpoint.addr())));
+    if startup_tx
+        .send(Ok((endpoint.id(), endpoint.addr())))
+        .is_err()
+    {
+        // Startup's owner was dropped; there is nobody to own an accept loop.
+        endpoint.close().await;
+        return;
+    }
 
     let mut pump = tokio::spawn(run_server_outgoing_pump(
         Arc::clone(&context),
@@ -1546,7 +1309,7 @@ fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u8]) {
         peers.readiness.begun.map(|(frame, start_epoch_ms)| {
             let senders = seats
                 .iter()
-                .filter_map(|seat| peers.sender(seat).cloned())
+                .filter_map(|seat| peers.sessions.sender(seat).cloned())
                 .collect::<Vec<_>>();
             (frame, start_epoch_ms, senders)
         })
@@ -1579,34 +1342,12 @@ fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u8]) {
         start_epoch_ms
     };
     for sender in senders {
-        let _ = sender.send(NetMsg::BeginSim {
-            frame: begin_frame,
-            start_epoch_ms: begin_start_epoch_ms,
-        });
+        server_dispatch::queue_cached_begin(&sender, begin_frame, begin_start_epoch_ms);
     }
 }
 
 fn connect_all_provisional_seats(context: &ServerContext) {
-    let seats = {
-        let mut peers = context.peers.lock();
-        let mut seats = peers
-            .senders()
-            .map(|(seat, _)| seat)
-            .copied()
-            .filter(|seat| !peers.is_sim_connected(seat))
-            .collect::<Vec<_>>();
-        seats.sort_unstable();
-        seats
-            .into_iter()
-            .map(|seat| {
-                let nickname = peers.nickname(&seat).cloned().unwrap_or_else(|| {
-                    panic!("authenticated provisional seat {seat} has no nickname")
-                });
-                assert!(peers.connect_sim_seat(seat));
-                (seat, nickname)
-            })
-            .collect::<Vec<_>>()
-    };
+    let seats = context.peers.lock().sessions.admit_provisional_sessions();
     let connected_seats = seats.iter().map(|(seat, _)| *seat).collect::<Vec<_>>();
     publish_connect_seats(context, seats);
     finish_ranked_seat_connections(context, &connected_seats);
@@ -1637,9 +1378,21 @@ fn downgrade_ranked_session(
                 reason: wire_reason,
             },
         );
-        let _ = context.incoming_tx.send(NetEvent::RankedBrowseOnly {
-            reason: wire_reason,
-        });
+        if context
+            .incoming_tx
+            .send(NetEvent::RankedBrowseOnly {
+                reason: wire_reason,
+            })
+            .is_err()
+        {
+            // The authoritative game loop is gone. Do not release provisional
+            // peers into simulation after losing its admission notification.
+            fail_server(
+                context,
+                "host event receiver closed during ranked downgrade".into(),
+            );
+            return;
+        }
     }
     connect_all_provisional_seats(context);
 }
@@ -1676,8 +1429,8 @@ fn progress_ranked_admission(context: &ServerContext) {
             } else {
                 let mut peers = context.peers.lock();
                 if let Some(pending) = peers.admission.pending()
-                    && (peers.generation(&pending.seat) != Some(&pending.generation)
-                        || peers.sender(&pending.seat).is_none())
+                    && (peers.sessions.generation(&pending.seat) != Some(&pending.generation)
+                        || peers.sessions.sender(&pending.seat).is_none())
                 {
                     session.cancel_pending_join();
                     peers.admission.clear();
@@ -1686,15 +1439,16 @@ fn progress_ranked_admission(context: &ServerContext) {
                     RankedAdmissionProgress::Idle
                 } else {
                     let next_seat = peers
+                        .sessions
                         .senders()
                         .map(|(seat, _)| seat)
                         .copied()
-                        .filter(|seat| !peers.is_sim_connected(seat))
+                        .filter(|seat| !peers.sessions.is_sim_connected(seat))
                         .min();
                     let Some(seat) = next_seat else {
                         return;
                     };
-                    let identity = *peers.ranked_identity(&seat).unwrap_or_else(|| {
+                    let identity = *peers.sessions.ranked_identity(&seat).unwrap_or_else(|| {
                         panic!("authenticated provisional seat {seat} has no ranked identity")
                     });
                     if let Some(durable_public_key) = identity.durable_public_key {
@@ -1744,9 +1498,11 @@ fn progress_ranked_admission(context: &ServerContext) {
                                 match documents {
                                     Ok(challenge) => {
                                         let generation = *peers
+                                            .sessions
                                             .generation(&seat)
                                             .expect("provisional seat has a session generation");
                                         let sender = peers
+                                            .sessions
                                             .sender(&seat)
                                             .cloned()
                                             .expect("provisional seat has a sender");
@@ -1844,7 +1600,7 @@ fn handle_ranked_join_response(
     identity: RankedPeerIdentity,
     response: RankedJoinResponse,
 ) {
-    if context.peers.lock().generation(&seat.0) != Some(&generation) {
+    if context.peers.lock().sessions.generation(&seat.0) != Some(&generation) {
         tracing::debug!(
             ?seat,
             generation,
@@ -1943,21 +1699,32 @@ fn handle_ranked_join_response(
                     Ok(roster_document) => {
                         let roster_targets = if pending.kind == RankedAdmissionKind::Fresh {
                             peers
+                                .sessions
                                 .sim_connected_seats()
-                                .filter_map(|existing_seat| peers.sender(existing_seat).cloned())
+                                .filter_map(|existing_seat| {
+                                    peers.sessions.sender(existing_seat).cloned()
+                                })
                                 .collect::<Vec<_>>()
                         } else {
                             Vec::new()
                         };
                         peers.admission.clear();
                         assert!(
-                            peers.connect_sim_seat(seat.0),
+                            peers
+                                .sessions
+                                .admit_session(seat.0, generation)
+                                .expect("ranked response retains authenticated dispatch authority"),
                             "ranked admission connected a seat already present in the simulation"
                         );
-                        let nickname = peers.nickname(&seat.0).cloned().unwrap_or_else(|| {
-                            panic!("admitted ranked seat {} has no nickname", seat.0)
-                        });
-                        let sender = peers.sender(&seat.0).cloned().unwrap_or_else(|| {
+                        let nickname =
+                            peers
+                                .sessions
+                                .nickname(&seat.0)
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    panic!("admitted ranked seat {} has no nickname", seat.0)
+                                });
+                        let sender = peers.sessions.sender(&seat.0).cloned().unwrap_or_else(|| {
                             panic!("admitted ranked seat {} has no sender", seat.0)
                         });
                         Ok((pending, nickname, sender, roster_document, roster_targets))
@@ -2172,7 +1939,7 @@ fn prepare_peer_session(
     // Claim/reclaim a seat by authenticated owner, never by editable nickname.
     let seat_claim = {
         let mut p = context.peers.lock();
-        let returning_seat = p.owner_seat(owner);
+        let returning_seat = p.sessions.owner_seat(owner);
         if let Some(transition) = p.transitions.pending()
             && !returning_seat.is_some_and(|seat| transition.awaiting.contains(&seat))
         {
@@ -2181,7 +1948,8 @@ fn prepare_peer_session(
             );
         }
         let (write_tx, write_rx) = unbounded_channel::<NetMsg>();
-        p.claim_seat(owner, nickname, ranked_identity, write_tx)
+        p.sessions
+            .claim_seat(owner, nickname, ranked_identity, write_tx)
             .map(|claim| (claim, write_rx))
     };
     let (seat_claim, write_rx) = seat_claim?;
@@ -2200,7 +1968,7 @@ fn prepare_peer_session(
     let opening_result = (|| -> Result<(), String> {
         let p = context.peers.lock();
         {
-            let sender = p.sender(&assigned_seat_u8).ok_or_else(|| {
+            let sender = p.sessions.sender(&assigned_seat_u8).ok_or_else(|| {
                 format!("claimed peer {assigned_seat:?} has no writer for Welcome")
             })?;
             sender
@@ -2230,10 +1998,12 @@ fn prepare_peer_session(
                     bytes = bytes.len(),
                     "sending initial snapshot to peer"
                 );
-                let _ = sender.send(NetMsg::InitialSnapshot {
-                    frame,
-                    engine_bytes: bytes,
-                });
+                sender
+                    .send(NetMsg::InitialSnapshot {
+                        frame,
+                        engine_bytes: bytes,
+                    })
+                    .map_err(|_| "writer queue closed before InitialSnapshot")?;
                 Some(frame)
             } else {
                 None
@@ -2276,7 +2046,8 @@ fn prepare_peer_session(
     })();
     if let Err(error) = opening_result {
         let mut p = context.peers.lock();
-        p.release_seat_if_owner(assigned_seat_u8, owner, session_generation);
+        p.sessions
+            .release_seat_if_owner(assigned_seat_u8, owner, session_generation);
         return Err(error);
     }
 
@@ -2324,7 +2095,9 @@ fn release_peer_session(
     // reconnect reclaims the same deterministic seat. Nicknames are labels.
     let release = {
         let mut p = context.peers.lock();
-        let release = p.release_seat_if_owner(assigned_seat_u8, owner, session_generation);
+        let release = p
+            .sessions
+            .release_seat_if_owner(assigned_seat_u8, owner, session_generation);
         if release.is_some() {
             retain_transition_peer_for_reconnect(&mut p, assigned_seat_u8);
         }
@@ -2383,9 +2156,10 @@ async fn monitor_ranked_admission(context: Arc<ServerContext>, seat: u8, generat
                 seat,
                 generation,
                 peers
+                    .sessions
                     .sender(&seat)
-                    .and_then(|_| peers.generation(&seat).copied()),
-                peers.is_sim_connected(&seat),
+                    .and_then(|_| peers.sessions.generation(&seat).copied()),
+                peers.sessions.is_sim_connected(&seat),
                 Instant::now(),
             )
         };
@@ -2533,7 +2307,7 @@ fn authenticate_peer(
     let payload = ticket.payload();
     if payload.host_endpoint_id != context.host_endpoint_id.to_string()
         || ticket.session_id()? != context.session_id.0
-        || payload.expected_players != context.peers.lock().expected_players
+        || payload.expected_players != context.peers.lock().sessions.expected_players()
     {
         return Err(
             "browser invitation does not belong to this exact hosted mission session".to_string(),
@@ -2543,7 +2317,7 @@ fn authenticate_peer(
         return Err("browser invitation belongs to another hosted mission".to_string());
     }
     let owner = PeerOwner::Browser(auth.durable_public_key);
-    let use_kind = if context.peers.lock().owner_seat(owner).is_some() {
+    let use_kind = if context.peers.lock().sessions.owner_seat(owner).is_some() {
         super::join_ticket::InvitationUse::RedeemedReconnect
     } else {
         super::join_ticket::InvitationUse::Initial
@@ -2608,6 +2382,7 @@ async fn run_server_peer_reader(
                     context
                         .peers
                         .lock()
+                        .sessions
                         .authorize_session(seat, session_generation),
                 )? {
                     return Ok(exit);
@@ -2641,6 +2416,7 @@ fn dispatch_server_peer_message(
     context
         .peers
         .lock()
+        .sessions
         .authorize_session(seat, session_generation)?;
     apply_authenticated_peer_message(context, seat, session_generation, ranked_identity, message)
         .map_err(PeerDispatchFailure::Protocol)
@@ -2700,7 +2476,7 @@ fn apply_authenticated_peer_message(
             resolve_ranked_before_ready(context);
             let begin = {
                 let mut p = context.peers.lock();
-                p.record_ready(seat.0, frame)?;
+                p.sessions.record_ready(seat.0, session_generation, frame)?;
                 maybe_begin_sim_locked(&mut p)
             };
             let begin = match begin {
@@ -2756,7 +2532,7 @@ fn apply_authenticated_peer_message(
             let expected_key = context
                     .peers
                     .lock()
-                    .ranked_identity(&seat.0)
+                    .sessions.ranked_identity(&seat.0)
                     .and_then(|identity| identity.durable_public_key)
                     .map(PublicKey32::from_bytes)
                     .ok_or_else(|| {
@@ -2791,7 +2567,7 @@ fn apply_authenticated_peer_message(
             let expected_key = context
                     .peers
                     .lock()
-                    .ranked_identity(&seat.0)
+                    .sessions.ranked_identity(&seat.0)
                     .and_then(|identity| identity.durable_public_key)
                     .map(PublicKey32::from_bytes)
                     .ok_or_else(|| {
@@ -3442,12 +3218,15 @@ async fn complete_content_admission(
                 offer.encoded_bytes
             ));
         }
-        let _ = incoming_tx.send(NetEvent::ContentChunk {
-            full_mod_sha256,
-            offset,
-            total_bytes,
-            bytes,
-        });
+        super::client_gameplay::deliver(
+            incoming_tx,
+            NetEvent::ContentChunk {
+                full_mod_sha256,
+                offset,
+                total_bytes,
+                bytes,
+            },
+        )?;
         received = end;
     }
 
@@ -3651,10 +3430,19 @@ async fn run_client_io_inner(
         HandshakePrelude::Welcome { session, welcome } => (session, welcome, None),
         HandshakePrelude::Content { session, offer } => {
             *content_offer_shared.lock() = Some(offer.clone());
-            let _ = incoming_tx.send(NetEvent::ContentOffer(offer.clone()));
-            let _ = initial_handshake_tx.send(Ok(InitialHandshake::ContentOffered {
-                full_mod_sha256: offer.full_mod_sha256,
-            }));
+            if super::client_gameplay::deliver(&incoming_tx, NetEvent::ContentOffer(offer.clone()))
+                .is_err()
+            {
+                return;
+            }
+            if initial_handshake_tx
+                .send(Ok(InitialHandshake::ContentOffered {
+                    full_mod_sha256: offer.full_mod_sha256,
+                }))
+                .is_err()
+            {
+                return;
+            }
             match complete_content_admission(
                 session,
                 &offer,
@@ -3704,18 +3492,32 @@ async fn run_client_io_inner(
     *session_metadata.lock() = Some(admitted_session);
     *content_offer_shared.lock() = admitted_offer.clone();
     if admitted_offer.is_none() {
-        let _ = initial_handshake_tx.send(Ok(InitialHandshake::Welcomed {
-            seat: your_seat,
-            mission_seed,
-        }));
+        if initial_handshake_tx
+            .send(Ok(InitialHandshake::Welcomed {
+                seat: your_seat,
+                mission_seed,
+            }))
+            .is_err()
+        {
+            return;
+        }
     }
-    let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
-    let _ = incoming_tx.send(NetEvent::MissionConfig {
-        mission_id: mission_id.clone(),
-        rng_seed: mission_seed,
-        sim_config,
-        speech_timing_locale: speech_timing_locale.clone(),
-    });
+    if super::client_gameplay::deliver_lifecycle(
+        &incoming_tx,
+        [
+            NetEvent::AssignedLocalSeat(your_seat),
+            NetEvent::MissionConfig {
+                mission_id: mission_id.clone(),
+                rng_seed: mission_seed,
+                sim_config,
+                speech_timing_locale: speech_timing_locale.clone(),
+            },
+        ],
+    )
+    .is_err()
+    {
+        return;
+    }
     let leaderboard_cosign_state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
     let ranked_join_state: SharedClientRankedJoinState = Arc::new(Default::default());
     let ranked_setup_state = Arc::new(AtomicU8::new(RANKED_SETUP_AWAITING));
@@ -3757,10 +3559,17 @@ async fn run_client_io_inner(
                         "multiplayer: discarded outbound commands from abandoned prediction session"
                     );
                 }
-                let _ = incoming_tx.send(NetEvent::Note(format!(
-                    "disconnected: {reason}; reconnecting..."
-                )));
-                let _ = incoming_tx.send(NetEvent::Disconnected);
+                if super::client_gameplay::deliver_lifecycle(
+                    &incoming_tx,
+                    [
+                        NetEvent::Note(format!("disconnected: {reason}; reconnecting...")),
+                        NetEvent::Disconnected,
+                    ],
+                )
+                .is_err()
+                {
+                    return;
+                }
             }
             SessionEnd::Fatal(error) => {
                 let _ = incoming_tx.send(NetEvent::Fatal(error));
@@ -3835,14 +3644,23 @@ async fn run_client_io_inner(
                     }
                     tracing::info!(?new_seat, seed = new_seed, "client reconnected");
                     // Reconnect validation proved the published identity is unchanged.
-                    let _ = incoming_tx.send(NetEvent::Reconnected);
-                    let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(new_seat));
-                    let _ = incoming_tx.send(NetEvent::MissionConfig {
-                        mission_id: new_mission_id,
-                        rng_seed: new_seed,
-                        sim_config: new_config,
-                        speech_timing_locale: new_speech_timing_locale,
-                    });
+                    if super::client_gameplay::deliver_lifecycle(
+                        &incoming_tx,
+                        [
+                            NetEvent::Reconnected,
+                            NetEvent::AssignedLocalSeat(new_seat),
+                            NetEvent::MissionConfig {
+                                mission_id: new_mission_id,
+                                rng_seed: new_seed,
+                                sim_config: new_config,
+                                speech_timing_locale: new_speech_timing_locale,
+                            },
+                        ],
+                    )
+                    .is_err()
+                    {
+                        return;
+                    }
                     let discarded = discard_session_outbound(outgoing_async_rx);
                     if discarded != 0 {
                         tracing::warn!(
@@ -4316,29 +4134,41 @@ fn handle_client_wire_msg(
                         .browse_only_reason()
                         .is_none();
                 if unresolved {
-                    let _ = queue_client_ranked_response(
+                    if let Err(error) = queue_client_ranked_response(
                         context,
                         RankedJoinResponse::Unavailable(
                             super::RankedJoinUnavailableReason::LocalRankedSessionMismatch,
                         ),
-                    );
-                    let _ = context
+                    ) {
+                        // Native permits browse-only play even if no ranked
+                        // challenge was issued, so an unavailable response may
+                        // not be authorized. The local downgrade below remains
+                        // required; it cannot be lost along with this response.
+                        tracing::warn!(%error, "could not notify host of premature ranked BeginSim");
+                    }
+                    context
                         .join_state
-                        .mark_browse_only(RankedBrowseOnlyReason::RankedProtocolViolation);
+                        .mark_browse_only(RankedBrowseOnlyReason::RankedProtocolViolation)?;
                     downgrade_client_ranked(
                         context,
                         RankedBrowseOnlyReason::RankedProtocolViolation,
                         "host released simulation before ranked admission or browse-only resolution",
                     );
-                    let _ = incoming_tx.send(NetEvent::RankedBrowseOnly {
-                        reason: RankedBrowseOnlyReason::RankedProtocolViolation,
-                    });
+                    super::client_gameplay::deliver(
+                        incoming_tx,
+                        NetEvent::RankedBrowseOnly {
+                            reason: RankedBrowseOnlyReason::RankedProtocolViolation,
+                        },
+                    )?;
                 }
             }
-            let _ = incoming_tx.send(NetEvent::BeginSim {
-                frame,
-                start_epoch_ms,
-            });
+            super::client_gameplay::deliver(
+                incoming_tx,
+                NetEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                },
+            )?;
         }
         NetMsg::ModalProposal { .. } => {
             return Err("server sent a client-only modal proposal".to_string());
@@ -4822,6 +4652,30 @@ fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn begin_sim_requires_a_live_local_receiver() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state = std::sync::Arc::new(Default::default());
+        let begin = || super::NetMsg::BeginSim {
+            frame: 9,
+            start_epoch_ms: 12,
+        };
+        super::handle_client_wire_msg(&tx, &state, None, begin()).unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            super::NetEvent::BeginSim {
+                frame: 9,
+                start_epoch_ms: 12
+            }
+        ));
+        drop(rx);
+        assert!(
+            super::handle_client_wire_msg(&tx, &state, None, begin())
+                .unwrap_err()
+                .contains("channel is closed")
+        );
+    }
+
     use super::{
         HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind, ServerPeers,
         SharedClientLeaderboardCoSignState, checked_epoch_ms, client_gameplay_wire_msg,
@@ -4925,6 +4779,7 @@ mod tests {
             let first = context
                 .peers
                 .lock()
+                .sessions
                 .claim_seat(owner, "first", identity, sender)
                 .unwrap();
             let (replacement_sender, mut replacement_wire) = unbounded_channel();
@@ -4933,17 +4788,22 @@ mod tests {
                 match invalidation {
                     "replacement" => {
                         peers
+                            .sessions
                             .claim_seat(owner, "next", identity, replacement_sender)
                             .unwrap()
                             .generation
                     }
                     "detachment" => {
-                        peers.take_sender(&first.seat).unwrap();
+                        peers.sessions.detach_writer(&first.seat).unwrap();
                         first.generation
                     }
                     "release" => {
                         assert_eq!(
-                            peers.release_seat_if_owner(first.seat, owner, first.generation),
+                            peers.sessions.release_seat_if_owner(
+                                first.seat,
+                                owner,
+                                first.generation
+                            ),
                             Some(false)
                         );
                         first.generation
@@ -5065,9 +4925,9 @@ mod tests {
                 assert_eq!(peers.admission.pending().unwrap().generation, generation);
                 assert!(
                     peers
-                        .seats
-                        .values()
-                        .all(|session| session.ready_frame.is_none())
+                        .sessions
+                        .readiness()
+                        .all(|(_, _, ready_frame)| ready_frame.is_none())
                 );
                 assert!(peers.readiness.begun.is_none());
                 drop(peers);
@@ -5089,6 +4949,7 @@ mod tests {
         let claim = {
             let mut peers = context.peers.lock();
             let claim = peers
+                .sessions
                 .claim_seat(
                     PeerOwner::Native([1; 32]),
                     "peer",
@@ -5096,7 +4957,7 @@ mod tests {
                     sender,
                 )
                 .unwrap();
-            peers.connect_sim_seat(claim.seat);
+            peers.sessions.connect_sim_seat(claim.seat);
             peers.readiness.host_frame = Some(10);
             claim
         };
@@ -5135,7 +4996,7 @@ mod tests {
             super::NetMsg::BeginSim { frame: 12, .. }
         ));
         assert_eq!(
-            context.peers.lock().seats[&claim.seat].ready_frame,
+            context.peers.lock().sessions.ready_frame(claim.seat),
             Some(12)
         );
     }
@@ -5147,6 +5008,7 @@ mod tests {
         let claim = context
             .peers
             .lock()
+            .sessions
             .claim_seat(
                 PeerOwner::Native([1; 32]),
                 "peer",
@@ -5256,20 +5118,22 @@ mod tests {
         let first = context
             .peers
             .lock()
+            .sessions
             .claim_seat(owner, "old", ranked_identity(1), sender)
             .unwrap();
         let (sender, mut next_wire) = unbounded_channel();
         let next = context
             .peers
             .lock()
+            .sessions
             .claim_seat(owner, "next", ranked_identity(1), sender)
             .unwrap();
         super::release_peer_session(&context, PlayerId(first.seat), owner, first.generation);
         assert_eq!(
-            context.peers.lock().generation(&next.seat),
+            context.peers.lock().sessions.generation(&next.seat),
             Some(&next.generation)
         );
-        assert!(!context.peers.lock().is_sim_connected(&next.seat));
+        assert!(!context.peers.lock().sessions.is_sim_connected(&next.seat));
         assert!(events.try_recv().is_err());
         assert!(next_wire.try_recv().is_err());
     }
@@ -5286,6 +5150,7 @@ mod tests {
             let claim = context
                 .peers
                 .lock()
+                .sessions
                 .claim_seat(owner, "old", identity, sender)
                 .unwrap();
             let id = SnapshotTransitionId {
@@ -5336,6 +5201,7 @@ mod tests {
                     let _authority = context.session_dispatch.lock();
                     let mut peers = context.peers.lock();
                     peers
+                        .sessions
                         .sender(&claim.seat)
                         .unwrap()
                         .send(NetMsg::ReconnectRequired {
@@ -5344,16 +5210,18 @@ mod tests {
                         .unwrap();
                     match mode {
                         "reconnect" => {
-                            peers.take_sender(&claim.seat).unwrap();
+                            peers.sessions.detach_writer(&claim.seat).unwrap();
                         }
                         "replacement" => {
                             let (sender, _replacement_wire) = unbounded_channel();
                             peers
+                                .sessions
                                 .claim_seat(owner, "successor", identity, sender)
                                 .unwrap();
                         }
                         "release" => {
                             peers
+                                .sessions
                                 .release_seat_if_owner(claim.seat, owner, claim.generation)
                                 .unwrap();
                         }
@@ -5405,9 +5273,9 @@ mod tests {
                 context
                     .peers
                     .lock()
-                    .seats
-                    .values()
-                    .all(|session| session.ready_frame.is_none())
+                    .sessions
+                    .readiness()
+                    .all(|(_, _, ready_frame)| ready_frame.is_none())
             );
         }
     }
@@ -5437,6 +5305,7 @@ mod tests {
         let claim = context
             .peers
             .lock()
+            .sessions
             .claim_seat(owner, "peer", ranked_identity(1), sender.clone())
             .unwrap();
         let reader = std::future::pending::<Result<super::PeerReaderExit, String>>();
@@ -5459,11 +5328,12 @@ mod tests {
         // This is the same unconditional teardown used by the socket adapter,
         // after either half ends. The reader has never produced an EOF.
         super::release_peer_session(&context, PlayerId(claim.seat), owner, claim.generation);
-        assert!(context.peers.lock().sender(&claim.seat).is_none());
+        assert!(context.peers.lock().sessions.sender(&claim.seat).is_none());
         let (replacement, _replacement_rx) = unbounded_channel();
         let reconnect = context
             .peers
             .lock()
+            .sessions
             .claim_seat(owner, "peer", ranked_identity(1), replacement)
             .unwrap();
         assert_eq!(reconnect.seat, claim.seat);
@@ -5650,15 +5520,14 @@ mod tests {
     }
 
     fn admit_ranked_test_identity(peers: &mut ServerPeers, seat: u8, key: &iroh::SecretKey) {
-        peers
-            .seats
-            .get_mut(&seat)
-            .expect("test seat was claimed")
-            .ranked_identity = super::RankedPeerIdentity {
-            durable_public_key: Some(*key.public().as_bytes()),
-            transport_endpoint_id: *key.public().as_bytes(),
-            public_disclosure: robin_run_protocol::ParticipantPublicDisclosureV1::NamedProfile,
-        };
+        peers.sessions.set_test_ranked_identity(
+            seat,
+            super::RankedPeerIdentity {
+                durable_public_key: Some(*key.public().as_bytes()),
+                transport_endpoint_id: *key.public().as_bytes(),
+                public_disclosure: robin_run_protocol::ParticipantPublicDisclosureV1::NamedProfile,
+            },
+        );
     }
 
     fn claim_test_seat(
@@ -5667,6 +5536,7 @@ mod tests {
         sender: tokio::sync::mpsc::UnboundedSender<robin_engine::multiplayer::NetMsg>,
     ) {
         let claim = peers
+            .sessions
             .claim_seat(
                 PeerOwner::Native([seat; 32]),
                 "test peer",
@@ -6079,10 +5949,12 @@ mod tests {
 
         let (browser_tx, _browser_rx) = unbounded_channel();
         let browser_claim = peers
+            .sessions
             .claim_seat(browser, "renamed browser", ranked_identity(7), browser_tx)
             .unwrap();
         let (native_tx, _native_rx) = unbounded_channel();
         let native_claim = peers
+            .sessions
             .claim_seat(native, "renamed native", ranked_identity(8), native_tx)
             .unwrap();
 
@@ -6093,6 +5965,7 @@ mod tests {
         let (intruder_tx, _intruder_rx) = unbounded_channel();
         assert!(
             peers
+                .sessions
                 .claim_seat(
                     PeerOwner::Browser([9; 32]),
                     "same nickname",
@@ -6133,7 +6006,7 @@ mod tests {
             take_committed_snapshot_transition(&mut peers).expect("all peers acknowledged");
         assert_eq!(committed_id, id);
         assert_eq!(senders.len(), 2);
-        assert_eq!(peers.senders().count(), 0);
+        assert_eq!(peers.sessions.senders().count(), 0);
         assert!(peers.transitions.pending().is_none());
     }
 
@@ -6479,32 +6352,42 @@ mod tests {
         let other = PeerOwner::Browser([8; 32]);
         let (first_tx, _first_rx) = unbounded_channel();
         let first = peers
+            .sessions
             .claim_seat(owner, "Robin", ranked_identity(7), first_tx)
             .unwrap();
         let seat = first.seat;
         let generation = first.generation;
         assert_eq!(seat, 1);
         assert_eq!(first.kind, SeatClaimKind::Fresh);
-        assert!(peers.connect_sim_seat(seat));
+        assert!(peers.sessions.connect_sim_seat(seat));
 
         let (replacement_tx, _replacement_rx) = unbounded_channel();
         let replacement = peers
+            .sessions
             .claim_seat(owner, "Robin renamed", ranked_identity(7), replacement_tx)
             .unwrap();
         let replacement_seat = replacement.seat;
         let replacement_generation = replacement.generation;
         assert_eq!(replacement_seat, seat);
         assert_eq!(replacement.kind, SeatClaimKind::ActiveReplacement);
-        assert!(peers.is_sim_connected(&seat));
+        assert!(peers.sessions.is_sim_connected(&seat));
         assert_ne!(replacement_generation, generation);
-        assert_eq!(peers.release_seat_if_owner(seat, owner, generation), None);
+        assert_eq!(
+            peers
+                .sessions
+                .release_seat_if_owner(seat, owner, generation),
+            None
+        );
 
         assert_eq!(
-            peers.release_seat_if_owner(seat, owner, replacement_generation),
+            peers
+                .sessions
+                .release_seat_if_owner(seat, owner, replacement_generation),
             Some(true)
         );
         let (other_tx, _other_rx) = unbounded_channel();
         let other_claim = peers
+            .sessions
             .claim_seat(other, "Robin renamed", ranked_identity(8), other_tx)
             .unwrap();
         let other_seat = other_claim.seat;
@@ -6515,179 +6398,12 @@ mod tests {
 
         let (rejoin_tx, _rejoin_rx) = unbounded_channel();
         let rejoined = peers
+            .sessions
             .claim_seat(owner, "New name", ranked_identity(7), rejoin_tx)
             .unwrap();
         let rejoined_seat = rejoined.seat;
         assert_eq!(rejoined_seat, seat);
         assert_eq!(rejoined.kind, SeatClaimKind::Reconnect);
-    }
-
-    #[test]
-    fn registry_detachment_and_replacement_preserve_ownership_but_reset_readiness() {
-        let mut peers = ServerPeers::new(2);
-        let owner = PeerOwner::Native([7; 32]);
-        let (sender, _receiver) = unbounded_channel();
-        let first = peers
-            .claim_seat(owner, "first", ranked_identity(7), sender)
-            .unwrap();
-        peers.connect_sim_seat(first.seat);
-        peers.seats.get_mut(&first.seat).unwrap().ready_frame = Some(20);
-        peers.readiness.host_frame = Some(10);
-        let detached = peers.take_sender(&first.seat).unwrap();
-        assert_eq!(peers.owner_seats().get(&owner), Some(&first.seat));
-        assert!(super::maybe_begin_sim_locked(&mut peers).unwrap().is_none());
-
-        let (sender, _replacement_receiver) = unbounded_channel();
-        let replacement = peers
-            .claim_seat(owner, "replacement", ranked_identity(8), sender)
-            .unwrap();
-        let session = &peers.seats[&first.seat];
-        assert_eq!(session.claim_kind, SeatClaimKind::ActiveReplacement);
-        assert_eq!(session.nickname, "replacement");
-        assert_eq!(session.ranked_identity, ranked_identity(8));
-        assert!(session.sim_connected);
-        assert_eq!(session.ready_frame, None);
-        drop(detached);
-        assert_eq!(
-            peers.release_seat_if_owner(first.seat, owner, first.generation),
-            None
-        );
-        assert_eq!(
-            peers.release_seat_if_owner(
-                first.seat,
-                PeerOwner::Native([9; 32]),
-                replacement.generation
-            ),
-            None
-        );
-        assert!(super::maybe_begin_sim_locked(&mut peers).unwrap().is_none());
-        peers.seats.get_mut(&first.seat).unwrap().ready_frame = Some(30);
-        let (frame, _, senders) = super::maybe_begin_sim_locked(&mut peers).unwrap().unwrap();
-        assert_eq!(frame, 30);
-        assert_eq!(senders.len(), 1);
-        assert!(super::maybe_begin_sim_locked(&mut peers).unwrap().is_none());
-
-        assert_eq!(
-            peers.release_seat_if_owner(first.seat, owner, replacement.generation),
-            Some(true)
-        );
-        assert!(peers.seats.is_empty());
-        assert_eq!(peers.owner_seats().get(&owner), Some(&first.seat));
-        let (sender, _reconnect_receiver) = unbounded_channel();
-        let reconnect = peers
-            .claim_seat(owner, "reconnect", ranked_identity(7), sender)
-            .unwrap();
-        assert_eq!(reconnect.kind, SeatClaimKind::Reconnect);
-        assert_eq!(reconnect.seat, first.seat);
-        assert!(!peers.is_sim_connected(&reconnect.seat));
-        assert_eq!(peers.seats[&reconnect.seat].ready_frame, None);
-    }
-
-    #[test]
-    fn registry_ready_barrier_requires_admission_and_resets_all_frames() {
-        let mut peers = ServerPeers::new(3);
-        for seat in [1, 2] {
-            let (sender, _receiver) = unbounded_channel();
-            claim_test_seat(&mut peers, seat, sender);
-            peers.record_ready(seat, 10 + u32::from(seat)).unwrap();
-        }
-        peers.readiness.host_frame = Some(9);
-        peers.connect_sim_seat(2);
-        assert!(super::maybe_begin_sim_locked(&mut peers).unwrap().is_none());
-        peers.connect_sim_seat(1);
-        peers.clear_ready();
-        assert!(
-            peers
-                .seats
-                .values()
-                .all(|session| session.ready_frame.is_none())
-        );
-        peers.record_ready(1, 50).unwrap();
-        assert!(super::maybe_begin_sim_locked(&mut peers).unwrap().is_none());
-        peers.record_ready(2, 40).unwrap();
-        let (frame, _, senders) = super::maybe_begin_sim_locked(&mut peers).unwrap().unwrap();
-        assert_eq!(frame, 50);
-        assert_eq!(senders.len(), 2);
-        assert_eq!(peers.take_senders().len(), 2);
-        assert_eq!(peers.owner_seats().len(), 2);
-        assert_eq!(peers.sim_connected_seats().count(), 2);
-    }
-
-    #[test]
-    fn registry_rejects_readiness_without_an_authenticated_session() {
-        let mut peers = ServerPeers::new(2);
-        assert!(
-            peers
-                .record_ready(1, 10)
-                .unwrap_err()
-                .contains("without an authenticated session")
-        );
-        let (sender, _receiver) = unbounded_channel();
-        claim_test_seat(&mut peers, 1, sender);
-        peers.record_ready(1, 20).unwrap();
-        let session = &peers.seats[&1];
-        let (owner, generation) = (session.owner, session.generation);
-        assert_eq!(
-            peers.release_seat_if_owner(1, owner, generation),
-            Some(false)
-        );
-        assert!(
-            peers
-                .record_ready(1, 30)
-                .unwrap_err()
-                .contains("without an authenticated session")
-        );
-        assert!(peers.seats.is_empty());
-        assert_eq!(peers.owner_seat(owner), Some(1));
-    }
-
-    #[test]
-    fn registry_generation_overflow_does_not_consume_any_claim() {
-        for release in [false, true] {
-            let mut peers = ServerPeers::new(3);
-            let owner = PeerOwner::Native([7; 32]);
-            let (sender, _receiver) = unbounded_channel();
-            let first = peers
-                .claim_seat(owner, "first", ranked_identity(7), sender)
-                .unwrap();
-            if release {
-                assert_eq!(
-                    peers.release_seat_if_owner(first.seat, owner, first.generation),
-                    Some(false)
-                );
-            }
-            let owners = peers.owner_seats();
-            let next_seat = peers.next_seat;
-            peers.next_session_generation = u64::MAX;
-            for candidate in [owner, PeerOwner::Native([8; 32])] {
-                let (sender, _receiver) = unbounded_channel();
-                assert!(
-                    peers
-                        .claim_seat(candidate, "failed", ranked_identity(8), sender)
-                        .unwrap_err()
-                        .contains("generation overflow")
-                );
-                assert_eq!(peers.owner_seats(), owners);
-                assert_eq!(peers.next_seat, next_seat);
-                assert_eq!(peers.next_session_generation, u64::MAX);
-                assert_eq!(
-                    peers.generation(&first.seat).copied(),
-                    (!release).then_some(first.generation)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn registry_serialization_cannot_restore_a_writer() {
-        let mut peers = ServerPeers::new(2);
-        let (sender, _receiver) = unbounded_channel();
-        claim_test_seat(&mut peers, 1, sender);
-        let encoded = serde_json::to_string(&peers.seats[&1]).unwrap();
-        let decoded: super::ServerSeat = serde_json::from_str(&encoded).unwrap();
-        assert!(decoded.sender.is_none());
-        assert_eq!(decoded.owner, peers.seats[&1].owner);
-        assert_eq!(decoded.generation, peers.seats[&1].generation);
     }
 
     #[test]
@@ -6848,7 +6564,8 @@ mod tests {
             .context
             .peers
             .lock()
-            .take_sender(&1)
+            .sessions
+            .detach_writer(&1)
             .expect("ranked client has an active server writer");
         drop(disconnected_sender);
         recv_matching(&client_in_rx, Duration::from_secs(10), |event| {

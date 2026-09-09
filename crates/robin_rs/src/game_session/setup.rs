@@ -3,7 +3,17 @@
 //! initialization, sprite renderer setup, and the Kira audio backend
 //! bootstrap.
 
-use std::collections::BTreeMap;
+mod custom_sprites;
+mod error;
+mod localization;
+mod resources;
+
+use custom_sprites::prepare_custom_character_dirs;
+use localization::{apply_custom_mission_text_patch, descriptor_mission_id};
+pub use localization::{load_fixed_vip_name_map, load_peasant_name_pool};
+pub(super) use resources::{
+    DecodingInterfaceResources, MissionEngineResources, MissionProcessResources,
+};
 
 use crate::audio_backend::KiraAudioBackend;
 use crate::cursor::CursorRenderer;
@@ -12,7 +22,7 @@ use crate::host::Host;
 use crate::hud_text::HudFonts;
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
-use crate::main_entry::{current_mission_id, picture_to_surface};
+use crate::main_entry::picture_to_surface;
 use crate::markers::SelectionMarkRenderer;
 use crate::mouse_trail::MouseTrailRenderer;
 use crate::renderer::Renderer;
@@ -25,9 +35,7 @@ use robin_assets::resource_manager::ResourceManager;
 use robin_assets::scb as assets_scb;
 use robin_engine::campaign::Campaign;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{
-    ScreenSize, SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize,
-};
+use robin_engine::coordinates::ScreenSize;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerCommand;
@@ -39,7 +47,6 @@ use robin_engine::script_manager as engine_script_manager;
 use robin_engine::sound::ExclamationGroup;
 use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script as engine_sprite_script;
-use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::titbit::SpriteRow;
 
 /// Wall-clock step timer for the mission setup phase.  Each [`step`] logs the
@@ -99,560 +106,6 @@ pub(super) const LOADING_AUDIO_PROGRESS: f32 = 0.91;
 pub(super) const LOADING_DESCRIPTORS_PROGRESS: f32 = 0.95;
 pub(super) const LOADING_HUD_FONTS_PROGRESS: f32 = 0.98;
 pub(super) const LOADING_FINAL_PROGRESS: f32 = 1.0;
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsManifest {
-    pixel_format: HackableRhsPixelFormat,
-    profiles: Vec<HackableRhsProfile>,
-}
-
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum HackableRhsPixelFormat {
-    Rgba,
-    LegacyColorKeys,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsProfile {
-    name: String,
-    width: f32,
-    height: f32,
-    center_x: f32,
-    center_y: f32,
-    rows: Vec<HackableRhsRow>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CustomMissionTextPatch {
-    #[serde(default)]
-    popup_texts: BTreeMap<usize, String>,
-    #[serde(default)]
-    short_briefings: BTreeMap<usize, String>,
-    #[serde(default)]
-    dialogues: BTreeMap<usize, Vec<String>>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsRow {
-    action_id: u16,
-    action_done: u16,
-    average_speed: f32,
-    #[serde(default, rename = "direction")]
-    _direction: u16,
-    hotspot_x: f32,
-    hotspot_y: f32,
-    path: String,
-    frames: Vec<HackableRhsFrame>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsFrame {
-    file: String,
-    delay: u16,
-    distance: u16,
-    offset_x: f32,
-    offset_y: f32,
-    sound_id: u16,
-}
-
-const HACKABLE_RHS_CACHE_VERSION: u32 = 2;
-// Retain the original filename so v1 caches can be repaired in place without
-// decoding hundreds of thousands of source PNGs again.
-const HACKABLE_RHS_CACHE_FILE: &str = ".robin-rhs-cache-v1.zst";
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-struct HackableRhsCache {
-    version: u32,
-    manifest_hash: [u8; 32],
-    sources: Vec<HackableRhsCacheSource>,
-    frames: Vec<assets_frame_holder::RuntimeSprite>,
-    profiles: Vec<HackableRhsCacheProfile>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-struct HackableRhsCacheSource {
-    relative_path: String,
-    len: u64,
-    modified_secs: u64,
-    modified_nanos: u32,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-struct HackableRhsCacheProfile {
-    name: String,
-    info: SpriteInfo,
-}
-
-fn overlay_roots(files: &engine_sbfile::SbFileSystem) -> Vec<std::path::PathBuf> {
-    files
-        .overlay_paths()
-        .into_iter()
-        .map(std::path::PathBuf::from)
-        .collect()
-}
-
-fn decode_png_rgba(path: &std::path::Path) -> Result<(u16, u16, Vec<u8>), String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    decode_png_rgba_bytes(&bytes, &path.display().to_string())
-}
-
-fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Vec<u8>), String> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|e| format!("decode {source}: {e}"))?;
-    let mut buf = vec![
-        0;
-        reader
-            .output_buffer_size()
-            .ok_or_else(|| format!("unknown PNG output size for {source}"))?
-    ];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| format!("read frame {source}: {e}"))?;
-    let data = &buf[..info.buffer_size()];
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => data.to_vec(),
-        png::ColorType::Rgb => {
-            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for px in data.as_chunks::<3>().0 {
-                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
-            }
-            out
-        }
-        png::ColorType::Grayscale => {
-            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for &value in data {
-                out.extend_from_slice(&[value, value, value, 255]);
-            }
-            out
-        }
-        png::ColorType::GrayscaleAlpha => {
-            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for px in data.as_chunks::<2>().0 {
-                out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
-            }
-            out
-        }
-        other => {
-            return Err(format!(
-                "PNG decoder did not expand color type {other:?} for {source}"
-            ));
-        }
-    };
-    Ok((info.width as u16, info.height as u16, rgba))
-}
-
-fn current_hackable_character_filenames(
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    files: &engine_sbfile::SbFileSystem,
-) -> Option<std::collections::HashSet<String>> {
-    let mission_index = campaign.current_mission_idx?;
-    let mission = campaign.missions.get(mission_index)?.profile(profiles);
-    let descriptor_path =
-        robin_engine::level_data::hackable_level_descriptor_path(&mission.mission_filename);
-    if !files
-        .try_exists(&descriptor_path)
-        .unwrap_or_else(|status| panic!("probe {descriptor_path}: file error {status}"))
-    {
-        return None;
-    }
-    let bytes = match files.read_all(&descriptor_path) {
-        Ok(bytes) => bytes,
-        Err(status) => {
-            tracing::warn!("Failed to read {descriptor_path}: file error {status}");
-            return Some(std::collections::HashSet::new());
-        }
-    };
-    let descriptor: robin_engine::level_data::HackableLevelDescriptor =
-        match serde_json::from_slice(&bytes) {
-            Ok(descriptor) => descriptor,
-            Err(error) => {
-                tracing::warn!("Failed to parse {descriptor_path}: {error}");
-                return Some(std::collections::HashSet::new());
-            }
-        };
-    let mut filenames = std::collections::HashSet::new();
-    for soldier in descriptor.soldiers {
-        let profile = match soldier.profile {
-            robin_engine::level_data::HackableSoldierProfile::Identifier(identifier) => profiles
-                .soldier_idx_by_identifier(&identifier)
-                .ok()
-                .and_then(|index| profiles.get_soldier(index)),
-            robin_engine::level_data::HackableSoldierProfile::LegacyIndex(index) => {
-                profiles.get_soldier(index)
-            }
-        };
-        if let Some(profile) = profile {
-            filenames.insert(profile.filename.clone());
-        }
-    }
-    Some(filenames)
-}
-
-fn hackable_manifest_hash(bytes: &[u8]) -> [u8; 32] {
-    use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).into()
-}
-
-fn hackable_source_stamp(
-    root: &std::path::Path,
-    relative_path: &str,
-) -> Result<HackableRhsCacheSource, String> {
-    let path = root.join(relative_path);
-    let metadata = std::fs::metadata(&path)
-        .map_err(|error| format!("stat hackable sprite {}: {error}", path.display()))?;
-    let modified = metadata
-        .modified()
-        .map_err(|error| format!("read mtime for {}: {error}", path.display()))?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("invalid mtime for {}: {error}", path.display()))?;
-    Ok(HackableRhsCacheSource {
-        relative_path: relative_path.to_owned(),
-        len: metadata.len(),
-        modified_secs: modified.as_secs(),
-        modified_nanos: modified.subsec_nanos(),
-    })
-}
-
-fn hackable_cache_sources_are_current(
-    root: &std::path::Path,
-    cache: &HackableRhsCache,
-    manifest_hash: [u8; 32],
-) -> bool {
-    cache.manifest_hash == manifest_hash
-        && cache.sources.iter().all(|source| {
-            hackable_source_stamp(root, &source.relative_path).is_ok_and(|current| {
-                current.len == source.len
-                    && current.modified_secs == source.modified_secs
-                    && current.modified_nanos == source.modified_nanos
-            })
-        })
-}
-
-fn read_hackable_cache(
-    root: &std::path::Path,
-    manifest_hash: [u8; 32],
-) -> Option<HackableRhsCache> {
-    let cache_path = root.join(HACKABLE_RHS_CACHE_FILE);
-    let compressed = match std::fs::read(&cache_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => {
-            tracing::warn!("Failed to read {}: {error}", cache_path.display());
-            return None;
-        }
-    };
-    let encoded = match zstd::stream::decode_all(std::io::Cursor::new(compressed)) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::warn!("Failed to decompress {}: {error}", cache_path.display());
-            return None;
-        }
-    };
-    let mut cache: HackableRhsCache = match bitcode::decode(&encoded) {
-        Ok(cache) => cache,
-        Err(error) => {
-            tracing::warn!("Failed to decode {}: {error}", cache_path.display());
-            return None;
-        }
-    };
-    if !hackable_cache_sources_are_current(root, &cache, manifest_hash) {
-        return None;
-    }
-    match cache.version {
-        HACKABLE_RHS_CACHE_VERSION => Some(cache),
-        1 => {
-            // Version 1 eagerly installed walking fallbacks while reading
-            // rows. A later explicit RunningUpright row therefore could not
-            // replace the fallback and resolved to WalkingUpright. Rebuild
-            // only the small action tables; packed pixels remain valid.
-            for profile in &mut cache.profiles {
-                profile.info.conversion = std::sync::Arc::new(hackable_animation_conversion(
-                    profile.info.scripts.as_ref(),
-                ));
-            }
-            cache.version = HACKABLE_RHS_CACHE_VERSION;
-            if let Err(error) = write_hackable_cache(root, &cache) {
-                tracing::warn!("Failed to upgrade {}: {error}", cache_path.display());
-            }
-            Some(cache)
-        }
-        version => {
-            tracing::warn!(
-                "Ignoring {} with unsupported cache version {version}",
-                cache_path.display()
-            );
-            None
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn write_hackable_cache(root: &std::path::Path, cache: &HackableRhsCache) -> Result<(), String> {
-    use std::io::Write as _;
-
-    let encoded = bitcode::encode(cache);
-    let compressed = zstd::stream::encode_all(std::io::Cursor::new(encoded), 3)
-        .map_err(|error| format!("compress hackable sprite cache: {error}"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(root).map_err(|error| {
-        format!(
-            "create hackable sprite cache in {}: {error}",
-            root.display()
-        )
-    })?;
-    temporary
-        .write_all(&compressed)
-        .map_err(|error| format!("write hackable sprite cache in {}: {error}", root.display()))?;
-    temporary
-        .persist(root.join(HACKABLE_RHS_CACHE_FILE))
-        .map_err(|error| {
-            format!(
-                "persist hackable sprite cache in {}: {error}",
-                root.display()
-            )
-        })?;
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn write_hackable_cache(_root: &std::path::Path, _cache: &HackableRhsCache) -> Result<(), String> {
-    Ok(())
-}
-
-fn hackable_animation_conversion(scripts: &[SpriteScript]) -> Vec<u16> {
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-    for (row_index, script) in scripts.iter().enumerate() {
-        if let Some(slot) = conversion.get_mut(script.action_id as usize)
-            && *slot == UNMAPPED
-        {
-            *slot = row_index as u16;
-        }
-    }
-
-    // Minimal hackable characters may only provide idle and walking loops.
-    // Install fallbacks only after every authored action has claimed its own
-    // slot, so a real run row always wins over the walking fallback.
-    for (source, aliases) in [
-        (3usize, &[0usize, 1, 2, 4, 8][..]),
-        (6, &[5, 7, 9, 10, 11, 12][..]),
-    ] {
-        let source_row = conversion[source];
-        if source_row == UNMAPPED {
-            continue;
-        }
-        for &alias in aliases {
-            if conversion[alias] == UNMAPPED {
-                conversion[alias] = source_row;
-            }
-        }
-    }
-    conversion
-}
-
-fn build_hackable_cache(
-    root: &std::path::Path,
-    manifest_hash: [u8; 32],
-    manifest: HackableRhsManifest,
-) -> (HackableRhsCache, bool) {
-    let mut frames = Vec::new();
-    let mut sources = Vec::new();
-    let mut local_frames = std::collections::HashMap::<String, u32>::new();
-    let mut profiles = Vec::with_capacity(manifest.profiles.len());
-    let mut complete = true;
-    let legacy_color_keys = matches!(
-        manifest.pixel_format,
-        HackableRhsPixelFormat::LegacyColorKeys
-    );
-
-    for profile in manifest.profiles {
-        let mut scripts = Vec::with_capacity(profile.rows.len());
-        for row in profile.rows {
-            let mut script = SpriteScript {
-                action_id: row.action_id,
-                action_done: row.action_done,
-                average_speed: row.average_speed,
-                hotspot: SpriteLocalPoint::new(row.hotspot_x, row.hotspot_y),
-                ..SpriteScript::default()
-            };
-            for frame in row.frames {
-                let relative_path = std::path::Path::new(&row.path)
-                    .join(&frame.file)
-                    .to_string_lossy()
-                    .into_owned();
-                let local_id = if let Some(local_id) = local_frames.get(&relative_path) {
-                    *local_id
-                } else {
-                    let frame_path = root.join(&relative_path);
-                    let (width, height, rgba) = match decode_png_rgba(&frame_path) {
-                        Ok(decoded) => decoded,
-                        Err(error) => {
-                            tracing::warn!("{error}");
-                            complete = false;
-                            continue;
-                        }
-                    };
-                    let source = match hackable_source_stamp(root, &relative_path) {
-                        Ok(source) => source,
-                        Err(error) => {
-                            tracing::warn!("{error}");
-                            complete = false;
-                            continue;
-                        }
-                    };
-                    let local_id = frames.len() as u32;
-                    frames.push(assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
-                        width,
-                        height,
-                        &rgba,
-                        legacy_color_keys,
-                    ));
-                    sources.push(source);
-                    local_frames.insert(relative_path, local_id);
-                    local_id
-                };
-                script.frame_ids.push(local_id);
-                script.delays.push(frame.delay);
-                script.distances.push(frame.distance);
-                script
-                    .offsets
-                    .push(SpriteFrameOffset::new(frame.offset_x, frame.offset_y));
-                script.sound_ids.push(frame.sound_id);
-                script.sum_distance = script.sum_distance.saturating_add(frame.distance);
-            }
-            scripts.push(script);
-        }
-        let conversion = hackable_animation_conversion(&scripts);
-        profiles.push(HackableRhsCacheProfile {
-            name: profile.name,
-            info: SpriteInfo {
-                scripts: std::sync::Arc::new(scripts),
-                conversion: std::sync::Arc::new(conversion),
-                size: SpriteSize::new(profile.width, profile.height),
-                center: SpriteAnchor::new(profile.center_x, profile.center_y),
-            },
-        });
-    }
-
-    (
-        HackableRhsCache {
-            version: HACKABLE_RHS_CACHE_VERSION,
-            manifest_hash,
-            sources,
-            frames,
-            profiles,
-        },
-        complete,
-    )
-}
-
-fn install_hackable_cache(
-    host: &mut Host,
-    assets: &mut LevelAssets,
-    filename: &str,
-    cache: HackableRhsCache,
-) -> Result<(), String> {
-    let frame_ids: Vec<u32> = cache
-        .frames
-        .into_iter()
-        .map(|frame| {
-            host.frontend
-                .frame_holder_mut()
-                .append_runtime_sprite(frame)
-        })
-        .collect();
-    for profile in cache.profiles {
-        let mut info = profile.info;
-        let scripts = std::sync::Arc::make_mut(&mut info.scripts);
-        for script in scripts {
-            for frame_id in &mut script.frame_ids {
-                *frame_id = *frame_ids.get(*frame_id as usize).ok_or_else(|| {
-                    format!(
-                        "hackable sprite cache {filename}/{} references missing local frame {}",
-                        profile.name, *frame_id
-                    )
-                })?;
-            }
-        }
-        let cache_key = format!("{filename}/{}", profile.name);
-        assets.sprite_scriptor_mut().insert(cache_key.clone(), info);
-        tracing::info!("Loaded hackable character profile {cache_key}");
-    }
-    Ok(())
-}
-
-fn preload_hackable_character_dirs(
-    host: &mut Host,
-    assets: &mut LevelAssets,
-    campaign: &Campaign,
-    files: &engine_sbfile::SbFileSystem,
-) {
-    let mission_filenames =
-        current_hackable_character_filenames(campaign, &assets.profile_manager, files);
-    for root in overlay_roots(files) {
-        let chars = root.join("Data/Characters");
-        let mission_scoped = chars.join("mission-scoped.json").is_file();
-        let Ok(entries) = std::fs::read_dir(&chars) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            let Some(filename) = name.strip_suffix(".rhs.d") else {
-                continue;
-            };
-            if mission_scoped
-                && !mission_filenames
-                    .as_ref()
-                    .is_some_and(|filenames| filenames.contains(filename))
-            {
-                continue;
-            }
-
-            let manifest_path = path.join("manifest.json");
-            let Ok(manifest_bytes) = std::fs::read(&manifest_path) else {
-                continue;
-            };
-            let manifest_hash = hackable_manifest_hash(&manifest_bytes);
-            if let Some(cache) = read_hackable_cache(&path, manifest_hash) {
-                tracing::info!("Using compiled hackable sprite cache for {filename}");
-                if let Err(error) = install_hackable_cache(host, assets, filename, cache) {
-                    tracing::warn!("{error}");
-                }
-                continue;
-            }
-
-            let manifest: HackableRhsManifest = match serde_json::from_slice(&manifest_bytes) {
-                Ok(manifest) => manifest,
-                Err(error) => {
-                    tracing::warn!("Failed to parse {}: {error}", manifest_path.display());
-                    continue;
-                }
-            };
-            let (cache, complete) = build_hackable_cache(&path, manifest_hash, manifest);
-            if complete {
-                if let Err(error) = write_hackable_cache(&path, &cache) {
-                    tracing::warn!("Failed to cache hackable sprites for {filename}: {error}");
-                } else {
-                    tracing::info!("Compiled hackable sprite cache for {filename}");
-                }
-            } else {
-                tracing::warn!(
-                    "Hackable sprite source {filename} was incomplete; not writing a compiled cache"
-                );
-            }
-            if let Err(error) = install_hackable_cache(host, assets, filename, cache) {
-                tracing::warn!("{error}");
-            }
-        }
-    }
-}
 
 /// Load mission-specific sound banks and switch to mission music.
 ///
@@ -1142,360 +595,6 @@ pub(super) struct LoadedInteractiveResources {
     pub(super) hud_fonts: Option<HudFonts>,
 }
 
-fn descriptor_mission_id(
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    files: &engine_sbfile::SbFileSystem,
-) -> u32 {
-    let current_id = current_mission_id(campaign, profiles);
-    let current_profile = campaign
-        .current_mission_idx
-        .and_then(|index| campaign.missions.get(index))
-        .map(|mission| mission.profile(profiles))
-        .expect("descriptor lookup requires a current campaign mission");
-    let patch_path = format!(
-        "Data/Levels/{}.characters.patch.json",
-        current_profile.mission_filename
-    );
-    if !files
-        .try_exists(&patch_path)
-        .unwrap_or_else(|status| panic!("probe {patch_path}: file error {status}"))
-    {
-        return current_id;
-    }
-    let bytes = files
-        .read_all(&patch_path)
-        .unwrap_or_else(|status| panic!("read descriptor alias patch {patch_path}: {status}"));
-    let patch: serde_json::Value = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|error| panic!("parse descriptor alias patch {patch_path}: {error}"));
-    let alias = patch
-        .get("descriptor_mission")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_else(|| panic!("{patch_path} is missing descriptor_mission"));
-    let mut matches = profiles
-        .missions
-        .iter()
-        .filter(|profile| profile.mission_filename == alias);
-    let id = matches
-        .next()
-        .unwrap_or_else(|| panic!("{patch_path} descriptor mission {alias:?} does not exist"))
-        .id;
-    assert!(
-        matches.next().is_none(),
-        "{patch_path} descriptor mission {alias:?} is ambiguous"
-    );
-    id
-}
-
-fn apply_custom_mission_text_patch(
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    descriptors: &mut assets_res_descr::LevelDescriptors,
-    files: &engine_sbfile::SbFileSystem,
-) {
-    let mission_filename = campaign
-        .current_mission_idx
-        .and_then(|index| campaign.missions.get(index))
-        .map(|mission| mission.profile(profiles).mission_filename.as_str())
-        .expect("custom mission text lookup requires a current campaign mission");
-    let path = format!("Data/Levels/{mission_filename}.text.patch.json");
-    if !files
-        .try_exists(&path)
-        .unwrap_or_else(|status| panic!("probe {path}: file error {status}"))
-    {
-        return;
-    }
-    let bytes = files
-        .read_all(&path)
-        .unwrap_or_else(|status| panic!("read custom mission text patch {path}: {status}"));
-    let patch: CustomMissionTextPatch = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|error| panic!("parse custom mission text patch {path}: {error}"));
-    let install = |target: &mut Vec<Option<String>>, values: BTreeMap<usize, String>| {
-        if let Some(max_index) = values.keys().next_back().copied() {
-            target.resize(target.len().max(max_index + 1), None);
-        }
-        for (index, text) in values {
-            target[index] = Some(text);
-        }
-    };
-    install(&mut descriptors.custom_popup_texts, patch.popup_texts);
-    install(
-        &mut descriptors.custom_short_briefings,
-        patch.short_briefings,
-    );
-    if let Some(max_index) = patch.dialogues.keys().next_back().copied() {
-        descriptors.custom_dialogue_texts.resize(
-            descriptors.custom_dialogue_texts.len().max(max_index + 1),
-            None,
-        );
-    }
-    for (index, sentences) in patch.dialogues {
-        let expected = descriptors
-            .dialogues
-            .get(index)
-            .unwrap_or_else(|| panic!("{path} dialogue {index} has no base descriptor"))
-            .portrait_ids
-            .len();
-        assert_eq!(
-            sentences.len(),
-            expected,
-            "{path} dialogue {index} requires {expected} sentences"
-        );
-        descriptors.custom_dialogue_texts[index] = Some(sentences);
-    }
-    tracing::info!("Applied custom mission text patch {path}");
-}
-
-/// Process-only resources acquired before the deterministic engine is built.
-///
-/// The text and interface archives provide both construction metadata and the
-/// later interactive frontend caches. The optional backend owns the native
-/// audio device. None of these values belongs in an engine snapshot.
-pub(super) struct MissionProcessResources<Interface = ResourceManager> {
-    pub(super) text: ResourceManager,
-    /// Only the ready stage permits engine metadata extraction. Dispatch and
-    /// collection consume their stages, so neither operation can run twice.
-    interface: Interface,
-    pub(super) audio_backend: Option<KiraAudioBackend>,
-}
-
-/// The interface archive, possibly off on a worker getting its JXL pictures
-/// eagerly decoded while the level loads (see
-/// [`MissionProcessResources::start_interface_decode`]). The joined pair is
-/// `(cursor, menu)` — two identical fully-decoded `DEFAULT.RES` views, one
-/// for the mission sprite caches and one owned by the in-game menus.
-pub(super) enum DecodingInterfaceResources {
-    #[cfg(target_arch = "wasm32")]
-    Ready { cursor: ResourceManager },
-    #[cfg(not(target_arch = "wasm32"))]
-    Thread(std::thread::JoinHandle<(ResourceManager, ResourceManager)>),
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-    Pool(robin_assets::wasm_threads::PoolReceiver<(ResourceManager, ResourceManager)>),
-}
-
-/// Worker-side body of the interface pre-decode: decode every encoded (JXL)
-/// picture once, then duplicate the decoded manager for the menu owner —
-/// a memcpy of decoded pixels, far cheaper than a second decode pass.
-#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
-fn decode_interface_managers(mut cursor: ResourceManager) -> (ResourceManager, ResourceManager) {
-    let started = web_time::Instant::now();
-    let decoded = cursor.decode_all_encoded_pictures();
-    let menu = cursor.duplicate();
-    tracing::info!(
-        resources = decoded,
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "interface pictures pre-decoded off the loading path"
-    );
-    (cursor, menu)
-}
-
-/// Shared engine-construction resources for graphical and headless missions.
-/// This owner contains
-/// no renderer, input device, HUD, menu, font, or native audio backend.
-pub(super) struct MissionEngineResources {
-    pub(super) text: ResourceManager,
-    cursor: ResourceManager,
-}
-
-impl MissionEngineResources {
-    pub(super) fn load(host: &Host) -> Result<Self, String> {
-        Ok(Self::load_archives(
-            host.preparation_files()?.clone(),
-            host.frontend.shipping.as_deref(),
-        ))
-    }
-
-    fn load_archives(
-        files: std::sync::Arc<engine_sbfile::SbFileSystem>,
-        shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
-    ) -> Self {
-        // These archives are optional for hackable/headless missions. Preserve
-        // diagnostics for malformed archives as well as missing ones; required
-        // mission data is still rejected by the later preparation stages.
-        let mut text = ResourceManager::with_files(files.clone());
-        if let Err(error) = text.attach_or_from_shipping("Data/Text/Level.res", shipping) {
-            tracing::warn!("Failed to load text resource file: {error}");
-        }
-
-        let mut cursor = ResourceManager::with_files(files);
-        if let Err(error) = cursor.attach_or_from_shipping("Data/Interface/DEFAULT.RES", shipping) {
-            tracing::warn!("Failed to load cursor resource file: {error}");
-        }
-        Self { text, cursor }
-    }
-
-    pub(super) fn engine_setup_resources(
-        &mut self,
-        host: &mut Host,
-    ) -> (
-        Option<engine_api::GroundMarkSpriteData>,
-        Vec<u16>,
-        Option<engine_api::MinimapWidgetSetup>,
-    ) {
-        engine_setup_resources(&mut self.cursor, host)
-    }
-}
-
-fn engine_setup_resources(
-    cursor: &mut ResourceManager,
-    host: &mut Host,
-) -> (
-    Option<engine_api::GroundMarkSpriteData>,
-    Vec<u16>,
-    Option<engine_api::MinimapWidgetSetup>,
-) {
-    let ground_mark_sprite = extract_ground_mark_sprite_data(cursor);
-    if let Some(data) = ground_mark_sprite.as_ref() {
-        host.frontend.install_trajectory_ground_mark_sprite(data);
-    }
-    (
-        ground_mark_sprite,
-        extract_titbit_row_frame_counts(cursor),
-        extract_minimap_widget_setup(cursor),
-    )
-}
-
-impl MissionProcessResources {
-    pub(super) fn load(
-        host: &mut Host,
-        game: &Game,
-        play_loading_menu_music: bool,
-    ) -> Result<Self, String> {
-        let audio_backend = init_audio_backend(host, game, play_loading_menu_music);
-
-        let MissionEngineResources { text, cursor } = MissionEngineResources::load(host)?;
-
-        Ok(Self {
-            text,
-            interface: cursor,
-            audio_backend,
-        })
-    }
-
-    /// Move the interface archive onto a worker that eagerly decodes every
-    /// encoded (JXL) picture, so frontend assembly finds them ready instead
-    /// of decoding hundreds of interface images on the loading path. No-op
-    /// when no worker can run it (single-threaded wasm) — the lazy per-
-    /// resource decode then behaves exactly as before.
-    pub(super) fn start_interface_decode(
-        self,
-    ) -> MissionProcessResources<DecodingInterfaceResources> {
-        let Self {
-            text,
-            interface: cursor,
-            audio_backend,
-        } = self;
-        MissionProcessResources {
-            text,
-            interface: DecodingInterfaceResources::start(cursor),
-            audio_backend,
-        }
-    }
-
-    pub(super) fn engine_setup_resources(
-        &mut self,
-        host: &mut Host,
-    ) -> (
-        Option<engine_api::GroundMarkSpriteData>,
-        Vec<u16>,
-        Option<engine_api::MinimapWidgetSetup>,
-    ) {
-        engine_setup_resources(&mut self.interface, host)
-    }
-}
-
-impl DecodingInterfaceResources {
-    fn start(cursor: ResourceManager) -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let handle = std::thread::Builder::new()
-                .name("interface-decode".into())
-                .spawn(move || decode_interface_managers(cursor))
-                .expect("failed to spawn interface decode thread");
-            Self::Thread(handle)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            #[cfg(feature = "wasm-threads")]
-            if robin_assets::wasm_threads::pool_threads() > 0 {
-                return Self::Pool(robin_assets::wasm_threads::start_on_pool(move || {
-                    decode_interface_managers(cursor)
-                }));
-            }
-            Self::Ready { cursor }
-        }
-    }
-
-    /// Collect the `(cursor, menu)` interface managers for frontend
-    /// assembly, waiting for the pre-decode worker when one is running.
-    /// Never blocks the wasm main thread (the pool variant is awaited).
-    async fn collect(self) -> (ResourceManager, ResourceManager) {
-        match self {
-            #[cfg(target_arch = "wasm32")]
-            Self::Ready { cursor } => {
-                // No worker ran: hand the menus their own lazily-decoded
-                // copy, exactly like the old second attach.
-                let menu = cursor.duplicate();
-                (cursor, menu)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Thread(handle) => handle.join().expect("interface decode thread panicked"),
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-            Self::Pool(receiver) => receiver
-                .await
-                .expect("interface decode worker dropped its result"),
-        }
-    }
-}
-
-impl MissionProcessResources<DecodingInterfaceResources> {
-    pub(super) async fn collect(
-        self,
-    ) -> (
-        ResourceManager,
-        ResourceManager,
-        ResourceManager,
-        Option<KiraAudioBackend>,
-    ) {
-        let (cursor, menu) = self.interface.collect().await;
-        (self.text, cursor, menu, self.audio_backend)
-    }
-}
-
-impl<Interface> MissionProcessResources<Interface> {
-    pub(super) fn resolve_short_briefings(
-        &mut self,
-        level_descriptors: Option<&assets_res_descr::LevelDescriptors>,
-    ) -> std::collections::HashMap<u32, String> {
-        let Some(descriptor) = level_descriptors else {
-            return std::collections::HashMap::new();
-        };
-        let table_id = descriptor.short_briefing.text_table_id;
-        let mut resolved = match self.text.get_string_count(table_id) {
-            Ok(count) => (0..count)
-                .filter_map(|index| {
-                    self.text
-                        .get_string(table_id, index)
-                        .ok()
-                        .map(|text| (index as u32, text.to_string()))
-                })
-                .collect(),
-            Err(error) => {
-                tracing::warn!(
-                    "Short-briefing text table {table_id} unavailable in Level.res: {error}"
-                );
-                std::collections::HashMap::new()
-            }
-        };
-        for (index, text) in descriptor.custom_short_briefings.iter().enumerate() {
-            if let Some(text) = text {
-                resolved.insert(index as u32, text.clone());
-            }
-        }
-        resolved
-    }
-}
-
 /// Pre-decode the background map + minimap and attach the interface /
 /// text resource files while the loading screen is still visible.
 ///
@@ -1538,7 +637,8 @@ pub(super) fn pre_decode_maps_and_resources(
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
     let mut level_descriptors = {
         let campaign = engine.campaign();
-        let mission_id = descriptor_mission_id(campaign, profiles, files);
+        let mission_id =
+            descriptor_mission_id(campaign, profiles, files).map_err(|error| error.to_string())?;
         crate::mission_descriptors::for_presentation(
             host.application_context(),
             host.frontend.shipping.as_deref(),
@@ -1546,7 +646,8 @@ pub(super) fn pre_decode_maps_and_resources(
         )
     };
     if let Some(descriptors) = level_descriptors.as_mut() {
-        apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors, files);
+        apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors, files)
+            .map_err(|error| error.to_string())?;
     }
     timer.step("level descriptors");
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -1774,7 +875,7 @@ pub(super) fn load_mission_sprites(
         .application_context()
         .active_profile_snapshot()
         .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-        .unwrap_or(true);
+        .unwrap_or_else(|error| panic!("mission sprite setup requires an active profile: {error}"));
     let visual_shadow_color = if dynamic_ambience_visuals {
         engine.weather().night_color
     } else {
@@ -1873,7 +974,16 @@ pub(super) fn extract_minimap_widget_setup(
     let metadata = cursor_res
         .get_picture_opacity_metadata(resource_ids::RHMAP_CORNER)
         .unwrap_or_else(|error| panic!("minimap engine picture metadata: {error:#}"));
-    let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
+    // An empty optional picture collection is supported. Metadata errors for
+    // a present resource must not masquerade as the widget being absent.
+    if metadata.iter().all(Option::is_none) {
+        return None;
+    }
+    let (btn_w, btn_h) = cursor_res
+        .get_dimension(resource_ids::RHMAP_CORNER)
+        .unwrap_or_else(|error| {
+            panic!("Data/Interface/DEFAULT.RES minimap corner dimensions: {error:#}")
+        });
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
     let button_hit_mask = metadata.get(1).and_then(Clone::clone).map(|metadata| {
         metadata
@@ -2018,52 +1128,6 @@ pub(super) fn register_mission_peasant_names(
             localized_names[slot] = Some(display_name);
         }
     });
-}
-
-/// Load the 22-firstname / 22-surname peasant name pool from
-/// `Level.res` — the civilian display-name branch.  Sub-IDs 100-121
-/// hold firstnames, 122-143 surnames, under one of three menu text
-/// tables (full / demo / demo2).
-pub fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
-    use crate::ui_panel::menu_text_string;
-    const FIRSTNAME_BASE: usize = 100;
-    const SURNAME_BASE: usize = 122;
-    const NAME_COUNT: usize = 22;
-    let firstnames: Vec<String> = (0..NAME_COUNT)
-        .filter_map(|i| menu_text_string(text_res, FIRSTNAME_BASE + i).map(|(s, _, _)| s))
-        .collect();
-    let surnames: Vec<String> = (0..NAME_COUNT)
-        .filter_map(|i| menu_text_string(text_res, SURNAME_BASE + i).map(|(s, _, _)| s))
-        .collect();
-    (firstnames, surnames)
-}
-
-/// Load the fixed localized VIP names selected by
-/// Original-game name generation. Keys are the canonical French profile
-/// identities stored in CPF and mission data.
-pub fn load_fixed_vip_name_map(
-    text_res: &mut ResourceManager,
-) -> std::collections::BTreeMap<String, String> {
-    use crate::ui_panel::menu_text_string;
-    const VIP_NAME_BASE: usize = 144;
-    const PROFILE_NAMES: [&str; 7] = [
-        "Robin des bois",
-        "Robin des villes",
-        "Will Ecarlate",
-        "Petit Jean",
-        "Frere Tuck",
-        "Lady Marianne",
-        "Stutely",
-    ];
-
-    PROFILE_NAMES
-        .into_iter()
-        .enumerate()
-        .filter_map(|(offset, profile_name)| {
-            menu_text_string(text_res, VIP_NAME_BASE + offset)
-                .map(|(localized, _, _)| (profile_name.to_owned(), localized))
-        })
-        .collect()
 }
 
 /// Run the CPU-only loading phase: sprite bank, campaign install +
@@ -2480,7 +1544,17 @@ pub(super) fn prepare_mission(
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     }
     timer.step("sprite bank from application asset cache");
-    preload_hackable_character_dirs(host, &mut assets, &campaign, &files);
+    let custom_sprites =
+        match prepare_custom_character_dirs(&campaign, &assets.profile_manager, &files) {
+            Ok(prepared) => prepared,
+            Err(error) => return Err(MissionLoadError::new(campaign, error.to_string())),
+        };
+    if let Err(error) = custom_sprites.install(
+        host.frontend.frame_holder_mut(),
+        assets.sprite_scriptor_mut(),
+    ) {
+        return Err(MissionLoadError::new(campaign, error.to_string()));
+    }
     timer.step("hackable character preload");
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
@@ -2818,7 +1892,9 @@ pub(super) fn prepare_mission(
         .application_context()
         .active_profile_snapshot()
         .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-        .unwrap_or(true);
+        .unwrap_or_else(|error| {
+            panic!("mission presentation preparation requires an active profile: {error}")
+        });
     let presentation_initial_ambiance = if dynamic_visuals {
         effective_initial_ambiance
     } else {
@@ -3102,7 +2178,8 @@ impl ConstructedMission {
                     )
                 })?;
             loaded_host.apply_display_to(&mut host.frontend.engine_display);
-            host.frontend.selected_view_element = loaded_host.selected_view_element();
+            host.frontend
+                .set_selected_view_element(loaded_host.selected_view_element());
             tracing::info!("adopted Original v48 save for frame-zero viewport capture");
         }
         if rng_seed != 0 {
@@ -3243,13 +2320,13 @@ pub(super) fn setup_input_and_camera(
         || args.mission_start_legacy_save.is_some()
         || args.mission_start_viewport_capture
     {
-        host.frontend.planning.force_off_for_session();
+        host.frontend.force_planning_off_for_session();
     }
 
     // Host construction snapshots the active profile's bindings from the
     // ApplicationContext. The Original copies that active config at this
     // exact input-translator boundary (`ReflectActiveKeyConfig`).
-    input_translator.load_bindings_from_keyconfig(&host.frontend.key_config);
+    input_translator.load_bindings_from_keyconfig(host.frontend.preferences().key_config());
 
     // The `DisplayMap` minimap accelerator is stored host-side on
     // `host.frontend.minimap_fast_key` — the game loop reads it out to emit a
@@ -3385,144 +2462,6 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
-
-    fn interface_stage_fixture() -> ResourceManager {
-        use std::sync::Arc;
-        let picture = robin_assets::picture::Picture {
-            width: 2,
-            height: 1,
-            pitch: 4,
-            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
-            data: vec![0xc0, 0x07, 0xff, 0xff],
-            palette: None,
-        };
-        // Load a real two-entry legacy archive through the owned reader. This
-        // avoids relying on flattened JSON maps to decode integer resource IDs.
-        let mut bytes = b"SRES".to_vec();
-        bytes.extend_from_slice(&0x0100u32.to_le_bytes());
-        bytes.extend_from_slice(&2u32.to_le_bytes());
-        bytes.extend_from_slice(b"PIC ");
-        bytes.extend_from_slice(&resource_ids::RHID_GROUND_FOCUS.to_le_bytes());
-        bytes.extend_from_slice(&0u32.to_le_bytes());
-        bytes.extend(
-            picture
-                .write_sixteen_to_bytes(robin_assets::picture::SixteenPacking::None)
-                .unwrap(),
-        );
-        bytes.extend_from_slice(b"TEXT");
-        bytes.extend_from_slice(&123u32.to_le_bytes());
-        bytes.extend_from_slice(&0u32.to_le_bytes());
-        bytes.extend_from_slice(&1u16.to_le_bytes());
-        let text: Vec<_> = "stage fixture".encode_utf16().collect();
-        bytes.extend_from_slice(&(text.len() as u16).to_le_bytes());
-        for unit in text {
-            bytes.extend_from_slice(&unit.to_le_bytes());
-        }
-        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
-        vfs.install_preloaded_asset("stage.res", bytes).unwrap();
-        let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
-        let mut resources = ResourceManager::with_files(files);
-        resources.attach_resource_file("stage.res").unwrap();
-        resources
-    }
-
-    #[test]
-    fn graphical_and_headless_stages_extract_identical_engine_metadata() {
-        let cursor = interface_stage_fixture();
-        let mut graphical = MissionProcessResources {
-            text: ResourceManager::new(),
-            interface: cursor.duplicate(),
-            audio_backend: None,
-        };
-        let mut headless = MissionEngineResources {
-            text: ResourceManager::new(),
-            cursor,
-        };
-        let mut graphical_host = Host::scratch(800.0, 600.0);
-        let mut headless_host = Host::scratch(800.0, 600.0);
-        let graphical_metadata = graphical.engine_setup_resources(&mut graphical_host);
-        let headless_metadata = headless.engine_setup_resources(&mut headless_host);
-        let ground = graphical_metadata
-            .0
-            .as_ref()
-            .expect("fixture ground geometry");
-        assert_eq!(ground.frame_sizes, vec![(2, 1)]);
-        assert_eq!(ground.per_frame_offsets, vec![(1, 0)]);
-        let headless_ground = headless_metadata
-            .0
-            .as_ref()
-            .expect("headless ground geometry");
-        assert_eq!(ground.half_w, headless_ground.half_w);
-        assert_eq!(ground.half_h, headless_ground.half_h);
-        assert_eq!(ground.frame_sizes, headless_ground.frame_sizes);
-        assert_eq!(ground.per_frame_offsets, headless_ground.per_frame_offsets);
-        assert_eq!(graphical_metadata.1, headless_metadata.1);
-        match (graphical_metadata.2, headless_metadata.2) {
-            (Some(graphical), Some(headless)) => {
-                assert_eq!(graphical.corner_size, headless.corner_size);
-                // HitMask already has a persisted representation, including
-                // its private dimensions and every opacity bit.
-                assert_eq!(
-                    serde_json::to_value(graphical.button_hit_mask).unwrap(),
-                    serde_json::to_value(headless.button_hit_mask).unwrap()
-                );
-            }
-            (None, None) => {}
-            _ => panic!("graphical and headless minimap presence differs"),
-        }
-    }
-
-    #[test]
-    fn mission_archives_require_owned_preparation_authority() {
-        let host = Host::scratch(800.0, 600.0);
-        assert!(MissionEngineResources::load(&host).is_err());
-    }
-
-    #[test]
-    fn optional_mission_archives_preserve_absent_and_malformed_fallbacks() {
-        use robin_util::asset_fs::{AssetVfs, Bundle};
-        use std::sync::Arc;
-        for malformed in [false, true] {
-            let vfs = Arc::new(AssetVfs::new());
-            if malformed {
-                vfs.mount_bundle_first(Arc::new(Bundle::from([
-                    (
-                        "Data/Text/Level.res".into(),
-                        b"invalid archive".to_vec().into(),
-                    ),
-                    (
-                        "Data/Interface/DEFAULT.RES".into(),
-                        b"invalid archive".to_vec().into(),
-                    ),
-                ])))
-                .unwrap();
-            }
-            let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
-            let mut probe = ResourceManager::with_files(files.clone());
-            assert!(probe.attach_resource_file("Data/Text/Level.res").is_err());
-            let loaded = MissionEngineResources::load_archives(files, None);
-            assert!(loaded.text.is_empty());
-            assert!(loaded.cursor.is_empty());
-        }
-    }
-
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn interface_decode_consumes_ready_stage_and_preserves_both_frontend_views() {
-        let process = MissionProcessResources {
-            text: interface_stage_fixture(),
-            interface: interface_stage_fixture(),
-            audio_backend: None,
-        };
-        let decoding: MissionProcessResources<DecodingInterfaceResources> =
-            process.start_interface_decode();
-        let (mut text, mut cursor, mut menu, audio) = pollster::block_on(decoding.collect());
-        assert!(audio.is_none());
-        for manager in [&mut text, &mut cursor, &mut menu] {
-            assert_eq!(manager.get_string(123, 0).unwrap(), "stage fixture");
-        }
-        assert_ne!(cursor.cache_identity(), menu.cache_identity());
-    }
 
     fn prepared_stage_fixture() -> PreparedMission {
         let mut assets = LevelAssets::new();
@@ -3734,14 +2673,18 @@ mod tests {
                     };
                     barrier.wait();
                     for _ in 0..20 {
-                        assert_eq!(descriptor_mission_id(&campaign, &profiles, &files), id);
+                        assert_eq!(
+                            descriptor_mission_id(&campaign, &profiles, &files).unwrap(),
+                            id
+                        );
                         let mut descriptors = assets_res_descr::LevelDescriptors::default();
                         apply_custom_mission_text_patch(
                             &campaign,
                             &profiles,
                             &mut descriptors,
                             &files,
-                        );
+                        )
+                        .unwrap();
                         assert_eq!(
                             descriptors.custom_popup_texts[0].as_deref(),
                             Some(text.as_str())
@@ -3849,109 +2792,6 @@ mod tests {
                 .map(|pack| pack.locale),
             Some("en-US".to_owned())
         );
-    }
-
-    #[test]
-    fn png_decoder_expands_indexed_pixels_and_palette_transparency() {
-        let mut encoded = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut encoded, 2, 1);
-            encoder.set_color(png::ColorType::Indexed);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder.set_palette(vec![0, 255, 0, 0, 0, 255]);
-            encoder.set_trns(vec![0, 127]);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(&[0, 1]).unwrap();
-        }
-
-        let (width, height, rgba) = decode_png_rgba_bytes(&encoded, "indexed test").unwrap();
-
-        assert_eq!((width, height), (2, 1));
-        assert_eq!(rgba, [0, 255, 0, 0, 0, 0, 255, 127]);
-    }
-
-    #[test]
-    fn hackable_animation_fallbacks_do_not_override_authored_actions() {
-        let script = |action_id| SpriteScript {
-            action_id,
-            ..SpriteScript::default()
-        };
-        let conversion = hackable_animation_conversion(&[script(3), script(6), script(10)]);
-
-        assert_eq!(conversion[9], 1, "missing transition reuses walking");
-        assert_eq!(conversion[10], 2, "authored running row must win");
-
-        let minimal = hackable_animation_conversion(&[script(3), script(6)]);
-        assert_eq!(minimal[10], 1, "minimal sprites may reuse walking");
-    }
-
-    #[test]
-    fn hackable_sprite_cache_round_trips_and_invalidates_changed_sources() {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("frame.png"), b"source").unwrap();
-        let manifest_hash = hackable_manifest_hash(b"manifest");
-        let cache = HackableRhsCache {
-            version: HACKABLE_RHS_CACHE_VERSION,
-            manifest_hash,
-            sources: vec![hackable_source_stamp(directory.path(), "frame.png").unwrap()],
-            frames: vec![assets_frame_holder::RuntimeSprite {
-                width: 2,
-                height: 1,
-                packed_data: vec![0, 1, 0x1234, 0x5678],
-                rgba_data: None,
-            }],
-            profiles: Vec::new(),
-        };
-
-        write_hackable_cache(directory.path(), &cache).unwrap();
-        let decoded = read_hackable_cache(directory.path(), manifest_hash).unwrap();
-        assert_eq!(decoded.frames.len(), 1);
-        assert_eq!(decoded.frames[0].packed_data, cache.frames[0].packed_data);
-
-        std::fs::write(directory.path().join("frame.png"), b"source changed").unwrap();
-        assert!(read_hackable_cache(directory.path(), manifest_hash).is_none());
-        assert!(read_hackable_cache(directory.path(), [7; 32]).is_none());
-    }
-
-    #[test]
-    fn version_one_hackable_cache_repairs_walking_over_run_alias() {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("frame.png"), b"source").unwrap();
-        let manifest_hash = hackable_manifest_hash(b"manifest");
-        let scripts = vec![
-            SpriteScript {
-                action_id: 6,
-                ..SpriteScript::default()
-            },
-            SpriteScript {
-                action_id: 10,
-                ..SpriteScript::default()
-            },
-        ];
-        let mut broken_conversion = vec![UNMAPPED; NONANIMATION_END];
-        broken_conversion[6] = 0;
-        broken_conversion[10] = 0;
-        let cache = HackableRhsCache {
-            version: 1,
-            manifest_hash,
-            sources: vec![hackable_source_stamp(directory.path(), "frame.png").unwrap()],
-            frames: Vec::new(),
-            profiles: vec![HackableRhsCacheProfile {
-                name: "test".to_owned(),
-                info: SpriteInfo {
-                    scripts: std::sync::Arc::new(scripts),
-                    conversion: std::sync::Arc::new(broken_conversion),
-                    size: SpriteSize::new(1.0, 1.0),
-                    center: SpriteAnchor::new(0.0, 0.0),
-                },
-            }],
-        };
-        write_hackable_cache(directory.path(), &cache).unwrap();
-
-        let upgraded = read_hackable_cache(directory.path(), manifest_hash).unwrap();
-        assert_eq!(upgraded.version, HACKABLE_RHS_CACHE_VERSION);
-        assert_eq!(upgraded.profiles[0].info.conversion[6], 0);
-        assert_eq!(upgraded.profiles[0].info.conversion[10], 1);
     }
 
     #[test]

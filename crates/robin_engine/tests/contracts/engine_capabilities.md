@@ -1,6 +1,17 @@
 
 ## Compiler-checked capability boundary
 
+Live engines cannot reopen mission script startup authority:
+
+```compile_fail,E0599
+use robin_engine::engine::Engine;
+let _ = Engine::mission_setup;
+```
+
+The single-use bootstrap clock completion does not expose startup script mutation.
+Clones and restored snapshots have no bootstrap clock authority; the runtime
+checks are exercised by the engine fixture suite.
+
 These examples compile against the actual public crate, not a mock type or a
 second copy of its source. The positive controls ensure the types and supported
 operations are accessible; each negative example isolates one forbidden access.

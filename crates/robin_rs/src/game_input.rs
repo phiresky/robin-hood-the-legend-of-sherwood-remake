@@ -69,7 +69,7 @@ pub fn resolve_left_click_with_planning(
     // the original PC selection so scripts and hero action bars retain their
     // five-PC assumptions. A direct click still feels like ordinary unit
     // selection and may coexist with heroes when Shift is held.
-    if host.frontend.control_tactical_units
+    if host.frontend.preferences().control_tactical_units()
         && let Some(soldier) =
             engine.find_tactically_controllable_unit(assets, &host.frontend.draw_order.ids, map_pt)
     {
@@ -201,7 +201,7 @@ pub fn resolve_left_click_with_planning(
             });
             return commands;
         }
-        if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+        if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.frontend.draw_order.ids,
@@ -382,7 +382,8 @@ pub fn resolve_left_click_with_planning(
             // discard the soldiers' half of that mixed selection, making the
             // gallery troops appear unable to run whenever Robin was boxed
             // with them.
-            if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+            if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty()
+            {
                 commands.push(PlayerCommand::MoveTacticalUnits {
                     formation: selected_tactical_formation(engine, &tactical_selected),
                     soldiers: tactical_selected.clone(),
@@ -444,7 +445,7 @@ pub fn resolve_left_click_with_planning(
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
         }];
-        if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+        if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
             commands.push(PlayerCommand::MoveTacticalUnits {
                 formation: selected_tactical_formation(engine, &tactical_selected),
                 soldiers: tactical_selected.clone(),
@@ -492,7 +493,7 @@ pub fn resolve_left_click_with_planning(
         recorded_gate_routes: Vec::new(),
         recorded_failed_gate_routes: Vec::new(),
     }];
-    if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+    if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
         commands.push(PlayerCommand::MoveTacticalUnits {
             formation: selected_tactical_formation(engine, &tactical_selected),
             soldiers: tactical_selected.clone(),
@@ -684,7 +685,7 @@ fn resolve_action_left_click(
     };
     let is_recording = engine.is_recording_macro();
     let is_deferred = is_recording || is_planning;
-    let valid_trajectory = host.frontend.trajectory_preview.is_valid();
+    let valid_trajectory = host.frontend.trajectory_preview().is_valid();
     let selected_layer = host.frontend.input.selected_layer;
 
     // 2D → 3D projection of the mouse-map point onto the topmost
@@ -1301,7 +1302,7 @@ pub fn resolve_action_drag(
         return vec![];
     };
     let is_recording = engine.is_recording_macro();
-    let valid_trajectory = host.frontend.trajectory_preview.is_valid();
+    let valid_trajectory = host.frontend.trajectory_preview().is_valid();
 
     // Apple / Stone gate on a valid arc.
     if matches!(selected_action, Action::Apple | Action::Stone)
@@ -1780,7 +1781,7 @@ pub fn resolve_swordfight(
         }
 
         let pc_screen = host.frontend.viewport.map_to_screen_unclamped(pos_map);
-        let evaluation = host.frontend.mouse_way.evaluate_detailed(
+        let evaluation = host.frontend.mouse_way().evaluate_detailed(
             pc_screen,
             facing_dir,
             combat_rules.more_combat_gestures,
@@ -1790,13 +1791,17 @@ pub fn resolve_swordfight(
             "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} quality={} similarity={} mw_pts={}",
             evaluation.quality.permille(),
             evaluation.similarity,
-            host.frontend.mouse_way.len(),
+            host.frontend.mouse_way().len(),
         );
 
-        if host.frontend.gameplay_config.combat_gesture_coach
+        if host
+            .frontend
+            .preferences()
+            .gameplay_config()
+            .combat_gesture_coach
             && !feedback_recorded
             && !matches!(pattern, MouseWayPattern::None)
-            && let Some(bounds) = host.frontend.mouse_way.bounds()
+            && let Some(bounds) = host.frontend.mouse_way().bounds()
         {
             let feedback_pattern = if combat_rules.more_combat_gestures
                 && matches!(pattern, MouseWayPattern::Attempt)
@@ -1808,16 +1813,17 @@ pub fn resolve_swordfight(
             } else {
                 pattern
             };
-            host.frontend.gesture_coach_feedback = Some(GestureCoachFeedback {
-                pattern: feedback_pattern,
-                quality: evaluation.quality,
-                bounds,
-                template_rotation: crate::mouse_way::display_template_rotation(
-                    feedback_pattern,
-                    facing_dir,
-                ),
-                created_at_ms: crate::window::process_uptime_ms(),
-            });
+            host.frontend
+                .set_gesture_coach_feedback(Some(GestureCoachFeedback {
+                    pattern: feedback_pattern,
+                    quality: evaluation.quality,
+                    bounds,
+                    template_rotation: crate::mouse_way::display_template_rotation(
+                        feedback_pattern,
+                        facing_dir,
+                    ),
+                    created_at_ms: crate::window::process_uptime_ms(),
+                }));
             feedback_recorded = true;
         }
 
@@ -2959,7 +2965,17 @@ mod tests {
     #[test]
     fn double_click_ground_runs_allies_in_mixed_selection() {
         let (mut engine, assets, mut host) = fixture();
-        host.frontend.control_tactical_units = true;
+        let preferences = host.frontend.preferences();
+        crate::host::FrontendPreferences::new(
+            preferences.key_config().clone(),
+            preferences.custom_key_config().clone(),
+            robin_engine::gameplay_config::GameplayConfig {
+                control_tactical_units: true,
+                ..preferences.gameplay_config()
+            },
+            &robin_engine::graphic_config::GraphicConfig::default(),
+        )
+        .apply(&mut host.frontend);
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         let ally = add_allied_soldier(&mut engine, 20.0, 20.0);
         select(&mut engine, &assets, pc);
@@ -3135,7 +3151,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Purse);
-        host.frontend.trajectory_preview.reject_hit();
+        host.frontend.reject_trajectory_hit();
 
         let cmds = resolve_left_click(
             &mut host,
@@ -3156,7 +3172,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Net);
-        host.frontend.trajectory_preview.reject_hit();
+        host.frontend.reject_trajectory_hit();
 
         let cmds = resolve_left_click(
             &mut host,
@@ -3506,8 +3522,7 @@ mod tests {
             (320.0, 290.0),
         ] {
             host.frontend
-                .mouse_way
-                .add_point(engine_coordinates::ScreenPoint::new(x, y));
+                .add_gesture_point(engine_coordinates::ScreenPoint::new(x, y));
         }
         assert_cmds!(
             resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(0.0, 0.0), true,),
@@ -3522,7 +3537,7 @@ mod tests {
             }]
         );
 
-        host.frontend.mouse_way.clear();
+        host.frontend.clear_gesture();
         apply(
             &mut engine,
             &assets,
@@ -3533,8 +3548,7 @@ mod tests {
         );
         for &(x, y) in crate::mouse_way::composite_template(CompositeSwordTechnique::Vortex) {
             host.frontend
-                .mouse_way
-                .add_point(engine_coordinates::ScreenPoint::new(
+                .add_gesture_point(engine_coordinates::ScreenPoint::new(
                     320.0 + x * 90.0,
                     320.0 + y * 90.0,
                 ));

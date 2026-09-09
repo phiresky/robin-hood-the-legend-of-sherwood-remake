@@ -565,7 +565,7 @@ impl Game {
         let screen_width = viewport.screen_size.x as i32;
         let screen_height = viewport.screen_size.y as i32;
         if frame.run_hourglass {
-            host.frontend.trajectory_preview.tick_marks(
+            host.frontend.tick_trajectory_marks(
                 view_position,
                 zoom_factor,
                 screen_width,
@@ -591,7 +591,9 @@ impl Game {
         // `pending_fps_cheat_promote` for us to apply here where both
         // halves are in scope.
         if host.effects.take_signal(HostSignal::PromoteFpsCheat) {
-            host.frontend.info_displayed = dev.debug.fps_display;
+            host.frontend
+                .diagnostics_mut()
+                .set_info_displayed(dev.debug.fps_display);
             dev.debug.fps_display = false;
         }
 

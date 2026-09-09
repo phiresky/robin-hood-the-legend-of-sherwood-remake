@@ -2248,8 +2248,8 @@ target/debug/robin-highscores-worker --config /absolute/highscores-worker.toml
 ```sh
 cargo test -p robin_replay_format
 cargo test -p robin_run_protocol
-cargo test -p robin_highscores
-cargo test -p robin_highscores --test router_e2e
+cargo test -p robin_highscores --features test-support
+cargo test -p robin_highscores --features test-support --test router_e2e
 python3 -m unittest discover -s scripts/release -p 'test_author_leaderboard_release.py'
 ```
 

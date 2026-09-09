@@ -48,9 +48,9 @@ use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
-use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 #[cfg(feature = "client")]
-use robin_engine::engine::{HostDisplayState, InputState};
+use robin_engine::engine::HostDisplayState;
+use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]
@@ -5016,22 +5016,15 @@ fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
 
 #[cfg(feature = "client")]
 fn drain_headless_http(
+    http: &mut robin_rs::http_server::SessionIngress,
     engine: &mut Engine,
-    display: &mut HostDisplayState,
     assets: &LevelAssets,
-    input: &mut InputState,
     selected_view_element: &mut Option<EntityId>,
     manual_pause: &mut bool,
     active_step: &mut Option<ActiveHttpStep>,
 ) -> robin_engine::player_command::FrameCommands {
-    let commands = robin_rs::http_server::drain_global_headless(
-        engine,
-        display,
-        assets,
-        input,
-        selected_view_element,
-    );
-    for request in robin_rs::http_server::take_pending_steps() {
+    let commands = http.drain_headless(engine, assets, selected_view_element);
+    for request in http.take_pending_steps() {
         match request.kind {
             robin_rs::http_server::StepKind::Forward { n, .. } => {
                 if n == 0 {
@@ -5099,21 +5092,14 @@ fn drain_headless_http(
 
 #[cfg(feature = "client")]
 fn serve_halted_http(
+    http: &mut robin_rs::http_server::SessionIngress,
     engine: &mut Engine,
-    display: &mut HostDisplayState,
     assets: &LevelAssets,
-    input: &mut InputState,
     selected_view_element: &mut Option<EntityId>,
 ) -> ! {
     loop {
-        let _ = robin_rs::http_server::drain_global_headless(
-            engine,
-            display,
-            assets,
-            input,
-            selected_view_element,
-        );
-        for request in robin_rs::http_server::take_pending_steps() {
+        let _ = http.drain_headless(engine, assets, selected_view_element);
+        for request in http.take_pending_steps() {
             request.respond_err(format!(
                 "parity replay is halted at divergent frame {}",
                 engine.frame_counter()

@@ -275,6 +275,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let MissionRuntime {
             world,
             timeline: runtime,
+            http,
             ..
         } = runtime;
         let mut startup_timer = (runtime.frame_number() <= 1)
@@ -383,6 +384,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             // frame so `present()` still blits the real frame last.
             let display_snapshot = host.frontend.engine_display.clone();
             drain_screenshots(
+                http,
                 runtime.frame_number(),
                 engine,
                 &display_snapshot,
@@ -410,7 +412,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let display_snapshot = host.frontend.engine_display.clone();
             let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.draw_order.clone();
-            let interpolation_enabled = host.frontend.native_refresh_presentation
+            let interpolation_enabled = host.frontend.preferences().native_refresh_presentation()
                 && !args.fast_forward
                 && !engine.is_fast_forward()
                 && !rewind_active;
@@ -427,7 +429,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
             host.frontend.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
-            if host.frontend.info_displayed && resources.hud_fonts.is_some() {
+            if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
                 super::render::prepare_display_info(host, crate::window::process_uptime_ms());
             }
             render_frame(
@@ -569,7 +571,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             sync_render_camera(host.frontend);
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
-            if host.frontend.info_displayed && resources.hud_fonts.is_some() {
+            if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
                 super::render::prepare_display_info(host, now_ms);
             }
             render_frame(
@@ -596,10 +598,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
             if host.frontend.input.is_dragging()
                 && crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat)
-                && !host.frontend.mouse_way.is_empty()
+                && !host.frontend.mouse_way().is_empty()
                 && let Some(trail) = presentation.sprites.mouse_trail_renderer.as_ref()
             {
-                trail.advance(&mut host.frontend.mouse_way);
+                host.frontend.advance_gesture_trail(trail);
             }
             host.frontend.input.marked_pc_ids.clear();
             if let Some(mut fade) = host.frontend.fade_to_black {
@@ -661,9 +663,11 @@ impl InteractiveMission {
         let outcome = InteractiveFrameSimulation::new(
             frame,
             FrameSimulationFlags {
-                rewind_active,
-                paused,
-                consumed_buffered,
+                execution: super::frame_simulate::FrameExecutionMode::admitted(
+                    rewind_active,
+                    paused,
+                    consumed_buffered,
+                ),
                 shift_held,
                 modal_rendered,
             },
@@ -700,6 +704,7 @@ impl InteractiveMission {
                     world,
                     timeline,
                     control,
+                    http,
                     ..
                 } = &mut self.runtime;
                 let MissionMutation {
@@ -711,6 +716,7 @@ impl InteractiveMission {
                 } = world.mutation();
                 let terminal_pending = self.frontend.ui.terminal_flow_active();
                 InteractiveFrameSimulation::drive_manual_steps(
+                    http,
                     timeline,
                     &services.callbacks.save_manager,
                     host,
@@ -724,8 +730,10 @@ impl InteractiveMission {
                     &mut self.frontend.presentation,
                     &mut self.frontend.input,
                     terminal_pending,
-                    step_forward_pressed,
-                    step_back_pressed,
+                    super::frame_simulate::KeyboardStep::from_pressed(
+                        step_forward_pressed,
+                        step_back_pressed,
+                    ),
                 );
                 FrameControl::Continue
             }
@@ -992,7 +1000,7 @@ async fn pace_interactive_frame(
     let remaining_wait_ms =
         presentation_wait_ms(presentation_deadline_ms, crate::window::process_uptime_us());
     if remaining_wait_ms > 0 {
-        let refresh_presentation = host.frontend.native_refresh_presentation
+        let refresh_presentation = host.frontend.preferences().native_refresh_presentation()
             && target >= engine_api::FRAME_TIME_MS
             && !host.frontend.skip_render;
         if refresh_presentation {
@@ -1005,7 +1013,7 @@ async fn pace_interactive_frame(
             let mut schedule = RefreshPresentationSchedule::new(
                 presentation_start_us,
                 remaining_wait_ms * 1_000,
-                host.frontend.native_refresh_present_cost_us,
+                host.frontend.diagnostics().native_refresh_present_cost_us(),
             );
             while schedule.should_present(crate::window::process_uptime_us()) {
                 let present_start_us = crate::window::process_uptime_us();
@@ -1016,7 +1024,9 @@ async fn pace_interactive_frame(
                 let present_end_us = crate::window::process_uptime_us();
                 schedule.record_present(present_start_us, present_end_us);
             }
-            host.frontend.native_refresh_present_cost_us = schedule.observed_present_cost_us();
+            host.frontend
+                .diagnostics_mut()
+                .observe_present_cost(schedule.observed_present_cost_us());
             let residual_us = schedule.remaining_us(crate::window::process_uptime_us());
             if residual_us > 0 {
                 crate::window::sleep_ms(residual_us.div_ceil(1_000)).await;

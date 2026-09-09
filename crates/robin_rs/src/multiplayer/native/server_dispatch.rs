@@ -60,6 +60,25 @@ fn queue_peer_message(
     }
 }
 
+/// Re-send cached lifecycle state to a provisional/reconnected peer. Writer
+/// closure is recoverable through generation-safe teardown and the next
+/// handshake; unlike initial handshake queuing it must not fail the host.
+pub(super) fn queue_cached_begin(
+    sender: &UnboundedSender<NetMsg>,
+    frame: u32,
+    start_epoch_ms: u64,
+) {
+    queue_peer_message(
+        sender,
+        NetMsg::BeginSim {
+            frame,
+            start_epoch_ms,
+        },
+        Delivery::ReconnectRecoverable,
+    )
+    .expect("reconnect-recoverable delivery cannot fail the host");
+}
+
 /// Take locally-produced messages from the game loop, stamp them with
 /// seat 0 + a target frame, fan them out to every peer's writer
 /// queue, AND echo them back into `incoming_tx` so the local game
@@ -167,7 +186,7 @@ pub(super) async fn run_server_outgoing_pump(
                     PlayerId::HOST,
                     "authoritative host cannot reconnect itself for a stale input"
                 );
-                let sender = context.peers.lock().take_sender(&player_id.0);
+                let sender = context.peers.lock().sessions.detach_writer(&player_id.0);
                 if let Some(sender) = sender {
                     tracing::warn!(
                         ?player_id,
@@ -193,8 +212,8 @@ pub(super) async fn run_server_outgoing_pump(
                 let senders = {
                     let mut peers = context.peers.lock();
                     peers.readiness.reset();
-                    peers.clear_ready();
-                    peers.take_senders()
+                    peers.sessions.clear_ready();
+                    peers.sessions.detach_all_writers()
                 };
                 tracing::warn!(
                     peers = senders.len(),
@@ -220,6 +239,7 @@ pub(super) async fn run_server_outgoing_pump(
                         "another multiplayer snapshot transition is already pending"
                     );
                     let awaiting = peers
+                        .sessions
                         .senders()
                         .map(|(seat, _)| seat)
                         .copied()
@@ -233,7 +253,7 @@ pub(super) async fn run_server_outgoing_pump(
                     // Keep the peer-state lock until every current writer has
                     // queued Prepare. Otherwise its reader could disconnect,
                     // empty the readiness set, and queue Commit first.
-                    for sender in peers.senders().map(|(_, sender)| sender) {
+                    for sender in peers.sessions.senders().map(|(_, sender)| sender) {
                         queue_peer_message(sender, prepare.clone(), Delivery::Required)?;
                     }
                     take_committed_snapshot_transition(&mut peers)
@@ -314,6 +334,7 @@ pub(super) async fn run_server_outgoing_pump(
                 let sender = {
                     let peers = context.peers.lock();
                     let expected_controller = peers
+                        .sessions
                         .ranked_identity(&to.0)
                         .and_then(|identity| identity.durable_public_key)
                         .map(PublicKey32::from_bytes);
@@ -323,7 +344,7 @@ pub(super) async fn run_server_outgoing_pump(
                     {
                         None
                     } else {
-                        peers.sender(&to.0).cloned()
+                        peers.sessions.sender(&to.0).cloned()
                     }
                 };
                 match sender {
@@ -377,8 +398,9 @@ pub(super) async fn run_server_outgoing_pump(
                 let sender = {
                     let peers = context.peers.lock();
                     peers
+                        .sessions
                         .is_sim_connected(&to.0)
-                        .then(|| peers.sender(&to.0).cloned())
+                        .then(|| peers.sessions.sender(&to.0).cloned())
                         .flatten()
                 };
                 match sender {
@@ -411,8 +433,9 @@ pub(super) async fn run_server_outgoing_pump(
                 let sender = {
                     let peers = context.peers.lock();
                     peers
+                        .sessions
                         .is_sim_connected(&to.0)
-                        .then(|| peers.sender(&to.0).cloned())
+                        .then(|| peers.sessions.sender(&to.0).cloned())
                         .flatten()
                 };
                 match sender {
@@ -590,7 +613,11 @@ fn broadcast_with_delivery(
     );
     let to_send: Vec<UnboundedSender<NetMsg>> = {
         let p = context.peers.lock();
-        p.senders().map(|(_, sender)| sender).cloned().collect()
+        p.sessions
+            .senders()
+            .map(|(_, sender)| sender)
+            .cloned()
+            .collect()
     };
     for sender in to_send {
         queue_peer_message(&sender, msg.clone(), delivery)?;
@@ -609,6 +636,7 @@ pub(super) fn broadcast_msg_required(context: &ServerContext, msg: NetMsg) -> Re
     let to_send: Vec<(u8, UnboundedSender<NetMsg>)> = {
         let peers = context.peers.lock();
         peers
+            .sessions
             .senders()
             .map(|(seat, sender)| (*seat, sender.clone()))
             .collect()
@@ -700,5 +728,22 @@ mod tests {
         assert!(queue_peer_message(&sender, message(), Delivery::Required).is_err());
         assert!(queue_peer_message(&sender, message(), Delivery::ReconnectRecoverable).is_ok());
         assert!(queue_peer_message(&sender, message(), Delivery::Diagnostic).is_ok());
+    }
+
+    #[test]
+    fn cached_begin_preserves_payload_and_allows_disconnected_peer_recovery() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        queue_cached_begin(&sender, 41, 73);
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            NetMsg::BeginSim {
+                frame: 41,
+                start_epoch_ms: 73
+            }
+        ));
+        drop(receiver);
+        // Cached BeginSim is reconstructible at the next admission, unlike
+        // a live-session irreversible control. It must not stop the host.
+        queue_cached_begin(&sender, 42, 74);
     }
 }

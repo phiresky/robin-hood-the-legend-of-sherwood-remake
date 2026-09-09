@@ -117,15 +117,15 @@ pub(super) fn handle_hold_to_rewind(
     // consecutive rewind steps reuse earlier replay work instead
     // of re-ticking from a snapshot each frame.
     if rewind_held {
-        timeline.rewind_buffer.begin_session();
+        timeline.begin_rewind_session();
     } else {
-        timeline.rewind_buffer.end_session();
+        timeline.end_rewind_session();
     }
     let mut rewind_active = false;
     if rewind_held
         && timeline.current_frame().previous().is_some()
         && timeline
-            .rewind_buffer
+            .retained_history()
             .oldest_reachable_frame()
             .is_some_and(|f| f < timeline.frame_number())
     {
@@ -208,15 +208,15 @@ pub(super) fn handle_console_overlay_events(
                 frame.record_applied_external_action(action);
                 tracing::info!("Loaded campaign values from {}", path.display());
                 host.frontend
-                    .pending_console_output
-                    .push("Campaign values loaded !".to_string());
+                    .diagnostics_mut()
+                    .queue_console_output("Campaign values loaded !".to_string());
             }
             Err(err) => {
                 tracing::error!("CAMPAIGN load failed for {}: {err:#}", path.display());
                 // Echo the open-failure message into the console.
                 host.frontend
-                    .pending_console_output
-                    .push("Kaputt !".to_string());
+                    .diagnostics_mut()
+                    .queue_console_output("Kaputt !".to_string());
             }
         }
     }

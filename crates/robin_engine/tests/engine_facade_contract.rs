@@ -136,7 +136,7 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
         // render interpolation; it cannot open the live simulation owner.
         "apply_spatial_presentation",
         "host_console",
-        "mission_setup",
+        "finish_mission_bootstrap",
         "parity_replay_setup",
         // Host-side, exactly-once policy attestation for the terminal attempt.
         // Calculation itself remains deterministic engine state; this opener
@@ -150,6 +150,7 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
         "test_set_frame_counter",
         "test_set_mission_flags",
         "test_set_mission_stat",
+        "test_with_mission_script_effects_and_rng",
     ];
     allowed.sort();
 
@@ -160,6 +161,39 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
     assert!(
         mutable_inner_methods.is_empty(),
         "EngineInner is a public read-only projection; public &mut EngineInner methods bypass the authoritative Engine facade: {mutable_inner_methods:?}"
+    );
+}
+
+#[test]
+fn parity_reconstruction_opener_requires_explicit_tooling_feature() {
+    let syntax = parse_rust("src/engine/rollback_safe.rs");
+    let opener = syntax
+        .items
+        .iter()
+        .find_map(|item| {
+            let Item::Impl(item) = item else {
+                return None;
+            };
+            if !path_ends_with(&item.self_ty, "Engine") {
+                return None;
+            }
+            item.items.iter().find_map(|item| match item {
+                syn::ImplItem::Fn(method) if method.sig.ident == "parity_replay_setup" => {
+                    Some(method)
+                }
+                _ => None,
+            })
+        })
+        .expect("the parity tool needs an explicit reconstruction opener");
+    assert!(
+        opener.attrs.iter().any(|attribute| {
+            let syn::Meta::List(meta) = &attribute.meta else {
+                return false;
+            };
+            meta.path.is_ident("cfg")
+                && meta.tokens.to_string() == "any (test , feature = \"original-parity\")"
+        }),
+        "parity reconstruction must not be available to ordinary runtime consumers"
     );
 }
 

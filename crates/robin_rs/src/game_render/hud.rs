@@ -215,7 +215,7 @@ const TRAJECTORY_DOT_INTERVAL: f32 = 7.0;
 /// Draws filled 1-pixel squares at regular intervals along the
 /// ballistic arc.
 pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Renderer) {
-    if !host.frontend.trajectory_preview.is_valid() {
+    if !host.frontend.trajectory_preview().is_valid() {
         return;
     }
 
@@ -227,7 +227,7 @@ pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Rend
     // Trajectory color: cyan (0,231,191) for a normal arc, pink
     // (255,100,150) when the shot is crumpled / will miss
     // (`net_crumpled` is set).
-    let (cr, cg, cb) = if host.frontend.trajectory_preview.crumpled() {
+    let (cr, cg, cb) = if host.frontend.trajectory_preview().crumpled() {
         (255u8, 100u8, 150u8)
     } else {
         (0u8, 231u8, 191u8)
@@ -292,10 +292,10 @@ pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Rend
     }
 
     // Render the hover-preview trajectory (computed by is_valid_trajectory).
-    if !host.frontend.trajectory_preview.points().is_empty() {
+    if !host.frontend.trajectory_preview().points().is_empty() {
         render_arc(
-            host.frontend.trajectory_preview.start(),
-            host.frontend.trajectory_preview.points(),
+            host.frontend.trajectory_preview().start(),
+            host.frontend.trajectory_preview().points(),
             view,
             zoom,
             screen_w,
@@ -316,7 +316,7 @@ pub(crate) fn render_item_effect_preview(
     renderer: &mut Renderer,
     fonts: Option<&HudFonts>,
 ) {
-    let Some(preview) = host.frontend.item_effect_preview else {
+    let Some(preview) = host.frontend.item_effect_preview() else {
         return;
     };
 

@@ -919,13 +919,11 @@ mod tests {
             robin_engine::engine::SimConfig::default(),
         )
         .expect("construct engine with the minimal mission script");
-        engine
-            .mission_setup()
-            .with_script_effects_and_rng(&assets, |_simulation, native_parts| {
-                session
-                    .run_required_startup_events(native_parts, 0)
-                    .expect("Lua startup campaign native succeeds")
-            });
+        engine.test_with_mission_script_effects_and_rng(&assets, |_simulation, native_parts| {
+            session
+                .run_required_startup_events(native_parts, 0)
+                .expect("Lua startup campaign native succeeds")
+        });
 
         let slot = CampaignValue::custom(7).expect("custom campaign slot 7");
         assert_eq!(
@@ -993,13 +991,11 @@ mod tests {
             robin_engine::engine::SimConfig::default(),
         )
         .expect("construct engine with the minimal mission script");
-        engine
-            .mission_setup()
-            .with_script_effects_and_rng(&assets, |_simulation, native_parts| {
-                session
-                    .run_required_startup_events(native_parts, 0)
-                    .expect("Lua startup AI natives succeed")
-            });
+        engine.test_with_mission_script_effects_and_rng(&assets, |_simulation, native_parts| {
+            session
+                .run_required_startup_events(native_parts, 0)
+                .expect("Lua startup AI natives succeed")
+        });
 
         assert_eq!(engine.ai_global().next_repulsive_point_id, 2);
         assert!(engine.ai_global().repulsive_points.is_empty());

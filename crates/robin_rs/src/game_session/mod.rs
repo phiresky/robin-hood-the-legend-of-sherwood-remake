@@ -389,9 +389,9 @@ async fn resolve_replay_mission_assets(
 }
 
 fn choose_pending_replay(
-    newly_queued: Option<crate::http_server::PendingReplay>,
-    restart_fallback: &mut Option<crate::http_server::PendingReplay>,
-) -> Option<crate::http_server::PendingReplay> {
+    newly_queued: Option<crate::replay_service::PendingReplay>,
+    restart_fallback: &mut Option<crate::replay_service::PendingReplay>,
+) -> Option<crate::replay_service::PendingReplay> {
     if newly_queued.is_some() {
         // A newly queued replay supersedes the whole prior replay lifecycle,
         // including its restart copy. Do not leave the old recording armed
@@ -973,10 +973,10 @@ pub(crate) async fn run_session(
         preselected_mission = Some(target_idx);
         callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
     }
-    let mut replay_restart: Option<crate::http_server::PendingReplay> = None;
+    let mut replay_restart: Option<crate::replay_service::PendingReplay> = None;
     loop {
         let pending_replay = choose_pending_replay(
-            crate::http_server::take_pending_replay(),
+            crate::replay_service::process().take_pending(),
             &mut replay_restart,
         );
         let mut mission_args_storage = None;
@@ -1012,7 +1012,7 @@ pub(crate) async fn run_session(
             authoritative_rng_seed = prepared.4;
             authoritative_sim_config = prepared.5;
             mission_args_storage = Some(prepared.3);
-            replay_for_restart = Some(crate::http_server::PendingReplay {
+            replay_for_restart = Some(crate::replay_service::PendingReplay {
                 data: replay_copy,
                 paused,
             });
@@ -1535,7 +1535,7 @@ pub(crate) async fn run_mission(
             .replay_data
             .as_ref()
             .map(|_| (campaign.clone(), rng_seed, sim_config));
-        let mut pending_replay = crate::http_server::take_pending_replay();
+        let mut pending_replay = crate::replay_service::process().take_pending();
         loop {
             match prepare_pending_direct_replay(
                 &mut pending_replay,
@@ -1575,7 +1575,7 @@ pub(crate) async fn run_mission(
             );
             let outcome_sim_config = outcome.sim_config;
             campaign = outcome.campaign;
-            pending_replay = crate::http_server::take_pending_replay();
+            pending_replay = crate::replay_service::process().take_pending();
             if pending_replay.is_some() {
                 // A newly admitted replay owns the next cold construction. Do not
                 // restore the previous mission checkpoint or reuse its selection.
@@ -1632,7 +1632,7 @@ fn carry_direct_restart_multiplayer_continuation(
 /// caller owns its launch args so releasing the old asset lease really unmounts
 /// that overlay before canonical replay resolution installs a replacement.
 async fn prepare_pending_direct_replay(
-    pending: &mut Option<crate::http_server::PendingReplay>,
+    pending: &mut Option<crate::replay_service::PendingReplay>,
     application_context: &ApplicationContext,
     profiles: &mut engine_profiles::ProfileManager,
     args: &mut crate::main_entry::CliArgs,
@@ -2213,7 +2213,7 @@ mod required_state_tests {
             header.rng_seed = 0x3030;
         })
         .unwrap();
-        let mut pending = Some(crate::http_server::PendingReplay {
+        let mut pending = Some(crate::replay_service::PendingReplay {
             data,
             paused: false,
         });
@@ -2256,7 +2256,7 @@ mod required_state_tests {
     fn pending_direct_replay_same_mission_restores_recorded_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
         let mut args = crate::main_entry::CliArgs::default();
-        let mut pending = Some(crate::http_server::PendingReplay { data, paused: true });
+        let mut pending = Some(crate::replay_service::PendingReplay { data, paused: true });
         let (campaign, index, _, seed, config) = pollster::block_on(prepare_pending_direct_replay(
             &mut pending,
             &crate::host::ApplicationContext::default(),
@@ -2278,7 +2278,7 @@ mod required_state_tests {
     fn pending_direct_replay_rejection_is_consumed_without_fallback() {
         let (mut profiles, data) = replay_fixture(None);
         let mut args = crate::main_entry::CliArgs::default();
-        let mut pending = Some(crate::http_server::PendingReplay {
+        let mut pending = Some(crate::replay_service::PendingReplay {
             data,
             paused: false,
         });
@@ -2518,13 +2518,13 @@ mod required_state_tests {
         restart_data
             .try_edit_header(|header| header.rng_seed = 0x3030)
             .unwrap();
-        let mut restart = Some(crate::http_server::PendingReplay {
+        let mut restart = Some(crate::replay_service::PendingReplay {
             data: restart_data,
             paused: false,
         });
 
         let selected = choose_pending_replay(
-            Some(crate::http_server::PendingReplay {
+            Some(crate::replay_service::PendingReplay {
                 data: queued_data,
                 paused: true,
             }),
@@ -2545,13 +2545,13 @@ mod required_state_tests {
             restart_data
                 .try_edit_header(|header| header.rng_seed = 0x3030)
                 .unwrap();
-            let mut restart = Some(crate::http_server::PendingReplay {
+            let mut restart = Some(crate::replay_service::PendingReplay {
                 data: restart_data,
                 paused: false,
             });
 
             let selected = choose_pending_replay(
-                Some(crate::http_server::PendingReplay {
+                Some(crate::replay_service::PendingReplay {
                     data: queued_data,
                     paused: true,
                 }),

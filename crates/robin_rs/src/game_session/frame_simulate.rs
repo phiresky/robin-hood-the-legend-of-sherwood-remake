@@ -35,11 +35,69 @@ pub(super) enum FrameSimulationOutcome {
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(super) struct FrameSimulationFlags {
-    pub(super) rewind_active: bool,
-    pub(super) paused: bool,
-    pub(super) consumed_buffered: bool,
+    pub(super) execution: FrameExecutionMode,
     pub(super) shift_held: bool,
     pub(super) modal_rendered: bool,
+}
+
+/// Admitted timeline work, not independent switches. Buffered history is only
+/// consumed by a running forward frame; a rewind has already replaced state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) enum FrameExecutionMode {
+    Live,
+    Paused,
+    Buffered,
+    Rewind,
+}
+
+impl FrameExecutionMode {
+    pub(super) fn admitted(rewind: bool, paused: bool, buffered: bool) -> Self {
+        assert!(
+            !buffered || (!rewind && !paused),
+            "buffered input requires a running forward frame"
+        );
+        match (rewind, paused, buffered) {
+            (true, _, _) => Self::Rewind,
+            (_, true, _) => Self::Paused,
+            (_, _, true) => Self::Buffered,
+            _ => Self::Live,
+        }
+    }
+
+    fn records_commands(self) -> bool {
+        matches!(self, Self::Live | Self::Paused)
+    }
+
+    fn advances_live_timeline(self) -> bool {
+        matches!(self, Self::Live | Self::Buffered)
+    }
+}
+
+/// One keyboard action, selected before any HTTP step changes the playhead.
+/// Simultaneous bindings retain the existing forward-before-back precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) enum KeyboardStep {
+    None,
+    Forward,
+    Back,
+}
+
+impl KeyboardStep {
+    pub(super) fn from_pressed(forward: bool, back: bool) -> Self {
+        match (forward, back) {
+            (true, _) => Self::Forward,
+            (_, true) => Self::Back,
+            _ => Self::None,
+        }
+    }
+
+    fn admitted(self, multiplayer: bool, host_modal: bool, mission_modal: bool) -> Self {
+        if multiplayer || host_modal || mission_modal {
+            Self::None
+        } else {
+            self
+        }
+    }
 }
 
 /// One admitted interactive frame after input preparation has completed.
@@ -98,7 +156,7 @@ fn ui_task_modal_admission(
 struct SimulationVisualRefresh<'a> {
     last_shadow_color: &'a mut u16,
     last_visual_ambiance: &'a mut robin_engine::engine::Ambiance,
-    manager: &'a mut robin_engine::engine_manager::EngineManager,
+    engine: &'a robin_engine::engine::Engine,
     host: &'a mut Host,
     dev: &'a mut robin_engine::engine::DevState,
     presentation: &'a mut MissionPresentation,
@@ -111,7 +169,7 @@ impl SimulationVisualRefresh<'_> {
         let Self {
             last_shadow_color,
             last_visual_ambiance,
-            manager,
+            engine,
             host,
             dev,
             presentation,
@@ -125,18 +183,18 @@ impl SimulationVisualRefresh<'_> {
             .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
             .unwrap_or(true);
         let current_visual_ambiance = if dynamic_visuals {
-            manager.engine.weather().ambiance
+            engine.weather().ambiance
         } else {
-            manager.engine.initial_mission_ambiance()
+            engine.initial_mission_ambiance()
         };
         let current_shadow_color = if dynamic_visuals {
-            manager.engine.weather().night_color
+            engine.weather().night_color
         } else {
-            manager.engine.initial_mission_night_color()
+            engine.initial_mission_night_color()
         };
         let ambiance_changed = current_visual_ambiance != *last_visual_ambiance;
         if ambiance_changed {
-            presentation.apply_ambience_maps(&manager.engine, host, current_visual_ambiance);
+            presentation.apply_ambience_maps(engine, host, current_visual_ambiance);
             *last_visual_ambiance = current_visual_ambiance;
         }
         if current_shadow_color != *last_shadow_color || ambiance_changed {
@@ -151,7 +209,7 @@ impl SimulationVisualRefresh<'_> {
                 &window.gpu,
                 current_shadow_color,
                 current_visual_ambiance,
-                manager.engine.sim_config().bypass_fog_sprites_crash,
+                engine.sim_config().bypass_fog_sprites_crash,
             );
             *last_shadow_color = current_shadow_color;
         }
@@ -567,6 +625,7 @@ impl InteractiveFrameSimulation {
             world,
             timeline: runtime,
             control,
+            http,
             leaderboard: _,
         } = runtime;
         let MissionMutation {
@@ -585,30 +644,27 @@ impl InteractiveFrameSimulation {
         let presentation = &mut frontend.presentation;
         let Self { mut frame, flags } = this;
         let FrameSimulationFlags {
-            rewind_active,
-            paused,
-            consumed_buffered,
+            execution,
             shift_held,
             modal_rendered: modal_rendered_this_frame,
         } = flags;
 
         let tick_exit_code = Self::advance_timeline(
+            http,
             runtime,
             host,
             game,
-            manager,
+            &mut manager.engine,
             assets,
             dev,
             &mut frame,
-            rewind_active,
-            paused,
-            consumed_buffered,
+            execution,
         );
-        let history_commit_pending = frame.timeline_advances(!paused && !rewind_active);
+        let history_commit_pending = frame.timeline_advances(execution.advances_live_timeline());
         SimulationVisualRefresh {
             last_shadow_color,
             last_visual_ambiance,
-            manager,
+            engine: &manager.engine,
             host,
             dev,
             presentation,
@@ -619,8 +675,8 @@ impl InteractiveFrameSimulation {
 
         SimulationModalState {
             frame,
-            rewind_active,
-            consumed_buffered,
+            rewind_active: execution == FrameExecutionMode::Rewind,
+            consumed_buffered: execution == FrameExecutionMode::Buffered,
             shift_held,
             modal_rendered_this_frame,
             auto_dismiss_modals,
@@ -645,6 +701,7 @@ impl InteractiveFrameSimulation {
             world,
             timeline: runtime,
             leaderboard,
+            http,
             ..
         } = runtime;
         let MissionMutation {
@@ -707,8 +764,7 @@ impl InteractiveFrameSimulation {
             }
         } else if let Some(mut task) = ui.active_ui_task.take() {
             let task_owned_presentation = task.owns_presentation();
-            let scene_screenshots =
-                crate::http_server::take_pending_scene_screenshots(runtime.frame_number());
+            let scene_screenshots = http.take_pending_scene_screenshots(runtime.frame_number());
             if !scene_screenshots.is_empty() {
                 pre_render_engine_setup(host);
                 update_mouse_and_cursor(
@@ -779,7 +835,11 @@ impl InteractiveFrameSimulation {
             );
             if task_owned_presentation {
                 modal_rendered_this_frame = true;
-                drain_presented_ui_screenshots(runtime.frame_number(), &presentation.renderer);
+                drain_presented_ui_screenshots(
+                    http,
+                    runtime.frame_number(),
+                    &presentation.renderer,
+                );
             }
 
             if let Some(outcome) = task_outcome {
@@ -1329,16 +1389,15 @@ impl InteractiveFrameSimulation {
     /// Record commands, advance the engine, service script RPC, and commit
     /// the resulting deterministic history before any manual stepping.
     fn advance_timeline(
+        http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
         host: &mut Host,
         game: &mut crate::game::Game,
-        manager: &mut robin_engine::engine_manager::EngineManager,
-        assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
+        engine: &mut robin_engine::engine::Engine,
+        assets: &robin_engine::engine::LevelAssets,
         dev: &mut robin_engine::engine::DevState,
         frame: &mut MissionFrame,
-        rewind_active: bool,
-        paused: bool,
-        consumed_buffered: bool,
+        execution: FrameExecutionMode,
     ) -> Option<GameCode> {
         // ── Record frame commands + periodic state hash ──
         // The matching `recorder.end_frame()` runs after the modal
@@ -1349,7 +1408,7 @@ impl InteractiveFrameSimulation {
         // pass). The hash itself was computed at the top of the
         // frame into `frame.recorder_hash` — writing it here
         // keeps the gating in one place.
-        runtime.begin_recording(frame, !rewind_active && !consumed_buffered);
+        runtime.begin_recording(frame, execution.records_commands());
         runtime.trace(FrameContractStage::Simulation);
 
         // ── Engine tick ──
@@ -1359,9 +1418,10 @@ impl InteractiveFrameSimulation {
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
         let tick_exit_code = runtime.run_simulation(|| {
-            if rewind_active {
+            if execution == FrameExecutionMode::Rewind {
                 return None;
             }
+            let paused = execution == FrameExecutionMode::Paused;
             let mut display = std::mem::take(&mut host.frontend.engine_display);
             let mission_transitioning = !game
                 .operation
@@ -1371,8 +1431,8 @@ impl InteractiveFrameSimulation {
             let result = game.run_engine_tick(
                 host,
                 &mut display,
-                assets.as_ref(),
-                &mut manager.engine,
+                assets,
+                engine,
                 dev,
                 simulation_frame,
                 false,
@@ -1390,36 +1450,32 @@ impl InteractiveFrameSimulation {
         // that just finished.  No-op when the HTTP server is disabled
         // or the mission isn't loaded yet (each handler returns an
         // `Err` that's relayed back).
-        let pending_actions = frame.unapplied_post_external_actions().to_vec();
-        if !pending_actions.is_empty() {
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
-            crate::sim_timeline::run_post_external_action_stage(
-                host,
-                &mut display,
-                assets,
-                &mut manager.engine,
-                dev,
-                &pending_actions,
-            );
-            host.frontend.engine_display = display;
-            frame.mark_post_external_actions_applied();
-        }
-        let actions =
-            crate::http_server::drain_global(manager, host, assets, &mut frame.post_commands);
-        runtime.record_input_taints(crate::http_server::take_pending_replay_taints());
-        frame.record_applied_post_external_actions(actions);
+        let application_context = host.application_context().clone();
+        super::runtime::drain_post_tick_rpc(
+            http,
+            runtime,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            &host.transport,
+            engine,
+            assets,
+            dev,
+            frame,
+        );
 
         // ── Rollback check + rewind buffer commit ──
         // Both are post-tick bookkeeping.  Skipped on paused frames
         // (no tick ran) and rewind frames (tick was suppressed).  The
         // rewind buffer also skips commits while consuming its own
         // log — the slot is already populated and would duplicate.
-        if frame.timeline_advances(!paused && !rewind_active) {
+        if frame.timeline_advances(execution.advances_live_timeline()) {
             let next_frame = runtime.advance_frame().number();
             if let Some(net) = host.transport.net()
                 && host.transport.local_seat() == engine_player_command::PlayerId::HOST
             {
-                net.set_initial_snapshot(next_frame, &manager.engine);
+                net.set_initial_snapshot(next_frame, engine);
             }
         }
         frame.commit_timeline_after(runtime.current_frame());
@@ -1433,6 +1489,7 @@ impl InteractiveFrameSimulation {
     /// This stays after the normal history commit: step-forward owns its own
     /// tick/PostInitialize boundary, while step-back replaces the live engine.
     pub(super) fn drive_manual_steps(
+        http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
         save_manager: &crate::savegame::SaveGameManager,
         host: &mut Host,
@@ -1446,8 +1503,7 @@ impl InteractiveFrameSimulation {
         presentation: &mut super::interactive::MissionPresentation,
         input: &mut super::interactive::MissionInput,
         terminal_exit_pending: bool,
-        step_forward_pressed: bool,
-        step_back_pressed: bool,
+        keyboard_step: KeyboardStep,
     ) {
         // ── Pending `/step-forward` / `/step-back` requests ──
         // Run each queued step synchronously with its own tick +
@@ -1469,6 +1525,7 @@ impl InteractiveFrameSimulation {
         let pause_menu = &mut ui.pause_menu;
         let mut dismissed_ui_task = false;
         drain_steps(
+            http.take_pending_steps(),
             manager,
             host,
             assets.as_ref(),
@@ -1517,7 +1574,7 @@ impl InteractiveFrameSimulation {
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        crate::http_server::set_replay_status(runtime.replay_player.as_ref().map(|p| {
+        http.set_replay_status(runtime.replay_player.as_ref().map(|p| {
             crate::http_server::ReplayStatus {
                 frame: p.current_frame(),
                 total: p.total_frames(),
@@ -1544,12 +1601,12 @@ impl InteractiveFrameSimulation {
                 .active_modal
                 .as_ref()
                 .is_some_and(|modal| !modal.is_empty());
-        let keyboard_stepping_allowed = host.transport.net().is_none();
-        if step_forward_pressed
-            && keyboard_stepping_allowed
-            && !modal_state_pending(host)
-            && !mission_ui_modal_pending
-        {
+        let keyboard_step = keyboard_step.admitted(
+            host.transport.net().is_some(),
+            modal_state_pending(host),
+            mission_ui_modal_pending,
+        );
+        if keyboard_step == KeyboardStep::Forward {
             // Reuse the HTTP tick transaction, but do not auto-dismiss a
             // modal reached by this single interactive tick.
             let mut policy = crate::http_server::StepModalPolicy {
@@ -1561,18 +1618,14 @@ impl InteractiveFrameSimulation {
             {
                 tracing::warn!(%error, "keyboard step-forward stopped");
             }
-        } else if step_back_pressed
-            && keyboard_stepping_allowed
-            && !modal_state_pending(host)
-            && !mission_ui_modal_pending
-        {
+        } else if keyboard_step == KeyboardStep::Back {
             if let Some(target) = runtime.current_frame().previous()
-                && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
+                && let Some(oldest) = runtime.retained_history().oldest_reachable_frame()
                 && target.number() >= oldest
             {
-                runtime.rewind_buffer.begin_session();
+                runtime.begin_rewind_session();
                 let restored = runtime.restore_retained_frame(manager, assets, target);
-                runtime.rewind_buffer.end_session();
+                runtime.end_rewind_session();
                 if !restored {
                     tracing::warn!("step-back: rewind_to({}) failed", target.number());
                 }
@@ -1605,6 +1658,149 @@ fn manual_step_ui_block_reason(
 #[cfg(test)]
 mod tests {
     use super::{ScriptedModalMode, UiTaskKind, UiTaskModalAdmission, ui_task_modal_admission};
+
+    #[test]
+    fn execution_modes_preserve_admission_and_recording_policy() {
+        use super::super::runtime::{MissionFrame, TimelineFrame, TimelineTransition};
+        use super::FrameExecutionMode::{self, *};
+        for (rewind, paused, buffered, expected, records, advances) in [
+            (false, false, false, Live, true, true),
+            (false, true, false, Paused, true, false),
+            (false, false, true, Buffered, false, true),
+            (true, false, false, Rewind, false, false),
+            (true, true, false, Rewind, false, false),
+        ] {
+            let mode = FrameExecutionMode::admitted(rewind, paused, buffered);
+            assert_eq!(mode, expected);
+            assert_eq!(mode.records_commands(), records);
+            assert_eq!(mode.advances_live_timeline(), advances);
+            let mut frame = MissionFrame::new(0);
+            assert_eq!(
+                frame.timeline_advances(mode.advances_live_timeline()),
+                advances
+            );
+            // A recorded transition remains authoritative independently of
+            // the host's clock mode (including command-only replay records).
+            for after in [TimelineFrame::ZERO, TimelineFrame::ZERO.next()] {
+                frame.replay_timeline_transition = Some(TimelineTransition {
+                    before: TimelineFrame::ZERO,
+                    after,
+                });
+                assert_eq!(
+                    frame.timeline_advances(mode.advances_live_timeline()),
+                    after != TimelineFrame::ZERO,
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "buffered input requires a running forward frame")]
+    fn buffered_execution_rejects_rewind() {
+        super::FrameExecutionMode::admitted(true, false, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "buffered input requires a running forward frame")]
+    fn buffered_execution_rejects_pause() {
+        super::FrameExecutionMode::admitted(false, true, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "buffered input requires a running forward frame")]
+    fn buffered_execution_rejects_paused_rewind() {
+        super::FrameExecutionMode::admitted(true, true, true);
+    }
+
+    #[test]
+    fn paused_commands_and_rewind_post_actions_keep_their_frame_boundary() {
+        use super::{FrameExecutionMode, InteractiveFrameSimulation};
+        use crate::game_session::runtime::{FrameContract, MissionFrame, TimelineRuntime};
+        use robin_engine::engine::{DevState, Engine, ExternalAction, LevelAssets};
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+
+        for mode in [FrameExecutionMode::Paused, FrameExecutionMode::Rewind] {
+            let mut assets = LevelAssets::new();
+            let mut engine = Engine::new_for_test_with_level_size(
+                1024.0,
+                768.0,
+                Default::default(),
+                &mut assets,
+                4096.0,
+                4096.0,
+            )
+            .unwrap();
+            let assets = std::sync::Arc::new(assets);
+            let mut host = crate::host::Host::default();
+            let mut game = crate::game::Game::default();
+            let mut dev = DevState::default();
+            let mut timeline = TimelineRuntime::new(
+                super::super::replay_init::ReplayAndRollback {
+                    recorder: None,
+                    player: None,
+                    rollback_checker: None,
+                    rewind_buffer: crate::rewind::RewindBuffer::new(),
+                    start_paused: false,
+                },
+                FrameContract::Graphical,
+                false,
+                true,
+            );
+            let mut frame = MissionFrame::new(0);
+            timeline.open_frame(&mut frame, &engine, &assets);
+            frame.commands.push(PlayerInput::new(
+                PlayerId::HOST,
+                PlayerCommand::SetLockAlt(true),
+            ));
+            let campaign = robin_engine::campaign::Campaign {
+                ares: 3,
+                ..Default::default()
+            };
+            frame
+                .post_external_actions
+                .push(ExternalAction::ReplaceCampaign { campaign });
+            let before_tick = engine.simulation_tick();
+            let mut http = crate::http_server::SessionIngress::detached_for_test();
+            InteractiveFrameSimulation::advance_timeline(
+                &mut http,
+                &mut timeline,
+                &mut host,
+                &mut game,
+                &mut engine,
+                &assets,
+                &mut dev,
+                &mut frame,
+                mode,
+            );
+            assert_eq!(engine.simulation_tick(), before_tick);
+            assert_eq!(engine.is_lock_alt(), mode == FrameExecutionMode::Paused);
+            assert_eq!(
+                engine.campaign().ares,
+                3,
+                "post-tick RPC stage still executes during rewind"
+            );
+            assert!(frame.unapplied_post_external_actions().is_empty());
+            assert_eq!(timeline.frame_number(), 0);
+        }
+    }
+
+    #[test]
+    fn keyboard_step_has_one_direction_and_cannot_bypass_modal_or_network_gates() {
+        use super::KeyboardStep::{self, *};
+        assert_eq!(KeyboardStep::from_pressed(false, false), None);
+        assert_eq!(KeyboardStep::from_pressed(true, true), Forward);
+        assert_eq!(KeyboardStep::from_pressed(false, true), Back);
+        for step in [None, Forward, Back] {
+            assert_eq!(step.admitted(false, false, false), step);
+            for gate in [
+                (true, false, false),
+                (false, true, false),
+                (false, false, true),
+            ] {
+                assert_eq!(step.admitted(gate.0, gate.1, gate.2), None);
+            }
+        }
+    }
 
     #[test]
     fn shared_modal_driver_preserves_leave_mission_confirmation() {

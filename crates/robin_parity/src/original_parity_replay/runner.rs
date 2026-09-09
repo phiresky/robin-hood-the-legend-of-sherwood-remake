@@ -377,8 +377,6 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     #[cfg(feature = "client")]
     let mut display = HostDisplayState::default();
     #[cfg(feature = "client")]
-    let mut input = InputState::default();
-    #[cfg(feature = "client")]
     let mut selected_view_element = None;
     if let Some(loaded) = &loaded_save_host {
         #[cfg(feature = "client")]
@@ -386,14 +384,15 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             loaded.apply_display_to(&mut display);
             loaded.apply_display_to(&mut host.frontend.engine_display);
             selected_view_element = loaded.selected_view_element();
-            host.frontend.selected_view_element = selected_view_element;
+            host.frontend
+                .set_selected_view_element(selected_view_element);
         }
         assert!(
             loaded.trajectory_output().clear_preview,
             "Original loaded-save adoption must invalidate trajectory preview"
         );
         let _post_load = loaded.post_load_output();
-        // This replay host and input state were constructed afresh, so all
+        // This replay host was constructed afresh, so all
         // explicit Original post-load transient clears already hold.
     }
     #[cfg(feature = "client")]
@@ -447,6 +446,9 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             engine.frame_counter()
         );
     }
+
+    #[cfg(feature = "client")]
+    let mut http_ingress = robin_rs::http_server::SessionIngress::attach();
 
     // Original retains path events across the full boundary between frame
     // writes. PostInitialize, sound callbacks, and resolved input can enqueue
@@ -509,10 +511,9 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         if http_server.is_some() {
             loop {
                 let drained = drain_headless_http(
+                    &mut http_ingress,
                     &mut engine,
-                    &mut display,
                     &assets,
-                    &mut input,
                     &mut selected_view_element,
                     &mut manual_pause,
                     &mut active_http_step,
@@ -1293,10 +1294,9 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                     engine.frame_counter()
                 );
                 serve_halted_http(
+                    &mut http_ingress,
                     &mut engine,
-                    &mut display,
                     &assets,
-                    &mut input,
                     &mut selected_view_element,
                 );
             }

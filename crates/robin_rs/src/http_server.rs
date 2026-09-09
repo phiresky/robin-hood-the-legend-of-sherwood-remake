@@ -34,14 +34,13 @@
 //! A dedicated listener thread runs `tiny_http`'s blocking accept loop.
 //! Each request is decoded into a [`HttpRequest`] and pushed onto a
 //! shared FIFO with a one-shot `SyncSender` for the reply. The game
-//! loop drains the queue once per tick (see
-//! `game_session::drain_http_queue`), executes each request inline, and
+//! mission owner drains its queue once per tick, executes each request inline, and
 //! sends the reply back. The listener serialises it to JSON (or raw
 //! image/png bytes for `/screenshot`).
 //!
-//! Pause / level-loading / replay rewind / modal dialogs all suspend
-//! the per-tick drain, so a request issued during those windows blocks
-//! until the game resumes — bounded by a 60 s recv timeout on the
+//! Requests requiring an engine fail immediately between missions. A busy
+//! active mission can defer execution until its next RPC boundary, bounded
+//! by a 60 s recv timeout on the
 //! listener side.  Clients that want to fail fast instead of waiting
 //! out a blocked main loop should pass a shorter HTTP timeout
 //! themselves (e.g. `curl --max-time 2`).
@@ -51,11 +50,11 @@
 //! `/screenshot` is special because it needs a rendered frame, not the
 //! post-tick engine state.  The game loop:
 //!
-//! 1. [`drain_global`] moves screenshot requests from the request
-//!    queue into a module-local pending list.  **No mutation** of the
+//! 1. [`SessionIngress::drain`] moves screenshot requests from the request
+//!    queue into its mission-owned pending list.  **No mutation** of the
 //!    live `Engine`, `DevState`, or any host state happens here.
 //! 2. Before the live frame is rendered, the main loop calls
-//!    [`take_pending_screenshots`] and renders one throwaway frame
+//!    [`SessionIngress::take_pending_screenshots`] and renders one throwaway frame
 //!    per request into the offscreen target.  Each uses its own
 //!    cloned `DevState` with flags applied via
 //!    [`apply_screenshot_flags`] — the live `dev` is untouched.
@@ -74,12 +73,10 @@ use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
-use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::natives as engine_natives;
 use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
-use robin_engine::replay as engine_replay;
 use robin_engine::replay_rankability::InputTaintKind;
 use robin_engine::scb as engine_scb;
 use robin_engine::weapons as engine_weapons;
@@ -159,8 +156,8 @@ pub struct HttpRequest {
 
 /// Per-request payload — the transport layer parses each endpoint
 /// down to one of these.  Distinct variants (rather than a generic
-/// `serde_json::Value` body) keep the dispatch typed: each handler in
-/// `dispatch_in_engine` does its own argument extraction once.
+/// `serde_json::Value` body) keep the dispatch typed: classification
+/// selects the authority needed by each handler.
 pub enum HttpPayload {
     /// `POST /native` / `robin.call("native", …)` — single native invocation.
     Native {
@@ -209,11 +206,98 @@ pub enum HttpPayload {
     /// wasm use the same source without reading the filesystem.
     GetReplay,
     /// `POST /load-replay` — stash replay bytes + a `paused` flag into
-    /// a process-global slot that [`init_replay_and_rollback`] consumes
+    /// the replay service's pending launch slot that mission startup consumes
     /// on the next mission start.  The caller is responsible for
     /// triggering a mission restart (e.g. by sending a console command
     /// or by resetting the Game op) so the slot is actually picked up.
     LoadReplay { data: String, paused: bool },
+}
+
+/// Internal routing types are deliberately separate from the transport schema.
+/// A query handler cannot receive a mutation or a deferred operation.
+enum QueryRequest {
+    State,
+    EngineDump,
+    LevelAssets,
+    Script,
+    Decompile { class: Option<String> },
+}
+
+enum CommandRequest {
+    Native {
+        name: String,
+        args: Vec<i32>,
+        this: Option<i32>,
+    },
+    Batch(Vec<NativeCall>),
+    Console(String),
+    Player(PlayerCommand),
+}
+
+enum DeferredRequest {
+    Step(StepKind),
+    Screenshot(ScreenshotRequest),
+}
+
+enum ProcessRequest {
+    ExportReplay,
+    LoadReplay { data: String, paused: bool },
+}
+
+enum RoutedRequest {
+    Query(QueryRequest),
+    HostDebug,
+    Command(CommandRequest),
+    Deferred(DeferredRequest),
+    Process(ProcessRequest),
+}
+
+impl HttpPayload {
+    fn classify(self) -> RoutedRequest {
+        match self {
+            Self::State => RoutedRequest::Query(QueryRequest::State),
+            Self::HostDebug => RoutedRequest::HostDebug,
+            Self::EngineDump => RoutedRequest::Query(QueryRequest::EngineDump),
+            Self::LevelAssets => RoutedRequest::Query(QueryRequest::LevelAssets),
+            Self::Script => RoutedRequest::Query(QueryRequest::Script),
+            Self::Decompile { class } => RoutedRequest::Query(QueryRequest::Decompile { class }),
+            Self::Native { name, args, this } => {
+                RoutedRequest::Command(CommandRequest::Native { name, args, this })
+            }
+            Self::Batch(calls) => RoutedRequest::Command(CommandRequest::Batch(calls)),
+            Self::Console(command) => RoutedRequest::Command(CommandRequest::Console(command)),
+            Self::Command(command) => RoutedRequest::Command(CommandRequest::Player(command)),
+            Self::Screenshot(request) => {
+                RoutedRequest::Deferred(DeferredRequest::Screenshot(request))
+            }
+            Self::StepForward { request } => {
+                RoutedRequest::Deferred(DeferredRequest::Step(StepKind::Forward {
+                    n: request.n,
+                    modal_policy: request.modal_policy,
+                }))
+            }
+            Self::StepBack { request } => {
+                RoutedRequest::Deferred(DeferredRequest::Step(StepKind::Back {
+                    n: request.n,
+                    modal_policy: request.modal_policy,
+                }))
+            }
+            Self::GoToFrame {
+                target,
+                modal_policy,
+            } => RoutedRequest::Deferred(DeferredRequest::Step(StepKind::GoToFrame {
+                target,
+                modal_policy,
+            })),
+            Self::SetPaused { paused } => {
+                RoutedRequest::Deferred(DeferredRequest::Step(StepKind::SetPaused { paused }))
+            }
+            Self::GetReplay => RoutedRequest::Process(ProcessRequest::ExportReplay),
+            Self::LoadReplay { data, paused } => {
+                RoutedRequest::Process(ProcessRequest::LoadReplay { data, paused })
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
@@ -334,7 +418,11 @@ impl Responder {
     }
 }
 
-pub type Queue = Arc<Mutex<VecDeque<HttpRequest>>>;
+mod ingress;
+use ingress::RequestRouter;
+pub use ingress::SessionIngress;
+
+pub type Queue = Arc<Mutex<RequestRouter>>;
 
 pub struct HttpServer {
     pub queue: Queue,
@@ -343,12 +431,6 @@ pub struct HttpServer {
 }
 
 static GLOBAL: OnceLock<HttpServer> = OnceLock::new();
-static PENDING_REPLAY_TAINTS: OnceLock<Mutex<BTreeSet<InputTaintKind>>> = OnceLock::new();
-
-fn pending_replay_taints() -> &'static Mutex<BTreeSet<InputTaintKind>> {
-    PENDING_REPLAY_TAINTS.get_or_init(|| Mutex::new(BTreeSet::new()))
-}
-
 fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     match payload {
         HttpPayload::Native { .. } | HttpPayload::Batch(_) => {
@@ -372,28 +454,8 @@ fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     }
 }
 
-fn observe_ranked_input_taint(payload: &HttpPayload) {
-    if let Some(kind) = ranked_input_taint(payload) {
-        pending_replay_taints()
-            .lock()
-            .expect("HTTP replay-taint mutex poisoned")
-            .insert(kind);
-    }
-}
-
-/// Drain input-source evidence observed by HTTP ingress since the previous
-/// mission-frame boundary.
-pub fn take_pending_replay_taints() -> BTreeSet<InputTaintKind> {
-    std::mem::take(
-        &mut *pending_replay_taints()
-            .lock()
-            .expect("HTTP replay-taint mutex poisoned"),
-    )
-}
-
-/// Bring up the script-RPC transport and stash the queue in a
-/// process-global so the per-tick drain can reach it without threading
-/// the queue through every signature.  Re-calls are silently ignored.
+/// Bring up the process-scoped script-RPC listener. Mission execution queues
+/// are owned by [`SessionIngress`], not by the listener. Re-calls are ignored.
 ///
 /// Native: binds a loopback HTTP listener on `port` (0 disables).
 /// Wasm: ignores `port`; just installs the empty queue so `rh_rpc`
@@ -406,7 +468,7 @@ pub fn start_global(port: u16) -> Result<(), String> {
             return Ok(());
         }
         let _ = GLOBAL.set(HttpServer {
-            queue: Arc::new(Mutex::new(VecDeque::new())),
+            queue: Arc::new(Mutex::new(RequestRouter::default())),
         });
         tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
         Ok(())
@@ -441,7 +503,7 @@ fn start(port: u16) -> Result<HttpServer, String> {
         .ok_or_else(|| "script HTTP server bound to non-IP address".to_string())?;
     tracing::info!("script HTTP server listening on http://{bind_addr}");
 
-    let queue: Queue = Arc::new(Mutex::new(VecDeque::new()));
+    let queue: Queue = Arc::new(Mutex::new(RequestRouter::default()));
     let queue_for_thread = queue.clone();
     thread::Builder::new()
         .name("robin-http-server".into())
@@ -898,12 +960,12 @@ fn list_natives_json() -> serde_json::Value {
 /// isn't running.
 /// Drain the RPC queue without an engine — for use during the
 /// `--wait-for-command` idle phase, where replay import/export does not need
-/// engine state. Replies `503` to requests that do.
+/// engine state. The router rejects mission requests while no session is active.
 pub fn drain_pre_engine() {
     let Some(server) = GLOBAL.get() else { return };
     let pending: Vec<HttpRequest> = {
         let mut q = server.queue.lock().expect("queue mutex poisoned");
-        q.drain(..).collect()
+        q.take_idle()
     };
     for req in pending {
         match req.payload {
@@ -920,7 +982,7 @@ pub fn drain_pre_engine() {
     }
 }
 
-/// Parse a production replay payload and stash it in the pending slot. Both
+/// Parse a production replay payload and admit it to the pending slot. Both
 /// browser and native RPC accept exactly the canonical compact envelope.
 fn decode_load_replay(data: &str, paused: bool) -> Reply {
     // Compact admission is byte-canonical: whitespace is not discarded.
@@ -931,10 +993,10 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
         .map_err(|e| format!("decode compact replay: {e}"))?;
     let frame_count = replay.frame_count();
     let seed = replay.header().rng_seed;
-    set_pending_replay(PendingReplay {
+    crate::replay_service::process().admit_pending(crate::replay_service::PendingReplay {
         data: replay,
         paused,
-    });
+    })?;
     Ok(ReplyBody::Json(serde_json::json!({
         "ok": true,
         "frames": frame_count,
@@ -944,224 +1006,112 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
     })))
 }
 
-pub fn drain_global(
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut crate::host::Host,
-    assets: &LevelAssets,
-    post_commands: &mut FrameCommands,
-) -> Vec<engine_api::ExternalAction> {
-    let mut external_actions = Vec::new();
-    let engine = &mut manager.engine;
-    let Some(server) = GLOBAL.get() else {
-        return external_actions;
-    };
-    let pending: Vec<HttpRequest> = {
-        let mut q = server.queue.lock().expect("queue mutex poisoned");
-        q.drain(..).collect()
-    };
-    for req in pending {
-        observe_ranked_input_taint(&req.payload);
-        // `/screenshot` doesn't reply on the tick — it's deferred until
-        // the frame is rendered.  Route to the pending-screenshot list
-        // so the main loop's `screenshot_pre_render` / `…_capture_and_send`
-        // pair can fulfil it; all other payloads dispatch synchronously
-        // here and reply immediately.
-        match req.payload {
-            HttpPayload::Screenshot(request) => {
-                pending_screenshots()
-                    .lock()
-                    .expect("screenshot queue poisoned")
-                    .push(PendingScreenshot {
-                        response_tx: req.response_tx,
-                        request,
-                    });
-            }
-            HttpPayload::StepForward { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Forward {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::StepBack { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Back {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::GoToFrame {
-                target,
-                modal_policy,
-            } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame {
-                            target,
-                            modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::SetPaused { paused } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::SetPaused { paused },
-                    });
-            }
-            HttpPayload::HostDebug => {
-                req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
-                    engine, host, assets,
-                ))));
-            }
-            HttpPayload::GetReplay => start_replay_export(req.response_tx),
-            other => {
-                let reply = dispatch_in_engine(
-                    other,
+impl SessionIngress {
+    pub fn drain(
+        &mut self,
+        engine: &mut Engine,
+        frontend: &mut crate::host::HostFrontend,
+        local_seat: robin_engine::player_command::PlayerId,
+        net: Option<&crate::multiplayer::NetChannels>,
+        assets: &LevelAssets,
+        post_commands: &mut FrameCommands,
+    ) -> Vec<engine_api::ExternalAction> {
+        let mut external_actions = Vec::new();
+        for req in self.take_requests() {
+            self.observe_ranked_input_taint(&req.payload);
+            match req.payload.classify() {
+                RoutedRequest::HostDebug => {
+                    req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
+                        engine, frontend, local_seat, assets,
+                    ))));
+                }
+                RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
+                    query,
+                    self.replay_status(),
                     engine,
-                    &mut host.frontend.engine_display,
                     assets,
-                    &mut host.frontend.input,
-                    &mut host.frontend.selected_view_element,
-                    host.transport.net(),
-                    post_commands,
-                    &mut external_actions,
-                );
-                req.response_tx.send(reply);
+                )),
+                RoutedRequest::Deferred(request) => {
+                    self.defer_request(request, req.response_tx, true)
+                }
+                RoutedRequest::Process(request) => dispatch_process(request, req.response_tx),
+                RoutedRequest::Command(command) => {
+                    let mut selected = frontend.selected_view_element();
+                    let reply = dispatch_command(
+                        command,
+                        engine,
+                        assets,
+                        &mut selected,
+                        net,
+                        post_commands,
+                        &mut external_actions,
+                    );
+                    frontend.set_selected_view_element(selected);
+                    req.response_tx.send(reply);
+                }
             }
         }
+        external_actions
     }
-    external_actions
-}
 
-/// Drain requests for a headless tool that owns an [`Engine`] directly.
-///
-/// This is the small counterpart to [`drain_global`] used by deterministic
-/// replay/debug runners. Requests which need the renderer or live host UI are
-/// rejected, while engine inspection, script/native calls, player commands,
-/// and the pause/step queue remain available.
-pub fn drain_global_headless(
-    engine: &mut Engine,
-    display: &mut engine_api::HostDisplayState,
-    assets: &LevelAssets,
-    input: &mut engine_api::InputState,
-    selected_view_element: &mut Option<engine_element::EntityId>,
-) -> FrameCommands {
-    let mut commands = FrameCommands::new();
-    let mut external_actions = Vec::new();
-    let Some(server) = GLOBAL.get() else {
-        return commands;
-    };
-    let pending: Vec<HttpRequest> = {
-        let mut queue = server.queue.lock().expect("queue mutex poisoned");
-        queue.drain(..).collect()
-    };
-    for req in pending {
-        observe_ranked_input_taint(&req.payload);
-        match req.payload {
-            HttpPayload::StepForward { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Forward {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::StepBack { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Back {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::GoToFrame {
-                target,
-                modal_policy,
-            } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame {
-                            target,
-                            modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::SetPaused { paused } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::SetPaused { paused },
-                    });
-            }
-            HttpPayload::Screenshot(_) => {
-                req.response_tx.send(Err(
-                    "screenshots are unavailable in a headless runner".into()
-                ));
-            }
-            HttpPayload::HostDebug => {
-                req.response_tx
-                    .send(Err("host-debug is unavailable in a headless runner".into()));
-            }
-            HttpPayload::EngineDump => {
-                let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
-                let reply = engine_dump_json(&diagnostic)
-                    .map(ReplyBody::Json)
-                    .map_err(|e| format!("engine serialize: {e}"));
-                req.response_tx.send(reply);
-            }
-            HttpPayload::GetReplay => start_replay_export(req.response_tx),
-            other => {
-                let reply = dispatch_in_engine(
-                    other,
+    /// Drain requests for a headless tool that owns an [`Engine`] directly.
+    ///
+    /// This is the small counterpart to [`SessionIngress::drain`] used by deterministic
+    /// replay/debug runners. Requests which need the renderer or live host UI are
+    /// rejected, while engine inspection, script/native calls, player commands,
+    /// and the pause/step queue remain available.
+    pub fn drain_headless(
+        &mut self,
+        engine: &mut Engine,
+        assets: &LevelAssets,
+        selected_view_element: &mut Option<engine_element::EntityId>,
+    ) -> FrameCommands {
+        let mut commands = FrameCommands::new();
+        let mut external_actions = Vec::new();
+        for req in self.take_requests() {
+            self.observe_ranked_input_taint(&req.payload);
+            match req.payload.classify() {
+                RoutedRequest::HostDebug => {
+                    req.response_tx
+                        .send(Err("host-debug is unavailable in a headless runner".into()));
+                }
+                RoutedRequest::Query(QueryRequest::EngineDump) => {
+                    let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
+                    let reply = engine_dump_json(&diagnostic)
+                        .map(ReplyBody::Json)
+                        .map_err(|e| format!("engine serialize: {e}"));
+                    req.response_tx.send(reply);
+                }
+                RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
+                    query,
+                    self.replay_status(),
                     engine,
-                    display,
                     assets,
-                    input,
-                    selected_view_element,
-                    None,
-                    &mut commands,
-                    &mut external_actions,
-                );
-                req.response_tx.send(reply);
+                )),
+                RoutedRequest::Deferred(request) => {
+                    self.defer_request(request, req.response_tx, false)
+                }
+                RoutedRequest::Process(request) => dispatch_process(request, req.response_tx),
+                RoutedRequest::Command(command) => {
+                    let reply = dispatch_command(
+                        command,
+                        engine,
+                        assets,
+                        selected_view_element,
+                        None,
+                        &mut commands,
+                        &mut external_actions,
+                    );
+                    req.response_tx.send(reply);
+                }
             }
         }
+        commands
     }
-    commands
 }
 
 fn admit_external_actions(
     engine: &mut Engine,
-    _display: &mut engine_api::HostDisplayState,
-    _input: &mut engine_api::InputState,
     assets: &LevelAssets,
     actions: Vec<engine_api::ExternalAction>,
     journal: &mut Vec<engine_api::ExternalAction>,
@@ -1177,23 +1127,19 @@ fn admit_external_actions(
     Ok(output.external_action_results)
 }
 
-fn dispatch_in_engine(
-    payload: HttpPayload,
+fn dispatch_command(
+    payload: CommandRequest,
     engine: &mut Engine,
-    display: &mut engine_api::HostDisplayState,
     assets: &LevelAssets,
-    input: &mut engine_api::InputState,
     selected_view_element: &mut Option<engine_element::EntityId>,
     net: Option<&crate::multiplayer::NetChannels>,
     frame_commands: &mut FrameCommands,
     external_actions: &mut Vec<engine_api::ExternalAction>,
 ) -> Reply {
     match payload {
-        HttpPayload::Native { name, args, this } => {
+        CommandRequest::Native { name, args, this } => {
             let results = admit_external_actions(
                 engine,
-                display,
-                input,
                 assets,
                 vec![engine_api::ExternalAction::Native {
                     name,
@@ -1209,7 +1155,7 @@ fn dispatch_in_engine(
                 _ => Err("native frame admission returned no native result".into()),
             }
         }
-        HttpPayload::Batch(calls) => {
+        CommandRequest::Batch(calls) => {
             let actions = calls
                 .into_iter()
                 .map(|call| engine_api::ExternalAction::Native {
@@ -1218,22 +1164,21 @@ fn dispatch_in_engine(
                     this_actor: call.this,
                 })
                 .collect();
-            let results =
-                admit_external_actions(engine, display, input, assets, actions, external_actions)?
-                    .into_iter()
-                    .map(|result| match result {
-                        engine_api::ExternalActionResult::Native(Ok(value)) => {
-                            serde_json::json!({"return": value})
-                        }
-                        engine_api::ExternalActionResult::Native(Err(error)) => {
-                            serde_json::json!({"error": error})
-                        }
-                        _ => serde_json::json!({"error": "non-native batch result"}),
-                    })
-                    .collect::<Vec<_>>();
+            let results = admit_external_actions(engine, assets, actions, external_actions)?
+                .into_iter()
+                .map(|result| match result {
+                    engine_api::ExternalActionResult::Native(Ok(value)) => {
+                        serde_json::json!({"return": value})
+                    }
+                    engine_api::ExternalActionResult::Native(Err(error)) => {
+                        serde_json::json!({"error": error})
+                    }
+                    _ => serde_json::json!({"error": "non-native batch result"}),
+                })
+                .collect::<Vec<_>>();
             Ok(ReplyBody::Json(serde_json::json!({"results": results})))
         }
-        HttpPayload::Console(cmd) => {
+        CommandRequest::Console(cmd) => {
             // HTTP forces the full developer parser, but it has no live
             // `DevState`. Presentation-only commands therefore stay outside
             // the authoritative journal and report that limitation.
@@ -1251,8 +1196,6 @@ fn dispatch_in_engine(
             }
             let results = admit_external_actions(
                 engine,
-                display,
-                input,
                 assets,
                 vec![engine_api::ExternalAction::ConsoleCommand {
                     command,
@@ -1271,7 +1214,7 @@ fn dispatch_in_engine(
                 _ => Err("console frame admission returned no console result".into()),
             }
         }
-        HttpPayload::Command(cmd) => {
+        CommandRequest::Player(cmd) => {
             // In multiplayer, route the command over the wire so every
             // peer applies it at the same `target_frame`.  The local
             // engine doesn't mutate here; the echo lands via
@@ -1283,34 +1226,41 @@ fn dispatch_in_engine(
             }
             Ok(ReplyBody::Json(serde_json::json!({"ok": true})))
         }
-        HttpPayload::State => Ok(ReplyBody::Json(snapshot_state(engine))),
-        HttpPayload::HostDebug => Err("host-debug must be routed via drain_global".into()),
-        HttpPayload::EngineDump => engine_dump_json(engine)
-            .map(ReplyBody::Json)
-            .map_err(|e| format!("engine serialize: {e}")),
-        HttpPayload::LevelAssets => level_assets_json(engine, assets)
-            .map(ReplyBody::Json)
-            .map_err(|e| format!("level assets serialize: {e}")),
-        HttpPayload::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
-        HttpPayload::Decompile { class } => {
-            Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
-        }
-        // Routed through `drain_global`'s per-kind arm — should never
-        // reach this generic dispatch path.
-        HttpPayload::Screenshot(_) => Err("screenshot must be routed via drain_global".into()),
-        HttpPayload::StepForward { .. }
-        | HttpPayload::StepBack { .. }
-        | HttpPayload::GoToFrame { .. }
-        | HttpPayload::SetPaused { .. } => Err("step must be routed via drain_global".into()),
-        HttpPayload::GetReplay => {
-            Err("get-replay must be routed to the replay export worker".into())
-        }
-        HttpPayload::LoadReplay { data, paused } => decode_load_replay(&data, paused),
     }
 }
 
-fn snapshot_state(engine: &Engine) -> serde_json::Value {
-    let replay = replay_status().map(|s| {
+fn dispatch_query(
+    query: QueryRequest,
+    replay: Option<ReplayStatus>,
+    engine: &Engine,
+    assets: &LevelAssets,
+) -> Reply {
+    match query {
+        QueryRequest::State => Ok(ReplyBody::Json(snapshot_state(engine, replay))),
+        QueryRequest::EngineDump => engine_dump_json(engine)
+            .map(ReplyBody::Json)
+            .map_err(|e| format!("engine serialize: {e}")),
+        QueryRequest::LevelAssets => level_assets_json(engine, assets)
+            .map(ReplyBody::Json)
+            .map_err(|e| format!("level assets serialize: {e}")),
+        QueryRequest::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
+        QueryRequest::Decompile { class } => {
+            Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
+        }
+    }
+}
+
+fn dispatch_process(request: ProcessRequest, response: Responder) {
+    match request {
+        ProcessRequest::ExportReplay => start_replay_export(response),
+        ProcessRequest::LoadReplay { data, paused } => {
+            response.send(decode_load_replay(&data, paused))
+        }
+    }
+}
+
+fn snapshot_state(engine: &Engine, replay: Option<ReplayStatus>) -> serde_json::Value {
+    let replay = replay.map(|s| {
         serde_json::json!({
             "frame": s.frame,
             "total": s.total,
@@ -1326,14 +1276,12 @@ fn snapshot_state(engine: &Engine) -> serde_json::Value {
 
 fn snapshot_host_debug(
     engine: &Engine,
-    host: &crate::host::Host,
+    frontend: &crate::host::HostFrontend,
+    local_seat: robin_engine::player_command::PlayerId,
     assets: &LevelAssets,
 ) -> serde_json::Value {
-    let selected_action = engine.selected_action_for_seat(host.transport.local_seat());
-    let selected_pc = engine
-        .hero_selection(host.transport.local_seat())
-        .first()
-        .copied();
+    let selected_action = engine.selected_action_for_seat(local_seat);
+    let selected_pc = engine.hero_selection(local_seat).first().copied();
     let selected_pc_state = selected_pc.and_then(|id| {
         engine.get_entity(id).map(|entity| {
             serde_json::json!({
@@ -1348,21 +1296,17 @@ fn snapshot_host_debug(
             })
         })
     });
-    let last_preview_point = host
-        .frontend
-        .trajectory_preview
-        .points()
-        .last()
-        .map(|point| {
-            serde_json::json!({
-                "position": point.position,
-                "time": point.time,
-            })
-        });
+    let preview = frontend.trajectory_preview();
+    let last_preview_point = preview.points().last().map(|point| {
+        serde_json::json!({
+            "position": point.position,
+            "time": point.time,
+        })
+    });
     let bow_hover = match (
         selected_action,
         selected_pc,
-        host.frontend.input.focused_entity_id,
+        frontend.input.focused_entity_id,
     ) {
         (engine_profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
             let (target_status, shoot_mode) =
@@ -1380,33 +1324,33 @@ fn snapshot_host_debug(
     serde_json::json!({
         "frame": engine.frame_counter(),
         "selected_action": selected_action,
-        "selection": engine.hero_selection(host.transport.local_seat()),
+        "selection": engine.hero_selection(local_seat),
         "selected_pc": selected_pc_state,
-        "valid_trajectory": host.frontend.trajectory_preview.is_valid(),
-        "trajectory_preview_points_len": host.frontend.trajectory_preview.points().len(),
-        "trajectory_preview_start": host.frontend.trajectory_preview.start(),
+        "valid_trajectory": preview.is_valid(),
+        "trajectory_preview_points_len": preview.points().len(),
+        "trajectory_preview_start": preview.start(),
         "trajectory_preview_last": last_preview_point,
-        "trajectory_preview_layer": host.frontend.trajectory_preview.layer(),
-        "net_crumpled": host.frontend.trajectory_preview.crumpled(),
-        "time_no_mouse_move": host.frontend.trajectory_preview.hover_ticks(),
-        "mouse_map_prev": host.frontend.trajectory_preview.previous_mouse(),
-        "trajectory_mark_count": host.frontend.trajectory_preview.mark_count(),
+        "trajectory_preview_layer": preview.layer(),
+        "net_crumpled": preview.crumpled(),
+        "time_no_mouse_move": preview.hover_ticks(),
+        "mouse_map_prev": preview.previous_mouse(),
+        "trajectory_mark_count": preview.mark_count(),
         "bow_hover": bow_hover,
         "input": {
-            "focused_entity_id": host.frontend.input.focused_entity_id,
-            "target_drag": host.frontend.input.target_drag,
-            "double_status_bar_entity_id": host.frontend.input.double_status_bar_entity_id,
-            "selected_layer": host.frontend.input.selected_layer,
-            "selected_sector_idx": host.frontend.input.selected_sector_idx,
-            "selected_patch_idx": host.frontend.input.selected_patch_idx,
-            "hovered_door_idx": host.frontend.input.hovered_door_idx,
-            "valid_position_for_move": host.frontend.input.valid_position_for_move,
-            "mouse_opacity": host.frontend.input.mouse_opacity,
-            "mouse_shadow_color": host.frontend.input.mouse_shadow_color,
-            "left_mouse_down": host.frontend.input.left_mouse_down(),
-            "right_mouse_down": host.frontend.input.right_mouse_down,
-            "is_dragging": host.frontend.input.is_dragging(),
-            "is_alt": host.frontend.input.is_alt,
+            "focused_entity_id": frontend.input.focused_entity_id,
+            "target_drag": frontend.input.target_drag,
+            "double_status_bar_entity_id": frontend.input.double_status_bar_entity_id,
+            "selected_layer": frontend.input.selected_layer,
+            "selected_sector_idx": frontend.input.selected_sector_idx,
+            "selected_patch_idx": frontend.input.selected_patch_idx,
+            "hovered_door_idx": frontend.input.hovered_door_idx,
+            "valid_position_for_move": frontend.input.valid_position_for_move,
+            "mouse_opacity": frontend.input.mouse_opacity,
+            "mouse_shadow_color": frontend.input.mouse_shadow_color,
+            "left_mouse_down": frontend.input.left_mouse_down(),
+            "right_mouse_down": frontend.input.right_mouse_down,
+            "is_dragging": frontend.input.is_dragging(),
+            "is_alt": frontend.input.is_alt,
         },
     })
 }
@@ -1881,450 +1825,25 @@ where
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Replay sideband — current recording path + pending replay to load
+// Replay export transport adapter
 // ──────────────────────────────────────────────────────────────────
 
-/// A replay queued by `load-replay`, consumed by
-/// [`crate::game_session::init_replay_and_rollback`] on next mission start.
-pub struct PendingReplay {
-    pub data: engine_replay::ReplayData,
-    /// Whether the caller asked for the mission to start paused so they
-    /// can step through frame-by-frame with `step-forward`.
-    pub paused: bool,
-}
-
-fn pending_replay_slot() -> &'static Mutex<Option<PendingReplay>> {
-    static SLOT: OnceLock<Mutex<Option<PendingReplay>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-/// Install a `PendingReplay`.  Overwrites any previous pending slot —
-/// latest wins, caller is expected to only queue one at a time.
-pub fn set_pending_replay(p: PendingReplay) {
-    *pending_replay_slot()
-        .lock()
-        .expect("pending replay poisoned") = Some(p);
-}
-
-/// Take the pending replay, leaving the slot empty.
-pub fn take_pending_replay() -> Option<PendingReplay> {
-    pending_replay_slot()
-        .lock()
-        .expect("pending replay poisoned")
-        .take()
-}
-
-/// Peek at the pending replay's mission id (the `.rhm` filename
-/// stamped into the replay header, e.g. `"Dem_Lei_MP"`) without
-/// consuming the slot.  Used by `--wait-for-command` to pick which
-/// mission to launch; [`take_pending_replay`] consumes the slot
-/// later before mission startup.
-pub fn peek_pending_replay_mission_id() -> Option<String> {
-    pending_replay_slot()
-        .lock()
-        .expect("pending replay poisoned")
-        .as_ref()
-        .map(|p| p.data.header().mission_id.clone())
-}
-
-/// Hard local limits for the active JSONL recorder. The public replay service
-/// applies its own admission limits to the canonical compact artifact; these
-/// limits protect the in-process native/browser recording path before export.
-const MAX_ACTIVE_REPLAY_BYTES: usize = 64 * 1024 * 1024;
-const MAX_ACTIVE_REPLAY_LINE_BYTES: usize = 16 * 1024 * 1024;
-const REPLAY_SPOOL_CHUNK_BYTES: usize = 64 * 1024;
-
-#[derive(Clone)]
-struct ReplaySpool {
-    inner: Arc<Mutex<ReplaySpoolState>>,
-    max_bytes: usize,
-    max_pending_bytes: usize,
-}
-
-struct ReplaySpoolState {
-    generation: u64,
-    chunks: Vec<Arc<[u8]>>,
-    tail: Vec<u8>,
-    committed_bytes: usize,
-    failure: Option<String>,
-}
-
-impl ReplaySpool {
-    fn new(max_bytes: usize) -> Self {
-        assert!(max_bytes > 0, "replay spool limit must be positive");
-        Self {
-            inner: Arc::new(Mutex::new(ReplaySpoolState {
-                generation: 0,
-                chunks: Vec::new(),
-                tail: Vec::with_capacity(REPLAY_SPOOL_CHUNK_BYTES),
-                committed_bytes: 0,
-                failure: None,
-            })),
-            max_bytes,
-            max_pending_bytes: MAX_ACTIVE_REPLAY_LINE_BYTES.min(max_bytes),
-        }
-    }
-
-    fn begin(&self) -> ReplaySpoolWriter {
-        let mut state = self.inner.lock().expect("replay spool poisoned");
-        state.generation = state
-            .generation
-            .checked_add(1)
-            .expect("replay spool generation overflow");
-        state.chunks.clear();
-        state.tail.clear();
-        state.committed_bytes = 0;
-        state.failure = None;
-        ReplaySpoolWriter {
-            spool: self.clone(),
-            generation: state.generation,
-            pending: Vec::new(),
-        }
-    }
-
-    fn snapshot(&self) -> Result<ReplaySnapshot, String> {
-        let state = self.inner.lock().expect("replay spool poisoned");
-        if let Some(error) = &state.failure {
-            return Err(format!("active replay spool is unavailable: {error}"));
-        }
-        let mut chunks = state.chunks.clone();
-        if !state.tail.is_empty() {
-            // Complete chunks are Arc clones. Snapshotting on the game thread
-            // copies at most the one incomplete 64-KiB tail.
-            chunks.push(Arc::from(state.tail.clone()));
-        }
-        Ok(ReplaySnapshot {
-            #[cfg(all(test, not(target_arch = "wasm32")))]
-            generation: state.generation,
-            byte_length: state.committed_bytes,
-            chunks,
-        })
-    }
-}
-
-/// Recorder-owned staging writer. Bytes become visible to readers only after
-/// the recorder flushes a complete header/record, so export never observes a
-/// partial JSONL line.
-pub struct ReplaySpoolWriter {
-    spool: ReplaySpool,
-    generation: u64,
-    pending: Vec<u8>,
-}
-
-impl ReplaySpoolWriter {
-    fn io_error(message: impl Into<String>) -> std::io::Error {
-        std::io::Error::other(message.into())
-    }
-
-    fn preflight(&self, additional: usize) -> std::io::Result<()> {
-        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
-        if state.generation != self.generation {
-            return Err(Self::io_error(
-                "replay spool writer belongs to an earlier mission",
-            ));
-        }
-        if let Some(error) = &state.failure {
-            return Err(Self::io_error(error.clone()));
-        }
-        let observed = state
-            .committed_bytes
-            .checked_add(self.pending.len())
-            .and_then(|value| value.checked_add(additional))
-            .ok_or_else(|| Self::io_error("replay spool byte count overflow"))?;
-        let pending = self
-            .pending
-            .len()
-            .checked_add(additional)
-            .ok_or_else(|| Self::io_error("replay spool pending-line byte count overflow"))?;
-        if observed > self.spool.max_bytes {
-            let error = format!(
-                "replay recording reached {observed} bytes, bounded spool limit is {} bytes",
-                self.spool.max_bytes
-            );
-            state.failure = Some(error.clone());
-            return Err(Self::io_error(error));
-        }
-        if pending > self.spool.max_pending_bytes {
-            let error = format!(
-                "replay JSONL record reached {pending} bytes, local line limit is {} bytes",
-                self.spool.max_pending_bytes
-            );
-            state.failure = Some(error.clone());
-            return Err(Self::io_error(error));
-        }
-        Ok(())
-    }
-
-    /// Reject known backpressure before a tee writer changes its durable
-    /// primary. Primary short writes are mirrored by their exact returned
-    /// length and retried normally by `Write::write_all`.
-    pub fn preflight_write(&self, bytes: usize) -> std::io::Result<()> {
-        self.preflight(bytes)
-    }
-
-    /// Permanently invalidate this mission's spool after the durable primary
-    /// reports an ambiguous write or flush failure.
-    pub fn poison(&self, reason: impl Into<String>) {
-        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
-        if state.generation == self.generation && state.failure.is_none() {
-            state.failure = Some(reason.into());
-        }
-    }
-}
-
-impl std::io::Write for ReplaySpoolWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.preflight(buf.len())?;
-        self.pending.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
-        if state.generation != self.generation {
-            return Err(Self::io_error(
-                "replay spool writer belongs to an earlier mission",
-            ));
-        }
-        if let Some(error) = &state.failure {
-            return Err(Self::io_error(error.clone()));
-        }
-        let pending_len = self.pending.len();
-        let mut source = self.pending.as_slice();
-        while !source.is_empty() {
-            let available = REPLAY_SPOOL_CHUNK_BYTES - state.tail.len();
-            let take = available.min(source.len());
-            state.tail.extend_from_slice(&source[..take]);
-            source = &source[take..];
-            if state.tail.len() == REPLAY_SPOOL_CHUNK_BYTES {
-                let full = std::mem::replace(
-                    &mut state.tail,
-                    Vec::with_capacity(REPLAY_SPOOL_CHUNK_BYTES),
-                );
-                state.chunks.push(Arc::from(full));
-            }
-        }
-        state.committed_bytes = state
-            .committed_bytes
-            .checked_add(pending_len)
-            .expect("replay spool committed byte count overflow after preflight");
-        self.pending.clear();
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ReplaySnapshot {
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    generation: u64,
-    byte_length: usize,
-    chunks: Vec<Arc<[u8]>>,
-}
-
-impl ReplaySnapshot {
-    fn to_vec(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(self.byte_length);
-        for chunk in &self.chunks {
-            bytes.extend_from_slice(chunk);
-        }
-        assert_eq!(
-            bytes.len(),
-            self.byte_length,
-            "replay spool snapshot length disagrees with its chunks"
-        );
-        bytes
-    }
-
-    pub(crate) fn compact_sync(&self) -> Result<String, String> {
-        let data = self.parse_sync()?;
-        robin_replay_format::encode_compact(&data, robin_replay_format::ENGINE_VERSION_HASH)
-            .map_err(|error| format!("encode compact replay: {error}"))
-    }
-
-    pub(crate) fn parse_sync(&self) -> Result<engine_replay::ReplayData, String> {
-        if self.byte_length == 0 {
-            return Err("no active replay recording".to_owned());
-        }
-        engine_replay::ReplayData::from_reader(std::io::Cursor::new(self.to_vec()))
-            .map_err(|error| format!("parse mirrored replay buffer: {error}"))
-    }
-}
-
-fn replay_spool_slot() -> &'static ReplaySpool {
-    static SLOT: OnceLock<ReplaySpool> = OnceLock::new();
-    SLOT.get_or_init(|| ReplaySpool::new(MAX_ACTIVE_REPLAY_BYTES))
-}
-
-/// Start a fresh mission-scoped replay spool and return its sole writer.
-/// Existing writer handles become stale and fail closed on their next write.
-pub fn reset_replay_buffer() -> ReplaySpoolWriter {
-    replay_spool_slot().begin()
-}
-
-/// A restored attempt without a valid recorder must not export the preceding
-/// terminal attempt. Frozen leaderboard snapshots own their chunks and survive.
-pub(crate) fn invalidate_replay_buffer(reason: impl Into<String>) {
-    reset_replay_buffer().poison(reason);
-}
-
-#[cfg(test)]
-pub(crate) fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().expect("replay spool test lock poisoned")
-}
-
-/// Materialize the exact committed JSONL bytes for canonical compact export.
-/// A poisoned or overflowed spool returns an explicit error; it never returns
-/// a plausible truncated replay.
-pub fn replay_buffer_snapshot() -> Result<Vec<u8>, String> {
-    replay_spool_slot()
-        .snapshot()
-        .map(|snapshot| snapshot.to_vec())
-}
-
-/// Take a cheap, immutable snapshot of the active recorder for another
-/// frame-polled consumer. Complete 64-KiB chunks are shared and at most one
-/// incomplete chunk is copied, so the graphical frame never materializes the
-/// full JSONL recording. The caller must perform [`ReplaySnapshot::compact_sync`]
-/// away from the render/tick path.
-pub(crate) fn active_replay_snapshot() -> Result<ReplaySnapshot, String> {
-    replay_spool_slot().snapshot()
-}
-fn replay_export_reply(result: Result<String, String>) -> Reply {
-    result.map(|content| ReplyBody::Json(serde_json::json!({ "content": content })))
-}
-
 fn start_replay_export(response_tx: Responder) {
-    let snapshot = match replay_spool_slot().snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            response_tx.send(Err(error));
-            return;
-        }
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    enqueue_native_replay_export(snapshot, response_tx);
-    #[cfg(target_arch = "wasm32")]
-    enqueue_browser_replay_export(snapshot, response_tx);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct NativeReplayExportJob {
-    snapshot: ReplaySnapshot,
-    response_tx: Responder,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn native_replay_export_worker()
--> Result<&'static std::sync::mpsc::SyncSender<NativeReplayExportJob>, String> {
-    static WORKER: OnceLock<Result<std::sync::mpsc::SyncSender<NativeReplayExportJob>, String>> =
-        OnceLock::new();
-    WORKER
-        .get_or_init(|| {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
-            std::thread::Builder::new()
-                .name("robin-replay-export".to_owned())
-                .spawn(move || {
-                    while let Ok(job) = rx.recv() {
-                        let result = job.snapshot.compact_sync();
-                        job.response_tx.send(replay_export_reply(result));
-                    }
-                })
-                .map_err(|error| format!("spawn replay export worker: {error}"))?;
-            Ok(tx)
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn enqueue_native_replay_export(snapshot: ReplaySnapshot, response_tx: Responder) {
-    let worker = match native_replay_export_worker() {
-        Ok(worker) => worker,
-        Err(error) => {
-            response_tx.send(Err(error));
-            return;
-        }
-    };
-    try_enqueue_native_replay_export(worker, snapshot, response_tx);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn try_enqueue_native_replay_export(
-    worker: &std::sync::mpsc::SyncSender<NativeReplayExportJob>,
-    snapshot: ReplaySnapshot,
-    response_tx: Responder,
-) {
-    let job = NativeReplayExportJob {
-        snapshot,
-        response_tx,
-    };
-    match worker.try_send(job) {
-        Ok(()) => {}
-        Err(std::sync::mpsc::TrySendError::Full(job)) => job.response_tx.send(Err(
-            "replay export worker is busy; retry after the current export finishes".to_owned(),
-        )),
-        Err(std::sync::mpsc::TrySendError::Disconnected(job)) => job
-            .response_tx
-            .send(Err("replay export worker stopped unexpectedly".to_owned())),
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn enqueue_browser_replay_export(snapshot: ReplaySnapshot, response_tx: Responder) {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    static BUSY: AtomicBool = AtomicBool::new(false);
-    if BUSY.swap(true, Ordering::AcqRel) {
-        response_tx.send(Err(
-            "replay export is already running; retry after it finishes".to_owned(),
-        ));
-        return;
-    }
-    wasm_bindgen_futures::spawn_local(async move {
-        struct ReleaseBusy(&'static AtomicBool);
-        impl Drop for ReleaseBusy {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::Release);
-            }
-        }
-        let _release = ReleaseBusy(&BUSY);
-        // Return control to rendering/input before the canonical compact
-        // bitcode encode. True block-wise encoding is intentionally deferred:
-        // the rejected JSONL-in-compact representation must not be revived.
-        gloo_timers::future::TimeoutFuture::new(0).await;
-        response_tx.send(replay_export_reply(snapshot.compact_sync()));
-    });
+    crate::replay_service::process().export(Box::new(move |result| {
+        response_tx
+            .send(result.map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))));
+    }));
 }
 
 /// Per-frame replay-playback status surfaced to the script-RPC
 /// `state` endpoint so JS timeline UIs can render a playhead without
 /// polling a dedicated endpoint.  `None` when no replay is playing
-/// (live gameplay).  Updated once per frame by
-/// [`crate::game_session::publish_replay_status`].
-#[derive(Clone, Copy, Debug)]
+/// (live gameplay). Updated on the owning mission's manual-step boundary.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReplayStatus {
     pub frame: u32,
     pub total: u32,
     pub paused: bool,
-}
-
-fn replay_status_slot() -> &'static Mutex<Option<ReplayStatus>> {
-    static SLOT: OnceLock<Mutex<Option<ReplayStatus>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-/// Publish (or clear, with `None`) the live replay-playback status.
-/// Called from the game loop; cleared on mission end / when live
-/// gameplay resumes.
-pub fn set_replay_status(s: Option<ReplayStatus>) {
-    *replay_status_slot().lock().expect("replay status poisoned") = s;
-}
-
-/// Most-recent [`ReplayStatus`] published by the game loop, or `None`
-/// if no replay is currently playing.
-pub fn replay_status() -> Option<ReplayStatus> {
-    *replay_status_slot().lock().expect("replay status poisoned")
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -2369,11 +1888,6 @@ impl PendingScreenshot {
     }
 }
 
-fn pending_screenshots() -> &'static Mutex<Vec<PendingScreenshot>> {
-    static SLOT: OnceLock<Mutex<Vec<PendingScreenshot>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(Vec::new()))
-}
-
 // ──────────────────────────────────────────────────────────────────
 // Step-forward / step-back pipeline
 // ──────────────────────────────────────────────────────────────────
@@ -2404,7 +1918,7 @@ pub enum StepKind {
 
 /// A step-forward / step-back request waiting for the main loop to
 /// drive the engine.  The main loop is expected to
-/// [`take_pending_steps`] once per frame and, for each request, either:
+/// [`SessionIngress::take_pending_steps`] once per frame and, for each request, either:
 ///
 /// - run `n` full frame-equivalent ticks (`Forward`), or
 /// - rewind `n` frames through the rewind buffer (`Back`),
@@ -2426,73 +1940,6 @@ impl PendingStep {
     pub fn respond_err(self, msg: impl Into<String>) {
         self.response_tx.send(Err(msg.into()));
     }
-}
-
-fn pending_steps() -> &'static Mutex<Vec<PendingStep>> {
-    static SLOT: OnceLock<Mutex<Vec<PendingStep>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// Drain every step request queued since the last call.  The main
-/// loop calls this once per frame immediately before the tick gate,
-/// runs each step synchronously with the full rollback / rewind /
-/// replay bookkeeping, and replies via the `PendingStep` handle.
-pub fn take_pending_steps() -> Vec<PendingStep> {
-    std::mem::take(&mut *pending_steps().lock().expect("step queue poisoned"))
-}
-
-/// Whether the mission loop has an automation step waiting to run.
-///
-/// Cooperative local UI tasks use this non-consuming probe to cancel back to
-/// their owning pause surface before [`crate::game_session`] drains the step.
-pub fn has_pending_steps() -> bool {
-    !pending_steps()
-        .lock()
-        .expect("step queue poisoned")
-        .is_empty()
-}
-
-/// Drain every screenshot request queued since the last call.  Safe to
-/// call from the main render loop once per frame — returns an empty
-/// `Vec` when nothing is pending.
-pub fn take_pending_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
-    let mut queue = pending_screenshots()
-        .lock()
-        .expect("screenshot queue poisoned");
-    let requests = std::mem::take(&mut *queue);
-    let (ready, waiting) = requests
-        .into_iter()
-        .partition(|pending| pending.request.frame.is_none_or(|frame| sim_frame >= frame));
-    *queue = waiting;
-    ready
-}
-
-/// Drain ready screenshots which can faithfully use the already-presented UI
-/// framebuffer. Requests that need a scene-only/full-map/debug override stay
-/// queued for the normal dedicated render path.
-pub fn take_pending_ui_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
-    take_pending_screenshots_matching(sim_frame, can_capture_presented_ui)
-}
-
-/// Drain ready screenshots that require a dedicated scene render while a
-/// cooperative UI surface owns normal presentation.
-pub fn take_pending_scene_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
-    take_pending_screenshots_matching(sim_frame, |request| !can_capture_presented_ui(request))
-}
-
-fn take_pending_screenshots_matching(
-    sim_frame: u32,
-    predicate: impl Fn(&ScreenshotRequest) -> bool,
-) -> Vec<PendingScreenshot> {
-    let mut queue = pending_screenshots()
-        .lock()
-        .expect("screenshot queue poisoned");
-    let requests = std::mem::take(&mut *queue);
-    let (ready, waiting) = requests.into_iter().partition(|pending| {
-        pending.request.frame.is_none_or(|frame| sim_frame >= frame) && predicate(&pending.request)
-    });
-    *queue = waiting;
-    ready
 }
 
 fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
@@ -2617,168 +2064,60 @@ fn screenshot_target_dimensions(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
-    #[test]
-    fn replay_spool_publishes_only_complete_flush_boundaries() {
-        let spool = ReplaySpool::new(1024);
-        let mut writer = spool.begin();
-        writer.write_all(b"header\n").unwrap();
-        let before_flush = spool.snapshot().unwrap();
-        assert_eq!(before_flush.generation, 1);
-        assert_eq!(before_flush.byte_length, 0);
-        assert!(before_flush.to_vec().is_empty());
-
-        writer.flush().unwrap();
-        writer.write_all(b"partial record").unwrap();
-        assert_eq!(spool.snapshot().unwrap().to_vec(), b"header\n");
-
-        writer.write_all(b" end\n").unwrap();
-        writer.flush().unwrap();
-        assert_eq!(
-            spool.snapshot().unwrap().to_vec(),
-            b"header\npartial record end\n"
-        );
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn query_dispatch_has_only_read_authority() {
+        // Function-pointer coercion is a compile-time capability proof: adding
+        // mutable state, frontend input, or command sinks breaks this contract.
+        let _: fn(QueryRequest, Option<ReplayStatus>, &Engine, &LevelAssets) -> Reply =
+            dispatch_query;
+        let _: fn(
+            &Engine,
+            &crate::host::HostFrontend,
+            robin_engine::player_command::PlayerId,
+            &LevelAssets,
+        ) -> serde_json::Value = snapshot_host_debug;
     }
 
-    #[test]
-    fn replay_spool_overflow_poison_is_atomic_and_generational() {
-        let spool = ReplaySpool::new(8);
-        let mut old = spool.begin();
-        old.write_all(b"12345678").unwrap();
-        old.flush().unwrap();
-        assert_eq!(spool.snapshot().unwrap().to_vec(), b"12345678");
-
-        let error = old.write_all(b"9").unwrap_err().to_string();
-        assert!(error.contains("bounded spool limit"), "{error}");
-        let state = spool.inner.lock().unwrap();
-        assert_eq!(state.committed_bytes, 8);
-        assert_eq!(state.tail.as_slice(), b"12345678");
-        drop(state);
-        let snapshot_error = spool.snapshot().unwrap_err();
-        assert!(
-            snapshot_error.contains("reached 9 bytes"),
-            "{snapshot_error}"
-        );
-
-        let mut current = spool.begin();
-        assert!(
-            old.flush()
-                .unwrap_err()
-                .to_string()
-                .contains("earlier mission")
-        );
-        current.write_all(b"new\n").unwrap();
-        current.flush().unwrap();
-        assert_eq!(spool.snapshot().unwrap().to_vec(), b"new\n");
-    }
-
-    #[test]
-    fn replay_spool_enforces_the_independent_record_ceiling() {
-        assert_eq!(MAX_ACTIVE_REPLAY_BYTES, 64 * 1024 * 1024);
-        assert_eq!(MAX_ACTIVE_REPLAY_LINE_BYTES, 16 * 1024 * 1024);
-        assert_eq!(REPLAY_SPOOL_CHUNK_BYTES, 64 * 1024);
-
-        let mut spool = ReplaySpool::new(64);
-        spool.max_pending_bytes = 8;
-        let mut writer = spool.begin();
-        writer.write_all(b"12345678").unwrap();
-        let error = writer.write_all(b"9").unwrap_err().to_string();
-        assert!(error.contains("local line limit is 8 bytes"), "{error}");
-        assert!(spool.snapshot().unwrap_err().contains("reached 9 bytes"));
-    }
-
-    #[test]
-    fn active_replay_spool_exports_the_single_canonical_compact_format() {
-        let spool = ReplaySpool::new(2 * 1024 * 1024);
-        let writer = spool.begin();
-        let mut recorder = engine_replay::ReplayRecorder::with_writer(
-            Box::new(writer),
-            "active-snapshot".to_owned(),
-            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                "active-snapshot",
-                "active-map",
-                "active-map",
-            )
-            .expect("valid built-in active replay test descriptor"),
-            17,
-            robin_engine::engine::SimConfig::default(),
-            &robin_engine::campaign::Campaign::default(),
-        )
-        .unwrap();
-        assert!(recorder.write_frame(
-            0,
-            0,
-            1,
-            robin_engine::engine::SimulationFrameInput {
-                run_hourglass: true,
-                ..robin_engine::engine::SimulationFrameInput::default()
-            },
-            Vec::new(),
-            None,
-        ));
-
-        let jsonl = spool.snapshot().unwrap().to_vec();
-        let replay = engine_replay::ReplayData::from_reader(std::io::Cursor::new(jsonl)).unwrap();
-        let compact =
-            robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
-                .unwrap();
-        let (_, decoded) = robin_replay_format::decode_compact(&compact).unwrap();
-        assert_eq!(decoded.frame_count(), 1);
-        assert!(decoded.frame(0).unwrap().input.run_hourglass);
-    }
-
-    #[test]
-    fn replay_spool_long_run_uses_fixed_chunks_and_bounded_staging() {
-        let limit = 8 * 1024 * 1024;
-        let spool = ReplaySpool::new(limit);
-        let mut writer = spool.begin();
-        let record = [b'x'; 511];
-        let mut expected_len = 0;
-        for _ in 0..10_000 {
-            writer.write_all(&record).unwrap();
-            writer.write_all(b"\n").unwrap();
-            writer.flush().unwrap();
-            expected_len += record.len() + 1;
-            assert!(writer.pending.capacity() <= MAX_ACTIVE_REPLAY_LINE_BYTES);
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn transport_classification_separates_authority_without_losing_arguments() {
+        for payload in [
+            HttpPayload::State,
+            HttpPayload::EngineDump,
+            HttpPayload::LevelAssets,
+            HttpPayload::Script,
+        ] {
+            assert!(matches!(payload.classify(), RoutedRequest::Query(_)));
         }
-        let snapshot = spool.snapshot().unwrap();
-        assert_eq!(snapshot.byte_length, expected_len);
-        let state = spool.inner.lock().unwrap();
+        assert!(matches!(
+            HttpPayload::HostDebug.classify(),
+            RoutedRequest::HostDebug
+        ));
         assert!(
-            state
-                .chunks
-                .iter()
-                .all(|chunk| chunk.len() == REPLAY_SPOOL_CHUNK_BYTES)
+            matches!(HttpPayload::Decompile { class: Some("Mission".into()) }.classify(), RoutedRequest::Query(QueryRequest::Decompile { class: Some(class) }) if class == "Mission")
         );
-        assert!(state.tail.len() < REPLAY_SPOOL_CHUNK_BYTES);
-        assert!(state.chunks.len() <= limit.div_ceil(REPLAY_SPOOL_CHUNK_BYTES));
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn saturated_native_replay_export_queue_returns_explicit_backpressure() {
-        let (worker, held) = std::sync::mpsc::sync_channel(1);
-        let snapshot = ReplaySnapshot {
-            generation: 7,
-            byte_length: 2,
-            chunks: vec![Arc::from(&b"x\n"[..])],
-        };
-        let (held_response, _held_rx) = std::sync::mpsc::sync_channel(1);
-        worker
-            .send(NativeReplayExportJob {
-                snapshot: snapshot.clone(),
-                response_tx: Responder::Channel(held_response),
-            })
-            .unwrap();
-        let (response, response_rx) = std::sync::mpsc::sync_channel(1);
-        try_enqueue_native_replay_export(&worker, snapshot, Responder::Channel(response));
-        let error = match response_rx.recv().unwrap() {
-            Ok(_) => panic!("saturated export queue unexpectedly accepted work"),
-            Err(error) => error,
-        };
-        assert!(error.contains("worker is busy"), "{error}");
-        drop(held);
+        assert!(
+            matches!(HttpPayload::Native { name: "test".into(), args: vec![1, -2], this: Some(3) }.classify(), RoutedRequest::Command(CommandRequest::Native { name, args, this: Some(3) }) if name == "test" && args == [1, -2])
+        );
+        assert!(
+            matches!(HttpPayload::Console("UNBLIP".into()).classify(), RoutedRequest::Command(CommandRequest::Console(command)) if command == "UNBLIP")
+        );
+        assert!(matches!(
+            HttpPayload::Command(PlayerCommand::CrouchDown).classify(),
+            RoutedRequest::Command(CommandRequest::Player(PlayerCommand::CrouchDown))
+        ));
+        assert!(
+            matches!(HttpPayload::Batch(vec![]).classify(), RoutedRequest::Command(CommandRequest::Batch(calls)) if calls.is_empty())
+        );
+        assert!(matches!(
+            HttpPayload::GetReplay.classify(),
+            RoutedRequest::Process(ProcessRequest::ExportReplay)
+        ));
+        assert!(
+            matches!(HttpPayload::LoadReplay { data: "encoded".into(), paused: true }.classify(), RoutedRequest::Process(ProcessRequest::LoadReplay { data, paused: true }) if data == "encoded")
+        );
     }
 
     #[test]
@@ -2876,13 +2215,13 @@ mod tests {
                 InputTaintKind::ReplayPlayback,
             ),
         ];
-        take_pending_replay_taints();
+        let mut ingress = SessionIngress::attach();
         for (payload, expected) in &cases {
             assert_eq!(ranked_input_taint(payload), Some(*expected));
-            observe_ranked_input_taint(payload);
+            ingress.observe_ranked_input_taint(payload);
         }
         assert_eq!(
-            take_pending_replay_taints(),
+            ingress.take_pending_replay_taints(),
             BTreeSet::from([
                 InputTaintKind::HttpPlayerCommand,
                 InputTaintKind::HttpSimulationStep,

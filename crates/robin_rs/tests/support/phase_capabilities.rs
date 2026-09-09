@@ -4,6 +4,284 @@
 
 use syn::visit::{self, Visit};
 
+#[test]
+fn timeline_reconciliation_and_history_are_private_owners() {
+    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let owner = runtime
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "TimelineRuntime" => Some(item),
+            _ => None,
+        })
+        .expect("timeline runtime");
+    for name in ["network", "history", "mp_admission"] {
+        let field = owner
+            .fields
+            .iter()
+            .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+            .unwrap_or_else(|| panic!("missing timeline owner {name}"));
+        assert!(
+            matches!(field.vis, syn::Visibility::Inherited),
+            "{name} must not be mutated directly by sibling frame drivers"
+        );
+    }
+    for field in &owner.fields {
+        assert!(
+            ![
+                "pending_inputs",
+                "peer_hashes",
+                "local_mp_hashes",
+                "rewind_buffer",
+                "rollback_checker"
+            ]
+            .iter()
+            .any(|name| field.ident.as_ref().is_some_and(|ident| ident == name)),
+            "timeline collections belong inside their lifecycle owners"
+        );
+    }
+}
+
+#[test]
+fn http_transport_does_not_own_replay_storage() {
+    struct StorageDeclarations;
+    impl<'ast> Visit<'ast> for StorageDeclarations {
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            assert!(
+                ![
+                    "ReplaySpool",
+                    "ReplaySpoolState",
+                    "ReplaySpoolWriter",
+                    "ReplaySnapshot",
+                    "PendingReplay",
+                ]
+                .iter()
+                .any(|name| item.ident == name),
+                "{} belongs to the replay service, not HTTP transport",
+                item.ident
+            );
+            visit::visit_item_struct(self, item);
+        }
+    }
+    StorageDeclarations
+        .visit_file(&syn::parse_file(include_str!("../../src/http_server.rs")).unwrap());
+}
+
+#[test]
+fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
+    struct ExecutionSignatures {
+        found_advance: bool,
+        found_rpc: bool,
+    }
+    impl<'ast> Visit<'ast> for ExecutionSignatures {
+        fn visit_signature(&mut self, signature: &'ast syn::Signature) {
+            let advance = signature.ident == "advance_timeline";
+            let rpc = signature.ident == "drain_post_tick_rpc";
+            if advance || rpc {
+                self.found_advance |= advance;
+                self.found_rpc |= rpc;
+                struct Arguments {
+                    advance: bool,
+                    mode: bool,
+                }
+                impl<'ast> Visit<'ast> for Arguments {
+                    fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+                        for segment in &ty.path.segments {
+                            assert!(
+                                segment.ident != "EngineManager",
+                                "frame execution must not replace snapshots"
+                            );
+                            if self.advance {
+                                assert!(
+                                    segment.ident != "bool",
+                                    "use the admitted execution mode, not independent flags"
+                                );
+                                self.mode |= segment.ident == "FrameExecutionMode";
+                            } else {
+                                assert!(
+                                    segment.ident != "Game" && segment.ident != "Host",
+                                    "RPC execution must receive disjoint phase authority, not the whole game or host"
+                                );
+                            }
+                        }
+                        visit::visit_type_path(self, ty);
+                    }
+                }
+                let mut arguments = Arguments {
+                    advance,
+                    mode: false,
+                };
+                for input in &signature.inputs {
+                    arguments.visit_fn_arg(input);
+                }
+                assert!(
+                    !advance || arguments.mode,
+                    "timeline needs an explicit execution mode"
+                );
+            }
+            visit::visit_signature(self, signature);
+        }
+    }
+    let mut signatures = ExecutionSignatures {
+        found_advance: false,
+        found_rpc: false,
+    };
+    for source in [
+        include_str!("../../src/game_session/frame_simulate.rs"),
+        include_str!("../../src/game_session/runtime.rs"),
+    ] {
+        signatures.visit_file(&syn::parse_file(source).unwrap());
+    }
+    assert!(signatures.found_advance && signatures.found_rpc);
+}
+
+#[test]
+fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
+    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let owner = runtime
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "MissionRuntime" => Some(item),
+            _ => None,
+        })
+        .expect("mission runtime");
+    let ingress = owner
+        .fields
+        .iter()
+        .find(|field| field.ident.as_ref().is_some_and(|ident| ident == "http"))
+        .expect("mission owns HTTP ingress");
+    assert!(
+        matches!(&ingress.ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "SessionIngress"))
+    );
+
+    struct StaticTypes;
+    impl<'ast> Visit<'ast> for StaticTypes {
+        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+            struct DeferredTypes;
+            impl<'ast> Visit<'ast> for DeferredTypes {
+                fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+                    for segment in &path.path.segments {
+                        assert!(
+                            ![
+                                "PendingStep",
+                                "PendingScreenshot",
+                                "InputTaintKind",
+                                "ReplayStatus",
+                                "SessionIngress"
+                            ]
+                            .iter()
+                            .any(|name| segment.ident == name),
+                            "deferred mission work must not be stored in a static"
+                        );
+                    }
+                    visit::visit_type_path(self, path);
+                }
+            }
+            DeferredTypes.visit_type(&item.ty);
+            visit::visit_item_static(self, item);
+        }
+    }
+    for source in [
+        include_str!("../../src/http_server.rs"),
+        include_str!("../../src/http_server/ingress.rs"),
+    ] {
+        let syntax = syn::parse_file(source).unwrap();
+        StaticTypes.visit_file(&syntax);
+        for item in syntax.items {
+            if let syn::Item::Static(item) = item {
+                let name = item.ident.to_string();
+                assert!(
+                    ![
+                        "PENDING_STEPS",
+                        "PENDING_SCREENSHOTS",
+                        "PENDING_REPLAY_TAINTS",
+                        "REPLAY_STATUS"
+                    ]
+                    .contains(&name.as_str()),
+                    "{name} must not outlive the mission"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn frontend_policy_and_observation_owners_remain_private() {
+    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    let structure = |name: &str| {
+        host.items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == name => Some(item),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing owner {name}"))
+    };
+    let frontend = structure("HostFrontend");
+    let input = syn::parse_file(include_str!("../../src/frontend_input.rs")).unwrap();
+    let pointer_sequence = input
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "FrontendPointerSequence" => Some(item),
+            _ => None,
+        })
+        .expect("pointer sequence owns capture and gesture together");
+    assert!(
+        pointer_sequence
+            .fields
+            .iter()
+            .all(|field| matches!(field.vis, syn::Visibility::Inherited))
+    );
+    for name in [
+        "preferences",
+        "diagnostics",
+        "planning",
+        "pointer_sequence",
+        "queue_strip_animations",
+        "interaction",
+    ] {
+        let field = frontend
+            .fields
+            .iter()
+            .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+            .unwrap_or_else(|| panic!("missing frontend owner {name}"));
+        assert!(
+            matches!(field.vis, syn::Visibility::Inherited),
+            "{name} must be private"
+        );
+    }
+    for name in [
+        "FrontendPreferences",
+        "QueueStripAnimations",
+        "FrontendInteraction",
+    ] {
+        assert!(
+            structure(name)
+                .fields
+                .iter()
+                .all(|field| matches!(field.vis, syn::Visibility::Inherited)),
+            "{name} must expose operations, not writable fields"
+        );
+    }
+    let diagnostics = syn::parse_file(include_str!("../../src/frontend_diagnostics.rs")).unwrap();
+    let owner = diagnostics
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "FrontendDiagnostics" => Some(item),
+            _ => None,
+        })
+        .expect("diagnostics owner");
+    assert!(
+        owner
+            .fields
+            .iter()
+            .all(|field| matches!(field.vis, syn::Visibility::Inherited))
+    );
+}
+
 fn readonly_reference_to(ty: &syn::Type, expected: &str) -> bool {
     matches!(ty, syn::Type::Reference(reference)
         if reference.mutability.is_none()

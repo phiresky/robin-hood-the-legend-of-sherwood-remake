@@ -5365,7 +5365,7 @@ pub(crate) mod tests {
         };
         let quiescence = runtime.try_lock_exclusive_quiescence().unwrap().unwrap();
         assert!(database.release_backup_lock(&backup).await.unwrap());
-        crate::db_fence::wait_for_pool_idle(database.pool())
+        crate::db_fence::wait_for_pool_idle(database.fixture_pool())
             .await
             .unwrap();
         runtime
@@ -6773,13 +6773,13 @@ pub(crate) mod tests {
             .unwrap();
         sqlx::query("UPDATE submissions SET status = 'accepted' WHERE id = ?")
             .bind(&lifecycle.id)
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         let accepted_sequence: i64 = sqlx::query_scalar(
             "INSERT INTO acceptance_sequences (created_at_ms) VALUES (1) RETURNING sequence",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         let run_id = uuid::Uuid::now_v7().to_string();
@@ -6819,13 +6819,13 @@ pub(crate) mod tests {
         .bind([marker.wrapping_add(17); 32].as_slice())
         .bind([marker.wrapping_add(18); 32].as_slice())
         .bind(accepted_sequence)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         if tombstoned {
             sqlx::query("UPDATE submissions SET tombstoned_at_ms = created_at_ms + 1 WHERE id = ?")
                 .bind(&lifecycle.id)
-                .execute(database.pool())
+                .execute(database.fixture_pool())
                 .await
                 .unwrap();
         }
@@ -6996,7 +6996,7 @@ pub(crate) mod tests {
              ON r.submission_id = s.id WHERE r.id = ?",
         )
         .bind(&live_run)
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert_eq!(live_tombstone, None);
@@ -7018,7 +7018,7 @@ pub(crate) mod tests {
              ON r.submission_id = s.id WHERE r.id = ?",
         )
         .bind(&live_run)
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert!(live_tombstone.is_some());

@@ -475,24 +475,24 @@ impl ConsoleOverlay {
         } else if let Some(command) = parse_with_final(trimmed, dev.console.use_final) {
             dev.console.push_history(trimmed);
             if command.is_host_only() {
-                FrameConsoleResponse::from(engine.host_console().dispatch(
-                    assets,
-                    dev,
-                    &mut host.frontend.selected_view_element,
-                    &command,
-                ))
+                let mut selected = host.frontend.selected_view_element();
+                let response = engine
+                    .host_console()
+                    .dispatch(assets, dev, &mut selected, &command);
+                host.frontend.set_selected_view_element(selected);
+                FrameConsoleResponse::from(response)
             } else {
                 // HONOLULU's remembered actor is a host UI latch. Resolve it
                 // to the concrete authoritative target before admission.
                 let selected_view_element = if matches!(command, ConsoleCommand::Honolulu) {
-                    if let Some(selected) = host.frontend.selected_view_element {
+                    if let Some(selected) = host.frontend.selected_view_element() {
                         dev.last_actor_in_honolulu = Some(selected);
                     }
                     host.frontend
-                        .selected_view_element
+                        .selected_view_element()
                         .or(dev.last_actor_in_honolulu)
                 } else {
-                    host.frontend.selected_view_element
+                    host.frontend.selected_view_element()
                 };
                 let action = ExternalAction::ConsoleCommand {
                     command,
@@ -510,7 +510,8 @@ impl ConsoleOverlay {
                         response,
                         selected_view_element,
                     }) => {
-                        host.frontend.selected_view_element = selected_view_element;
+                        host.frontend
+                            .set_selected_view_element(selected_view_element);
                         response
                     }
                     _ => panic!("console action admission returned no console result"),
@@ -578,15 +579,11 @@ impl ConsoleOverlay {
     /// engine dispatcher but still want to show up in the overlay's
     /// history.
     pub fn drain_pending_host_output(&mut self, host: &mut crate::host::Host) {
-        self.drain_pending_output(&mut host.frontend.pending_console_output);
+        self.consume_pending_output(host.frontend.diagnostics_mut().take_console_output());
     }
 
     /// Consume only the deferred text queue; rendering needs no host authority.
-    pub(crate) fn drain_pending_output(&mut self, pending: &mut Vec<String>) {
-        if pending.is_empty() {
-            return;
-        }
-        let lines = std::mem::take(pending);
+    pub(crate) fn consume_pending_output(&mut self, lines: Vec<String>) {
         for line in lines {
             if line.is_empty() {
                 continue;
@@ -884,7 +881,7 @@ mod tests {
     fn presentation_drains_only_the_explicit_console_queue_once() {
         let mut overlay = ConsoleOverlay::new();
         let mut pending = vec![String::new(), "first\nsecond".into(), "third".into()];
-        overlay.drain_pending_output(&mut pending);
+        overlay.consume_pending_output(std::mem::take(&mut pending));
         assert!(pending.is_empty());
         let lines: Vec<_> = overlay
             .output
@@ -895,7 +892,7 @@ mod tests {
             })
             .collect();
         assert_eq!(lines, ["first", "second", "third"]);
-        overlay.drain_pending_output(&mut pending);
+        overlay.consume_pending_output(std::mem::take(&mut pending));
         assert_eq!(overlay.output.len(), 3);
     }
 
