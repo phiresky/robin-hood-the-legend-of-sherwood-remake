@@ -33,7 +33,10 @@ impl EngineInner {
             return;
         }
         let profile = campaign.missions[idx].profile(&assets.profile_manager);
-        let ransom_sent = profile.mission_name == "H10_Yor_VL";
+        // H10's dispatch message deducts the ransom and sets script custom
+        // slot 6. The localized display title is not the script filename.
+        let ransom_sent = profile.mission_filename.eq_ignore_ascii_case("H10_Yor_VL")
+            && campaign.get_value(crate::campaign::CampaignValue::Custom7) == 1;
         // Unlike a 100% fraction of a demo's tiny catalogue, H12 is the
         // Original full-campaign completion boundary.
         let full_complete = campaign.achievement_envelope_complete(&assets.profile_manager);
@@ -245,7 +248,9 @@ impl EngineInner {
             .entities
             .occupied()
             .filter(|(_, e)| {
-                matches!(e, Entity::Soldier(s) if !s.is_out_of_order()) && e.element_data().active
+                matches!(e, Entity::Soldier(s) if !s.is_out_of_order())
+                    && e.element_data().active
+                    && !e.element_data().in_honolulu
             })
             .map(|(id, _)| id)
             .collect();
@@ -281,15 +286,21 @@ impl EngineInner {
                     .then_some(id)
             })
             .collect();
-        if party.iter().any(|(id, _, _)| {
-            self.world
-                .entities
-                .get(*id)
-                .is_some_and(|e| e.element_data().active)
-        }) {
+        if !party.is_empty()
+            && party.iter().all(|(id, _, _)| {
+                self.world
+                    .entities
+                    .get(*id)
+                    .is_some_and(|e| e.element_data().active && !e.element_data().in_honolulu)
+            })
+        {
             self.mission_domain
                 .achievements
                 .refresh_pursuit(pursuit, alive);
+        } else {
+            // Do not carry an unfinished chase across an exit/reinforcement
+            // transition and award it when a different hero remains on-map.
+            self.mission_domain.achievements.escape_pursuers.clear();
         }
         let generic_only = !party.is_empty()
             && party.iter().all(|(_, _, kind)| {
@@ -390,6 +401,30 @@ impl EngineInner {
             .achievements
             .refresh_hostile_arrangement(self.control.frame_counter, npcs)
             .expect("achievement arrangement changed after mission finalization");
+        if let Some(idx) = self.mission_domain.campaign.current_mission_idx {
+            let profile =
+                self.mission_domain.campaign.missions[idx].profile(&assets.profile_manager);
+            let available =
+                crate::achievement::available_mission_badges(profile, &assets.profile_manager);
+            for id in crate::achievement::AchievementId::ALL {
+                if !id.campaign_only()
+                    && !available.contains(id)
+                    && self
+                        .mission_domain
+                        .achievements
+                        .verifiable_achievements()
+                        .contains(id)
+                {
+                    self.mission_domain
+                        .achievements
+                        .record_evaluation(
+                            id,
+                            crate::achievement::AchievementEvaluation::NotApplicable,
+                        )
+                        .expect("mission eligibility changed after finalization");
+                }
+            }
+        }
     }
 
     /// Classify a fresh death from the damage element's authoritative origin.
@@ -582,6 +617,63 @@ mod tests {
     use crate::diplomacy::{DiplomacyDefinition, DiplomacyState};
     use crate::element::{ActorSoldier, Camp, ElementData, ElementKind, NpcData, SoldierData};
 
+    #[test]
+    fn ransom_requires_the_script_dispatch_flag_in_the_actual_mission() {
+        use crate::achievement::{AchievementEvaluation as E, AchievementId as A};
+        let mut assets = super::super::LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .missions
+            .push(crate::profiles::MissionProfile {
+                mission_filename: "H10_Yor_VL".into(),
+                mission_name: "The Letter".into(),
+                ..Default::default()
+            });
+        let mut engine = EngineInner::new();
+        engine
+            .mission_domain
+            .campaign
+            .missions
+            .push(crate::mission::Mission {
+                profile_idx: Some(0),
+                ..crate::mission::Mission::new()
+            });
+        engine.mission_domain.campaign.current_mission_idx = Some(0);
+        engine
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::Ransom, 100_000);
+        engine.evaluate_campaign_deeds(&assets);
+        assert_eq!(
+            engine
+                .mission_domain
+                .achievements
+                .live_evaluation(A::ForKingRichard),
+            Some(E::Failed)
+        );
+        engine
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::Custom7, 1);
+        engine.evaluate_campaign_deeds(&assets);
+        assert_eq!(
+            engine
+                .mission_domain
+                .achievements
+                .live_evaluation(A::ForKingRichard),
+            Some(E::Earned)
+        );
+        std::sync::Arc::make_mut(&mut assets.profile_manager).missions[0].mission_filename =
+            "H01_Lin_VL".into();
+        engine.evaluate_campaign_deeds(&assets);
+        assert_eq!(
+            engine
+                .mission_domain
+                .achievements
+                .live_evaluation(A::ForKingRichard),
+            Some(E::Failed)
+        );
+    }
+
     fn test_soldier(camp: Camp) -> Entity {
         Entity::Soldier(ActorSoldier {
             element: {
@@ -601,6 +693,135 @@ mod tests {
                 ..Default::default()
             },
         })
+    }
+
+    #[test]
+    fn off_map_party_member_cannot_complete_a_tracked_escape() {
+        let mut engine = EngineInner::new();
+        let assets = super::super::LevelAssets::new();
+        for _ in 0..3 {
+            let id = engine.add_entity(test_soldier(Camp::Lacklandists));
+            engine
+                .mission_domain
+                .achievements
+                .escape_pursuers
+                .insert(id);
+        }
+        for off_map in [false, true] {
+            let mut element = ElementData::default();
+            element.active = true;
+            element.in_honolulu = off_map;
+            engine.add_entity(Entity::Pc(crate::element::ActorPc {
+                element,
+                actor: Default::default(),
+                human: Default::default(),
+                pc: crate::element::PcData {
+                    mission_role: crate::human_control::MissionRole::PlayerParty,
+                    kind: Some(crate::character_kind::CharacterKind::MerryManA),
+                    life_points: 100,
+                    ..Default::default()
+                },
+            }));
+        }
+        engine.refresh_achievement_progress(&assets);
+        assert!(
+            engine
+                .mission_domain
+                .achievements
+                .escape_pursuers
+                .is_empty()
+        );
+        assert!(!engine.mission_domain.achievements.escape_earned);
+    }
+
+    #[test]
+    fn mission_catalogue_excludes_impossible_and_unrelated_challenges() {
+        use crate::achievement::{AchievementId as A, available_mission_badges};
+        use crate::profiles::{MissionProfile, MissionType, ProfileManager};
+        let profiles = ProfileManager::new();
+        let mut mission = MissionProfile {
+            mission_filename: "H04_Lei_VL".into(),
+            mission_type: MissionType::Historical,
+            ..Default::default()
+        };
+        let badges = available_mission_badges(&mission, &profiles);
+        assert!(!badges.contains(A::Ruthless));
+        assert!(!badges.contains(A::NoBannersPurchased));
+        assert!(!badges.contains(A::PeopleBehindTheLegend));
+        assert!(badges.contains(A::Ghost));
+        mission.mission_filename = "Str01_Lin_EC".into();
+        mission.mission_type = MissionType::Attack;
+        mission.number_of_blazons_to_win = 12;
+        mission.number_of_blazons_to_be_collected = 5;
+        let badges = available_mission_badges(&mission, &profiles);
+        assert!(badges.contains(A::NoBannersPurchased));
+        assert!(badges.contains(A::AllBannersPurchased));
+        mission.mission_type = MissionType::Tactical;
+        let badges = available_mission_badges(&mission, &profiles);
+        assert!(!badges.contains(A::AllBannersPurchased));
+        assert!(badges.contains(A::PeopleBehindTheLegend));
+    }
+
+    #[test]
+    #[ignore = "requires ROBINHOOD_DATA_DIR with original full-game profiles"]
+    fn full_game_banner_purchases_use_the_real_preparation_limits() {
+        use crate::achievement::{
+            AchievementEvaluation as E, AchievementId as A, MissionAchievementState,
+        };
+        use crate::campaign::{Campaign, CampaignValue};
+        let root = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        let mut file = crate::sbfile::SbFile::open(
+            &format!("{root}/Data/Configuration/profile.cpf"),
+            crate::sbfile::SB_FILE_READ,
+        )
+        .expect("open full-game profiles");
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles
+            .load_all_legacy_cpf(&mut file)
+            .expect("parse full-game profiles");
+        let sim = crate::sim_rng::test_context();
+        for (filename, limit) in [
+            ("Str01_Lin_EC", 7),
+            ("Str02_Der_MP", 6),
+            ("Str03_Yor_MK", 5),
+        ] {
+            let mut campaign =
+                Campaign::from_profiles(&profiles, crate::player_profile::DifficultyLevel::Medium);
+            let idx = campaign
+                .missions
+                .iter()
+                .position(|m| m.profile(&profiles).mission_filename == filename)
+                .expect("full-game siege profile");
+            campaign.blazon_mission_idx = Some(idx);
+            campaign.current_mission_idx = Some(0);
+            campaign.set_value(CampaignValue::Ransom, 1_000_000);
+            assert_eq!(
+                u32::from(campaign.get_max_number_of_blazons(&profiles)),
+                limit
+            );
+            for purchased in 0..limit {
+                assert!(campaign.can_convert_money_to_blazons(idx, &profiles));
+                assert!(!campaign.buy_blazon(&sim, idx, &profiles));
+                assert_eq!(
+                    campaign.get_value(CampaignValue::Blazon),
+                    (purchased + 1) as i32
+                );
+            }
+            assert!(!campaign.can_convert_money_to_blazons(idx, &profiles));
+            let profile = campaign.missions[idx].profile(&profiles);
+            let count = campaign.deeds.purchased_banners[&profile.id];
+            assert_eq!(count, limit);
+            let mut state = MissionAchievementState::from_mission_start();
+            state.configure_banners(Some((count, limit)));
+            assert_eq!(
+                state.live_evaluation(A::AllBannersPurchased),
+                Some(E::Earned)
+            );
+            assert_eq!(
+                state.live_evaluation(A::NoBannersPurchased),
+                Some(E::Failed)
+            );
+        }
     }
 
     fn engine_with_custom_player_coalition() -> EngineInner {

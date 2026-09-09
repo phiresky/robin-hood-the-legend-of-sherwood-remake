@@ -181,6 +181,11 @@ A list of which additional features we have added, which ones we might still wan
   24 achievements: 10 mission badge types and 16 campaign achievement types,
   with **Clean Hands** and **Ghost** available at both scopes. The complete
   conditions and scope decisions are in [Achievement proposals](ACHIEVEMENT_PROPOSALS.md).
+  [Gameplay validation](ACHIEVEMENT_VALIDATION.md) records live observations,
+  original-data checks, and remaining proof routes. Mission metadata now filters
+  the campaign badge catalogue as well as simulation results; the ransom feat
+  requires the authored dispatch flag, and pursuit escape requires the party
+  to remain on-map.
   The former all-enemies-stashed achievement is removed, and its stable ID 3
   is retired. New badges include **Ruthless**, **I'm off home**, beggar-info
   completion, banner purchase challenges, **Leave Everyone Standing**,

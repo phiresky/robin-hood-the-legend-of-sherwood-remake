@@ -313,6 +313,7 @@ pub struct CampaignProgressNode {
     /// Best recorded results across the current save and archived attempts.
     pub best: MissionBestStats,
     pub campaign_badges: AchievementSet,
+    pub available_badges: AchievementSet,
     /// Policy-attested badges earned for this mission across eligible runs.
     pub badges: AchievementSet,
     pub badge_count: usize,
@@ -465,6 +466,9 @@ impl CampaignProgressGraph {
                     .count(),
                 best,
                 campaign_badges: mission.achievement_badges(),
+                available_badges: robin_engine::achievement::available_mission_badges(
+                    profile, profiles,
+                ),
                 // Raw calculated results remain on every immutable attempt for
                 // debrief/audit. Only the host-policy-approved achievement
                 // history is allowed to drive awarded badge presentation.
@@ -1202,6 +1206,7 @@ mod tests {
             win_count: 1,
             best: MissionBestStats::default(),
             campaign_badges: AchievementSet::empty(),
+            available_badges: AchievementSet::empty(),
             badges: robin_engine::achievement::AchievementSet::empty(),
             badge_count: 3,
             lifetime_attempt_count: 2,

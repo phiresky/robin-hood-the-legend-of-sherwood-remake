@@ -1750,6 +1750,7 @@ fn render_campaign_progress(
             |_| None,
         )
         .iter()
+        .filter(|badge| node.available_badges.contains(badge.id))
         .enumerate()
         {
             let x = 32 + index as i32 % 4 * 242;
@@ -2193,7 +2194,13 @@ fn campaign_map_items(
                         lifetime,
                     ),
                     |_| None,
-                ),
+                )
+                .into_iter()
+                .filter(|badge| {
+                    robin_engine::achievement::available_mission_badges(profile, profiles)
+                        .contains(badge.id)
+                })
+                .collect(),
             })
         })
         .collect()
