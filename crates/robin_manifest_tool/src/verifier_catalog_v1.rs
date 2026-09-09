@@ -371,7 +371,13 @@ fn build_verifier_job_config_catalog_v1(
             .collect::<Vec<_>>();
         let scopes = canonical_scope_kinds(profile, content.edition, &content.subject)?;
         for scope_kind in scopes {
+            let scoped_campaign_digest = campaign_digest_for_scope(scope_kind, campaign_digest)?;
             for competition_digest in &competition_matrix {
+                if competition_digest.is_some_and(|digest| {
+                    competition_scope_kind(&authority.competitions[&digest].subject) != scope_kind
+                }) {
+                    continue;
+                }
                 let route = VerifierJobRouteV1 {
                     schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
                     scope_kind,
@@ -379,7 +385,7 @@ fn build_verifier_job_config_catalog_v1(
                     content_subject: content.subject.clone(),
                     build_manifest_sha256: authority.build_digest,
                     content_manifest_sha256: content_digest,
-                    campaign_content_manifest_sha256: campaign_digest,
+                    campaign_content_manifest_sha256: scoped_campaign_digest,
                     rules_config_sha256: rules_digest,
                     ruleset_manifest_sha256: ruleset_digest,
                     competition_manifest_sha256: *competition_digest,
@@ -392,7 +398,7 @@ fn build_verifier_job_config_catalog_v1(
                     raw_content_edition: content.edition,
                     build_manifest: authority.build.clone(),
                     content_manifest: content.clone(),
-                    campaign_content_manifest: campaign_digest
+                    campaign_content_manifest: scoped_campaign_digest
                         .map(|digest| authority.campaigns[&digest].clone()),
                     rules_config: rules.clone(),
                     ruleset_manifest: ruleset.clone(),
@@ -655,6 +661,32 @@ fn validate_profile_strings(profile: &CatalogAdmissionProfileV1) -> Result<()> {
         profile.id
     );
     Ok(())
+}
+
+fn competition_scope_kind(subject: &LeaderboardSubjectV1) -> RunScopeKindV1 {
+    match subject {
+        LeaderboardSubjectV1::Mission {
+            category: robin_run_protocol::BoardCategoryV1::IndividualLevel,
+            ..
+        } => RunScopeKindV1::IndividualLevel,
+        LeaderboardSubjectV1::Mission {
+            category: robin_run_protocol::BoardCategoryV1::Campaign,
+            ..
+        }
+        | LeaderboardSubjectV1::FullCampaign => RunScopeKindV1::Campaign,
+    }
+}
+
+fn campaign_digest_for_scope(
+    scope: RunScopeKindV1,
+    campaign_digest: Option<Digest32>,
+) -> Result<Option<Digest32>> {
+    match scope {
+        RunScopeKindV1::IndividualLevel => Ok(None),
+        RunScopeKindV1::Campaign => Ok(Some(
+            campaign_digest.context("campaign verifier route requires its campaign catalog")?,
+        )),
+    }
 }
 
 fn canonical_scope_kinds(
@@ -1248,6 +1280,29 @@ mod tests {
     }
 
     #[test]
+    fn competition_routes_keep_their_declared_board_scope() {
+        for (subject, expected) in [
+            (LeaderboardSubjectV1::FullCampaign, RunScopeKindV1::Campaign),
+            (
+                LeaderboardSubjectV1::Mission {
+                    mission_id: "H01".into(),
+                    category: robin_run_protocol::BoardCategoryV1::Campaign,
+                },
+                RunScopeKindV1::Campaign,
+            ),
+            (
+                LeaderboardSubjectV1::Mission {
+                    mission_id: "H01".into(),
+                    category: robin_run_protocol::BoardCategoryV1::IndividualLevel,
+                },
+                RunScopeKindV1::IndividualLevel,
+            ),
+        ] {
+            assert_eq!(competition_scope_kind(&subject), expected);
+        }
+    }
+
+    #[test]
     fn official_scope_strings_are_exact_and_campaign_phases_collapse() -> Result<()> {
         let genesis = OfficialContentSubjectV1::FieldMission {
             mission_id: OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1.into(),
@@ -1298,6 +1353,19 @@ mod tests {
             canonical_scope_kinds(&profile, OfficialContentEditionV1::Full, &genesis)?,
             [RunScopeKindV1::IndividualLevel, RunScopeKindV1::Campaign]
         );
+        for scope in canonical_scope_kinds(&profile, OfficialContentEditionV1::Full, &genesis)? {
+            let mut generated_route = route(genesis.mission_id(), None);
+            generated_route.content_edition = OfficialContentEditionV1::Full;
+            generated_route.scope_kind = scope;
+            generated_route.campaign_content_manifest_sha256 =
+                campaign_digest_for_scope(scope, Some(digest(3)))?;
+            generated_route.validate()?;
+            assert_eq!(
+                generated_route.campaign_content_manifest_sha256.is_some(),
+                scope == RunScopeKindV1::Campaign
+            );
+        }
+        assert!(campaign_digest_for_scope(RunScopeKindV1::Campaign, None).is_err());
         for invalid in [
             vec!["campaign_continuation".into(), "campaign_genesis".into()],
             vec!["campaign_genesis".into()],
