@@ -544,9 +544,9 @@ def profiles(registry: dict[str, Any], states: dict[tuple[str, str], dict[str, A
         for ordinal, (subject, (content_identity, content)) in enumerate(registry["content"][edition].items()):
             kind, mission = subject
             profile_id = f"{edition}-{ruleset['preset_id']}-{ruleset['difficulty_id']}-{ordinal:02d}-{slug(mission)}"
-            allowed_scopes = ["individual_level"] if edition == "demo" else ["campaign_continuation"]
+            allowed_scopes = ["individual_level"] if edition == "demo" else (["individual_level", "campaign_continuation"] if kind == "field_mission" else ["campaign_continuation"])
             if edition == "full" and kind == "field_mission" and mission == "H01_Lin_VL":
-                allowed_scopes = ["campaign_genesis", "campaign_continuation"]
+                allowed_scopes = ["individual_level", "campaign_genesis", "campaign_continuation"]
             profile: dict[str, Any] = {
                 "id": profile_id,
                 "content_subject": content["subject"],

@@ -2748,7 +2748,11 @@ impl Database {
                 "full campaign does not start at canonical genesis".to_owned(),
             ));
         };
-        if campaign_sha256 != expected_genesis
+        if (published_ruleset
+            .manifest
+            .canonical_start_policy
+            .requires_exact_operator_artifact()
+            && campaign_sha256 != expected_genesis)
             || starting_state_requirement != profile.canonical_campaign_state.requirement
             || profile
                 .canonical_campaign_state
@@ -3392,8 +3396,40 @@ async fn verify_pinned_database_leaf(
 ) -> Result<(), DbError> {
     let opened_parent = Arc::clone(parent);
     let opened_leaf = leaf.to_owned();
-    let current = tokio::task::spawn_blocking(move || {
-        crate::secure_fs::open_regular_file(&opened_parent, std::path::Path::new(&opened_leaf))
+    let current = tokio::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+            use std::os::fd::AsFd as _;
+
+            // Closing any ordinary descriptor for this inode would discard
+            // SQLite's process-wide POSIX locks, even on another thread. An
+            // O_PATH descriptor can authenticate the leaf without that close
+            // side effect. Keep the same beneath/no-symlink path confinement.
+            let fd = openat2(
+                opened_parent.as_fd(),
+                std::path::Path::new(&opened_leaf),
+                OFlags::PATH | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            )
+            .map_err(std::io::Error::from)?;
+            let file = std::fs::File::from(fd);
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::other("database is not a regular file"));
+            }
+            Ok(file)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // TODO: provide a lock-preserving identity check before supporting
+            // production database operation on other platforms.
+            let _ = (opened_parent, opened_leaf);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "lock-preserving database identity verification requires Linux O_PATH",
+            ))
+        }
     })
     .await
     .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
@@ -3767,9 +3803,10 @@ fn validate_ranked_policy(
         || build.verifier.sha256.as_bytes() != &verifier_executable_sha256
         || published.ruleset_manifest_sha256 != offer.ruleset_manifest_sha256
         || result.ruleset_manifest_sha256 != published.ruleset_manifest_sha256
-        || manifest.rules_config_sha256 != offer.rules_config_sha256
-        || result.rules_config_sha256 != manifest.rules_config_sha256
-        || manifest.canonical_campaign_state != offer.starting_state.campaign_state_requirement()
+        || !manifest.admits_rules_config_digest(offer.rules_config_sha256)
+        || result.rules_config_sha256 != offer.rules_config_sha256
+        || !manifest
+            .admits_campaign_state_requirement(offer.starting_state.campaign_state_requirement())
         || manifest.canonical_campaign_state.edition != content.edition
         || manifest
             .allowed_content_manifest_sha256
@@ -3931,6 +3968,85 @@ mod tests {
         (directory, database)
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "subprocess helper for the POSIX database lock regression"]
+    fn database_posix_lock_probe_child() {
+        use rustix::fs::{FlockOperation, fcntl_lock};
+        let path = std::env::var_os("ROBIN_TEST_POSIX_LOCK_PROBE_PATH").unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        let error = fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive)
+            .expect_err("another process acquired the supposedly held database lock");
+        assert!(matches!(
+            error,
+            rustix::io::Errno::AGAIN | rustix::io::Errno::ACCESS
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn database_leaf_identity_check_preserves_posix_locks() {
+        use rustix::fs::{FlockOperation, fcntl_lock};
+
+        let directory = tempfile::tempdir().unwrap();
+        let parent = Arc::new(
+            cap_std::fs::Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority())
+                .unwrap(),
+        );
+        let pinned = Arc::new(std::fs::File::create(directory.path().join("database")).unwrap());
+        let holds_lock = || {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "db::tests::database_posix_lock_probe_child",
+                    "--ignored",
+                ])
+                .env(
+                    "ROBIN_TEST_POSIX_LOCK_PROBE_PATH",
+                    directory.path().join("database"),
+                )
+                .output()
+                .unwrap();
+            output.status.success()
+        };
+        fcntl_lock(&*pinned, FlockOperation::NonBlockingLockExclusive).unwrap();
+        assert!(
+            holds_lock(),
+            "the test POSIX lock did not exclude another process"
+        );
+        verify_pinned_database_leaf(&parent, "database", &pinned)
+            .await
+            .unwrap();
+        assert!(
+            holds_lock(),
+            "identity verification discarded the process's SQLite-style POSIX lock"
+        );
+        fcntl_lock(&*pinned, FlockOperation::Unlock).unwrap();
+
+        std::fs::rename(
+            directory.path().join("database"),
+            directory.path().join("original"),
+        )
+        .unwrap();
+        std::fs::write(directory.path().join("database"), b"replacement").unwrap();
+        assert!(
+            verify_pinned_database_leaf(&parent, "database", &pinned)
+                .await
+                .is_err()
+        );
+        std::fs::remove_file(directory.path().join("database")).unwrap();
+        std::os::unix::fs::symlink("original", directory.path().join("database")).unwrap();
+        assert!(
+            verify_pinned_database_leaf(&parent, "database", &pinned)
+                .await
+                .is_err()
+        );
+    }
+
     #[test]
     fn aggregate_recheck_rejects_h12_and_headquarters_as_full_campaign_genesis() {
         let genesis = InitialStateExpectationV1::CampaignGenesis {
@@ -3983,6 +4099,8 @@ mod tests {
                 host_participant_instance_id: Digest32::from_bytes([sequence.wrapping_add(2); 32]),
                 host_nonce: ChallengeNonce32::from_bytes([sequence.wrapping_add(3); 32]),
                 ranked_session: RankedSessionConfigV1 {
+                    custom_rules_config: None,
+                    custom_canonical_campaign: None,
                     schema_version: SCHEMA_VERSION_V1,
                     mission_id: "Dem_Lei_MP".into(),
                     content_edition: OfficialContentEditionV1::Demo,
@@ -4210,7 +4328,32 @@ mod tests {
     }
 
     async fn insert_indexed_hq_run(database: &Database) -> (String, String, i64) {
+        insert_indexed_campaign_run(database, 0).await
+    }
+
+    async fn insert_indexed_campaign_run(
+        database: &Database,
+        discriminator: u8,
+    ) -> (String, String, i64) {
         let mut submission = submission_fixture(database).await;
+        if discriminator != 0 {
+            submission.session_genesis_sha256 = [discriminator; 32];
+            submission.replay_session_id = [discriminator; 32];
+            submission.session_genesis_host_nonce = [discriminator; 32];
+            submission.offer_json = format!("{{\"fixture\":{discriminator}}}");
+            submission.envelope_json = submission.offer_json.clone();
+            submission.upload_challenge_id = database
+                .issue_challenge(
+                    ChallengePurpose::Submission,
+                    submission.controller_public_key,
+                    Duration::from_secs(60),
+                    Some(&submission.offer_json),
+                    Some("{}"),
+                )
+                .await
+                .unwrap()
+                .id;
+        }
         submission.scope_kind = "campaign".to_owned();
         submission.campaign_chain_id = Some("campaign-chain".to_owned());
         submission.campaign_content_manifest_id = Some([16; 32]);
@@ -4409,6 +4552,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn combined_boards_rank_and_page_across_rulesets_with_publication_visibility() {
+        use robin_run_protocol::{
+            BoardCategoryV1, BoardMetricV1, LeaderboardSubjectV1, RunContentIdentityV1, RunFilterV1,
+        };
+        let (_directory, database) = test_database().await;
+        let mut runs = Vec::new();
+        let mut watermark = 0;
+        for (discriminator, ruleset, value) in [(40, 5, 30), (41, 6, 20), (42, 5, 20), (43, 7, 99)]
+        {
+            let (id, submission, sequence) =
+                insert_indexed_campaign_run(&database, discriminator).await;
+            sqlx::query("UPDATE verified_runs SET campaign_session_kind = 'field_mission', campaign_hq_sequence = NULL, config_id = ?, ruleset_id = ? WHERE id = ?")
+                .bind(vec![ruleset - 1; 32]).bind(vec![ruleset; 32]).bind(&id)
+                .execute(database.pool()).await.unwrap();
+            sqlx::query("UPDATE verified_run_metrics SET value = ? WHERE run_id = ?")
+                .bind(value)
+                .bind(&id)
+                .execute(database.pool())
+                .await
+                .unwrap();
+            watermark = u64::try_from(sequence).unwrap();
+            runs.push((id, submission, sequence));
+        }
+        let mut filter = RunFilterV1 {
+            schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
+            subject: LeaderboardSubjectV1::Mission {
+                mission_id: "mission".to_owned(),
+                category: BoardCategoryV1::Campaign,
+            },
+            metric: BoardMetricV1::OriginalScore,
+            content: RunContentIdentityV1::Mission {
+                content_manifest_sha256: Digest32::from_bytes([3; 32]),
+            },
+            rules_config_sha256: None,
+            ruleset_manifest_sha256: None,
+            competition_manifest_sha256: None,
+            max_concurrent_players: None,
+            player_public_key: None,
+        };
+        let visible = [Digest32::from_bytes([5; 32]), Digest32::from_bytes([6; 32])];
+        let first = database
+            .leaderboard_rows(&filter, None, 2, watermark, &visible)
+            .await
+            .unwrap();
+        assert_eq!(
+            first
+                .iter()
+                .map(|row| (row.run_id.as_str(), row.rank))
+                .collect::<Vec<_>>(),
+            vec![(runs[0].0.as_str(), 1), (runs[1].0.as_str(), 2)]
+        );
+        let cursor = BoardCursor {
+            metric_value: first[1].metric_value,
+            accepted_sequence: runs[1].2,
+            run_id: runs[1].0.clone(),
+        };
+        let second = database
+            .leaderboard_rows(&filter, Some(&cursor), 2, watermark, &visible)
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!((&second[0].run_id, second[0].rank), (&runs[2].0, 2));
+        filter.rules_config_sha256 = Some(Digest32::from_bytes([5; 32]));
+        filter.ruleset_manifest_sha256 = Some(Digest32::from_bytes([6; 32]));
+        let exact = database
+            .leaderboard_rows(&filter, None, 10, watermark, &visible)
+            .await
+            .unwrap();
+        assert_eq!(exact.len(), 1);
+        assert_eq!((&exact[0].run_id, exact[0].rank), (&runs[1].0, 1));
+        filter.rules_config_sha256 = None;
+        filter.ruleset_manifest_sha256 = None;
+        sqlx::query("UPDATE submissions SET tombstoned_at_ms = created_at_ms WHERE id = ?")
+            .bind(&runs[0].1)
+            .execute(database.pool())
+            .await
+            .unwrap();
+        let remaining = database
+            .leaderboard_rows(&filter, None, 10, watermark, &visible)
+            .await
+            .unwrap();
+        assert_eq!(
+            remaining.iter().map(|row| row.rank).collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+        assert!(
+            database
+                .leaderboard_rows(&filter, None, 10, watermark, &[])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn headquarters_sessions_never_enter_standalone_mission_boards() {
         let (_directory, database) = test_database().await;
         let (run_id, _submission_id, watermark) = insert_indexed_hq_run(&database).await;
@@ -4450,15 +4688,21 @@ mod tests {
             content: robin_run_protocol::RunContentIdentityV1::Mission {
                 content_manifest_sha256: robin_run_protocol::Digest32::from_bytes([3; 32]),
             },
-            rules_config_sha256: robin_run_protocol::Digest32::from_bytes([4; 32]),
-            ruleset_manifest_sha256: robin_run_protocol::Digest32::from_bytes([5; 32]),
+            rules_config_sha256: Some(robin_run_protocol::Digest32::from_bytes([4; 32])),
+            ruleset_manifest_sha256: Some(robin_run_protocol::Digest32::from_bytes([5; 32])),
             competition_manifest_sha256: None,
             max_concurrent_players: None,
             player_public_key: None,
         };
         assert!(
             database
-                .leaderboard_rows(&filter, None, 10, u64::try_from(watermark).unwrap())
+                .leaderboard_rows(
+                    &filter,
+                    None,
+                    10,
+                    u64::try_from(watermark).unwrap(),
+                    &[robin_run_protocol::Digest32::from_bytes([5; 32])]
+                )
                 .await
                 .unwrap()
                 .is_empty()

@@ -127,7 +127,9 @@ pub struct AdmissionProfile {
     /// serializable artifact identity and may never be copied into public
     /// metadata or protocol proofs.
     pub canonical_campaign_state: CanonicalCampaignStatePinV1,
-    pub canonical_campaign_state_path: PathBuf,
+    /// Present in installed operator profiles; absent in a run-specific custom
+    /// proposal, whose bytes are reconstructed and checked by the verifier.
+    pub canonical_campaign_state_path: Option<PathBuf>,
     pub allowed_metrics: Vec<String>,
     pub ruleset_display_name: String,
     pub preset_id: String,
@@ -181,9 +183,18 @@ fn expected_admission_scopes(
         (OfficialContentEditionV1::Full, OfficialContentSubjectV1::FieldMission { mission_id })
             if mission_id == OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1 =>
         {
-            &["campaign_genesis", "campaign_continuation"]
+            &[
+                "individual_level",
+                "campaign_genesis",
+                "campaign_continuation",
+            ]
         }
-        (OfficialContentEditionV1::Full, _) => &["campaign_continuation"],
+        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::FieldMission { .. }) => {
+            &["individual_level", "campaign_continuation"]
+        }
+        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::Headquarters { .. }) => {
+            &["campaign_continuation"]
+        }
     }
 }
 
@@ -961,8 +972,17 @@ impl ServerConfig {
                 "canonical campaign state in profile {} exceeds the server limit",
                 profile.id
             );
+            let campaign_state_path = profile
+                .canonical_campaign_state_path
+                .as_deref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "installed profile {} is missing its canonical campaign-state path",
+                        profile.id
+                    )
+                })?;
             anyhow::ensure!(
-                profile.canonical_campaign_state_path.is_absolute(),
+                campaign_state_path.is_absolute(),
                 "canonical campaign-state path in profile {} must be absolute",
                 profile.id
             );
@@ -974,12 +994,12 @@ impl ServerConfig {
                             .join("private/campaign-states");
                     hash_authenticated_candidate_campaign_state(
                         authenticated_candidate_files,
-                        &profile.canonical_campaign_state_path,
+                        campaign_state_path,
                         &expected_parent,
                         HARD_MAX_CAMPAIGN_BYTES,
                     )?
                 } else {
-                    let path = &profile.canonical_campaign_state_path;
+                    let path = campaign_state_path;
                     hash_regular_file_no_symlinks(path, HARD_MAX_CAMPAIGN_BYTES).map_err(
                         |error| {
                             anyhow::anyhow!(
@@ -2048,7 +2068,11 @@ mod tests {
         };
         assert_eq!(
             expected_admission_scopes(OfficialContentEditionV1::Full, &full_genesis),
-            ["campaign_genesis", "campaign_continuation"]
+            [
+                "individual_level",
+                "campaign_genesis",
+                "campaign_continuation"
+            ]
         );
 
         let later_field = OfficialContentSubjectV1::FieldMission {
@@ -2056,7 +2080,7 @@ mod tests {
         };
         assert_eq!(
             expected_admission_scopes(OfficialContentEditionV1::Full, &later_field),
-            ["campaign_continuation"]
+            ["individual_level", "campaign_continuation"]
         );
 
         let headquarters = OfficialContentSubjectV1::Headquarters {

@@ -726,6 +726,7 @@ impl InteractiveFrameSimulation {
                     &mut hud.last_cursor_id,
                 );
                 let display_snapshot = host.frontend.engine_display.clone();
+                presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
                 let mut render_context = presentation.render_context(
                     resources,
                     hud,
@@ -751,7 +752,7 @@ impl InteractiveFrameSimulation {
                     dev,
                     &mut render_context,
                 );
-                post_render_engine_cleanup(&mut frame, host.transport.local_seat);
+                post_render_engine_cleanup(&mut frame, host.transport.local_seat());
             }
             let menu_resources =
                 required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");
@@ -823,37 +824,30 @@ impl InteractiveFrameSimulation {
                                 });
                         }
 
-                        host.frontend.key_config = result.key_config.clone();
-                        host.frontend.custom_key_config = result.custom_key_config.clone();
-                        host.frontend.control_tactical_units =
-                            result.profile_gameplay_config.control_tactical_units;
-                        host.frontend
-                            .planning
-                            .update_preference(result.profile_gameplay_config.plan_quick_actions);
-                        if !host.frontend.planning.enabled() {
+                        let effects = crate::host::FrontendPreferences::new(
+                            result.key_config.clone(),
+                            result.custom_key_config.clone(),
+                            result.profile_gameplay_config,
+                            &result.graphic_config,
+                        )
+                        .apply(&mut host.frontend);
+                        // Preserve live side-effect order: cancel planning, update
+                        // window/renderer presentation, release tactical control,
+                        // then enqueue authorized simulation-setting commands.
+                        if effects.cancel_planned_action {
                             dispatch_local_command(
                                 &host.transport,
                                 &mut frame.post_commands,
                                 &PlayerCommand::CancelPlannedAction,
                             );
                         }
-                        host.frontend.touch_camera_gestures =
-                            result.profile_gameplay_config.touch_camera_gestures;
-                        host.frontend.gameplay_config = result.profile_gameplay_config;
-                        host.frontend.native_refresh_presentation =
-                            result.graphic_config.native_refresh_presentation;
-                        host.frontend.quick_action_cursor_pulse =
-                            result.graphic_config.quick_action_cursor_pulse;
-                        host.frontend.diplomacy_visuals = result.graphic_config.diplomacy_visuals;
-                        window.set_native_refresh_presentation(
-                            result.graphic_config.native_refresh_presentation,
-                        );
+                        window.set_native_refresh_presentation(effects.native_refresh_presentation);
                         presentation.renderer.configure_native_refresh_presentation(
-                            result.graphic_config.native_refresh_presentation,
+                            effects.native_refresh_presentation,
                             window.surface_config.width,
                             window.surface_config.height,
                         );
-                        if !host.frontend.control_tactical_units {
+                        if effects.release_tactical_control {
                             dispatch_local_command(
                                 &host.transport,
                                 &mut frame.post_commands,
@@ -1410,17 +1404,10 @@ impl InteractiveFrameSimulation {
             host.frontend.engine_display = display;
             frame.mark_post_external_actions_applied();
         }
-        let net = host.transport.net.take();
-        let actions = crate::http_server::drain_global(
-            manager,
-            host,
-            assets,
-            net.as_ref(),
-            &mut frame.post_commands,
-        );
+        let actions =
+            crate::http_server::drain_global(manager, host, assets, &mut frame.post_commands);
         runtime.record_input_taints(crate::http_server::take_pending_replay_taints());
         frame.record_applied_post_external_actions(actions);
-        host.transport.net = net;
 
         // ── Rollback check + rewind buffer commit ──
         // Both are post-tick bookkeeping.  Skipped on paused frames
@@ -1429,8 +1416,8 @@ impl InteractiveFrameSimulation {
         // log — the slot is already populated and would duplicate.
         if frame.timeline_advances(!paused && !rewind_active) {
             let next_frame = runtime.advance_frame().number();
-            if let Some(net) = host.transport.net.as_ref()
-                && host.transport.local_seat == engine_player_command::PlayerId::HOST
+            if let Some(net) = host.transport.net()
+                && host.transport.local_seat() == engine_player_command::PlayerId::HOST
             {
                 net.set_initial_snapshot(next_frame, &manager.engine);
             }
@@ -1447,6 +1434,7 @@ impl InteractiveFrameSimulation {
     /// tick/PostInitialize boundary, while step-back replaces the live engine.
     pub(super) fn drive_manual_steps(
         runtime: &mut super::runtime::TimelineRuntime,
+        save_manager: &crate::savegame::SaveGameManager,
         host: &mut Host,
         game: &mut crate::game::Game,
         manager: &mut robin_engine::engine_manager::EngineManager,
@@ -1490,6 +1478,7 @@ impl InteractiveFrameSimulation {
             manual_pause,
             &mut ui.active_modal,
             ui.terminal_debriefing.as_mut(),
+            Some(save_manager),
             mission_ui_block_reason,
             None,
             |policy| {
@@ -1555,7 +1544,7 @@ impl InteractiveFrameSimulation {
                 .active_modal
                 .as_ref()
                 .is_some_and(|modal| !modal.is_empty());
-        let keyboard_stepping_allowed = host.transport.net.is_none();
+        let keyboard_stepping_allowed = host.transport.net().is_none();
         if step_forward_pressed
             && keyboard_stepping_allowed
             && !modal_state_pending(host)
@@ -1676,7 +1665,8 @@ mod tests {
 
         let mut host = crate::host::Host::scratch(640.0, 480.0);
         let (channels, _incoming, outgoing, _, _) = NetChannels::new();
-        host.transport.net = Some(channels);
+        host.transport =
+            crate::host::HostTransport::test_session(channels, host.transport.local_seat());
         let mut commands = FrameCommands::new();
         dispatch_active_modal_outcome(
             ActiveModalOutcome::QuitMissionRequested,

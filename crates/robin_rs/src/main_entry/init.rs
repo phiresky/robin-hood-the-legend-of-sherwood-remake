@@ -13,9 +13,9 @@ use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile as engine_sbfile;
-use robin_engine::sbfile::{
-    SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR, SbFile, SbFileSystem,
-};
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR};
+use robin_engine::sbfile::{SbFile, SbFileSystem};
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
 use robin_run_protocol::{
     OfficialBuiltInOverlaySourceManifestV2, OfficialProjectionSourceFormatV1, ResourceLocaleRootV1,
@@ -168,11 +168,13 @@ pub const OVERLAY_DATA_DIRS_ENV: &str = "ROBINHOOD_OVERLAY_DATA_DIRS";
 /// Directory whose immediate subdirectories are registered as overlay
 /// datadirs at startup.  Repository-shipped mods (e.g. hackable JSON
 /// levels) live here.
+#[cfg(not(target_arch = "wasm32"))]
 pub const MODS_DIR: &str = "mods";
 
 /// Engine-shipped overlay datadir: assets every installation needs on
 /// top of its game data (e.g. the native bitmap fonts the Steam release
 /// is missing). Registered before the `mods/` overlays.
+#[cfg(not(target_arch = "wasm32"))]
 pub const CORE_OVERLAY_DIR: &str = "assets/core-datadir";
 
 /// Resolve an engine-shipped resource directory that lives next to the
@@ -307,6 +309,7 @@ fn add_language_folder() {
 /// Legacy installations still require their bootstrap alternate roots when
 /// runtime pack validation cannot recognize a demo's raw Start.sxt format.
 /// Keep the original English-first order, scoped to this application reader.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn add_language_folder_with_files(files: &SbFileSystem) -> Result<(), InitError> {
     let add = |path: &str| match files.add_alternate_path(path) {
         SBFILE_NO_ERROR | SBFILE_ERROR_PATH_ALREADY_PRESENT => Ok(()),

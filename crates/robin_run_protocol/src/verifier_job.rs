@@ -86,7 +86,7 @@ impl Validate for VerifierJobRouteV1 {
                 self.campaign_content_manifest_sha256,
             ),
             (
-                OfficialContentEditionV1::Demo,
+                OfficialContentEditionV1::Demo | OfficialContentEditionV1::Full,
                 RunScopeKindV1::IndividualLevel,
                 OfficialContentSubjectV1::FieldMission { .. },
                 None,
@@ -247,8 +247,9 @@ impl Validate for VerifierJobTemplateV1 {
             || self.rules_config.canonical_digest().ok() != Some(self.route.rules_config_sha256)
             || self.ruleset_manifest.canonical_digest().ok()
                 != Some(self.route.ruleset_manifest_sha256)
-            || self.canonical_campaign_state.requirement
-                != self.ruleset_manifest.canonical_campaign_state
+            || !self
+                .ruleset_manifest
+                .admits_campaign_state_requirement(self.canonical_campaign_state.requirement)
             || self.canonical_campaign_state.requirement.edition != self.route.content_edition
             || self
                 .canonical_campaign_state
@@ -345,6 +346,16 @@ mod tests {
             .validate()
             .is_ok()
         );
+        assert!(
+            route(
+                OfficialContentEditionV1::Full,
+                RunScopeKindV1::IndividualLevel,
+                field(),
+                false
+            )
+            .validate()
+            .is_ok()
+        );
         for invalid in [
             route(
                 OfficialContentEditionV1::Demo,
@@ -361,7 +372,7 @@ mod tests {
             route(
                 OfficialContentEditionV1::Full,
                 RunScopeKindV1::IndividualLevel,
-                field(),
+                headquarters(),
                 false,
             ),
             route(

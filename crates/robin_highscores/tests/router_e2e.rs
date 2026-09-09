@@ -74,6 +74,7 @@ const NETWORK_PROTOCOL_VERSION: u32 =
     robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1;
 
 struct RigOptions {
+    any_ruleset: bool,
     campaign: bool,
     competition: bool,
     allowed_metrics: Vec<String>,
@@ -82,6 +83,7 @@ struct RigOptions {
 impl Default for RigOptions {
     fn default() -> Self {
         Self {
+            any_ruleset: false,
             campaign: false,
             competition: false,
             allowed_metrics: vec!["original_score".to_owned(), "fastest_success".to_owned()],
@@ -223,12 +225,20 @@ impl TestRig {
             content_digests.push(terminal_content_sha256);
         }
         content_digests.sort_unstable();
-        let published_ruleset = published_ruleset(
+        let mut published_ruleset = published_ruleset(
             build_sha256,
             content_digests,
             rules_config_sha256,
             campaign_content_sha256,
         );
+        if options.any_ruleset {
+            published_ruleset.manifest.rules_config_constraint =
+                RulesConfigConstraintV1::AnyCanonicalSimConfig;
+            published_ruleset.manifest.preset_id = OpaqueId::new("any").unwrap();
+            published_ruleset.manifest.difficulty_id = OpaqueId::new("any").unwrap();
+            published_ruleset.ruleset_manifest_sha256 =
+                published_ruleset.manifest.canonical_digest().unwrap();
+        }
         published_ruleset.validate().unwrap();
         let ruleset_sha256 = published_ruleset.ruleset_manifest_sha256;
         let competition = options.competition.then(|| {
@@ -363,7 +373,7 @@ impl TestRig {
                     media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
                 },
             },
-            canonical_campaign_state_path: starting_campaign_path.clone(),
+            canonical_campaign_state_path: Some(starting_campaign_path.clone()),
             allowed_metrics: options.allowed_metrics.clone(),
             ruleset_display_name: "Standard / Normal".to_owned(),
             preset_id: "standard".to_owned(),
@@ -401,7 +411,7 @@ impl TestRig {
                         media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
                     },
                 },
-                canonical_campaign_state_path: starting_campaign_path,
+                canonical_campaign_state_path: Some(starting_campaign_path),
                 allowed_metrics: options.allowed_metrics.clone(),
                 ruleset_display_name: "Standard / Normal".to_owned(),
                 preset_id: "standard".to_owned(),
@@ -435,7 +445,7 @@ impl TestRig {
                         media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
                     },
                 },
-                canonical_campaign_state_path: directory.path().join("starting.campaign"),
+                canonical_campaign_state_path: Some(directory.path().join("starting.campaign")),
                 allowed_metrics: options.allowed_metrics.clone(),
                 ruleset_display_name: "Standard / Normal".to_owned(),
                 preset_id: "standard".to_owned(),
@@ -1488,6 +1498,8 @@ impl TestRig {
                 host_participant_instance_id: participant_instance_id,
                 host_nonce: ChallengeNonce32::from_bytes([sequence.wrapping_add(80); 32]),
                 ranked_session: robin_run_protocol::RankedSessionConfigV1 {
+                    custom_rules_config: None,
+                    custom_canonical_campaign: None,
                     schema_version: SCHEMA_VERSION_V1,
                     mission_id: mission_id.to_owned(),
                     content_edition: OfficialContentEditionV1::Full,
@@ -1610,6 +1622,8 @@ impl TestRig {
                 host_participant_instance_id: participant_instance_id,
                 host_nonce: ChallengeNonce32::from_bytes([sequence.wrapping_add(80); 32]),
                 ranked_session: robin_run_protocol::RankedSessionConfigV1 {
+                    custom_rules_config: None,
+                    custom_canonical_campaign: None,
                     schema_version: SCHEMA_VERSION_V1,
                     mission_id: MISSION_ID.to_owned(),
                     content_edition: OfficialContentEditionV1::Demo,
@@ -1831,6 +1845,76 @@ async fn missing_authenticated_backup_blocks_offers_and_fresh_upload_reservation
         .unwrap(),
         None
     );
+}
+
+#[tokio::test]
+async fn custom_config_preflight_is_admitted_only_by_an_open_ruleset_and_digest_bound() {
+    for any_ruleset in [false, true] {
+        let rig = TestRig::new_with(RigOptions {
+            any_ruleset,
+            ..RigOptions::default()
+        })
+        .await;
+        let owner = SigningKey::from_bytes(&[80; 32]);
+        rig.rename(&owner, "Custom Robin", Ipv4Addr::new(127, 0, 8, 1))
+            .await;
+        let mut request = rig.offer_request(&owner, 80);
+        let baseline = rig
+            .config
+            .manifests
+            .rules_configs
+            .get(&rig.rules_config_sha256)
+            .unwrap();
+        let mut sim =
+            robin_engine::engine::RankedSimulationPolicy::standard_medium().expected_config();
+        sim.difficulty = robin_engine::player_profile::DifficultyLevel::Legendary;
+        sim.enable_unbinding = false;
+        let custom =
+            robin_engine::simulation_inputs::custom_rules_config_v1(baseline, sim).unwrap();
+        let ranked = &mut request.session_genesis.claim.ranked_session;
+        ranked.rules_config_sha256 = custom.canonical_digest().unwrap();
+        ranked.custom_rules_config = Some(custom);
+        ranked.custom_canonical_campaign = Some(ArtifactRefV1 {
+            sha256: ranked.starting_campaign_sha256,
+            byte_length: ranked.starting_campaign_byte_length,
+            media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
+        });
+        let mut preflight = rig.fresh_preflight_request(&request, 80).unwrap();
+        preflight.host_signature = sign(&owner, &preflight.signing_bytes().unwrap());
+        let response = rig
+            .app
+            .clone()
+            .oneshot(json_request(
+                Method::POST,
+                "/api/v1/fresh-run-preflight-grants",
+                &preflight,
+                Ipv4Addr::new(127, 8, 2, 80),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if any_ruleset {
+                StatusCode::CREATED
+            } else {
+                StatusCode::BAD_REQUEST
+            }
+        );
+        if any_ruleset {
+            let grant: FreshRunPreflightGrantV1 = json_body(response).await;
+            grant.validate_request(&preflight).unwrap();
+            preflight
+                .claim
+                .ranked_session
+                .custom_rules_config
+                .as_mut()
+                .unwrap()
+                .sim_config
+                .insert("enable_unbinding".into(), CanonicalValue::Bool(true));
+            assert!(preflight.validate().is_err());
+            assert!(grant.validate_request(&preflight).is_err());
+        }
+    }
 }
 
 #[tokio::test]

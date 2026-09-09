@@ -213,7 +213,7 @@ mod tests {
             },
         );
         pending.commit_authenticated(id).unwrap();
-        host.transport.snapshot_transition = Some(pending);
+        host.transport.prepare_snapshot_transition(pending);
         let committed = PreparedLoad::from_committed_snapshot(
             host.transport.take_committed_snapshot_transition().unwrap(),
         )
@@ -229,7 +229,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let outcome = crate::main_entry::perform_pending_save_load(
+        let mut outcome = crate::main_entry::perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -238,9 +238,9 @@ mod tests {
             &profiles,
             None,
         );
-        assert!(outcome.event.is_none() && outcome.restore.is_none());
+        assert!(outcome.event.is_none() && outcome.restore().is_none());
         let transition = outcome
-            .transition
+            .take_transition()
             .expect("different descriptor requires a mission handoff");
         engine.test_set_frame_counter(99);
         callbacks
@@ -288,25 +288,25 @@ mod tests {
             session_id: MultiplayerSessionId([7; 32]),
             sequence: 1,
         };
-        host.transport.snapshot_transition = Some(PendingSnapshotTransition::new(
-            id,
-            PendingSnapshotTransitionPayload::Save {
-                load: SnapshotSave::Remote(Box::new(save)),
-            },
-        ));
+        host.transport
+            .prepare_snapshot_transition(PendingSnapshotTransition::new(
+                id,
+                PendingSnapshotTransitionPayload::Save {
+                    load: SnapshotSave::Remote(Box::new(save)),
+                },
+            ));
         assert!(
             host.transport
                 .take_committed_snapshot_transition()
                 .is_none()
         );
-        let pending = host.transport.snapshot_transition.as_mut().unwrap();
         assert!(
-            pending
-                .commit_authenticated(SnapshotTransitionId { sequence: 2, ..id })
+            host.transport
+                .commit_snapshot_transition(SnapshotTransitionId { sequence: 2, ..id })
                 .is_err()
         );
-        pending.commit_authenticated(id).unwrap();
-        assert!(pending.commit_authenticated(id).is_err());
+        host.transport.commit_snapshot_transition(id).unwrap();
+        assert!(host.transport.commit_snapshot_transition(id).is_err());
         let token = host.transport.take_committed_snapshot_transition().unwrap();
         assert!(
             serde_json::from_slice::<crate::host::CommittedSnapshotTransition>(

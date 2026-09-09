@@ -1997,7 +1997,7 @@ fn load_sprite_pack(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Renderer) {
     use robin_assets::picture::{Picture, PixelFormat, SixteenPacking};
     use std::sync::Arc;

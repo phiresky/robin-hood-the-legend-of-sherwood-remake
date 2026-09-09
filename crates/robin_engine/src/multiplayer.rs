@@ -15,7 +15,7 @@ use crate::engine::Engine;
 use crate::player_command::{DialogResult, ModalKind, PlayerCommand, PlayerId, PlayerInput};
 use robin_run_protocol::{LeaderboardCoSignInstanceV1, LeaderboardCoSignRequestV1, Validate};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use unicode_security::GeneralSecurityProfile;
@@ -1033,6 +1033,7 @@ pub struct NetChannels {
     modal_sync: Mutex<ModalSyncState>,
     leaderboard_cosign_inbox: LeaderboardAuthorizationInbox,
     next_transition_sequence: AtomicU64,
+    command_worker_closed: AtomicBool,
 }
 
 impl NetChannels {
@@ -1061,6 +1062,7 @@ impl NetChannels {
                 modal_sync: Mutex::new(ModalSyncState::default()),
                 leaderboard_cosign_inbox: Arc::new(Mutex::new(std::collections::VecDeque::new())),
                 next_transition_sequence: AtomicU64::new(0),
+                command_worker_closed: AtomicBool::new(false),
             },
             in_tx,
             out_rx,
@@ -1072,60 +1074,81 @@ impl NetChannels {
     /// Cache an initial-state snapshot the host will offer to every
     /// new peer that handshakes.
     pub fn set_initial_snapshot(&self, frame: u32, engine: &Engine) {
-        if let Ok(mut slot) = self.initial_snapshot.lock() {
-            *slot = Some((frame, engine.encode_native_snapshot()));
-        }
+        *self
+            .initial_snapshot
+            .lock()
+            .expect("multiplayer initial snapshot lock poisoned") =
+            Some((frame, engine.encode_native_snapshot()));
+    }
+
+    /// Required commands must reach the worker. A closed worker is not an idle
+    /// connection and callers must propagate or explicitly report this failure.
+    fn send_required(&self, command: NetOutbound) -> Result<(), String> {
+        self.outgoing.send(command).map_err(|_| {
+            self.command_worker_closed.store(true, Ordering::Release);
+            "multiplayer transport worker is closed".to_string()
+        })
     }
 
     /// Cache an authoritative host snapshot and push it to peers
     /// that already handshook before the cache was populated.
-    pub fn publish_initial_snapshot(&self, frame: u32, engine: &Engine) {
+    pub fn publish_initial_snapshot(&self, frame: u32, engine: &Engine) -> Result<(), String> {
         self.set_initial_snapshot(frame, engine);
         let engine_bytes = engine.encode_native_snapshot();
-        let _ = self.outgoing.send(NetOutbound::InitialSnapshot {
+        self.send_required(NetOutbound::InitialSnapshot {
             frame,
             engine_bytes,
-        });
+        })
     }
 
     /// Announce that this process has loaded the mission, adopted any
     /// required initial snapshot, and is ready for the host-controlled
     /// sim start barrier.
-    pub fn send_ready_to_sim(&self, frame: u32) {
-        let _ = self.outgoing.send(NetOutbound::ReadyToSim { frame });
+    pub fn send_ready_to_sim(&self, frame: u32) -> Result<(), String> {
+        self.send_required(NetOutbound::ReadyToSim { frame })
     }
 
-    pub fn request_content(&self, full_mod_sha256: [u8; 32], resume_offset: u64) {
-        let _ = self.outgoing.send(NetOutbound::ContentRequest {
+    pub fn request_content(
+        &self,
+        full_mod_sha256: [u8; 32],
+        resume_offset: u64,
+    ) -> Result<(), String> {
+        self.send_required(NetOutbound::ContentRequest {
             full_mod_sha256,
             resume_offset,
-        });
+        })
     }
 
     pub fn reject_content(&self, full_mod_sha256: [u8; 32], reason: String) {
-        let _ = self.outgoing.send(NetOutbound::ContentReject {
+        // Rejection already terminates the local admission. Reporting it to a
+        // peer is best effort; retain the original local failure if it is gone.
+        if let Err(error) = self.send_required(NetOutbound::ContentReject {
             full_mod_sha256,
             reason: bounded_safe_diagnostic(&reason, MAX_REJECT_REASON_BYTES),
-        });
+        }) {
+            tracing::warn!(%error, "could not notify peer of content rejection");
+        }
     }
 
-    pub fn send_content_ready(&self, full_mod_sha256: [u8; 32]) {
-        let _ = self
-            .outgoing
-            .send(NetOutbound::ContentReady { full_mod_sha256 });
+    pub fn send_content_ready(&self, full_mod_sha256: [u8; 32]) -> Result<(), String> {
+        self.send_required(NetOutbound::ContentReady { full_mod_sha256 })
     }
 
-    pub fn send_content_prepared(&self, full_mod_sha256: [u8; 32]) {
-        let _ = self
-            .outgoing
-            .send(NetOutbound::ContentPrepared { full_mod_sha256 });
+    pub fn send_content_prepared(&self, full_mod_sha256: [u8; 32]) -> Result<(), String> {
+        self.send_required(NetOutbound::ContentPrepared { full_mod_sha256 })
     }
 
     /// Poll a network event, including events deferred by nested UI
     /// loops that only consumed modal-specific messages.
     pub fn try_recv_event(&self) -> Result<NetEvent, std::sync::mpsc::TryRecvError> {
-        if let Ok(mut deferred) = self.deferred_events.lock()
-            && let Some(event) = deferred.pop_front()
+        if self.command_worker_closed.load(Ordering::Acquire) {
+            return Err(std::sync::mpsc::TryRecvError::Disconnected);
+        }
+        if let Some(event) = self
+            .deferred_events
+            .lock()
+            .expect("multiplayer deferred event queue poisoned")
+            .pop_front()
         {
             return Ok(event);
         }
@@ -1135,6 +1158,9 @@ impl NetChannels {
     /// Poll only the transport receiver.  Modal loops use this to
     /// avoid repeatedly re-reading their own deferred events.
     pub fn try_recv_transport_event(&self) -> Result<NetEvent, std::sync::mpsc::TryRecvError> {
+        if self.command_worker_closed.load(Ordering::Acquire) {
+            return Err(std::sync::mpsc::TryRecvError::Disconnected);
+        }
         self.incoming.try_recv()
     }
 
@@ -1143,10 +1169,12 @@ impl NetChannels {
         if events.is_empty() {
             return;
         }
-        if let Ok(mut deferred) = self.deferred_events.lock() {
-            for event in events.into_iter().rev() {
-                deferred.push_front(event);
-            }
+        let mut deferred = self
+            .deferred_events
+            .lock()
+            .expect("multiplayer deferred event queue poisoned");
+        for event in events.into_iter().rev() {
+            deferred.push_front(event);
         }
     }
 
@@ -1274,8 +1302,15 @@ impl NetChannels {
     }
 
     pub fn try_recv_modal_event(&self) -> Result<NetEvent, std::sync::mpsc::TryRecvError> {
-        if let Ok(mut sync) = self.modal_sync.lock()
-            && let Some(event) = sync.inbox.pop_front()
+        if self.command_worker_closed.load(Ordering::Acquire) {
+            return Err(std::sync::mpsc::TryRecvError::Disconnected);
+        }
+        if let Some(event) = self
+            .modal_sync
+            .lock()
+            .expect("multiplayer modal event queue poisoned")
+            .inbox
+            .pop_front()
         {
             return Ok(event);
         }
@@ -1372,12 +1407,12 @@ impl NetChannels {
     }
 
     /// Push a locally-produced [`PlayerCommand`] onto the wire.
-    pub fn send_input(&self, cmd: PlayerCommand) {
+    pub fn send_input(&self, cmd: PlayerCommand) -> Result<(), String> {
         let origin_frame = self.frame_cursor.load(Ordering::Relaxed);
-        let _ = self.outgoing.send(NetOutbound::Input {
+        self.send_required(NetOutbound::Input {
             origin_frame,
             command: cmd,
-        });
+        })
     }
 
     /// Push an authoritative state hash for `frame`.  Server-side only.
@@ -1387,13 +1422,13 @@ impl NetChannels {
         hash: u64,
         clock_frame: u32,
         ms_until_next_frame: u32,
-    ) {
-        let _ = self.outgoing.send(NetOutbound::StateHash {
+    ) -> Result<(), String> {
+        self.send_required(NetOutbound::StateHash {
             frame,
             hash: Some(hash),
             clock_frame: Some(clock_frame),
             ms_until_next_frame: Some(ms_until_next_frame),
-        });
+        })
     }
 
     /// Submit a visible client request without changing local modal state.
@@ -1693,6 +1728,76 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn required_sends_fail_and_close_polling_even_with_live_event_sender() {
+        use super::*;
+        let (channels, _incoming, outgoing, _, _) = NetChannels::new();
+        drop(outgoing);
+        assert!(channels.send_ready_to_sim(0).is_err());
+        assert!(channels.request_content([1; 32], 0).is_err());
+        assert!(channels.send_content_ready([1; 32]).is_err());
+        assert!(channels.send_content_prepared([1; 32]).is_err());
+        assert!(
+            channels
+                .send_input(PlayerCommand::QuitMissionRequested)
+                .is_err()
+        );
+        assert!(channels.send_state_hash(0, 0, 0, 0).is_err());
+        assert!(matches!(
+            channels.try_recv_event(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+        assert!(matches!(
+            channels.try_recv_transport_event(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn deferred_events_keep_fifo_order_before_transport_closure() {
+        use super::*;
+        let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+        incoming.send(NetEvent::Note("transport".into())).unwrap();
+        channels.defer_events(vec![NetEvent::Note("older".into())]);
+        channels.defer_events(vec![
+            NetEvent::Note("first".into()),
+            NetEvent::Note("second".into()),
+        ]);
+        drop(incoming);
+        for expected in ["first", "second", "older", "transport"] {
+            assert!(
+                matches!(channels.try_recv_event(), Ok(NetEvent::Note(message)) if message == expected)
+            );
+        }
+        assert!(matches!(
+            channels.try_recv_event(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires LLVM unwind support; run with profile.test.package.robin_engine.codegen-backend=llvm"]
+    fn poisoned_deferred_queue_is_not_silently_skipped() {
+        use super::*;
+        let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+        let queue = Arc::clone(&channels.deferred_events);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = queue.lock().unwrap();
+                panic!("poison queue for test");
+            })
+            .join()
+            .is_err()
+        );
+        incoming
+            .send(NetEvent::Note("must not bypass queue".into()))
+            .unwrap();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| channels.try_recv_event()))
+                .is_err()
+        );
+    }
+
     use super::*;
 
     fn leaderboard_request(

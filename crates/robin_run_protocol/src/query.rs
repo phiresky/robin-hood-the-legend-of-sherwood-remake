@@ -39,7 +39,7 @@ pub enum LeaderboardSubjectV1 {
     FullCampaign,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunContentIdentityV1 {
     Mission {
@@ -190,8 +190,9 @@ pub struct RunFilterV1 {
     pub subject: LeaderboardSubjectV1,
     pub metric: BoardMetricV1,
     pub content: RunContentIdentityV1,
-    pub rules_config_sha256: Digest32,
-    pub ruleset_manifest_sha256: Digest32,
+    /// Omit both rules digests for the combined board across all configurations.
+    pub rules_config_sha256: Option<Digest32>,
+    pub ruleset_manifest_sha256: Option<Digest32>,
     pub competition_manifest_sha256: Option<Digest32>,
     pub max_concurrent_players: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,12 +204,23 @@ impl Validate for RunFilterV1 {
         crate::validation::schema("RunFilterV1", self.schema_version)?;
         self.subject.validate()?;
         self.content.validate_for_subject(&self.subject)?;
-        for digest in [self.rules_config_sha256, self.ruleset_manifest_sha256] {
+        for digest in [self.rules_config_sha256, self.ruleset_manifest_sha256]
+            .into_iter()
+            .flatten()
+        {
             if digest.is_zero() {
                 return Err(ValidationError::Zero {
                     field: "run_filter.identity_digest",
                 });
             }
+        }
+        if self.rules_config_sha256.is_some() != self.ruleset_manifest_sha256.is_some()
+            || (self.competition_manifest_sha256.is_some()
+                && self.ruleset_manifest_sha256.is_none())
+        {
+            return Err(ValidationError::ClaimMismatch {
+                field: "run_filter.ruleset_selection",
+            });
         }
         if self.max_concurrent_players == Some(0) {
             return Err(ValidationError::EmptyPlayerCount);
@@ -242,8 +254,8 @@ impl RunFilterV1 {
             || self.subject != manifest.subject
             || self.metric != manifest.metric
             || self.content != manifest.content
-            || self.rules_config_sha256 != manifest.rules_config_sha256
-            || self.ruleset_manifest_sha256 != manifest.ruleset_manifest_sha256
+            || self.rules_config_sha256 != Some(manifest.rules_config_sha256)
+            || self.ruleset_manifest_sha256 != Some(manifest.ruleset_manifest_sha256)
             || self.max_concurrent_players
                 != Some(manifest.participant_composition.max_concurrent_players())
         {
@@ -278,8 +290,9 @@ pub struct LeaderboardQueryV1 {
     /// Exact mission-manifest or campaign-catalog digest, selected by
     /// `subject_kind`. This query remains flat for URL form decoding.
     pub content_identity_sha256: Digest32,
-    pub rules_config_sha256: Digest32,
-    pub ruleset_manifest_sha256: Digest32,
+    /// Omit both rules digests for the combined board across all configurations.
+    pub rules_config_sha256: Option<Digest32>,
+    pub ruleset_manifest_sha256: Option<Digest32>,
     pub competition_manifest_sha256: Option<Digest32>,
     pub max_concurrent_players: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -430,6 +443,13 @@ pub struct RulesetFacetV1 {
     pub categories: Vec<BoardCategoryV1>,
     pub metrics: Vec<BoardMetricV1>,
     pub supports_full_campaign_boards: bool,
+}
+
+impl RulesetFacetV1 {
+    /// A ruleset can cover several missions and a separate full-campaign board.
+    pub fn identity(&self) -> (Digest32, RunContentIdentityV1) {
+        (self.ruleset_manifest_sha256, self.content)
+    }
 }
 
 impl Validate for RulesetFacetV1 {
@@ -802,7 +822,7 @@ impl Validate for LeaderboardMetadataV1 {
             || !self
                 .rulesets
                 .windows(2)
-                .all(|pair| pair[0].ruleset_manifest_sha256 < pair[1].ruleset_manifest_sha256)
+                .all(|pair| pair[0].identity() < pair[1].identity())
             || !self.competitions.windows(2).all(|pair| {
                 pair[0].competition_manifest_sha256 < pair[1].competition_manifest_sha256
             })
@@ -1464,8 +1484,11 @@ impl LeaderboardPageV1 {
             } => RulesetBoardScopeV1::CampaignMission,
             LeaderboardSubjectV1::FullCampaign => RulesetBoardScopeV1::FullCampaign,
         };
-        if self.filter.ruleset_manifest_sha256 != published.ruleset_manifest_sha256
-            || self.filter.rules_config_sha256 != manifest.rules_config_sha256
+        if self.filter.ruleset_manifest_sha256 != Some(published.ruleset_manifest_sha256)
+            || !self
+                .filter
+                .rules_config_sha256
+                .is_some_and(|digest| manifest.admits_rules_config_digest(digest))
             || match self.filter.content {
                 RunContentIdentityV1::Mission {
                     content_manifest_sha256,
@@ -1735,6 +1758,8 @@ mod tests {
             )
         };
         let ranked = RankedSessionConfigV1 {
+            custom_rules_config: None,
+            custom_canonical_campaign: None,
             schema_version: SCHEMA_VERSION_V1,
             mission_id: mission_id.into(),
             content_edition,
@@ -2488,8 +2513,8 @@ mod tests {
             content: RunContentIdentityV1::Mission {
                 content_manifest_sha256: Digest32::from_bytes([1; 32]),
             },
-            rules_config_sha256: Digest32::from_bytes([2; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([3; 32]),
+            rules_config_sha256: Some(Digest32::from_bytes([2; 32])),
+            ruleset_manifest_sha256: Some(Digest32::from_bytes([3; 32])),
             competition_manifest_sha256: None,
             max_concurrent_players: Some(1),
             player_public_key: None,
@@ -3430,8 +3455,8 @@ mod tests {
             mission_scope: Some(BoardCategoryV1::Campaign),
             metric: BoardMetricV1::OriginalScore,
             content_identity_sha256: Digest32::from_bytes([1; 32]),
-            rules_config_sha256: Digest32::from_bytes([2; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([3; 32]),
+            rules_config_sha256: Some(Digest32::from_bytes([2; 32])),
+            ruleset_manifest_sha256: Some(Digest32::from_bytes([3; 32])),
             competition_manifest_sha256: None,
             max_concurrent_players: Some(1),
             player_public_key: None,
@@ -3468,8 +3493,8 @@ mod tests {
             mission_scope: Some(BoardCategoryV1::IndividualLevel),
             metric: BoardMetricV1::FastestSuccess,
             content_identity_sha256: Digest32::from_bytes([1; 32]),
-            rules_config_sha256: Digest32::from_bytes([2; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([3; 32]),
+            rules_config_sha256: Some(Digest32::from_bytes([2; 32])),
+            ruleset_manifest_sha256: Some(Digest32::from_bytes([3; 32])),
             competition_manifest_sha256: Some(Digest32::from_bytes([4; 32])),
             max_concurrent_players: Some(1),
             player_public_key: Some(PublicKey32::from_bytes([5; 32])),

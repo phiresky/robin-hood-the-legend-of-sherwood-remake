@@ -51,6 +51,15 @@ export function normalizeFilters(input: BoardFilters, metadata: BoardMetadata): 
         }
     }
 
+    if (selectedCompetition === null && input.presetId === null
+        && input.difficultyId === null && input.rulesetId === null) {
+        const content = compatible[0]?.content;
+        if (content === undefined) throw new Error('No content is published for the combined board.');
+        return { ...input, subject, metric, missionId,
+            presetId: null, difficultyId: null, rulesetId: null, rulesConfigSha256: null,
+            contentIdentitySha256: runContentDigest(content), competitionManifestSha256: null };
+    }
+
     let presetId = competitionRuleset?.presetId ?? input.presetId;
     if (presetId !== null && !compatible.some(ruleset => ruleset.presetId === presetId)) {
         throw new Error('The selected preset is not available for this board.');
@@ -85,7 +94,7 @@ export function normalizeFilters(input: BoardFilters, metadata: BoardMetadata): 
         difficultyId,
         rulesetId,
         contentIdentitySha256: runContentDigest(selectedRuleset.content),
-        rulesConfigSha256: selectedRuleset.rulesConfigSha256,
+        rulesConfigSha256: selectedRuleset.presetId === 'any' ? input.rulesConfigSha256 ?? selectedRuleset.rulesConfigSha256 : selectedRuleset.rulesConfigSha256,
         competitionManifestSha256: selectedCompetition?.manifestSha256 ?? null,
         maxConcurrentPlayers: selectedCompetition === null
             ? input.maxConcurrentPlayers

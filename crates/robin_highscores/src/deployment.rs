@@ -73,7 +73,16 @@ pub fn validate_worker_authority_layout(
     validate_immutable_directory(&release.join("private"), authority_owner_uid, 0o550)?;
 
     for profile in &server.admission_profiles {
-        validate_campaign_template_path(&release, &profile.canonical_campaign_state_path)?;
+        let path = profile
+            .canonical_campaign_state_path
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "installed profile {} has no canonical campaign-state path",
+                    profile.id
+                )
+            })?;
+        validate_campaign_template_path(&release, path)?;
     }
 
     validate_immutable_tree(

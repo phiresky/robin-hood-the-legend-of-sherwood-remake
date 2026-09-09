@@ -75,12 +75,182 @@ pub fn validate_ranked_simulation_policy_rules_config_v1(
             "canonical SimConfig has missing, unknown, or noncanonical fields".into(),
         ));
     }
-    let policy = RankedSimulationPolicy::from_identity(rules_config.ranked_simulation_policy)
-        .map_err(|error| ProjectionError::InvalidRankedSimulationPolicy(error.to_string()))?;
+    let policy =
+        RankedSimulationPolicy::from_config(rules_config.ranked_simulation_policy, sim_config)
+            .map_err(|error| ProjectionError::InvalidRankedSimulationPolicy(error.to_string()))?;
     policy
         .validate_config(sim_config)
         .map_err(|error| ProjectionError::InvalidRankedSimulationPolicy(error.to_string()))?;
     Ok((sim_config, policy))
+}
+
+/// Capture every supported gameplay setting while preserving the published
+/// ranking metadata. Validation seals this exact configuration for playback.
+pub fn custom_rules_config_v1(
+    baseline: &RulesConfigIdentityV1,
+    config: SimConfig,
+) -> Result<RulesConfigIdentityV1, ProjectionError> {
+    use crate::player_profile::DifficultyLevel;
+    use robin_run_protocol::{
+        RankedSimulationDifficultyV1 as Difficulty, RankedSimulationPresetV1,
+    };
+    let mut rules = baseline.clone();
+    rules.ranked_simulation_policy.preset = RankedSimulationPresetV1::Custom;
+    rules.ranked_simulation_policy.difficulty = match config.difficulty {
+        DifficultyLevel::Easy => Difficulty::Easy,
+        DifficultyLevel::Medium => Difficulty::Medium,
+        DifficultyLevel::Hard => Difficulty::Hard,
+        DifficultyLevel::Legendary => Difficulty::Legendary,
+        DifficultyLevel::Custom(_) => Difficulty::Custom,
+    };
+    rules.sim_config = serde_json::from_value(
+        serde_json::to_value(config)
+            .map_err(|error| ProjectionError::InvalidRankedSimulationPolicy(error.to_string()))?,
+    )
+    .map_err(|error| ProjectionError::InvalidRankedSimulationPolicy(error.to_string()))?;
+    validate_ranked_simulation_policy_rules_config_v1(&rules)?;
+    Ok(rules)
+}
+
+/// Reconstruct the fresh campaign from the admitted profile catalog and exact
+/// difficulty. A run's proposed starting save never supplies this authority.
+pub fn canonical_fresh_campaign_artifact_v1(
+    rules: &RulesConfigIdentityV1,
+    profiles_document: &SimulationContentComponentDocumentV1,
+) -> Result<robin_run_protocol::ArtifactRefV1, ProjectionError> {
+    let profiles = profile_manager_from_component_document_v1(profiles_document)?;
+    if profiles.characters.len() < 2 || profiles.missions.is_empty() {
+        return Err(ProjectionError::InvalidRankedSimulationPolicy(
+            "official profiles cannot construct a fresh campaign".into(),
+        ));
+    }
+    let (config, _) = validate_ranked_simulation_policy_rules_config_v1(rules)?;
+    let campaign = Campaign::from_profiles(&profiles, config.difficulty);
+    campaign
+        .validate_history_schema()
+        .map_err(ProjectionError::InvalidRankedSimulationPolicy)?;
+    let bytes = bitcode::encode(&campaign);
+    if bytes.is_empty() || bytes.len() > 64 * 1024 * 1024 {
+        return Err(ProjectionError::InvalidRankedSimulationPolicy(
+            "fresh campaign exceeds verifier artifact limit".into(),
+        ));
+    }
+    Ok(robin_run_protocol::ArtifactRefV1 {
+        sha256: Digest32::digest_bytes(&bytes),
+        byte_length: bytes.len() as u64,
+        media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
+    })
+}
+
+/// Check the real pre-Engine campaign checkpoint, including the official team
+/// and mission selection. The operator's unselected fresh template is not a
+/// byte-for-byte representation of a game after these setup transitions.
+pub fn validate_canonical_mission_start_v1(
+    rules: &RulesConfigIdentityV1,
+    profiles_document: &SimulationContentComponentDocumentV1,
+    edition: OfficialContentEditionV1,
+    subject: &OfficialContentSubjectV1,
+    simulation_seed: u64,
+    expected: &robin_run_protocol::ArtifactRefV1,
+    files: &crate::sbfile::SbFileSystem,
+) -> Result<(), ProjectionError> {
+    let profiles = profile_manager_from_component_document_v1(profiles_document)?;
+    let (config, _) = validate_ranked_simulation_policy_rules_config_v1(rules)?;
+    if profiles.characters.len() < 2 || profiles.missions.is_empty() {
+        return Err(ProjectionError::InvalidRankedSimulationPolicy(
+            "official profiles cannot construct mission setup".into(),
+        ));
+    }
+    let mission_index = profiles
+        .missions
+        .iter()
+        .position(|mission| mission.mission_filename == subject.mission_id())
+        .ok_or_else(|| {
+            ProjectionError::InvalidRankedSimulationPolicy(
+                "official starting mission is absent from profiles".into(),
+            )
+        })?;
+    let matches = |campaign: &Campaign| {
+        let bytes = bitcode::encode(campaign);
+        expected.byte_length == bytes.len() as u64
+            && expected.sha256 == Digest32::digest_bytes(bytes)
+    };
+    let mut fresh = Campaign::from_profiles(&profiles, config.difficulty);
+    fresh.reset(&profiles, config.difficulty);
+    // Direct mission launch is also a legitimate fresh start. Its pending
+    // mission selection and preselected restart checkpoint are recorded.
+    let mut direct = fresh.clone();
+    direct.force_next_mission(mission_index);
+    direct.current_mission_idx = Some(mission_index);
+    direct.snapshot_preselected_with_simulation(simulation_seed, config);
+    if matches(&direct) {
+        return Ok(());
+    }
+    match edition {
+        OfficialContentEditionV1::Demo => {
+            let team = match subject.mission_id() {
+                "Dem_Lei_MP" => "RJMTF",
+                "Demo_Lin" => "RSABC",
+                _ => {
+                    return Err(ProjectionError::InvalidRankedSimulationPolicy(
+                        "unknown official demo starting team".into(),
+                    ));
+                }
+            };
+            let existing_files = profiles
+                .characters
+                .iter()
+                .map(|profile| {
+                    let path = format!("Data/Characters/{}.rhs", profile.filename);
+                    files
+                        .try_exists(&path)
+                        .map(|exists| (path, exists))
+                        .map_err(|status| {
+                            ProjectionError::InvalidRankedSimulationPolicy(format!(
+                                "cannot resolve official character file: {status}"
+                            ))
+                        })
+                })
+                .collect::<Result<BTreeMap<_, _>, _>>()?;
+            fresh.create_gang_from_pcs_with_file_exists(
+                team,
+                &profiles,
+                config.difficulty,
+                |path| {
+                    *existing_files
+                        .get(path)
+                        .expect("every profile file was checked")
+                },
+            );
+            fresh.add_all_to_mission_team();
+            fresh.current_mission_idx = Some(mission_index);
+            fresh.snapshot_preselected_with_simulation(simulation_seed, config);
+            if matches(&fresh) {
+                return Ok(());
+            }
+        }
+        OfficialContentEditionV1::Full => {
+            if subject.mission_id()
+                == robin_run_protocol::OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1
+            {
+                // A new campaign begins with the application-owned seed zero.
+                // Mission selection may advance it; both checkpoints must agree.
+                fresh.snapshot_with_simulation(0, config);
+                let (selected, selected_index, selected_seed, selected_config) =
+                    Engine::select_next_mission(fresh, &profiles, 0, config);
+                if selected_index == mission_index
+                    && selected_seed == simulation_seed
+                    && selected_config == config
+                    && matches(&selected)
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Err(ProjectionError::InvalidRankedSimulationPolicy(
+        "starting campaign differs from official fresh mission setup".into(),
+    ))
 }
 
 pub const SIMULATION_CONTENT_COMPONENT_ORDER_V1: [SimulationContentComponentKindV1; 8] = [
@@ -1343,6 +1513,29 @@ mod tests {
             "canonical operator JSON must preserve the complete typed SimConfig authority"
         );
 
+        use crate::player_profile::DifficultyLevel;
+        for difficulty in [
+            DifficultyLevel::Easy,
+            DifficultyLevel::Medium,
+            DifficultyLevel::Hard,
+            DifficultyLevel::Legendary,
+            DifficultyLevel::custom(DifficultyLevel::Medium.rules()).unwrap(),
+        ] {
+            let mut custom = RankedSimulationPolicy::standard_medium().expected_config();
+            custom.difficulty = difficulty;
+            custom.enable_unbinding = !custom.enable_unbinding;
+            let rules = custom_rules_config_v1(&baseline, custom).unwrap();
+            let (decoded, sealed) =
+                validate_ranked_simulation_policy_rules_config_v1(&rules).unwrap();
+            assert_eq!(decoded, custom);
+            assert!(sealed.validate_config(custom).is_ok());
+            custom.script_enabled = !custom.script_enabled;
+            assert!(sealed.validate_config(custom).is_err());
+            let mut missing = rules;
+            missing.sim_config.remove("script_enabled");
+            assert!(validate_ranked_simulation_policy_rules_config_v1(&missing).is_err());
+        }
+
         let mut missing = baseline.clone();
         missing.sim_config.remove("script_enabled");
         assert!(validate_official_projection_rules_config_v1(&missing).is_err());
@@ -1359,6 +1552,123 @@ mod tests {
             CanonicalSimulationValue::String("Hard".into()),
         );
         assert!(validate_official_projection_rules_config_v1(&hard).is_err());
+    }
+
+    #[test]
+    fn canonical_mission_setup_accepts_recorded_demo_start_and_rejects_modified_state() {
+        use crate::profiles::{CharacterProfile, MissionProfile, ProfileManager};
+        let mut profiles = ProfileManager::new();
+        for (index, name) in [
+            "Robin des villes",
+            "Robin des bois",
+            "Petit Jean",
+            "Lady Marianne",
+            "Frere Tuck",
+            "Ferris",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            profiles.characters.push(CharacterProfile {
+                index: index as u32,
+                profile_name: name.into(),
+                ..Default::default()
+            });
+        }
+        profiles.missions.push(MissionProfile {
+            mission_filename: "Dem_Lei_MP".into(),
+            ..Default::default()
+        });
+        let config = RankedSimulationPolicy::standard_medium().expected_config();
+        let CanonicalSimulationValue::Object(sim_config) =
+            canonical_from_serializable(&config).unwrap()
+        else {
+            panic!("config must be an object")
+        };
+        let rules = RulesConfigIdentityV1 {
+            schema_version: 1,
+            replay_schema_version: crate::replay::REPLAY_SCHEMA_VERSION,
+            ranked_simulation_policy: RankedSimulationPolicy::standard_medium().identity(),
+            sim_config,
+            rules: BTreeMap::from([("ranked".into(), CanonicalSimulationValue::Bool(true))]),
+        };
+        let document = profiles_component_document_v1(&profiles).unwrap();
+        let files = crate::sbfile::SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        ));
+        let subject = OfficialContentSubjectV1::FieldMission {
+            mission_id: "Dem_Lei_MP".into(),
+        };
+        let artifact = |campaign: &Campaign| {
+            let bytes = bitcode::encode(campaign);
+            robin_run_protocol::ArtifactRefV1 {
+                sha256: Digest32::digest_bytes(&bytes),
+                byte_length: bytes.len() as u64,
+                media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
+            }
+        };
+        let mut campaign = Campaign::from_profiles(&profiles, config.difficulty);
+        campaign.reset(&profiles, config.difficulty);
+        // The launch path selects the demo party and records its restart checkpoint.
+        campaign.create_gang_from_pcs_with_file_exists(
+            "RJMTF",
+            &profiles,
+            config.difficulty,
+            |_| false,
+        );
+        campaign.add_all_to_mission_team();
+        campaign.current_mission_idx = Some(0);
+        campaign.snapshot_preselected_with_simulation(17, config);
+        assert!(
+            validate_canonical_mission_start_v1(
+                &rules,
+                &document,
+                OfficialContentEditionV1::Demo,
+                &subject,
+                17,
+                &artifact(&campaign),
+                &files
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_canonical_mission_start_v1(
+                &rules,
+                &document,
+                OfficialContentEditionV1::Demo,
+                &subject,
+                18,
+                &artifact(&campaign),
+                &files
+            )
+            .is_err()
+        );
+        campaign.characters[0].status.life_points += 1;
+        assert!(
+            validate_canonical_mission_start_v1(
+                &rules,
+                &document,
+                OfficialContentEditionV1::Demo,
+                &subject,
+                17,
+                &artifact(&campaign),
+                &files
+            )
+            .is_err()
+        );
+        let unselected = canonical_fresh_campaign_artifact_v1(&rules, &document).unwrap();
+        assert!(
+            validate_canonical_mission_start_v1(
+                &rules,
+                &document,
+                OfficialContentEditionV1::Demo,
+                &subject,
+                17,
+                &unselected,
+                &files
+            )
+            .is_err()
+        );
     }
 
     #[test]

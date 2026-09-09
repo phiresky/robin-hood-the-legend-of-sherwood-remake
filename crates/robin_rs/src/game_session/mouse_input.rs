@@ -34,7 +34,6 @@ use crate::sherwood_hud::{SherwoodButton, SherwoodButtonEnable, SherwoodHudLayou
 use crate::ui_panel::{self, PortraitCache, PortraitHitArea, PortraitTarget};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
-use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Command, Posture};
@@ -219,7 +218,7 @@ fn on_left_mouse_down(
     clicks: u8,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         host.frontend.input.press_left_pointer(
             engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
@@ -343,7 +342,7 @@ fn on_right_mouse_down(
     clicks: u8,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         host.frontend.input.right_mouse_down = true;
         host.frontend.pointer_capture.right_button_down(clicks);
@@ -381,7 +380,7 @@ fn on_mouse_move(
     y: i32,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
 
@@ -497,7 +496,7 @@ fn on_left_mouse_up(
     planning_held: bool,
     ctrl_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         let is_double = host.frontend.input.release_left_pointer();
 
@@ -651,7 +650,7 @@ fn on_portrait_click(
     planning_held: bool,
     ctrl_held: bool,
 ) -> bool {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
 
     if matches!(
         hit.area,
@@ -1165,7 +1164,7 @@ fn on_world_click(
             );
         }
         let queued_action = if planning_held {
-            engine.planned_action_for_seat(host.transport.local_seat)
+            engine.planned_action_for_seat(host.transport.local_seat())
         } else {
             Action::NoAction
         };
@@ -1189,7 +1188,7 @@ fn on_right_mouse_up(
     my: i32,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     let right_double_click = host.frontend.pointer_capture.take_right_double_click();
     {
         host.frontend.input.right_mouse_down = false;
@@ -1566,7 +1565,7 @@ pub(super) fn handle_pause_menu_events(
                     host.frontend.key_config.clone(),
                     host.frontend.custom_key_config.clone(),
                     host.audio.sound.can_3d_sound(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                 )));
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
@@ -1595,14 +1594,14 @@ pub(super) fn handle_pause_menu_events(
                     mission_id,
                     detailed_metadata,
                     mode,
-                    host.transport.net.is_some(),
+                    host.transport.net().is_some(),
                 )));
             }
             PauseMenuOutcome::Restart => {
                 callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                if host.transport.net.is_some() {
+                if host.transport.net().is_some() {
                     assert_eq!(
-                        host.transport.local_seat,
+                        host.transport.local_seat(),
                         robin_engine::player_command::PlayerId::HOST,
                         "multiplayer client activated disabled Restart button"
                     );
@@ -1649,7 +1648,7 @@ pub(super) fn dispatch_corner_button_left_click(
     host: &mut Host,
     frame_cmds: &mut FrameCommands,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     match btn {
         CornerButton::Clock => {
             if engine.hero_selection(local_seat).is_empty() {
@@ -1730,21 +1729,21 @@ pub(super) fn choose_recording_place(
 }
 
 fn defer_multiplayer_campaign_exit(host: &mut Host, mission_id: u32) -> bool {
-    let Some(net) = host.transport.net.as_ref() else {
+    let Some(net) = host.transport.net() else {
         return false;
     };
     assert_eq!(
-        host.transport.local_seat,
+        host.transport.local_seat(),
         robin_engine::player_command::PlayerId::HOST,
         "only the multiplayer host can launch the selected campaign mission"
     );
     assert!(
-        host.transport.pending_campaign_exit.is_none(),
+        host.transport.pending_campaign_exit().is_none(),
         "a Sherwood campaign transition is already deferred"
     );
     let origin_frame = net.frame_cursor.load(std::sync::atomic::Ordering::Relaxed);
-    host.transport.pending_campaign_exit =
-        Some(crate::main_entry::PendingMultiplayerCampaignExit {
+    host.transport
+        .defer_campaign_exit(crate::main_entry::PendingMultiplayerCampaignExit {
             not_before_frame: origin_frame
                 .saturating_add(robin_engine::multiplayer::INPUT_DELAY_FRAMES)
                 .saturating_add(1),
@@ -1777,8 +1776,8 @@ pub(super) fn handle_sherwood_hud_buttons(
     sherwood_layout: &SherwoodHudLayout,
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
-    if host.transport.net.is_some()
-        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    if host.transport.net().is_some()
+        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
     {
         // Sherwood campaign state is host-authored. Clients keep simulating
         // and receive the eventual authoritative mission transition.
@@ -2032,8 +2031,8 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> Result<HandlerAction, String> {
     let engine = &mut manager.engine;
-    if host.transport.net.is_some()
-        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    if host.transport.net().is_some()
+        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
         && (game.persistent.campaign_map_active || sherwood_flow.is_some())
     {
         // Mission-description ticks can spend blazons through synchronous
@@ -2331,23 +2330,11 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     // back to the generic strategical-mission text
                     // only if the resource lookup fails.
                     let last_id = engine.campaign().last_pseudo_mission_id;
-                    let pseudo_red = {
-                        let filename = assets_res_descr::red_filename(last_id);
-                        host.frontend.shipping
-                            .as_deref()
-                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
-                            .or_else(|| {
-                                let path = format!("Data/Text/{filename}");
-                                assets_res_descr::load(&path)
-                                    .map_err(|e| {
-                                        tracing::warn!(
-                                            "Pseudo-mission debriefing: failed to load .red {path}: {e}"
-                                        );
-                                        e
-                                    })
-                                    .ok()
-                            })
-                    };
+                    let pseudo_red = crate::mission_descriptors::for_presentation(
+                        host.application_context(),
+                        host.frontend.shipping.as_deref(),
+                        last_id,
+                    );
                     let per_mission_text = pseudo_red.as_ref().and_then(|desc| {
                         let table_id = if won {
                             desc.debriefing.win_text_table_id
@@ -2417,15 +2404,11 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         let campaign = engine.campaign();
                         let mission = &campaign.missions[idx];
                         let mission_id = mission.profile(&assets.profile_manager).id;
-                        let filename = assets_res_descr::red_filename(mission_id);
-                        host.frontend
-                            .shipping
-                            .as_deref()
-                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
-                            .or_else(|| {
-                                let path = format!("Data/Text/{filename}");
-                                assets_res_descr::load(&path).ok()
-                            })
+                        crate::mission_descriptors::for_presentation(
+                            host.application_context(),
+                            host.frontend.shipping.as_deref(),
+                            mission_id,
+                        )
                     };
                     *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
                         mission_index: idx,

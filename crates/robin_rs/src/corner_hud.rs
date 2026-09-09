@@ -43,7 +43,7 @@ fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
 }
 
 /// Logical id for the three corner HUD buttons.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CornerButton {
     /// Record / cycle QA memory slot.
     Clock,
@@ -216,7 +216,7 @@ impl CornerHudLayout {
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
 type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
     let mut sprites = CornerButtonSprites::default();
     let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();

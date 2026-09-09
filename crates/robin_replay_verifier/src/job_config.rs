@@ -239,6 +239,21 @@ pub fn validate_job_config(
         &template.rules_config,
         offer.rules_config_sha256,
     )?;
+    match (
+        template.ruleset_manifest.rules_config_constraint,
+        &ranked.custom_rules_config,
+    ) {
+        (robin_run_protocol::RulesConfigConstraintV1::ExactCanonicalDigestOnly, None) => {}
+        (robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig, Some(custom))
+            if custom == &template.rules_config
+                && ranked.custom_canonical_campaign.as_ref()
+                    == Some(&template.canonical_campaign_state.artifact) => {}
+        _ => {
+            return Err(JobConfigError::RulesetMismatch(
+                "signed_custom_rules_config",
+            ));
+        }
+    }
     let ruleset_manifest_sha256 = require_identity(
         "ruleset_manifest",
         &template.ruleset_manifest,
@@ -466,10 +481,11 @@ fn validate_ruleset_tuple(
     let submission = &request.submission.submission;
     let offer = &submission.offer;
     let genesis = &offer.session_genesis.claim;
-    if ruleset.rules_config_sha256 != offer.rules_config_sha256 {
+    if !ruleset.admits_rules_config_digest(offer.rules_config_sha256) {
         return Err(JobConfigError::RulesetMismatch("rules_config_sha256"));
     }
-    if ruleset.canonical_campaign_state != offer.starting_state.campaign_state_requirement() {
+    if !ruleset.admits_campaign_state_requirement(offer.starting_state.campaign_state_requirement())
+    {
         return Err(JobConfigError::RulesetMismatch("canonical_campaign_state"));
     }
     if ruleset
@@ -558,7 +574,10 @@ fn validate_campaign_state_binding(
     let offer = &submission.offer;
     let pin = &config.template.canonical_campaign_state;
     if pin.requirement != offer.starting_state.campaign_state_requirement()
-        || pin.requirement != config.template.ruleset_manifest.canonical_campaign_state
+        || !config
+            .template
+            .ruleset_manifest
+            .admits_campaign_state_requirement(pin.requirement)
         || pin.requirement.rules_config_sha256 != offer.rules_config_sha256
         || pin.requirement.edition != offer.session_genesis.claim.ranked_session.content_edition
     {
@@ -569,9 +588,15 @@ fn validate_campaign_state_binding(
     match offer.starting_state {
         InitialStateExpectationV1::IndividualLevel { .. }
         | InitialStateExpectationV1::CampaignGenesis { .. } => {
-            if pin.artifact != submission.artifacts.starting_campaign
-                || pin.artifact.sha256 != offer.starting_state.campaign_sha256()
-                || pin.artifact.byte_length != offer.starting_state.starting_campaign_byte_length()
+            if config
+                .template
+                .ruleset_manifest
+                .canonical_start_policy
+                .requires_exact_operator_artifact()
+                && (pin.artifact != submission.artifacts.starting_campaign
+                    || pin.artifact.sha256 != offer.starting_state.campaign_sha256()
+                    || pin.artifact.byte_length
+                        != offer.starting_state.starting_campaign_byte_length())
             {
                 return Err(JobConfigError::RulesetMismatch(
                     "canonical_campaign_state_artifact",

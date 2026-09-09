@@ -982,8 +982,9 @@ fn decode_complete_ranked_rules_config_v1(
         canonical_round_trip == canonical_input,
         "official SimConfig contains missing, unknown, defaulted, or noncanonical fields"
     );
-    let policy = robin_engine::engine::RankedSimulationPolicy::from_identity(
+    let policy = robin_engine::engine::RankedSimulationPolicy::from_config(
         rules_config.ranked_simulation_policy,
+        sim_config,
     )
     .context("decode ranked simulation policy")?;
     policy

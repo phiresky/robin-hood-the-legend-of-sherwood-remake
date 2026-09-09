@@ -417,7 +417,8 @@ impl AssetVfs {
     fn locate(
         &self,
         path: impl AsRef<Path>,
-        require_file: bool,
+        // Memory mounts contain only files; only native mounts need this distinction.
+        _require_file: bool,
     ) -> Result<Option<AssetLocation>, AssetError> {
         let requested = path.as_ref();
         let relative = normalize_virtual_path(requested)?;
@@ -477,7 +478,7 @@ impl AssetVfs {
                     };
                     // Reading requires a file; a directory falls through to
                     // the next mount.
-                    if require_file && !resolved.is_file() {
+                    if _require_file && !resolved.is_file() {
                         continue;
                     }
                     return Ok(Some(AssetLocation::Native(resolved)));

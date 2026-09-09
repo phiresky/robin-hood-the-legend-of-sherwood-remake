@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 pub enum RankedSimulationPresetV1 {
     Standard,
     OriginalParity,
+    Custom,
 }
 
 impl RankedSimulationPresetV1 {
@@ -30,6 +31,7 @@ impl RankedSimulationPresetV1 {
         match self {
             Self::Standard => "standard",
             Self::OriginalParity => "original",
+            Self::Custom => "custom",
         }
     }
 
@@ -37,19 +39,22 @@ impl RankedSimulationPresetV1 {
         match self {
             Self::Standard => "Standard",
             Self::OriginalParity => "Original",
+            Self::Custom => "Custom",
         }
     }
 }
 
 /// Retail difficulty selected by an immutable ranked simulation policy.
-/// Custom and Legendary remain valid local difficulties, but cannot silently
-/// enter the V1 Standard/Original board families.
+/// Custom and Legendary use the explicit custom policy; they cannot silently
+/// enter the Standard/Original board families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RankedSimulationDifficultyV1 {
     Easy,
     Medium,
     Hard,
+    Legendary,
+    Custom,
 }
 
 impl RankedSimulationDifficultyV1 {
@@ -59,6 +64,8 @@ impl RankedSimulationDifficultyV1 {
             Self::Easy => "easy",
             Self::Medium => "normal",
             Self::Hard => "hard",
+            Self::Legendary => "legendary",
+            Self::Custom => "custom",
         }
     }
 
@@ -67,6 +74,8 @@ impl RankedSimulationDifficultyV1 {
             Self::Easy => "Easy",
             Self::Medium => "Normal",
             Self::Hard => "Hard",
+            Self::Legendary => "Legendary",
+            Self::Custom => "Custom",
         }
     }
 
@@ -76,6 +85,8 @@ impl RankedSimulationDifficultyV1 {
             Self::Easy => "Easy",
             Self::Medium => "Medium",
             Self::Hard => "Hard",
+            Self::Legendary => "Legendary",
+            Self::Custom => "Custom",
         }
     }
 }
@@ -132,6 +143,16 @@ impl Validate for RankedSimulationPolicyV1 {
                 document: "RankedSimulationPolicyV1",
                 expected: RANKED_SIMULATION_POLICY_VERSION_V1,
                 actual: self.version,
+            });
+        }
+        if self.preset != RankedSimulationPresetV1::Custom
+            && matches!(
+                self.difficulty,
+                RankedSimulationDifficultyV1::Legendary | RankedSimulationDifficultyV1::Custom
+            )
+        {
+            return Err(ValidationError::ClaimMismatch {
+                field: "ranked_simulation_policy.difficulty",
             });
         }
         Ok(())
@@ -300,6 +321,18 @@ impl Validate for ImmutablePolicyManifestV1 {
 #[serde(rename_all = "snake_case")]
 pub enum CanonicalStartPolicyV1 {
     RulesConfigBoundOperatorStateAndVerifiedPredecessor,
+    /// Reconstruct the official mission/team selection and restart checkpoint
+    /// from fresh state before comparing the replay's starting bytes.
+    RulesConfigBoundMissionSetupAndVerifiedPredecessor,
+}
+
+impl CanonicalStartPolicyV1 {
+    pub const fn requires_exact_operator_artifact(self) -> bool {
+        matches!(
+            self,
+            Self::RulesConfigBoundOperatorStateAndVerifiedPredecessor
+        )
+    }
 }
 
 /// Logical class of the operator-private campaign state from which an
@@ -510,6 +543,9 @@ pub enum RunCompositionPolicyV1 {
 #[serde(rename_all = "snake_case")]
 pub enum RulesConfigConstraintV1 {
     ExactCanonicalDigestOnly,
+    /// Accept a complete run-specific configuration whose digest is signed
+    /// before simulation. Gameplay settings remain fixed throughout the run.
+    AnyCanonicalSimConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -640,6 +676,22 @@ pub struct RulesetManifestV1 {
 }
 
 impl RulesetManifestV1 {
+    pub fn admits_campaign_state_requirement(
+        &self,
+        requirement: crate::CanonicalCampaignStateRequirementV1,
+    ) -> bool {
+        let mut expected = self.canonical_campaign_state;
+        if self.rules_config_constraint == RulesConfigConstraintV1::AnyCanonicalSimConfig {
+            expected.rules_config_sha256 = requirement.rules_config_sha256;
+        }
+        expected == requirement
+    }
+
+    pub fn admits_rules_config_digest(&self, digest: Digest32) -> bool {
+        !digest.is_zero()
+            && (self.rules_config_constraint == RulesConfigConstraintV1::AnyCanonicalSimConfig
+                || self.rules_config_sha256 == digest)
+    }
     /// Validate the cross-document engine-policy identity. Neither document
     /// may supply free-form preset/difficulty labels which disagree with the
     /// typed, content-addressed policy or point at different config bytes.
@@ -655,6 +707,14 @@ impl RulesetManifestV1 {
                 .map_err(|_| ValidationError::ClaimMismatch {
                     field: "ruleset.rules_config_canonicalization",
                 })?;
+        if self.rules_config_constraint == RulesConfigConstraintV1::AnyCanonicalSimConfig {
+            if self.preset_id.as_str() != "any" || self.difficulty_id.as_str() != "any" {
+                return Err(ValidationError::ClaimMismatch {
+                    field: "ruleset.any_config_labels",
+                });
+            }
+            return Ok(());
+        }
         if self.rules_config_sha256 != rules_config_sha256 {
             return Err(ValidationError::ClaimMismatch {
                 field: "ruleset.rules_config_sha256",
@@ -945,14 +1005,17 @@ impl Validate for RulesConfigIdentityV1 {
             });
         }
         self.ranked_simulation_policy.validate()?;
-        if self.sim_config.get("difficulty")
-            != Some(&CanonicalValue::String(
-                self.ranked_simulation_policy
-                    .difficulty
-                    .sim_config_wire_name()
-                    .into(),
-            ))
-        {
+        let difficulty_matches = match self.ranked_simulation_policy.difficulty {
+            RankedSimulationDifficultyV1::Custom => matches!(self.sim_config.get("difficulty"),
+                Some(CanonicalValue::Object(value)) if value.len() == 1 && value.contains_key("Custom")),
+            difficulty => {
+                self.sim_config.get("difficulty")
+                    == Some(&CanonicalValue::String(
+                        difficulty.sim_config_wire_name().into(),
+                    ))
+            }
+        };
+        if !difficulty_matches {
             return Err(ValidationError::ClaimMismatch {
                 field: "rules_config.ranked_simulation_policy.difficulty",
             });

@@ -62,23 +62,14 @@ pub(super) fn begin_deferred_campaign_exit(
     frame: u32,
     pending_request_absent: bool,
 ) -> Option<(SaveLoadRequest, SnapshotTransitionId)> {
-    if !transport
-        .pending_campaign_exit
-        .is_some_and(|pending| frame >= pending.not_before_frame)
-    {
-        return None;
-    }
-    let pending = transport
-        .pending_campaign_exit
-        .take()
-        .expect("checked deferred multiplayer campaign exit exists");
+    let pending = transport.take_campaign_exit_at(frame)?;
     assert_eq!(
-        transport.local_seat,
+        transport.local_seat(),
         PlayerId::HOST,
         "only the host may publish a campaign-exit snapshot"
     );
     assert!(
-        transport.snapshot_transition.is_none() && !transport.reconnecting,
+        !transport.has_snapshot_transition() && !transport.reconnecting(),
         "campaign exit reached its snapshot boundary during another transition"
     );
     assert!(
@@ -87,19 +78,17 @@ pub(super) fn begin_deferred_campaign_exit(
     );
     let engine_bytes = engine.encode_native_snapshot();
     let id = transport
-        .net
-        .as_ref()
+        .net()
         .expect("deferred multiplayer campaign exit lost its transport")
         .begin_campaign_exit_transition(GameCode::LevelInterrupted, engine_bytes)
         .unwrap_or_else(|error| panic!("failed to begin multiplayer campaign transition: {error}"));
-    transport.snapshot_transition = Some(PendingSnapshotTransition::new(
+    transport.prepare_snapshot_transition(PendingSnapshotTransition::new(
         id,
         PendingSnapshotTransitionPayload::CampaignExit {
             exit_code: GameCode::LevelInterrupted,
             engine: None,
         },
     ));
-    transport.reconnecting = true;
     Some((
         SaveLoadRequest::Sherwood {
             mission_id: pending.mission_id,
@@ -131,10 +120,8 @@ mod tests {
             },
         );
         pending.commit_authenticated(id).unwrap();
-        let mut transport = HostTransport {
-            snapshot_transition: Some(pending),
-            ..Default::default()
-        };
+        let mut transport = HostTransport::default();
+        transport.prepare_snapshot_transition(pending);
         transport.take_committed_snapshot_transition().unwrap()
     }
 
@@ -183,16 +170,14 @@ mod tests {
 
     #[test]
     fn deferred_exit_before_boundary_retains_its_request_without_transport() {
-        let mut transport = HostTransport {
-            pending_campaign_exit: Some(crate::main_entry::PendingMultiplayerCampaignExit {
-                not_before_frame: 8,
-                mission_id: 12,
-            }),
-            ..Default::default()
-        };
+        let mut transport = HostTransport::default();
+        transport.defer_campaign_exit(crate::main_entry::PendingMultiplayerCampaignExit {
+            not_before_frame: 8,
+            mission_id: 12,
+        });
         assert!(begin_deferred_campaign_exit(&mut transport, &engine(), 7, false).is_none());
-        assert_eq!(transport.pending_campaign_exit.unwrap().mission_id, 12);
-        assert!(transport.snapshot_transition.is_none());
-        assert!(!transport.reconnecting);
+        assert_eq!(transport.pending_campaign_exit().unwrap().mission_id, 12);
+        assert!(!transport.has_snapshot_transition());
+        assert!(!transport.reconnecting());
     }
 }

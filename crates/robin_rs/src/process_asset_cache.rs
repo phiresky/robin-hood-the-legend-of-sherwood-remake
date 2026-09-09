@@ -405,13 +405,17 @@ impl CacheKey {
         let selection = shipping
             .map(|dd| dd.selection_snapshot())
             .unwrap_or_else(|| files.selection_snapshot());
-        let mut mounts = files.mount_snapshot();
+        let mounts = files.mount_snapshot();
         #[cfg(not(target_arch = "wasm32"))]
-        if mounts.working_directory.is_none() {
-            mounts.working_directory = Some(
-                std::env::current_dir().expect("cannot capture asset-cache working directory"),
-            );
-        }
+        let mounts = {
+            let mut mounts = mounts;
+            if mounts.working_directory.is_none() {
+                mounts.working_directory = Some(
+                    std::env::current_dir().expect("cannot capture asset-cache working directory"),
+                );
+            }
+            mounts
+        };
         Self {
             reader: files.origin_identity(),
             mounts,

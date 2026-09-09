@@ -17,6 +17,7 @@ bitcode.workspace = true
 ed25519-dalek = "3.0.0"
 nix = { version = "0.31", features = ["fs", "resource"] }
 robin_engine = { path = "../robin_engine" }
+robin_util.workspace = true
 robin_replay_format.workspace = true
 robin_ranked_verification.workspace = true
 robin_run_protocol = { path = "../robin_run_protocol" }

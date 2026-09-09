@@ -226,8 +226,9 @@ impl HeadlessMission {
         }
         self.runtime.timeline.trace(FrameContractStage::Pacing);
         let world_view = self.runtime.world.view();
-        let host_deadline_ms = if world_view.host.transport.net.is_some()
-            && world_view.host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+        let host_deadline_ms = if world_view.host.transport.net().is_some()
+            && world_view.host.transport.local_seat()
+                != robin_engine::player_command::PlayerId::HOST
         {
             host_scheduled_frame_deadline_ms(
                 self.runtime.timeline.mp_host_frame_schedule,
@@ -249,16 +250,19 @@ impl HeadlessMission {
         );
         if let FrameOutcome::Continue { sleep_ms } = outcome
             && let Some((hash_frame, hash)) = self.runtime.timeline.pending_mp_state_hash
-            && let Some(net) = world_view.host.transport.net.as_ref()
-            && world_view.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
+            && let Some(net) = world_view.host.transport.net()
+            && world_view.host.transport.local_seat()
+                == robin_engine::player_command::PlayerId::HOST
         {
             net.publish_frame(self.runtime.timeline.frame_number());
-            net.send_state_hash(
+            if let Err(error) = net.send_state_hash(
                 hash_frame,
                 hash,
                 self.runtime.timeline.frame_number(),
                 sleep_ms,
-            );
+            ) {
+                tracing::error!(%error, "multiplayer state hash send failed");
+            }
         }
 
         let result = HeadlessFrameResult {
@@ -294,11 +298,13 @@ impl HeadlessMission {
                         }
                     )
                 {
-                    if let Some(net) = host.transport.net.as_ref() {
-                        net.send_input(PlayerCommand::QuitMissionRequested);
+                    if let Some(net) = host.transport.net() {
+                        if let Err(error) = net.send_input(PlayerCommand::QuitMissionRequested) {
+                            tracing::error!(%error, "multiplayer quit request send failed");
+                        }
                     }
                     frame.post_commands.push(PlayerInput::new(
-                        host.transport.local_seat,
+                        host.transport.local_seat(),
                         PlayerCommand::QuitMissionRequested,
                     ));
                 }
@@ -337,8 +343,8 @@ impl HeadlessMission {
                 },
             );
             let next_frame = timeline.advance_frame().number();
-            if let Some(net) = host.transport.net.as_ref()
-                && host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
+            if let Some(net) = host.transport.net()
+                && host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
             {
                 net.set_initial_snapshot(next_frame, &manager.engine);
             }
@@ -373,6 +379,7 @@ impl HeadlessMission {
             timeline,
             &mut control.manual_pause,
             &mut active_modal,
+            None,
             None,
             None,
             Some(&mut self.modals),
@@ -423,8 +430,7 @@ mod tests {
         let assets = Arc::new(level_assets);
         let (channels, incoming, _outgoing, _, _) = NetChannels::new();
         let mut host = Host::scratch(640.0, 480.0);
-        host.transport.local_seat = PlayerId::HOST;
-        host.transport.net = Some(channels);
+        host.transport = crate::host::HostTransport::test_session(channels, PlayerId::HOST);
         incoming
             .send(NetEvent::Input {
                 server_frame: 0,

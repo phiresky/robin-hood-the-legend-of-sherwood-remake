@@ -200,6 +200,7 @@ pub fn load_replay_spec(spec: &str) -> Result<robin_engine::replay::ReplayData, 
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum AdmissionWorkerReply {

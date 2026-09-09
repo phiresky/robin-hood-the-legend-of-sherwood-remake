@@ -205,11 +205,11 @@ impl<S: ModalScreen> ModalBatch<S> {
         if !S::HANDLES_NETWORK_AUTHORITY
             && let Some((kind, _)) = self.current.as_ref()
         {
-            let modal_net = host.transport.net.as_ref().map(|net| {
+            let modal_net = host.transport.net().map(|net| {
                 ModalNet::new(
                     net,
                     kind.clone(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                 )
             });
             if let Some(result) = self.dismissal.poll(modal_net.as_ref()) {
@@ -232,11 +232,11 @@ impl<S: ModalScreen> ModalBatch<S> {
         if let Some(outcome) = screen.step(kind, host, ctx) {
             let mut result = S::to_result(&outcome);
             if !S::HANDLES_NETWORK_AUTHORITY {
-                let modal_net = host.transport.net.as_ref().map(|net| {
+                let modal_net = host.transport.net().map(|net| {
                     ModalNet::new(
                         net,
                         kind.clone(),
-                        host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                        host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                     )
                 });
                 if let Some(confirmed) = self.dismissal.request(result, modal_net.as_ref()) {
@@ -305,11 +305,11 @@ impl ModalScreen for DialogueModalState {
             .expect("ModalBatch::tick verified menu resources before step");
         let sound_cfg = SoundConfig::default();
         let sound_enabled = audio_backend.is_some();
-        let modal_net = host.transport.net.as_ref().map(|net| {
+        let modal_net = host.transport.net().map(|net| {
             ModalNet::new(
                 net,
                 kind.clone(),
-                host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                host.transport.local_seat() == engine_player_command::PlayerId::HOST,
             )
         });
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
@@ -425,11 +425,11 @@ impl ModalScreen for PopupScrollModalState {
         let resources = menu_resources
             .as_mut()
             .expect("ModalBatch::tick verified menu resources before step");
-        let modal_net = host.transport.net.as_ref().map(|net| {
+        let modal_net = host.transport.net().map(|net| {
             ModalNet::new(
                 net,
                 kind.clone(),
-                host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                host.transport.local_seat() == engine_player_command::PlayerId::HOST,
             )
         });
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
@@ -731,11 +731,11 @@ pub(super) async fn drain_pending_dialogues(
                         dialog_id: *dialog_id,
                     };
                     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-                    let modal_net = host.transport.net.as_ref().map(|net| {
+                    let modal_net = host.transport.net().map(|net| {
                         ModalNet::new(
                             net,
                             kind.clone(),
-                            host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                            host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                         )
                     });
                     ingame_menu::BatchDialogue {
@@ -1027,11 +1027,11 @@ pub(super) fn tick_active_modal(
                 *replay_result = pop_matching_dismissal(replay_modal_dismissals, kind);
             }
             if replay_result.is_none() {
-                let modal_net = host.transport.net.as_ref().map(|net| {
+                let modal_net = host.transport.net().map(|net| {
                     ModalNet::new(
                         net,
                         kind.clone(),
-                        host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                        host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                     )
                 });
                 *replay_result = dismissal.poll(modal_net.as_ref());
@@ -1082,11 +1082,11 @@ pub(super) fn tick_active_modal(
                 } else {
                     engine_player_command::DialogResult::Aborted
                 };
-                let modal_net = host.transport.net.as_ref().map(|net| {
+                let modal_net = host.transport.net().map(|net| {
                     ModalNet::new(
                         net,
                         kind.clone(),
-                        host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                        host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                     )
                 });
                 let Some(result) = dismissal.request(result, modal_net.as_ref()) else {
@@ -1235,11 +1235,11 @@ pub(super) async fn drain_pending_popup_scroll(
                 .picture_from(ctx.renderer, text_res, picture_id);
             let kind = engine_player_command::ModalKind::PopupText { text_id };
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-            let modal_net = host.transport.net.as_ref().map(|net| {
+            let modal_net = host.transport.net().map(|net| {
                 ModalNet::new(
                     net,
                     kind.clone(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                 )
             });
             let item = PopupScrollItem {
@@ -1298,11 +1298,11 @@ pub(super) async fn drain_pending_sherwood_stat(
             );
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-            let modal_net = host.transport.net.as_ref().map(|net| {
+            let modal_net = host.transport.net().map(|net| {
                 ModalNet::new(
                     net,
                     kind.clone(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                 )
             });
             // The Sherwood report uses the "Debrief" font and is

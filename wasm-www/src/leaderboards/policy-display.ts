@@ -2,20 +2,24 @@
 import { type RankedSimulationPolicy } from './types.js';
 
 export function rankedSimulationPolicyLabels(policy: RankedSimulationPolicy): {
-    readonly presetId: 'standard' | 'original';
-    readonly presetName: 'Standard' | 'Original';
-    readonly difficultyId: 'easy' | 'normal' | 'hard';
-    readonly difficultyName: 'Easy' | 'Normal' | 'Hard';
+    readonly presetId: string;
+    readonly presetName: string;
+    readonly difficultyId: string;
+    readonly difficultyName: string;
 } {
-    const preset = policy.preset === 'standard'
-        ? { presetId: 'standard' as const, presetName: 'Standard' as const }
-        : { presetId: 'original' as const, presetName: 'Original' as const };
-    const difficulty = policy.difficulty === 'easy'
-        ? { difficultyId: 'easy' as const, difficultyName: 'Easy' as const }
-        : policy.difficulty === 'medium'
-            ? { difficultyId: 'normal' as const, difficultyName: 'Normal' as const }
-            : { difficultyId: 'hard' as const, difficultyName: 'Hard' as const };
-    return { ...preset, ...difficulty };
+    const presets = {
+        standard: { presetId: 'standard', presetName: 'Standard' },
+        original_parity: { presetId: 'original', presetName: 'Original' },
+        custom: { presetId: 'custom', presetName: 'Custom' },
+    };
+    const difficulties = {
+        easy: { difficultyId: 'easy', difficultyName: 'Easy' },
+        medium: { difficultyId: 'normal', difficultyName: 'Normal' },
+        hard: { difficultyId: 'hard', difficultyName: 'Hard' },
+        legendary: { difficultyId: 'legendary', difficultyName: 'Legendary' },
+        custom: { difficultyId: 'custom', difficultyName: 'Custom' },
+    };
+    return { ...presets[policy.preset], ...difficulties[policy.difficulty] };
 }
 
 export function rankedSimulationPolicyDisplay(policy: RankedSimulationPolicy): string {

@@ -59,7 +59,7 @@ fn toggle_pause_menu(context: &mut LiveGameplayContext<'_>, pause_closed: &mut b
     }
 
     let sherwood_trading_available = engine.is_sherwood(&assets.profile_manager)
-        && host.transport.local_seat == engine_player_command::PlayerId::HOST
+        && host.transport.local_seat() == engine_player_command::PlayerId::HOST
         && sherwood_trading_access(host, engine, &assets.profile_manager)
             .validate()
             .is_ok();
@@ -162,7 +162,7 @@ fn dispatch_gameplay_action(
             dispatch_local_command(&host.transport, commands, &PlayerCommand::UnselectAllPcs);
         }
         GameAction::SelectAction { index } => {
-            let selected = engine.hero_selection(host.transport.local_seat);
+            let selected = engine.hero_selection(host.transport.local_seat());
             if selected.len() == 1 {
                 let pc_id = selected[0];
                 let command = if planning_held {
@@ -258,7 +258,7 @@ fn dispatch_gameplay_action(
             // Resolve selection into per-actor commands before recording.
             // This keeps multiplayer/replay semantics independent of later
             // selection changes and makes mixed cloaked/upright groups safe.
-            for command in engine.cloak_toggle_commands_for_seat(host.transport.local_seat) {
+            for command in engine.cloak_toggle_commands_for_seat(host.transport.local_seat()) {
                 dispatch_local_command(&host.transport, commands, &command);
             }
         }
@@ -276,7 +276,10 @@ fn dispatch_gameplay_action(
         GameAction::Teleport => {
             let mouse_screen = input.threaded.position();
             if let Some(mouse_map) = host.frontend.viewport.screen_to_map(mouse_screen) {
-                if !engine.hero_selection(host.transport.local_seat).is_empty() {
+                if !engine
+                    .hero_selection(host.transport.local_seat())
+                    .is_empty()
+                {
                     let accessible = engine.fast_grid().get_sector_screen_accessible(mouse_map);
                     if let Some(sector_idx) = accessible.sector_idx {
                         let command = PlayerCommand::TeleportSelectedToPoint {
@@ -345,7 +348,7 @@ pub(super) async fn drive_live_gameplay_input(
 
     let planned_action = context
         .engine
-        .planned_action_for_seat(context.host.transport.local_seat);
+        .planned_action_for_seat(context.host.transport.local_seat());
     if context.assets.attachments.spellforge_runtime.is_some()
         && !context.ui.console_overlay.is_visible()
         && context.ui.pause_menu.is_none()

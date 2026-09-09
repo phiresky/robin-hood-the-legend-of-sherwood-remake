@@ -60,7 +60,7 @@ pub fn resolve_left_click_with_planning(
     ctrl_held: bool,
     is_double: bool,
 ) -> Vec<PlayerCommand> {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     let selected = engine.hero_selection(local_seat);
     let num_selected = selected.len();
     let tactical_selected = engine.tactical_selection(local_seat).to_vec();
@@ -1275,7 +1275,7 @@ pub fn resolve_action_drag(
     assets: &LevelAssets,
     map_pt: MapPoint,
 ) -> Vec<PlayerCommand> {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     if host.frontend.input.ignore_next_drag() {
         return vec![];
     }
@@ -1732,7 +1732,7 @@ pub fn resolve_swordfight(
     map_pt: MapPoint,
     is_left_button: bool,
 ) -> Vec<PlayerCommand> {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     if !is_selected_unit_swordfighting(engine, local_seat) {
         return vec![];
     }
@@ -2477,7 +2477,7 @@ mod tests {
         let protected = add_pc(&mut engine, 125.0, 125.0, Posture::Upright);
         select(&mut engine, &assets, actor);
         arm_action(&mut engine, &assets, actor, Action::Shield);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         let first = resolve_action_left_click(
             &mut host,
@@ -2531,7 +2531,7 @@ mod tests {
         let protected = add_pc(&mut engine, 125.0, 125.0, Posture::Upright);
         select(&mut engine, &assets, actor);
         arm_action(&mut engine, &assets, actor, Action::BigShield);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         let first = resolve_shield_portrait_click(&engine, seat, actor, protected, false)
             .expect("armed shield must consume its protectee portrait");
@@ -2582,7 +2582,7 @@ mod tests {
                 action: Action::Shield,
             },
         );
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         let first = resolve_shield_portrait_click(&engine, seat, actor, protected, true)
             .expect("planned shield must consume its protectee portrait");
@@ -2637,7 +2637,7 @@ mod tests {
         let dead = add_pc_with_status(&mut engine, 325.0, 325.0, Posture::Dead, true, 0);
         let inactive = add_pc_with_status(&mut engine, 425.0, 425.0, Posture::Upright, false, 100);
         select(&mut engine, &assets, actor);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         assert!(is_valid_shield_portrait_protectee(&engine, seat, protected));
         assert!(!is_valid_shield_portrait_protectee(&engine, seat, actor));
@@ -2664,7 +2664,7 @@ mod tests {
         let protected = add_pc(&mut engine, 125.0, 125.0, Posture::Upright);
         select(&mut engine, &assets, actor);
         arm_action(&mut engine, &assets, actor, Action::Shield);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
         let first = resolve_shield_portrait_click(&engine, seat, actor, protected, false)
             .expect("shield protectee click");
         apply(&mut engine, &assets, first[0].clone());
@@ -3023,7 +3023,7 @@ mod tests {
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Whistle);
         assert_eq!(
-            engine.selected_action_for_seat(host.transport.local_seat),
+            engine.selected_action_for_seat(host.transport.local_seat()),
             Action::Whistle
         );
 
@@ -3179,7 +3179,7 @@ mod tests {
         arm_action(&mut engine, &assets, pc, Action::Beggar);
         // The double-click availability pre-check would swallow this
         // (no profiles), so call the action resolver directly.
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
         let cmds = resolve_action_left_click(
             &mut host,
             &engine,
@@ -3199,7 +3199,7 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         let cmds = resolve_action_left_click(
             &mut host,
@@ -3229,7 +3229,7 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         let cmds = resolve_action_left_click(
             &mut host,
@@ -3259,7 +3259,7 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::HelpingToClimb);
         select(&mut engine, &assets, pc);
-        let seat = host.transport.local_seat;
+        let seat = host.transport.local_seat();
 
         let cmds = resolve_action_left_click(
             &mut host,
@@ -3280,7 +3280,7 @@ mod tests {
     #[test]
     fn right_click_without_selection_is_noop() {
         let (engine, _assets, host) = fixture();
-        assert!(resolve_right_click(&engine, host.transport.local_seat).is_empty());
+        assert!(resolve_right_click(&engine, host.transport.local_seat()).is_empty());
     }
 
     #[test]
@@ -3289,7 +3289,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(cmds, vec![PlayerCommand::StopPc { pc_id: pc }]);
     }
 
@@ -3302,7 +3302,7 @@ mod tests {
         select_allied(&mut engine, &assets, soldier);
 
         assert_cmds!(
-            resolve_right_click(&engine, host.transport.local_seat),
+            resolve_right_click(&engine, host.transport.local_seat()),
             vec![
                 PlayerCommand::StopPc { pc_id: pc },
                 PlayerCommand::ClearTacticalSelection,
@@ -3340,7 +3340,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::CarryingCorpse);
         select(&mut engine, &assets, pc);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(
             cmds,
             vec![PlayerCommand::LaunchSelfAbility {
@@ -3356,7 +3356,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::OnShoulders);
         select(&mut engine, &assets, pc);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(
             cmds,
             vec![PlayerCommand::LaunchSelfAbility {
@@ -3372,7 +3372,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::HelpingToClimb);
         select(&mut engine, &assets, pc);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert!(cmds.is_empty());
     }
 
@@ -3383,7 +3383,7 @@ mod tests {
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Apple);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(cmds, vec![PlayerCommand::UnselectAllActions]);
     }
 
@@ -3394,7 +3394,7 @@ mod tests {
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Hit);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(
             cmds,
             vec![
@@ -3411,7 +3411,7 @@ mod tests {
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Bow);
 
-        let cmds = resolve_right_click(&engine, host.transport.local_seat);
+        let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(cmds, vec![PlayerCommand::UnselectAllActions]);
     }
 
@@ -3643,7 +3643,7 @@ mod tests {
         let soldier = add_soldier(&mut engine, 60.0, 60.0, 10);
 
         let cmds =
-            resolve_double_click_repeat(&engine, &assets, soldier, host.transport.local_seat);
+            resolve_double_click_repeat(&engine, &assets, soldier, host.transport.local_seat());
         assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
     }
 
@@ -3654,7 +3654,8 @@ mod tests {
         select(&mut engine, &assets, pc);
         let ghost = EntityId::Soldier(robin_engine::entity_id::SoldierId(99));
 
-        let cmds = resolve_double_click_repeat(&engine, &assets, ghost, host.transport.local_seat);
+        let cmds =
+            resolve_double_click_repeat(&engine, &assets, ghost, host.transport.local_seat());
         assert!(cmds.is_empty());
     }
 }

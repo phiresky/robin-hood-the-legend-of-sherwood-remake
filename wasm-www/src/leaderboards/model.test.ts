@@ -1201,7 +1201,7 @@ test('rules config and ranking policy are separate strict content-addressed docu
     }), /ranked_simulation_policy.version must be 1/u);
     assert.throws(() => parseRulesConfigIdentity({
         ...rulesConfig,
-        ranked_simulation_policy: { ...rulesConfig.ranked_simulation_policy, preset: 'custom' },
+        ranked_simulation_policy: { ...rulesConfig.ranked_simulation_policy, preset: 'unsupported' },
     }), /ranked_simulation_policy.preset/u);
     assert.throws(() => parseRulesConfigIdentity({
         ...rulesConfig,
@@ -1219,6 +1219,7 @@ test('rules config and ranking policy are separate strict content-addressed docu
         ['original_parity', 'easy', 'Easy', ['original', 'Original', 'easy', 'Easy', 'Original / Easy (v1)']],
         ['original_parity', 'medium', 'Medium', ['original', 'Original', 'normal', 'Normal', 'Original / Normal (v1)']],
         ['original_parity', 'hard', 'Hard', ['original', 'Original', 'hard', 'Hard', 'Original / Hard (v1)']],
+        ['custom', 'legendary', 'Legendary', ['custom', 'Custom', 'legendary', 'Legendary', 'Custom / Legendary (v1)']],
     ] as const;
     for (const [preset, difficulty, wireDifficulty, expected] of policyVariants) {
         const variant = parseRulesConfigIdentity({

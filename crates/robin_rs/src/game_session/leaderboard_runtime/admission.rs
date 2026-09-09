@@ -897,9 +897,7 @@ async fn authorize_multiplayer_host_proposal(
     let content_task = api
         .content_manifest(proposed.content_manifest_sha256)
         .map_err(|error| error.to_string())?;
-    let rules_task = api
-        .rules_config(proposed.rules_config_sha256)
-        .map_err(|error| error.to_string())?;
+
     let published_task = api
         .published_ruleset(proposed.ruleset_manifest_sha256)
         .map_err(|error| error.to_string())?;
@@ -914,11 +912,19 @@ async fn authorize_multiplayer_host_proposal(
         proposed.content_manifest_sha256,
     )
     .map_err(|error| error.to_string())?;
-    let rules = crate::leaderboard_service::decode_rules_config(
-        Ok(rules_task.take().await.map_err(|error| error.to_string())?),
-        proposed.rules_config_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    let rules = match &proposed.custom_rules_config {
+        Some(custom) => custom.clone(),
+        None => {
+            let task = api
+                .rules_config(proposed.rules_config_sha256)
+                .map_err(|error| error.to_string())?;
+            crate::leaderboard_service::decode_rules_config(
+                Ok(task.take().await.map_err(|error| error.to_string())?),
+                proposed.rules_config_sha256,
+            )
+            .map_err(|error| error.to_string())?
+        }
+    };
     let published = crate::leaderboard_service::decode_published_ruleset(
         Ok(published_task
             .take()
@@ -1027,7 +1033,9 @@ fn validate_multiplayer_host_documents(
             published.operational_status,
             RulesetOperationalStatusV1::Active
         )
-        || published.manifest.rules_config_sha256 != proposed.rules_config_sha256
+        || !published
+            .manifest
+            .admits_rules_config_digest(proposed.rules_config_sha256)
         || published
             .manifest
             .allowed_build_manifest_sha256
@@ -1303,6 +1311,35 @@ impl RankedPreFramePlan {
             .iter()
             .map(|component| component.document.clone())
             .collect::<Vec<_>>();
+        let custom_rules_config = (authority.published_ruleset.manifest.rules_config_constraint
+            == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig)
+            .then(|| authority.rules_config.clone());
+        let custom_canonical_campaign = if custom_rules_config.is_some() {
+            let artifact = mounted_documents
+                .iter()
+                .find(|document| {
+                    document.kind == robin_run_protocol::SimulationContentComponentKindV1::Profiles
+                })
+                .ok_or_else(|| "prepared mission is missing the Profiles component".to_owned())
+                .and_then(|document| {
+                    robin_engine::simulation_inputs::canonical_fresh_campaign_artifact_v1(
+                        &authority.rules_config,
+                        document,
+                    )
+                    .map_err(|error| error.to_string())
+                });
+            match artifact {
+                Ok(artifact) => Some(artifact),
+                Err(reason) => {
+                    return (
+                        robin_engine::engine::Engine::from_prepared(prepared),
+                        PreparedRankedAdmission::BrowseOnly { reason },
+                    );
+                }
+            }
+        } else {
+            None
+        };
         let ranked = match robin_engine::simulation_inputs::RankedPreparedMissionInputs::admit(
             prepared,
             robin_engine::simulation_inputs::RankedContentAdmissionV1 {
@@ -1327,6 +1364,8 @@ impl RankedPreFramePlan {
         let seal = ranked.seal().clone();
         let ruleset_sha256 = authority.published_ruleset.ruleset_manifest_sha256;
         let config = robin_run_protocol::RankedSessionConfigV1 {
+            custom_rules_config,
+            custom_canonical_campaign,
             schema_version: SCHEMA_VERSION_V1,
             mission_id: seal.content_subject.mission_id().to_owned(),
             content_edition: seal.content_edition,
@@ -1443,14 +1482,15 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
                     == RunContentIdentityV1::Mission {
                         content_manifest_sha256: mission.content_manifest_sha256,
                     }
-                && preferences
-                    .preferred_preset_id
-                    .as_deref()
-                    .is_none_or(|id| ruleset.preset_id.as_str() == id)
+                && preferences.preferred_preset_id.as_deref().is_none_or(|id| {
+                    ruleset.preset_id.as_str() == id || ruleset.preset_id.as_str() == "any"
+                })
                 && preferences
                     .preferred_difficulty_id
                     .as_deref()
-                    .is_none_or(|id| ruleset.difficulty_id.as_str() == id)
+                    .is_none_or(|id| {
+                        ruleset.difficulty_id.as_str() == id || ruleset.preset_id.as_str() == "any"
+                    })
         })
         .collect::<Vec<_>>();
     if candidate_facets.is_empty() {
@@ -1497,6 +1537,15 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
                 facet.difficulty_id.as_str()
             )),
         }
+    }
+    if exact_matches.iter().any(|(_, _, published)| {
+        published.manifest.rules_config_constraint
+            == robin_run_protocol::RulesConfigConstraintV1::ExactCanonicalDigestOnly
+    }) {
+        exact_matches.retain(|(_, _, published)| {
+            published.manifest.rules_config_constraint
+                == robin_run_protocol::RulesConfigConstraintV1::ExactCanonicalDigestOnly
+        });
     }
     let [(ruleset, rules_config, published_ruleset)] = exact_matches.as_slice() else {
         return match exact_matches.len() {
@@ -1563,14 +1612,15 @@ async fn fetch_campaign_authority(
             facet.categories.contains(&BoardCategoryV1::Campaign)
                 && facet.supports_full_campaign_boards
                 && matches!(facet.content, RunContentIdentityV1::FullCampaign { .. })
-                && preferences
-                    .preferred_preset_id
-                    .as_deref()
-                    .is_none_or(|id| facet.preset_id.as_str() == id)
+                && preferences.preferred_preset_id.as_deref().is_none_or(|id| {
+                    facet.preset_id.as_str() == id || facet.preset_id.as_str() == "any"
+                })
                 && preferences
                     .preferred_difficulty_id
                     .as_deref()
-                    .is_none_or(|id| facet.difficulty_id.as_str() == id)
+                    .is_none_or(|id| {
+                        facet.difficulty_id.as_str() == id || facet.preset_id.as_str() == "any"
+                    })
         })
         .collect::<Vec<_>>();
     if candidate_facets.is_empty() {
@@ -1648,6 +1698,15 @@ async fn fetch_campaign_authority(
             )),
         }
     }
+    if exact_matches.iter().any(|(_, _, published, _, _)| {
+        published.manifest.rules_config_constraint
+            == robin_run_protocol::RulesConfigConstraintV1::ExactCanonicalDigestOnly
+    }) {
+        exact_matches.retain(|(_, _, published, _, _)| {
+            published.manifest.rules_config_constraint
+                == robin_run_protocol::RulesConfigConstraintV1::ExactCanonicalDigestOnly
+        });
+    }
     let [
         (
             facet,
@@ -1675,7 +1734,9 @@ async fn fetch_campaign_authority(
             &participant_public_keys,
             published_ruleset.manifest.campaign_roster_continuity,
             *campaign_content_manifest_sha256,
-            facet.rules_config_sha256,
+            rules_config
+                .canonical_digest()
+                .map_err(|error| error.to_string())?,
             facet.ruleset_manifest_sha256,
             None,
             local_public_key,
@@ -1773,6 +1834,14 @@ async fn fetch_and_validate_ruleset_candidate<'a>(
         facet.ruleset_manifest_sha256,
     )
     .map_err(|error| error.to_string())?;
+    let rules_config = if published_ruleset.manifest.rules_config_constraint
+        == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig
+    {
+        robin_engine::simulation_inputs::custom_rules_config_v1(&rules_config, sim_config)
+            .map_err(|error| error.to_string())?
+    } else {
+        rules_config
+    };
     validate_single_player_authority(
         mission_id,
         sim_config,

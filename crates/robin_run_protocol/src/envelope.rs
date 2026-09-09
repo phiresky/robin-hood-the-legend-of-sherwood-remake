@@ -1605,7 +1605,7 @@ pub fn validate_official_ranked_scope_subject_v1(
     };
     let lane_is_authorized = match (edition, subject, starting_state) {
         (
-            OfficialContentEditionV1::Demo,
+            OfficialContentEditionV1::Demo | OfficialContentEditionV1::Full,
             OfficialContentSubjectV1::FieldMission { .. },
             InitialStateExpectationV1::IndividualLevel { .. },
         ) => true,
@@ -2915,7 +2915,7 @@ impl VerifiedCampaignAggregateV1 {
         campaign_content.validate()?;
         let manifest = &published.manifest;
         if self.ruleset_manifest_sha256 != published.ruleset_manifest_sha256
-            || self.rules_config_sha256 != manifest.rules_config_sha256
+            || !manifest.admits_rules_config_digest(self.rules_config_sha256)
             || manifest
                 .allowed_campaign_content_manifest_sha256
                 .binary_search(&self.campaign_content_manifest_sha256)
@@ -3362,6 +3362,8 @@ mod tests {
 
     fn ranked_session() -> RankedSessionConfigV1 {
         RankedSessionConfigV1 {
+            custom_rules_config: None,
+            custom_canonical_campaign: None,
             schema_version: 1,
             mission_id: "Dem_Lei_MP".into(),
             content_edition: OfficialContentEditionV1::Demo,

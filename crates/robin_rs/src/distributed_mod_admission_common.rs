@@ -82,7 +82,7 @@ pub async fn admit_trusted_distributed_mod(
         AdmissionState::new(offer.full_mod_sha256, offer.encoded_bytes, resume_offset)?;
     let mut deferred = Vec::new();
     await_authenticated_offer(channels, offer, &mut deferred, OFFER_WAIT).await?;
-    channels.request_content(offer.full_mod_sha256, resume_offset);
+    channels.request_content(offer.full_mod_sha256, resume_offset)?;
 
     let mut durable_offset = resume_offset;
     let transfer_started = web_time::Instant::now();
@@ -197,7 +197,7 @@ pub async fn admit_trusted_distributed_mod(
         DistributedModAdmissionPurpose::PrepareOnly => {
             channels.send_content_prepared(offer.full_mod_sha256)
         }
-    }
+    }?;
     Ok(AdmittedDistributedMod {
         mount,
         cache_lease: lease,

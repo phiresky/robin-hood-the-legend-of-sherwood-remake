@@ -1763,7 +1763,12 @@ pub(crate) mod tests {
             "preset": "standard",
             "difficulty": "legendary"
         });
-        assert!(serde_json::from_value::<RankedSimulationPolicyV1>(json).is_err());
+        assert!(
+            serde_json::from_value::<RankedSimulationPolicyV1>(json)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
 
         let mut hard_as_medium = official_rules_config();
         hard_as_medium

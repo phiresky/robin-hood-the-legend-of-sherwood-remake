@@ -555,7 +555,7 @@ impl Game {
         // and re-selecting after an idle period would jump to a
         // different visible frame.
         if frame.run_hourglass
-            && engine.any_selection_drawing_selection_mark(host.transport.local_seat)
+            && engine.any_selection_drawing_selection_mark(host.transport.local_seat())
         {
             host.frontend.selection_mark.tick();
         }

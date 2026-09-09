@@ -110,6 +110,13 @@ fn main() -> Result<()> {
     }
 
     let projection_rules = projection_rules.context("missing Standard/Medium projection rules")?;
+    let open_rules = robin_engine::simulation_inputs::custom_rules_config_v1(
+        &projection_rules,
+        RankedSimulationPolicy::standard_medium().expected_config(),
+    )?;
+    robin_manifest_tool::validate_complete_ranked_rules_config_v1(&open_rules)?;
+    write(output.join("rules-configs/any.json"), &open_rules)?;
+
     let execution = OfficialProjectionExecutionPolicyV1 {
         schema_version: 1,
         policy_version: 1,

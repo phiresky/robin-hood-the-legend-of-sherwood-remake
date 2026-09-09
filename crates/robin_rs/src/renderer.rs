@@ -959,13 +959,13 @@ impl Renderer {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     fn delete_surface(&mut self, id: u32) -> bool {
         self.try_delete_legacy_surface(id)
             .expect("owned upload must be retired with its ownership token")
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn try_delete_legacy_surface(
         &mut self,
         id: u32,
@@ -977,7 +977,7 @@ impl Renderer {
     }
 
     /// Compatibility boundary: resolve legacy screen aliases or mint a local upload reference.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     fn legacy_surface_target(&self, id: u32) -> Result<SurfaceTarget, MissingSurface> {
         if id <= 1 {
             Ok(SurfaceTarget::Screen)
@@ -1008,7 +1008,7 @@ impl Renderer {
         Ok(OwnedSurface { handle })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn assert_legacy_adoption_rejected(&mut self, handle: SurfaceHandle) {
         assert!(self.try_adopt_surface(handle.id).is_err());
     }
@@ -3246,7 +3246,7 @@ mod bind_counter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     verify_mask_atlas_pixels(gpu.clone());
     let mut other_renderer =
@@ -3471,7 +3471,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     verify_deferred_menu_surfaces(&mut renderer);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
     let pixels = [
         0xf800,
@@ -3613,7 +3613,7 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
     renderer.clear_frozen_scene();
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn verify_mask_atlas_pixels(gpu: GpuContext) {
     let mut renderer =
         Renderer::with_optional_surface(gpu, None, None, 31, 19, TextureScaleMode::Nearest);

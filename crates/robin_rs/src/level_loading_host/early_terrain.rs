@@ -11,11 +11,17 @@ struct TerrainKey {
     mission_generation: u64,
 }
 
-#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+#[cfg(any(
+    all(test, not(target_arch = "wasm32")),
+    all(target_arch = "wasm32", feature = "wasm-threads")
+))]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct FinishOnDrop(#[serde(skip)] Arc<AtomicBool>);
 
-#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+#[cfg(any(
+    all(test, not(target_arch = "wasm32")),
+    all(target_arch = "wasm32", feature = "wasm-threads")
+))]
 impl Drop for FinishOnDrop {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Release);

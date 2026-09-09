@@ -203,6 +203,7 @@ impl ProgressCounter {
         self.total
     }
 
+    #[cfg(test)]
     pub(crate) fn completed(&self) -> usize {
         self.completed
     }

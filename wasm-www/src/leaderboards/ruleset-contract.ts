@@ -47,10 +47,11 @@ export function parseRulesConfigIdentity(value: unknown): RulesConfigIdentity {
     if (Object.keys(simConfig).length === 0 || Object.keys(rules).length === 0) {
         throw new Error('rules_config sim_config and rules maps must both be non-empty');
     }
-    const expectedDifficulty = rankedSimulationPolicy.difficulty === 'easy'
-        ? 'Easy'
-        : rankedSimulationPolicy.difficulty === 'medium' ? 'Medium' : 'Hard';
-    if (simConfig.difficulty !== expectedDifficulty) {
+    const expectedDifficulty = { easy: 'Easy', medium: 'Medium', hard: 'Hard', legendary: 'Legendary', custom: 'Custom' }[rankedSimulationPolicy.difficulty];
+    if (rankedSimulationPolicy.difficulty === 'custom') {
+        const difficulty = strictObject(simConfig.difficulty, 'rules_config.sim_config.difficulty', ['Custom']);
+        object(difficulty.Custom, 'rules_config.sim_config.difficulty.Custom');
+    } else if (simConfig.difficulty !== expectedDifficulty) {
         throw new Error('rules_config.ranked_simulation_policy.difficulty does not match sim_config.difficulty');
     }
     return {
@@ -68,16 +69,19 @@ export function parseRankedSimulationPolicy(value: unknown): RankedSimulationPol
     if (obj.version !== 1) {
         throw new Error('rules_config.ranked_simulation_policy.version must be 1');
     }
+    if (obj.preset !== 'custom' && (obj.difficulty === 'custom' || obj.difficulty === 'legendary')) {
+        throw new Error('rules_config.ranked_simulation_policy.difficulty requires custom policy');
+    }
     return {
         version: 1,
         preset: enumeration(
             obj.preset,
-            ['standard', 'original_parity'] as const,
+            ['standard', 'original_parity', 'custom'] as const,
             'rules_config.ranked_simulation_policy.preset',
         ),
         difficulty: enumeration(
             obj.difficulty,
-            ['easy', 'medium', 'hard'] as const,
+            ['easy', 'medium', 'hard', 'legendary', 'custom'] as const,
             'rules_config.ranked_simulation_policy.difficulty',
         ),
     };
@@ -254,7 +258,7 @@ export function parseRulesetManifest(value: unknown): RulesetManifest {
         rulesConfigSha256,
         rulesConfigConstraint: enumeration(
             obj.rules_config_constraint,
-            ['exact_canonical_digest_only'] as const,
+            ['exact_canonical_digest_only', 'any_canonical_sim_config'] as const,
             'ruleset_manifest.rules_config_constraint',
         ),
         allowedBuildManifestSha256,
@@ -267,7 +271,7 @@ export function parseRulesetManifest(value: unknown): RulesetManifest {
         achievementPolicies,
         canonicalStartPolicy: enumeration(
             obj.canonical_start_policy,
-            ['rules_config_bound_operator_state_and_verified_predecessor'] as const,
+            ['rules_config_bound_operator_state_and_verified_predecessor', 'rules_config_bound_mission_setup_and_verified_predecessor'] as const,
             'ruleset_manifest.canonical_start_policy',
         ),
         canonicalCampaignState,
@@ -383,6 +387,10 @@ export function validateRulesetRulesConfigBinding(
 ): void {
     if (!ruleset.replaySchemaVersions.includes(rulesConfig.replaySchemaVersion)) {
         throw new Error('The rules configuration replay schema is outside its immutable ruleset allowlist.');
+    }
+    if (ruleset.rulesConfigConstraint === 'any_canonical_sim_config') {
+        if (ruleset.presetId !== 'any' || ruleset.difficultyId !== 'any') throw new Error('Open ruleset labels are invalid.');
+        return;
     }
     const labels = rankedSimulationPolicyLabels(rulesConfig.rankedSimulationPolicy);
     if (ruleset.presetId !== labels.presetId

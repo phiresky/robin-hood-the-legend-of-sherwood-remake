@@ -865,7 +865,9 @@ impl PublicCampaignAggregateProofV1 {
         published.validate()?;
         campaign_content.validate()?;
         if self.public_request.ruleset_manifest_sha256 != published.ruleset_manifest_sha256
-            || self.public_request.rules_config_sha256 != published.manifest.rules_config_sha256
+            || !published
+                .manifest
+                .admits_rules_config_digest(self.public_request.rules_config_sha256)
             || published
                 .manifest
                 .allowed_campaign_content_manifest_sha256
@@ -1633,7 +1635,7 @@ impl RunDetailV1 {
             LeaderboardSubjectV1::FullCampaign => RulesetBoardScopeV1::FullCampaign,
         };
         if self.ruleset_manifest_sha256 != published.ruleset_manifest_sha256
-            || self.rules_config_sha256 != manifest.rules_config_sha256
+            || !manifest.admits_rules_config_digest(self.rules_config_sha256)
             || match self.subject {
                 LeaderboardSubjectV1::Mission { .. } => manifest
                     .allowed_content_manifest_sha256

@@ -85,6 +85,14 @@ pub struct RankedSessionConfigV1 {
     pub content_manifest_sha256: Digest32,
     pub campaign_content_manifest_sha256: Option<Digest32>,
     pub rules_config_sha256: Digest32,
+    /// Complete custom settings, authenticated by the genesis signature and
+    /// their canonical digest. Absent on historical exact-preset sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_rules_config: Option<crate::RulesConfigIdentityV1>,
+    /// Fresh campaign proposal checked independently by the verifier. Each
+    /// continuation retains the accepted genesis artifact unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_canonical_campaign: Option<crate::ArtifactRefV1>,
     pub ruleset_manifest_sha256: Digest32,
     pub competition_manifest_sha256: Option<Digest32>,
     pub spellforge_content_sha256: Option<Digest32>,
@@ -129,6 +137,29 @@ impl Validate for RankedSessionConfigV1 {
             return Err(ValidationError::ClaimMismatch {
                 field: "ranked_session.spellforge_unranked",
             });
+        }
+        if self.custom_rules_config.is_some() != self.custom_canonical_campaign.is_some() {
+            return Err(ValidationError::ClaimMismatch {
+                field: "ranked_session.custom_canonical_campaign",
+            });
+        }
+        if let Some(artifact) = &self.custom_canonical_campaign {
+            artifact.validate()?;
+            if artifact.media_type != crate::RANKED_CAMPAIGN_MEDIA_TYPE_V1 {
+                return Err(ValidationError::ClaimMismatch {
+                    field: "ranked_session.custom_canonical_campaign.media_type",
+                });
+            }
+        }
+        if let Some(config) = &self.custom_rules_config {
+            config.validate()?;
+            if config.canonical_digest().ok() != Some(self.rules_config_sha256)
+                || self.competition_manifest_sha256.is_some()
+            {
+                return Err(ValidationError::ClaimMismatch {
+                    field: "ranked_session.custom_rules_config",
+                });
+            }
         }
         self.resource_locale_root.validate()?;
         self.speech_timing.validate()

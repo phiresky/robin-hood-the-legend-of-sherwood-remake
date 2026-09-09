@@ -176,6 +176,7 @@ impl InteractiveMission {
             }
             let display_snapshot = host.frontend.engine_display.clone();
             let capture_result = {
+                presentation.prepare_zoom(engine, host, hud, input);
                 let mut render_ctx = presentation.render_context(
                     resources,
                     hud,
@@ -346,6 +347,18 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // screenshot is rendered once immediately after the target frame.
         let mut fixed_tick_presented = false;
         if should_draw {
+            super::render::prepare_fixed_tick_hud(
+                engine,
+                host,
+                assets,
+                game,
+                presentation,
+                hud,
+                input,
+                ui,
+                resources.hud_fonts.is_some(),
+            );
+            presentation.prepare_zoom(engine, host, hud, input);
             let mut render_ctx = presentation.render_context(
                 resources,
                 hud,
@@ -414,14 +427,16 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
             host.frontend.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
+            if host.frontend.info_displayed && resources.hud_fonts.is_some() {
+                super::render::prepare_display_info(host, crate::window::process_uptime_ms());
+            }
             render_frame(
                 render_engine,
                 &display_snapshot,
-                host,
+                &host.draw(),
                 assets,
                 dev,
                 &mut render_ctx,
-                RenderCadence::FixedTick,
             );
 
             // PrintScreen keybind — capture the composited frame
@@ -554,14 +569,16 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             sync_render_camera(host.frontend);
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
+            if host.frontend.info_displayed && resources.hud_fonts.is_some() {
+                super::render::prepare_display_info(host, now_ms);
+            }
             render_frame(
                 render_engine,
                 &display_snapshot,
-                host,
+                &host.draw(),
                 assets,
                 dev,
                 &mut render_ctx,
-                RenderCadence::DisplayRefresh,
             );
             render_ctx.present();
             saved_camera.apply(host.frontend);
@@ -695,6 +712,7 @@ impl InteractiveMission {
                 let terminal_pending = self.frontend.ui.terminal_flow_active();
                 InteractiveFrameSimulation::drive_manual_steps(
                     timeline,
+                    &services.callbacks.save_manager,
                     host,
                     game,
                     manager,
@@ -789,8 +807,8 @@ fn run_interactive_post_initialize(
     frame.run_post_initialize = post_initialized;
     host.frontend.engine_display = display;
     if post_initialized
-        && let Some(net) = host.transport.net.as_ref()
-        && host.transport.local_seat == engine_player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net()
+        && host.transport.local_seat() == engine_player_command::PlayerId::HOST
     {
         net.set_initial_snapshot(runtime.frame_number(), &manager.engine);
     }
@@ -895,8 +913,8 @@ fn plan_interactive_pacing(
         engine_api::FRAME_TIME_MS
     };
     let normal_sleep_ms = target.saturating_sub(elapsed);
-    let host_deadline_ms = if host.transport.net.is_some()
-        && host.transport.local_seat != engine_player_command::PlayerId::HOST
+    let host_deadline_ms = if host.transport.net().is_some()
+        && host.transport.local_seat() != engine_player_command::PlayerId::HOST
         && !args.fast_forward
     {
         host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, runtime.frame_number())
@@ -937,8 +955,8 @@ fn plan_interactive_pacing(
         }
     }
     if let Some((hash_frame, hash)) = runtime.pending_mp_state_hash
-        && let Some(net) = host.transport.net.as_ref()
-        && host.transport.local_seat == engine_player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net()
+        && host.transport.local_seat() == engine_player_command::PlayerId::HOST
     {
         net.publish_frame(runtime.frame_number());
         tracing::info!(
@@ -949,7 +967,12 @@ fn plan_interactive_pacing(
             remaining_sleep_ms,
             "multiplayer: host sending state hash timing sample"
         );
-        net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms);
+        if let Err(error) =
+            net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms)
+        {
+            // NetChannels latches the worker failure for the next ingress poll.
+            tracing::error!(%error, "multiplayer state hash publication failed");
+        }
     }
     // Preserve the absolute deadline across the capability handoff. Hash
     // publication and preparing the presentation borrow both consume this

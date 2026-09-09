@@ -8,7 +8,7 @@ use robin_engine::player_command::{FrameCommands, PlayerCommand};
 
 /// Admit a batch of locally-produced [`PlayerCommand`]s.
 ///
-/// In single-player (`host.transport.net.is_none()`), commands are staged in
+/// In single-player (`host.transport.net().is_none()`), commands are staged in
 /// `frame_cmds` and are applied only by `Engine::advance_frame`.
 ///
 /// In multiplayer, commands are sent through the net layer instead.
@@ -26,9 +26,13 @@ pub(crate) fn dispatch_local_commands(
     frame_cmds: &mut FrameCommands,
     cmds: &[PlayerCommand],
 ) {
-    if let Some(net) = transport.net.as_ref() {
+    if let Some(net) = transport.net() {
         for cmd in cmds {
-            net.send_input(cmd.clone());
+            if let Err(error) = net.send_input(cmd.clone()) {
+                // The channel also latches failure for the next transport drain.
+                tracing::error!(%error, "multiplayer command dispatch failed");
+                break;
+            }
         }
     } else {
         frame_cmds
@@ -55,8 +59,10 @@ pub(crate) fn dispatch_local_command(
     frame_cmds: &mut FrameCommands,
     cmd: &PlayerCommand,
 ) {
-    if let Some(net) = transport.net.as_ref() {
-        net.send_input(cmd.clone());
+    if let Some(net) = transport.net() {
+        if let Err(error) = net.send_input(cmd.clone()) {
+            tracing::error!(%error, "multiplayer command dispatch failed");
+        }
     } else {
         frame_cmds.push(cmd.clone());
     }
@@ -99,7 +105,8 @@ mod tests {
     fn multiplayer_dispatch_defers_recording_until_the_server_echo() {
         let mut host = Host::scratch(640.0, 480.0);
         let (channels, _incoming, outgoing, _, _) = NetChannels::new();
-        host.transport.net = Some(channels);
+        host.transport =
+            crate::host::HostTransport::test_session(channels, host.transport.local_seat());
         let mut commands = FrameCommands::new();
 
         dispatch_local_command(

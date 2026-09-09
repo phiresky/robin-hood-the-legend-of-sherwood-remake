@@ -69,3 +69,13 @@ test('only a matching canonical wire digest can produce a digest-verified contra
     assert.equal((await parseAndVerifyRulesConfigIdentity(config, digest)).rankedSimulationPolicy.preset, 'standard');
     await assert.rejects(parseAndVerifyRulesConfigIdentity({ ...config, rules: { ...config.rules, state_load: true } }, digest), /content address/u);
 });
+
+test('custom run settings bind to an open ruleset without entering exact preset boards', async () => {
+    const { run, ruleset, rulesConfig } = await fixture();
+    const customRun = { ...run, rulesConfigSha256: 'f'.repeat(64) };
+    const customConfig = { ...rulesConfig, rankedSimulationPolicy: { version: 1 as const, preset: 'custom' as const, difficulty: 'legendary' as const }, simConfig: { ...rulesConfig.simConfig, difficulty: 'Legendary' } };
+    const open = { ...ruleset, rulesConfigConstraint: 'any_canonical_sim_config' as const, presetId: 'any', difficultyId: 'any' };
+    assert.doesNotThrow(() => assertRunRulesetBinding(customRun, open, customConfig));
+    assert.throws(() => assertRunRulesetBinding(customRun, ruleset, customConfig));
+    assert.throws(() => assertRunRulesetBinding(customRun, { ...open, allowedContentManifestSha256: [] }, customConfig));
+});

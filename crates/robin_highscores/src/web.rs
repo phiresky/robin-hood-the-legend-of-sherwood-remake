@@ -1369,10 +1369,40 @@ async fn leaderboard_metadata(
             });
         }
         rulesets.push(ruleset_facet(profile)?);
+        if profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "campaign_genesis")
+            && published
+                .manifest
+                .board_scopes
+                .contains(&RulesetBoardScopeV1::FullCampaign)
+        {
+            let mut campaign = ruleset_facet(profile)?;
+            campaign.content = RunContentIdentityV1::FullCampaign {
+                campaign_content_manifest_sha256: digest(
+                    profile
+                        .campaign_content_manifest_id
+                        .as_deref()
+                        .ok_or(ApiError::Internal)?,
+                )?,
+            };
+            campaign.categories = vec![BoardCategoryV1::Campaign];
+            campaign.supports_full_campaign_boards = true;
+            rulesets.push(campaign);
+        }
     }
     missions.sort_by(|left, right| left.mission_id.cmp(&right.mission_id));
-    rulesets.sort_by_key(|ruleset| ruleset.ruleset_manifest_sha256);
-    rulesets.dedup_by_key(|ruleset| ruleset.ruleset_manifest_sha256);
+    rulesets.sort_by_key(RulesetFacetV1::identity);
+    rulesets.dedup_by(|later, earlier| {
+        if later.identity() != earlier.identity() {
+            return false;
+        }
+        earlier.categories.extend(later.categories.iter().copied());
+        earlier.categories.sort();
+        earlier.categories.dedup();
+        true
+    });
     let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
     let mut competitions = state
         .config
@@ -1451,6 +1481,9 @@ async fn fresh_run_preflight_grant(
     }
 
     let profile = select_fresh_run_profile(&state.config, &request)?;
+    let derived_profile =
+        profile_with_session_config(&state.config, profile, &request.claim.ranked_session)?;
+    let profile = &derived_profile;
     validate_fresh_run_preflight_profile(&state.config, &request, profile)?;
     let published = state
         .config
@@ -1582,6 +1615,9 @@ async fn campaign_continuation_preflight_grant(
         .campaign_predecessor(request.claim.predecessor_run_id.as_str())
         .await?;
     let profile = select_continuation_preflight_profile(&state.config, &request)?;
+    let derived_profile =
+        profile_with_session_config(&state.config, profile, &request.claim.ranked_session)?;
+    let profile = &derived_profile;
     let published = state
         .config
         .manifests
@@ -1855,6 +1891,12 @@ async fn submission_offer(
     }
     let scope_name = scope_request_name(&request.scope_request);
     let profile = select_profile(&state.config, &request, scope_name)?;
+    let derived_profile = profile_with_session_config(
+        &state.config,
+        profile,
+        &request.session_genesis.claim.ranked_session,
+    )?;
+    let profile = &derived_profile;
     if let Some(grant) = &request.session_genesis.claim.fresh_run_preflight_grant {
         let published = state
             .config
@@ -2472,14 +2514,15 @@ async fn rules_config(
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
     let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .rules_configs
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    if let Some(rules) = state.config.manifests.rules_configs.get(&digest) {
+        return immutable_json(rules);
+    }
+    let rules = state
+        .database
+        .public_custom_rules_config(digest)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    immutable_json(&rules)
 }
 
 async fn ruleset_manifest(
@@ -2620,6 +2663,35 @@ async fn leaderboard(
         Some(cursor) => cursor.accepted_sequence_watermark,
         None => state.database.accepted_sequence_watermark().await?,
     };
+    let profile = profile_for_filter(&state.config, &filter)?;
+    let published = state
+        .config
+        .manifests
+        .rulesets
+        .get(&digest(&profile.ruleset_id)?)
+        .ok_or(ApiError::Internal)?;
+    let mut allowed_rulesets = Vec::new();
+    for (id, candidate) in &state.config.manifests.rulesets {
+        if filter
+            .ruleset_manifest_sha256
+            .is_some_and(|selected| selected != *id)
+        {
+            continue;
+        }
+        let mut exact_filter = filter.clone();
+        exact_filter.ruleset_manifest_sha256 = Some(*id);
+        exact_filter.rules_config_sha256 = Some(candidate.manifest.rules_config_sha256);
+        if profile_for_filter(&state.config, &exact_filter).is_err() {
+            continue;
+        }
+        if candidate.manifest.tick_duration != published.manifest.tick_duration {
+            return Err(ApiError::BadRequest(
+                "combined boards require rulesets with the same simulation tick duration"
+                    .to_owned(),
+            ));
+        }
+        allowed_rulesets.push(*id);
+    }
     let mut rows = state
         .database
         .leaderboard_rows(
@@ -2627,6 +2699,7 @@ async fn leaderboard(
             db_cursor.as_ref(),
             u32::from(query.limit) + 1,
             accepted_sequence_watermark,
+            &allowed_rulesets,
         )
         .await?;
     if state.database.leaderboard_visibility_revision().await? != visibility_revision {
@@ -2636,13 +2709,6 @@ async fn leaderboard(
     }
     let has_more = rows.len() > usize::from(query.limit);
     rows.truncate(usize::from(query.limit));
-    profile_for_filter(&state.config, &filter)?;
-    let published = state
-        .config
-        .manifests
-        .rulesets
-        .get(&filter.ruleset_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
     let first_position = decoded_cursor
         .as_ref()
         .map_or(1, |cursor| cursor.position.saturating_add(1));
@@ -2718,7 +2784,12 @@ async fn leaderboard(
         entries,
         next_cursor,
     };
-    page.validate_against_ruleset(published).map_err(|_error| {
+    (if page.filter.ruleset_manifest_sha256.is_some() {
+        page.validate_against_ruleset(published)
+    } else {
+        page.validate()
+    })
+    .map_err(|_error| {
         tracing::error!(
             error_code = "leaderboard_page_invalid",
             "leaderboard query produced an invalid protocol page"
@@ -3521,8 +3592,8 @@ async fn player_run_history(
                 subject,
                 metric,
                 content,
-                rules_config_sha256: Digest32::from_bytes(best.config_id),
-                ruleset_manifest_sha256: Digest32::from_bytes(best.ruleset_id),
+                rules_config_sha256: Some(Digest32::from_bytes(best.config_id)),
+                ruleset_manifest_sha256: Some(Digest32::from_bytes(best.ruleset_id)),
                 competition_manifest_sha256: best.competition_manifest_id.map(Digest32::from_bytes),
                 max_concurrent_players: Some(best.max_concurrent_players),
                 player_public_key: Some(key),
@@ -3912,23 +3983,54 @@ async fn campaign_receipt(
     }))
 }
 
+fn fresh_start_artifact(
+    config: &ServerConfig,
+    profile: &AdmissionProfile,
+    ranked: &robin_run_protocol::RankedSessionConfigV1,
+) -> Result<ArtifactRefV1, ApiError> {
+    let published = config
+        .manifests
+        .rulesets
+        .get(&ranked.ruleset_manifest_sha256)
+        .ok_or(ApiError::NotFound)?;
+    if published
+        .manifest
+        .canonical_start_policy
+        .requires_exact_operator_artifact()
+    {
+        return Ok(profile.canonical_campaign_state.artifact.clone());
+    }
+    // The immutable policy delegates mission setup validation to replay
+    // verification. This grant binds a proposal; it does not award a score.
+    Ok(ArtifactRefV1 {
+        sha256: ranked.starting_campaign_sha256,
+        byte_length: ranked.starting_campaign_byte_length,
+        media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.into(),
+    })
+}
+
 async fn starting_state(
     state: &AppState,
     request: &SubmissionOfferRequestV1,
     profile: &AdmissionProfile,
 ) -> Result<InitialStateExpectationV1, ApiError> {
+    let fresh = fresh_start_artifact(
+        &state.config,
+        profile,
+        &request.session_genesis.claim.ranked_session,
+    )?;
     match &request.scope_request {
         ScopeRequestV1::IndividualLevel => Ok(InitialStateExpectationV1::IndividualLevel {
             template_id: opaque(&profile.template_id)?,
             campaign_state_requirement: profile.canonical_campaign_state.requirement,
-            campaign_sha256: profile.canonical_campaign_state.artifact.sha256,
-            starting_campaign_byte_length: profile.canonical_campaign_state.artifact.byte_length,
+            campaign_sha256: fresh.sha256,
+            starting_campaign_byte_length: fresh.byte_length,
         }),
         ScopeRequestV1::CampaignGenesis => Ok(InitialStateExpectationV1::CampaignGenesis {
             template_id: opaque(&profile.template_id)?,
             campaign_state_requirement: profile.canonical_campaign_state.requirement,
-            campaign_sha256: profile.canonical_campaign_state.artifact.sha256,
-            starting_campaign_byte_length: profile.canonical_campaign_state.artifact.byte_length,
+            campaign_sha256: fresh.sha256,
+            starting_campaign_byte_length: fresh.byte_length,
         }),
         ScopeRequestV1::CampaignContinuation {
             chain_id,
@@ -4022,6 +4124,64 @@ fn continuation_owner_authorized(
         .any(|claim| claim.public_key.as_bytes() == &owner)
 }
 
+fn profile_with_session_config(
+    config: &ServerConfig,
+    profile: &AdmissionProfile,
+    ranked: &robin_run_protocol::RankedSessionConfigV1,
+) -> Result<AdmissionProfile, ApiError> {
+    ranked
+        .validate()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let published = config
+        .manifests
+        .rulesets
+        .get(&ranked.ruleset_manifest_sha256)
+        .ok_or(ApiError::NotFound)?;
+    let mut derived = profile.clone();
+    match (
+        published.manifest.rules_config_constraint,
+        &ranked.custom_rules_config,
+    ) {
+        (robin_run_protocol::RulesConfigConstraintV1::ExactCanonicalDigestOnly, None) => {}
+        (robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig, Some(custom)) => {
+            robin_engine::simulation_inputs::validate_ranked_simulation_policy_rules_config_v1(
+                custom,
+            )
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+            let baseline = config
+                .manifests
+                .rules_configs
+                .get(&published.manifest.rules_config_sha256)
+                .ok_or(ApiError::Internal)?;
+            if custom.rules != baseline.rules
+                || custom.replay_schema_version != baseline.replay_schema_version
+            {
+                return Err(ApiError::BadRequest(
+                    "custom configuration changes unsupported ranking rules".to_owned(),
+                ));
+            }
+            derived.config_id = ranked.rules_config_sha256.to_string();
+            derived.canonical_campaign_state_path = None;
+            derived
+                .canonical_campaign_state
+                .requirement
+                .rules_config_sha256 = ranked.rules_config_sha256;
+            derived.canonical_campaign_state.artifact =
+                ranked.custom_canonical_campaign.clone().ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "custom session has no canonical campaign proposal".to_owned(),
+                    )
+                })?;
+        }
+        _ => {
+            return Err(ApiError::BadRequest(
+                "ruleset does not admit this session configuration".to_owned(),
+            ));
+        }
+    }
+    Ok(derived)
+}
+
 fn select_fresh_run_profile<'a>(
     config: &'a ServerConfig,
     request: &FreshRunPreflightRequestV1,
@@ -4079,6 +4239,7 @@ fn validate_fresh_run_preflight_profile(
     profile: &AdmissionProfile,
 ) -> Result<(), ApiError> {
     let ranked = &request.claim.ranked_session;
+    let fresh = fresh_start_artifact(config, profile, ranked)?;
     let expected_campaign_content = match request.claim.scope {
         FreshRunScopeV1::IndividualLevel => None,
         FreshRunScopeV1::CampaignGenesis => Some(digest(
@@ -4092,14 +4253,14 @@ fn validate_fresh_run_preflight_profile(
         FreshRunScopeV1::IndividualLevel => InitialStateExpectationV1::IndividualLevel {
             template_id: opaque(&profile.template_id)?,
             campaign_state_requirement: profile.canonical_campaign_state.requirement,
-            campaign_sha256: profile.canonical_campaign_state.artifact.sha256,
-            starting_campaign_byte_length: profile.canonical_campaign_state.artifact.byte_length,
+            campaign_sha256: fresh.sha256,
+            starting_campaign_byte_length: fresh.byte_length,
         },
         FreshRunScopeV1::CampaignGenesis => InitialStateExpectationV1::CampaignGenesis {
             template_id: opaque(&profile.template_id)?,
             campaign_state_requirement: profile.canonical_campaign_state.requirement,
-            campaign_sha256: profile.canonical_campaign_state.artifact.sha256,
-            starting_campaign_byte_length: profile.canonical_campaign_state.artifact.byte_length,
+            campaign_sha256: fresh.sha256,
+            starting_campaign_byte_length: fresh.byte_length,
         },
     };
     robin_run_protocol::validate_official_ranked_scope_subject_v1(
@@ -4118,7 +4279,7 @@ fn validate_fresh_run_preflight_profile(
         .validate_content_manifest(content)
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
     if request.claim.starting_campaign.media_type != RANKED_CAMPAIGN_MEDIA_TYPE_V1
-        || request.claim.starting_campaign != profile.canonical_campaign_state.artifact
+        || request.claim.starting_campaign != fresh
         || profile
             .canonical_campaign_state
             .requirement
@@ -4344,22 +4505,22 @@ fn select_profile<'a>(
     } else {
         participant_policy.allow_multiplayer
     };
-    if manifest.rules_config_sha256
-        != request
+    if !manifest.admits_rules_config_digest(
+        request
             .session_genesis
             .claim
             .ranked_session
-            .rules_config_sha256
-        || manifest
-            .allowed_build_manifest_sha256
-            .binary_search(
-                &request
-                    .session_genesis
-                    .claim
-                    .ranked_session
-                    .build_manifest_sha256,
-            )
-            .is_err()
+            .rules_config_sha256,
+    ) || manifest
+        .allowed_build_manifest_sha256
+        .binary_search(
+            &request
+                .session_genesis
+                .claim
+                .ranked_session
+                .build_manifest_sha256,
+        )
+        .is_err()
         || manifest
             .allowed_content_manifest_sha256
             .binary_search(
@@ -4391,7 +4552,18 @@ fn profile_for_filter<'a>(
 ) -> Result<&'a AdmissionProfile, ApiError> {
     let profile_matches = |profile: &&AdmissionProfile| {
         let subject_matches = match &filter.subject {
-            LeaderboardSubjectV1::Mission { mission_id, .. } => profile.mission_id() == mission_id,
+            LeaderboardSubjectV1::Mission {
+                mission_id,
+                category,
+            } => {
+                profile.mission_id() == mission_id
+                    && profile.allowed_scopes.iter().any(|scope| match category {
+                        BoardCategoryV1::IndividualLevel => scope == "individual_level",
+                        BoardCategoryV1::Campaign => {
+                            scope == "campaign_genesis" || scope == "campaign_continuation"
+                        }
+                    })
+            }
             LeaderboardSubjectV1::FullCampaign => profile
                 .allowed_scopes
                 .iter()
@@ -4410,10 +4582,21 @@ fn profile_for_filter<'a>(
                     configured == &campaign_content_manifest_sha256.to_string()
                 }),
         };
-        subject_matches
+        let active = digest(&profile.ruleset_id)
+            .ok()
+            .and_then(|id| config.manifests.rulesets.get(&id))
+            .is_some_and(|published| {
+                matches!(
+                    published.operational_status,
+                    RulesetOperationalStatusV1::Active
+                )
+            });
+        active && subject_matches
             && content_matches
-            && profile.config_id == filter.rules_config_sha256.to_string()
-            && profile.ruleset_id == filter.ruleset_manifest_sha256.to_string()
+            && filter.rules_config_sha256.is_none_or(|value| profile.config_id == value.to_string()
+                || digest(&profile.ruleset_id).ok().and_then(|id| config.manifests.rulesets.get(&id))
+                    .is_some_and(|published| published.manifest.rules_config_constraint == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig))
+            && filter.ruleset_manifest_sha256.is_none_or(|value| profile.ruleset_id == value.to_string())
             && metrics(profile).is_ok_and(|metrics| metrics.contains(&filter.metric))
     };
     let profile = if let Some(competition_digest) = filter.competition_manifest_sha256 {
@@ -4428,8 +4611,8 @@ fn profile_for_filter<'a>(
         if filter.subject != manifest.subject
             || manifest.metric != filter.metric
             || manifest.content != filter.content
-            || manifest.rules_config_sha256 != filter.rules_config_sha256
-            || manifest.ruleset_manifest_sha256 != filter.ruleset_manifest_sha256
+            || Some(manifest.rules_config_sha256) != filter.rules_config_sha256
+            || Some(manifest.ruleset_manifest_sha256) != filter.ruleset_manifest_sha256
             || filter.max_concurrent_players
                 != Some(manifest.participant_composition.max_concurrent_players())
         {
@@ -4446,7 +4629,7 @@ fn profile_for_filter<'a>(
     let published = config
         .manifests
         .rulesets
-        .get(&filter.ruleset_manifest_sha256)
+        .get(&digest(&profile.ruleset_id)?)
         .ok_or(ApiError::NotFound)?;
     if !matches!(
         published.operational_status,
@@ -4483,27 +4666,10 @@ fn ruleset_facet(profile: &AdmissionProfile) -> Result<RulesetFacetV1, ApiError>
         .collect::<Result<Vec<_>, _>>()?;
     categories.sort();
     categories.dedup();
-    let supports_full_campaign_boards = profile
-        .allowed_scopes
-        .iter()
-        .any(|scope| scope == "campaign_genesis")
-        && profile
-            .allowed_scopes
-            .iter()
-            .any(|scope| scope == "campaign_continuation");
-    let content = if supports_full_campaign_boards {
-        RunContentIdentityV1::FullCampaign {
-            campaign_content_manifest_sha256: digest(
-                profile
-                    .campaign_content_manifest_id
-                    .as_deref()
-                    .ok_or(ApiError::Internal)?,
-            )?,
-        }
-    } else {
-        RunContentIdentityV1::Mission {
-            content_manifest_sha256: digest(&profile.content_manifest_id)?,
-        }
+    // Keep the mission facet even when this profile also starts a full campaign.
+    let supports_full_campaign_boards = false;
+    let content = RunContentIdentityV1::Mission {
+        content_manifest_sha256: digest(&profile.content_manifest_id)?,
     };
     Ok(RulesetFacetV1 {
         ruleset_manifest_sha256: digest(&profile.ruleset_id)?,
@@ -5534,7 +5700,9 @@ pub(crate) mod tests {
                     media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
                 },
             },
-            canonical_campaign_state_path: std::path::PathBuf::from("/private/campaign-state"),
+            canonical_campaign_state_path: Some(std::path::PathBuf::from(
+                "/private/campaign-state",
+            )),
             allowed_metrics: vec!["original_score".to_owned()],
             ruleset_display_name: "Standard".to_owned(),
             preset_id: "standard".to_owned(),
@@ -5834,8 +6002,8 @@ pub(crate) mod tests {
             content: RunContentIdentityV1::Mission {
                 content_manifest_sha256: Digest32::from_bytes([9; 32]),
             },
-            rules_config_sha256: published.manifest.rules_config_sha256,
-            ruleset_manifest_sha256: published.ruleset_manifest_sha256,
+            rules_config_sha256: Some(published.manifest.rules_config_sha256),
+            ruleset_manifest_sha256: Some(published.ruleset_manifest_sha256),
             competition_manifest_sha256: None,
             max_concurrent_players: None,
             player_public_key: None,
@@ -5861,13 +6029,14 @@ pub(crate) mod tests {
             replay_directory: directory.path().join("replays"),
             ..Default::default()
         };
-        for (id, mission_id, display_name) in [
-            ("z-profile", "z-mission", "A"),
-            ("a-profile", "a-mission", "Z"),
+        for (id, mission_id, display_name, content) in [
+            ("z-profile", "z-mission", "A", 9),
+            ("a-profile", "a-mission", "Z", 10),
         ] {
             let mut profile =
                 viewer_profile(Digest32::from_bytes([8; 32]), Digest32::from_bytes([9; 32]));
             profile.id = id.to_owned();
+            profile.content_manifest_id = Digest32::from_bytes([content; 32]).to_string();
             profile.content_subject = OfficialContentSubjectV1::FieldMission {
                 mission_id: mission_id.to_owned(),
             };
@@ -5900,6 +6069,24 @@ pub(crate) mod tests {
                 .map(|mission| mission.mission_id.as_str())
                 .collect::<Vec<_>>(),
             ["a-mission", "z-mission"]
+        );
+        assert_eq!(
+            metadata.rulesets.len(),
+            2,
+            "shared rulesets must retain each mission"
+        );
+        for mission in &metadata.missions {
+            assert!(metadata.rulesets.iter().any(|facet| facet.content
+                == RunContentIdentityV1::Mission {
+                    content_manifest_sha256: mission.content_manifest_sha256,
+                }));
+        }
+        metadata.validate().unwrap();
+        let mut duplicate = metadata.clone();
+        duplicate.rulesets.insert(0, duplicate.rulesets[0].clone());
+        assert!(
+            duplicate.validate().is_err(),
+            "duplicate ruleset/content facets remain invalid"
         );
     }
 
