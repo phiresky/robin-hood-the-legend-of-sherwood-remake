@@ -172,8 +172,8 @@ fn draw_status_bar(
     g: u8,
     b: u8,
 ) {
-    let view = host.frontend.viewport.view_position;
-    let zoom = host.frontend.viewport.zoom_factor;
+    let view = host.viewport().view_position;
+    let zoom = host.viewport().zoom_factor;
 
     // Cast the origin to integer — truncation in world space, required
     // for pixel-perfect parity.
@@ -217,10 +217,10 @@ pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Rend
         return;
     }
 
-    let view = host.frontend.viewport.view_position;
-    let zoom = host.frontend.viewport.zoom_factor;
-    let screen_w = host.frontend.viewport.screen_size.x as i32;
-    let screen_h = host.frontend.viewport.screen_size.y as i32;
+    let view = host.viewport().view_position;
+    let zoom = host.viewport().zoom_factor;
+    let screen_w = host.viewport().screen_size.x as i32;
+    let screen_h = host.viewport().screen_size.y as i32;
 
     // Trajectory color: cyan (0,231,191) for a normal arc, pink
     // (255,100,150) when the shot is crumpled / will miss
@@ -319,7 +319,7 @@ pub(crate) fn render_item_effect_preview(
     };
 
     if let Some(radius) = preview.radius {
-        host.frontend.presentation.draw_manager.draw_circle(
+        host.draw_manager().draw_circle(
             renderer,
             preview.center,
             radius,
@@ -328,8 +328,8 @@ pub(crate) fn render_item_effect_preview(
     }
 
     let Some(fonts) = fonts else { return };
-    let view = host.frontend.viewport.view_position;
-    let zoom = host.frontend.viewport.zoom_factor;
+    let view = host.viewport().view_position;
+    let zoom = host.viewport().zoom_factor;
     let screen_x = ((preview.center.x - view.x) * zoom) as i32;
     let screen_y = ((preview.center.y - view.y) * zoom) as i32;
     let text_width = fonts.tooltip_font.text_width(preview.fallback_text);
@@ -390,7 +390,7 @@ pub(crate) fn render_listen_ping(
             }
             _ => continue,
         };
-        host.frontend.presentation.draw_manager.draw_circle(
+        host.draw_manager().draw_circle(
             renderer, position, radius, 0xFFFF, // white
         );
     }
@@ -526,29 +526,25 @@ pub(crate) fn draw_multi_selection_box(
     // ── Compute screen-space corners via the unclamped transform;
     //    the GPU line renderer clips off-screen pieces. ──
     let a = host
-        .frontend
-        .viewport
+        .viewport()
         .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.min(p2.x),
             p1.y.min(p2.y),
         ));
     let b = host
-        .frontend
-        .viewport
+        .viewport()
         .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.max(p2.x),
             p1.y.min(p2.y),
         ));
     let c = host
-        .frontend
-        .viewport
+        .viewport()
         .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.max(p2.x),
             p1.y.max(p2.y),
         ));
     let d = host
-        .frontend
-        .viewport
+        .viewport()
         .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.min(p2.x),
             p1.y.max(p2.y),

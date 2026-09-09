@@ -391,6 +391,8 @@ pub struct Renderer {
     resources: GpuResources,
     pipelines: PipelineStore,
     frame: FrameState,
+    capture_frame: Option<FrameState>,
+    screen_layout: wgpu::BindGroupLayout,
     /// Update-owned zoom HUD data. Kept separate from GPU ownership because
     /// throwaway screenshot and thumbnail passes must not advance it.
     zoom_presentation: ZoomPresentationState,
@@ -401,6 +403,51 @@ struct FontAtlas {
     _texture: wgpu::Texture,
     _view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
+}
+
+/// A scoped selection of the renderer's cached capture target, not a second
+/// asset-owning renderer. Drop restores the untouched live frame even when a
+/// draw/readback returns early (or unwinds).
+pub(crate) struct CaptureTarget<'a> {
+    renderer: &'a mut Renderer,
+    live: Option<FrameState>,
+}
+
+impl serde::Serialize for CaptureTarget<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_unit_struct("CaptureTarget")
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CaptureTarget<'_> {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "capture target authority must be borrowed from a renderer",
+        ))
+    }
+}
+
+impl std::ops::Deref for CaptureTarget<'_> {
+    type Target = Renderer;
+    fn deref(&self) -> &Renderer {
+        self.renderer
+    }
+}
+
+impl std::ops::DerefMut for CaptureTarget<'_> {
+    fn deref_mut(&mut self) -> &mut Renderer {
+        self.renderer
+    }
+}
+
+impl Drop for CaptureTarget<'_> {
+    fn drop(&mut self) {
+        let live = self
+            .live
+            .take()
+            .expect("capture scope owns its live target");
+        self.renderer.capture_frame = Some(std::mem::replace(&mut self.renderer.frame, live));
+    }
 }
 
 struct FogMaskTexture {
@@ -688,6 +735,8 @@ impl Renderer {
             resources,
             pipelines,
             frame,
+            capture_frame: None,
+            screen_layout: bgl_screen,
             zoom_presentation: ZoomPresentationState::default(),
             fog_mask: None,
         }
@@ -698,6 +747,33 @@ impl Renderer {
         self.frame.finish_loading_screen(&self.gpu);
         self.pipelines.gpu_upscale.finish_loading_screen();
         self.clear_font_atlas_cache();
+    }
+
+    /// Select an independent reusable logical target while sharing uploaded
+    /// assets and pipelines. The held live frame (including pending draws and
+    /// modal snapshot) is never resized, flushed or otherwise modified.
+    pub(crate) fn capture_target(&mut self, width: u16, height: u16) -> CaptureTarget<'_> {
+        assert!(
+            width > 0 && height > 0,
+            "capture dimensions must be positive"
+        );
+        let mut frame = self.capture_frame.take().unwrap_or_else(|| {
+            FrameState::offscreen(
+                &self.gpu,
+                &self.resources,
+                &self.screen_layout,
+                width,
+                height,
+            )
+        });
+        frame.resize(&self.gpu, &self.resources, width, height);
+        frame.clear_frozen_scene();
+        frame.clear_recording();
+        let live = std::mem::replace(&mut self.frame, frame);
+        CaptureTarget {
+            renderer: self,
+            live: Some(live),
+        }
     }
 
     // ----- accessors that stayed compatible -----
@@ -3398,8 +3474,58 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert_eq!(renderer.draw_queue_checkpoint(), 0);
     renderer.freeze_scene_for_modal();
     assert_eq!(renderer.try_capture_frame_rgba().unwrap().2, expected);
-    renderer.render_gpu_rect(0, 0, 3, 2, 255, 0, 0, 255);
+    let queued_image = renderer
+        .create_rgba_gpu_image(3, 2, &[255, 0, 0, 255].repeat(6), "pending live frame")
+        .unwrap();
+    renderer.render_gpu_image(&queued_image, None, None, BlendMode::None);
     let queued = renderer.draw_queue_checkpoint();
+    let live_texture = renderer.frame.render_target_texture.clone();
+    let live_backdrop = renderer.frame.frozen_scene.as_ref().unwrap().0.clone();
+    let mut capture_texture = None;
+    for fail in [false, true, false] {
+        let result = (|| -> Result<(), CaptureError> {
+            let mut target = renderer.capture_target(7, 5);
+            if let Some(previous) = &capture_texture {
+                assert_eq!(
+                    &target.frame.render_target_texture, previous,
+                    "same-size captures must reuse their target allocation"
+                );
+            } else {
+                capture_texture = Some(target.frame.render_target_texture.clone());
+            }
+            assert_ne!(target.frame.render_target_texture, live_texture);
+            assert!(target.frame.frozen_scene.is_none());
+            let image = target
+                .create_rgba_gpu_image(7, 5, &[0, 0, 255, 255].repeat(35), "capture frame")
+                .unwrap();
+            target.render_gpu_image(&image, None, None, BlendMode::None);
+            target.begin_ui_layer();
+            target.render_gpu_rect(0, 0, 1, 1, 0, 255, 0, 255);
+            if fail {
+                // Exercise the same early-return path as failed mapping,
+                // including unsubmitted capture-only world/UI commands.
+                return Err(CaptureError::CompletionLost);
+            }
+            let (w, h, pixels) = target.try_capture_frame_rgba()?;
+            assert_eq!((w, h), (7, 5));
+            assert_eq!(&pixels[..4], &[0, 255, 0, 255]);
+            assert_eq!(&pixels[4..], &[0, 0, 255, 255].repeat(34));
+            target.freeze_scene_for_modal();
+            Ok(())
+        })();
+        assert_eq!(result.is_err(), fail);
+        assert_eq!((renderer.screen_width(), renderer.screen_height()), (3, 2));
+        assert_eq!(renderer.frame.render_target_texture, live_texture);
+        assert_eq!(
+            renderer.frame.frozen_scene.as_ref().unwrap().0,
+            live_backdrop
+        );
+        assert_eq!(renderer.draw_queue_checkpoint(), queued);
+        assert_eq!(
+            renderer.try_capture_presented_frame_rgba().unwrap().2,
+            expected
+        );
+    }
     assert_eq!(
         renderer.try_capture_presented_frame_rgba().unwrap().2,
         expected
@@ -3714,6 +3840,11 @@ fn verify_mask_atlas_pixels(gpu: GpuContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_target_diagnostics_cannot_restore_gpu_authority() {
+        assert!(serde_json::from_str::<CaptureTarget<'_>>("null").is_err());
+    }
 
     #[test]
     fn mask_atlas_vertex_encoding_is_exact_at_page_extremes() {

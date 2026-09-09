@@ -3427,7 +3427,7 @@ pub fn draw_pc_info_overlay(
 /// segment starting at the PC's map position.  The dot phase is a
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
 pub fn render_macro_dotted_chains(
-    frontend: &HostFrontend,
+    draw_manager: &crate::draw_manager::DrawManager,
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
@@ -3469,7 +3469,7 @@ pub fn render_macro_dotted_chains(
         for slot in state.slots() {
             for step in &slot.steps {
                 let to = step.position;
-                frontend.presentation.draw_manager.draw_dotted_line(
+                draw_manager.draw_dotted_line(
                     renderer,
                     from,
                     to,

@@ -363,7 +363,7 @@ impl TitbitRenderer {
                 renderer.enqueue_external_texture(
                     view,
                     world_titbit_rect(
-                        &host.frontend.viewport,
+                        host.viewport(),
                         floor_centered(map_pt.x, w),
                         floor_bottom(map_pt.y, h),
                         w,
@@ -661,7 +661,7 @@ impl TitbitRenderer {
                 }
                 renderer.enqueue_external_texture(
                     view,
-                    world_titbit_rect(&host.frontend.viewport, dst_x, dst_y, w, h),
+                    world_titbit_rect(host.viewport(), dst_x, dst_y, w, h),
                     [0.0, 0.0, 1.0, 1.0],
                     tint,
                     blend,
@@ -731,7 +731,7 @@ impl TitbitRenderer {
             };
             renderer.enqueue_external_texture(
                 view,
-                world_titbit_rect(&host.frontend.viewport, dst_x, dst_y, w, h),
+                world_titbit_rect(host.viewport(), dst_x, dst_y, w, h),
                 [0.0, 0.0, 1.0, 1.0],
                 tint,
                 blend,
