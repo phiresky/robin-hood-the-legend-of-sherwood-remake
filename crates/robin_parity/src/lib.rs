@@ -9,17 +9,11 @@
 pub mod original_parity_replay;
 pub mod result;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
-use std::sync::Arc;
-
 use robin_assets::picture::Picture;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::engine::LevelAssets;
-use robin_engine::profiles::{CivilianType, ProfileManager};
+use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile::SbFile;
-use robin_engine::sound::ExclamationGroup;
-use robin_engine::sound_cache::{IndexedCache, SoundCache};
 
 /// Locale-specific directories searched by the Original international build.
 pub const LANGUAGE_FOLDERS: &[&str] = &[
@@ -143,230 +137,31 @@ pub fn background_dimensions(
     ))
 }
 
-fn exclamation_cache(profiles: &ProfileManager) -> Result<IndexedCache, String> {
-    let mut resources = ResourceManager::legacy_tool();
-    resources
-        .attach_resource_file("Data/Sounds/Exclamations/actors.res")
-        .map_err(|error| format!("load Data/Sounds/Exclamations/actors.res: {error}"))?;
-    let mut files = BTreeMap::<u32, String>::new();
-    for id in profiles
-        .characters
-        .iter()
-        .map(|profile| profile.exclamation_id)
-        .chain(
-            profiles
-                .soldiers
-                .iter()
-                .map(|profile| profile.exclamation_id),
-        )
-        .chain(
-            profiles
-                .civilians
-                .iter()
-                .map(|profile| profile.exclamation_id),
-        )
-        .filter(|id| *id != 0)
-    {
-        let suffix = id
-            .to_le_bytes()
-            .into_iter()
-            .filter(|byte| *byte != 0)
-            .map(char::from)
-            .collect::<String>();
-        files.insert(id, format!("actor{suffix}.dat"));
-    }
-
-    let mut cache = SoundCache::new();
-    for (id, filename) in files {
-        let path = format!("Data/Sounds/Exclamations/{filename}");
-        let bytes = match SbFile::read_all(&path) {
-            Ok(bytes) => bytes,
-            Err(status) => {
-                tracing::warn!(path, status, "exclamation definition is absent");
-                continue;
-            }
-        };
-        let (table, exclamations) =
-            robin_engine::sound_cache::parse_exclamation_file(&bytes, id & 0xffff_0000)
-                .map_err(|error| format!("parse {path}: {error}"))?;
-        let mut resolved = Vec::with_capacity(exclamations.len());
-        for (action, variants) in exclamations {
-            let paths = variants
-                .into_iter()
-                .filter_map(
-                    |variant| match resources.get_sample(table as i32, variant as usize) {
-                        Ok(path) => Some(path.to_owned()),
-                        Err(error) => {
-                            tracing::warn!(table, variant, %error, "actors.res variant is absent");
-                            None
-                        }
-                    },
-                )
-                .collect();
-            resolved.push((action, paths));
-        }
-        cache.initialize_exclamations_for_profile(&resolved);
-    }
-    Ok(cache.speech_cache)
-}
-
-fn sample_duration_ms(base: &str, file_name: &str) -> Option<u32> {
-    let normalized = file_name.replace('\\', "/");
-    let candidates = [
-        format!("{base}/{normalized}"),
-        format!("{base}/Exclamations/{normalized}"),
-    ];
-    let bytes = candidates.iter().find_map(|path| {
-        SbFile::read_all(path).ok().or_else(|| {
-            let opus = Path::new(path).with_extension("opus");
-            SbFile::read_all(&opus.to_string_lossy()).ok()
-        })
-    })?;
-    // Match the game client's admission rule: readable unknown encodings
-    // remain one-frame sounds instead of disappearing from simulation state.
-    Some(wav_or_ogg_duration_ms(&bytes).unwrap_or(0))
-}
-
-fn wav_or_ogg_duration_ms(bytes: &[u8]) -> Option<u32> {
-    if bytes.get(..4)? == b"OggS" {
-        let segments = *bytes.get(26)? as usize;
-        let body = bytes.get(27 + segments..)?;
-        if body.len() < 16 || body[0] != 1 || body.get(1..7)? != b"vorbis" {
-            return None;
-        }
-        let sample_rate = u32::from_le_bytes(body[12..16].try_into().ok()?);
-        if sample_rate == 0 {
-            return None;
-        }
-        let mut granule = 0;
-        let mut offset = 0;
-        while offset + 27 <= bytes.len() {
-            if bytes.get(offset..offset + 4) == Some(b"OggS") {
-                let value = u64::from_le_bytes(bytes[offset + 6..offset + 14].try_into().ok()?);
-                if value != u64::MAX {
-                    granule = value;
-                }
-                let count = bytes[offset + 26] as usize;
-                let lacing = bytes.get(offset + 27..offset + 27 + count)?;
-                offset += 27 + count + lacing.iter().map(|value| *value as usize).sum::<usize>();
-            } else {
-                offset += 1;
-            }
-        }
-        return u32::try_from(granule.checked_mul(1000)?.checked_div(sample_rate.into())?).ok();
-    }
-    if bytes.len() < 44 || bytes.get(..4)? != b"RIFF" || bytes.get(8..12)? != b"WAVE" {
-        return None;
-    }
-    let mut offset = 12;
-    let mut byte_rate = 0;
-    let mut data_size = 0;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().ok()?);
-        if bytes.get(offset..offset + 4)? == b"fmt " && offset + 20 <= bytes.len() {
-            byte_rate = u32::from_le_bytes(bytes[offset + 16..offset + 20].try_into().ok()?);
-        } else if bytes.get(offset..offset + 4)? == b"data" {
-            data_size = size;
-        }
-        offset = offset.checked_add(8 + size as usize)?;
-        if !offset.is_multiple_of(2) {
-            offset += 1;
-        }
-    }
-    u32::try_from(
-        u64::from(data_size)
-            .checked_mul(1000)?
-            .checked_div(u64::from(byte_rate))?,
-    )
-    .ok()
-}
-
-/// Populate the sound durations that affect simulation without creating an
-/// audio device or compiling the interactive audio backend.
+/// Use engine-owned timing even for CPU-only trace replay. Recorded Original
+/// boundary facts remain explicit replay inputs, not inferred audio durations.
 pub fn populate_sound_duration_tables(
     assets: &mut LevelAssets,
     profiles: &ProfileManager,
-    sound_directory: &str,
+    _sound_directory: &str,
 ) -> Result<(), String> {
-    let speech_cache = exclamation_cache(profiles)?;
-    let frames_from_ms = |milliseconds: u32| ((milliseconds.saturating_add(39)) / 40).max(1);
-
-    let mut groups_by_profile: BTreeMap<u32, BTreeSet<ExclamationGroup>> = BTreeMap::new();
-    for profile in &profiles.characters {
-        if profile.exclamation_id != 0 {
-            groups_by_profile
-                .entry(profile.exclamation_id)
-                .or_default()
-                .insert(ExclamationGroup::Pc);
-        }
+    let files = SbFile::snapshot_legacy_file_system();
+    // TODO: accept an explicit core-datadir path for separately installed parity tools.
+    let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/core-datadir");
+    let status = files.add_overlay_path(core.to_str().ok_or("non-UTF8 core datadir")?);
+    if status != robin_engine::sbfile::SBFILE_NO_ERROR
+        && status != robin_engine::sbfile::SBFILE_ERROR_PATH_ALREADY_PRESENT
+    {
+        return Err(format!("cannot mount parity core audio timing: {status}"));
     }
-    for profile in &profiles.soldiers {
-        if profile.exclamation_id != 0 {
-            let groups = groups_by_profile.entry(profile.exclamation_id).or_default();
-            groups.insert(ExclamationGroup::Civilian);
-            groups.insert(ExclamationGroup::Soldier);
-            if profile.vip {
-                groups.insert(ExclamationGroup::Vip);
-            }
-        }
-    }
-    for profile in &profiles.civilians {
-        if profile.exclamation_id != 0 {
-            let groups = groups_by_profile.entry(profile.exclamation_id).or_default();
-            groups.insert(ExclamationGroup::Civilian);
-            if profile.civilian_type == CivilianType::Vip {
-                groups.insert(ExclamationGroup::Vip);
-            }
-        }
-    }
-
-    let mut exclamation_durations = BTreeMap::new();
-    for (&group_id, group) in &speech_cache.groups {
-        let prefix = group_id & 0xffff_0000;
-        let duration = group
-            .entry_indices
+    assets.audio.required_exclamation_ids.extend(
+        profiles
+            .characters
             .iter()
-            .map(|&index| {
-                let entry = speech_cache.entries.get(index).ok_or_else(|| {
-                    format!("speech group {group_id:#010x} references missing entry {index}")
-                })?;
-                let milliseconds = sample_duration_ms(sound_directory, &entry.file_name)
-                    .ok_or_else(|| format!("speech sample `{}` is unavailable", entry.file_name))?;
-                Ok(frames_from_ms(milliseconds))
-            })
-            .collect::<Result<Vec<_>, String>>()?
-            .into_iter()
-            .max()
-            .ok_or_else(|| format!("speech group {group_id:#010x} has no samples"))?;
-        for (&profile, groups) in &groups_by_profile {
-            if profile & 0xffff_0000 == prefix {
-                for &kind in groups {
-                    exclamation_durations.insert((kind, profile, group_id as u16), duration);
-                }
-            }
-        }
-    }
-
-    let mut source_cache = SoundCache::new();
-    source_cache.initialize_sound_source_cache(&assets.audio.sound_source_required_ids);
-    let mut source_durations = BTreeMap::new();
-    for (&id, entry) in &source_cache.source_cache.entries {
-        if let Some(milliseconds) = sample_duration_ms(sound_directory, &entry.file_name) {
-            source_durations.insert(id, frames_from_ms(milliseconds));
-        }
-    }
-    tracing::info!(
-        exclamations = exclamation_durations.len(),
-        sources = source_durations.len(),
-        "populated headless parity sound durations"
+            .map(|p| p.exclamation_id)
+            .chain(profiles.soldiers.iter().map(|p| p.exclamation_id))
+            .chain(profiles.civilians.iter().map(|p| p.exclamation_id))
+            .filter(|id| *id != 0),
     );
-    assets
-        .audio
-        .publish_timing(
-            Arc::new(exclamation_durations),
-            assets.audio.speech_timing_catalog().clone(),
-            Arc::new(source_durations),
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    robin_engine::audio_durations::AudioDurations::load(&files)?
+        .populate(&mut assets.audio, profiles)
 }

@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MENU_W, MenuTransform, TextAlign, VAlign, align_bottom_right, dim_screen,
-    enter_modal_gpu_phase, render_text_in_box_aligned_font, render_text_virt_font,
+    MENU_W, MenuTransform, align_bottom_right, dim_screen, enter_modal_gpu_phase,
+    render_text_virt_font, wrap_text_for_box_font,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mods_dir};
@@ -71,12 +71,14 @@ const TITLE_Y: i32 = 8;
 const LIST_X: i32 = 14;
 const LIST_Y: i32 = 36;
 const LIST_W: i32 = 380;
-const LIST_H: i32 = 380;
+// Leave room below both panes for the Play/Cancel button stack.
+const LIST_H: i32 = 360;
 const DETAIL_X: i32 = 408;
 const DETAIL_Y: i32 = 36;
 const DETAIL_W: i32 = 218;
-const DETAIL_H: i32 = 380;
+const DETAIL_H: i32 = LIST_H;
 const ROW_HEIGHT: i32 = 20;
+const SCROLL_W: i32 = 12;
 
 const ID_PLAY: u32 = 0;
 const ID_CANCEL: u32 = 1;
@@ -130,8 +132,17 @@ pub(crate) async fn show_custom_missions(
     // Default selection: first launchable row if any, otherwise the
     // first row (which will be broken — at least the user can read why).
     let mut selected: usize = entries.iter().position(|e| e.status.is_ok()).unwrap_or(0);
-    let visible_rows = (LIST_H / ROW_HEIGHT).max(1) as usize;
-    let mut scroll_offset: usize = 0;
+    let visible_rows = ((LIST_H - 8) / ROW_HEIGHT).max(1) as usize;
+    let mut scroll_offset = selected.saturating_sub(visible_rows - 1);
+    let mut detail_offset: usize = 0;
+    let font = resources
+        .menu_text_font_any()
+        .expect("custom missions requires a body font");
+    let detail_line_h = (font.height() as i32).max(12) + 2;
+    let detail_visible = ((DETAIL_H - 16) / detail_line_h) as usize;
+    let mut detail_lines = mission_detail_lines(font, &entries[selected]);
+    // (detail pane, pointer offset within thumb)
+    let mut scroll_drag: Option<(bool, i32)> = None;
 
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
@@ -152,15 +163,6 @@ pub(crate) async fn show_custom_missions(
     }
 
     loop {
-        // Ensure the selected row stays within the visible window. Done
-        // before event polling so a keyboard arrow that just moved the
-        // selection off-screen still triggers a scroll this frame.
-        if selected < scroll_offset {
-            scroll_offset = selected;
-        } else if selected >= scroll_offset + visible_rows {
-            scroll_offset = selected + 1 - visible_rows;
-        }
-
         let play_enabled = entries[selected].status.is_ok();
         // Update the Play button's enabled flag in place — selecting a
         // broken row should grey the button without resetting its
@@ -174,6 +176,7 @@ pub(crate) async fn show_custom_missions(
         let (events, transform) =
             crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
+            let previous_selected = selected;
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => activated = Some(ID_CANCEL),
@@ -225,10 +228,63 @@ pub(crate) async fn show_custom_missions(
                 } if play_enabled => {
                     activated = Some(ID_PLAY);
                 }
+                GameEvent::MouseDown(x, y, 1, _) => {
+                    let (x, y) = transform.from_screen(x, y);
+                    for (detail, pane_x, total, visible, offset) in [
+                        (
+                            false,
+                            LIST_X + LIST_W,
+                            entries.len(),
+                            visible_rows,
+                            &mut scroll_offset,
+                        ),
+                        (
+                            true,
+                            DETAIL_X + DETAIL_W,
+                            detail_lines.len(),
+                            detail_visible,
+                            &mut detail_offset,
+                        ),
+                    ] {
+                        if total > visible
+                            && (pane_x - SCROLL_W - 2..pane_x - 2).contains(&x)
+                            && (LIST_Y + 4..LIST_Y + LIST_H - 4).contains(&y)
+                        {
+                            let (top, height) = scrollbar_thumb(total, visible, *offset);
+                            let relative = y - LIST_Y - 4;
+                            let grab = if (top..top + height).contains(&relative) {
+                                relative - top
+                            } else {
+                                height / 2
+                            };
+                            *offset = scrollbar_offset(relative, grab, total, visible);
+                            scroll_drag = Some((detail, grab));
+                        }
+                    }
+                }
+                GameEvent::MouseMove { y, .. } if scroll_drag.is_some() => {
+                    let (_, y) = transform.from_screen(0, y);
+                    let (detail, grab) = scroll_drag.expect("active scrollbar drag");
+                    if detail {
+                        detail_offset = scrollbar_offset(
+                            y - DETAIL_Y - 4,
+                            grab,
+                            detail_lines.len(),
+                            detail_visible,
+                        );
+                    } else {
+                        scroll_offset =
+                            scrollbar_offset(y - LIST_Y - 4, grab, entries.len(), visible_rows);
+                    }
+                }
+                GameEvent::PointerCancel => scroll_drag = None,
                 GameEvent::MouseUp(x, y, 1) => {
+                    if scroll_drag.take().is_some() {
+                        continue;
+                    }
                     let (vx, vy) = transform.from_screen(x, y);
-                    if (LIST_X..LIST_X + LIST_W).contains(&vx)
-                        && (LIST_Y..LIST_Y + LIST_H).contains(&vy)
+                    if (LIST_X..LIST_X + LIST_W - SCROLL_W - 2).contains(&vx)
+                        && (LIST_Y + 4..LIST_Y + 4 + visible_rows as i32 * ROW_HEIGHT).contains(&vy)
                     {
                         let row_offset = ((vy - LIST_Y - 4) / ROW_HEIGHT).max(0) as usize;
                         let target = scroll_offset + row_offset;
@@ -246,14 +302,48 @@ pub(crate) async fn show_custom_missions(
                     }
                 }
                 GameEvent::MouseWheel(dy) => {
-                    let max_scroll = entries.len().saturating_sub(visible_rows);
-                    if dy > 0 {
-                        scroll_offset = scroll_offset.saturating_sub(1);
-                    } else if dy < 0 {
-                        scroll_offset = (scroll_offset + 1).min(max_scroll);
+                    let x = input_state.virt_x as i32;
+                    let y = input_state.virt_y as i32;
+                    if (DETAIL_X..DETAIL_X + DETAIL_W).contains(&x)
+                        && (DETAIL_Y..DETAIL_Y + DETAIL_H).contains(&y)
+                    {
+                        detail_offset = detail_offset
+                            .saturating_add_signed(-(dy as isize) * 3)
+                            .min(detail_lines.len().saturating_sub(detail_visible));
+                    } else if (LIST_X..LIST_X + LIST_W).contains(&x)
+                        && (LIST_Y..LIST_Y + LIST_H).contains(&y)
+                    {
+                        scroll_offset = scroll_offset
+                            .saturating_add_signed(-(dy as isize) * 3)
+                            .min(entries.len().saturating_sub(visible_rows));
                     }
                 }
                 _ => {}
+            }
+            if selected != previous_selected {
+                detail_lines = mission_detail_lines(font, &entries[selected]);
+                detail_offset = 0;
+                scroll_drag = None;
+            }
+            // Only keyboard navigation reveals selection; wheel/drag scrolling
+            // must remain independent of the currently selected mission.
+            if matches!(
+                event,
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up
+                        | Keycode::Down
+                        | Keycode::PageUp
+                        | Keycode::PageDown
+                        | Keycode::Home
+                        | Keycode::End,
+                    ..
+                }
+            ) {
+                if selected < scroll_offset {
+                    scroll_offset = selected;
+                } else if selected >= scroll_offset + visible_rows {
+                    scroll_offset = selected + 1 - visible_rows;
+                }
             }
         }
 
@@ -333,7 +423,15 @@ pub(crate) async fn show_custom_missions(
             scroll_offset,
             visible_rows,
         );
-        draw_detail_pane(renderer, resources, transform, &entries[selected]);
+        draw_detail_pane(
+            renderer,
+            resources,
+            transform,
+            &detail_lines,
+            detail_offset,
+            detail_visible,
+            detail_line_h,
+        );
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
         cursor.draw(renderer, transform, &input_state);
         renderer.present();
@@ -390,7 +488,8 @@ fn draw_list(
         // neighbours.
         if is_selected {
             let (sx0, sy0) = transform.to_screen(LIST_X + 2, row_y - 2);
-            let (sx1, sy1) = transform.to_screen(LIST_X + LIST_W - 2, row_y + ROW_HEIGHT - 4);
+            let (sx1, sy1) =
+                transform.to_screen(LIST_X + LIST_W - SCROLL_W - 4, row_y + ROW_HEIGHT - 4);
             renderer.fill_screen(
                 Some(&BBox::from_coords(
                     sx0 as f32, sy0 as f32, sx1 as f32, sy1 as f32,
@@ -420,7 +519,7 @@ fn draw_list(
         // Truncate so long labels don't bleed out of the list pane into
         // the detail pane. Drops trailing chars + adds an ellipsis if it
         // doesn't fit.
-        let row_text_w = LIST_W - 20;
+        let row_text_w = LIST_W - 20 - SCROLL_W;
         let label = truncate_to_pixel_width(font, &label, row_text_w);
         // Visual highlight of the selected row already drawn above; the
         // text colour is the same for selected/unselected, matching the
@@ -428,6 +527,14 @@ fn draw_list(
         let _ = is_selected;
         render_text_virt_font(renderer, font, transform, &label, LIST_X + 10, row_y);
     }
+    draw_scrollbar(
+        renderer,
+        transform,
+        LIST_X + LIST_W,
+        entries.len(),
+        visible_rows,
+        scroll_offset,
+    );
 }
 
 fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
@@ -456,7 +563,10 @@ fn draw_detail_pane(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     transform: MenuTransform,
-    entry: &MissionEntry,
+    lines: &[String],
+    offset: usize,
+    visible: usize,
+    line_h: i32,
 ) {
     let (sx0, sy0) = transform.to_screen(DETAIL_X, DETAIL_Y);
     let (sx1, sy1) = transform.to_screen(DETAIL_X + DETAIL_W, DETAIL_Y + DETAIL_H);
@@ -474,11 +584,27 @@ fn draw_detail_pane(
         return;
     };
 
-    let mut y = DETAIL_Y + 8;
-    let info_x = DETAIL_X + 8;
-    let info_w = DETAIL_W - 16;
-    let line_h = (font.height() as i32).max(12);
+    for (row, line) in lines.iter().skip(offset).take(visible).enumerate() {
+        render_text_virt_font(
+            renderer,
+            font,
+            transform,
+            line,
+            DETAIL_X + 10,
+            DETAIL_Y + 8 + row as i32 * line_h,
+        );
+    }
+    draw_scrollbar(
+        renderer,
+        transform,
+        DETAIL_X + DETAIL_W,
+        lines.len(),
+        visible,
+        offset,
+    );
+}
 
+fn mission_detail_lines(font: &crate::native_font::Font, entry: &MissionEntry) -> Vec<String> {
     let mut lines: Vec<String> = Vec::with_capacity(8);
     lines.push(entry.mod_title.clone());
     lines.push(format!("by {}", entry.author));
@@ -498,42 +624,140 @@ fn draw_detail_pane(
         lines.push(format!("Status: unavailable — {reason}"));
     }
 
+    let mut wrapped = Vec::new();
     for line in lines {
-        let _ = render_text_in_box_aligned_font(
-            renderer,
-            font,
-            transform,
-            &line,
-            info_x,
-            y,
-            info_w,
-            line_h * 2,
-            TextAlign::Left,
-            VAlign::Top,
+        wrapped.extend(
+            wrap_text_for_box_font(font, &line, DETAIL_W - 20 - SCROLL_W, usize::MAX).lines,
         );
-        y += line_h + 2;
+    }
+    if !entry.description.trim().is_empty() {
+        wrapped.push(String::new());
+        wrapped.extend(
+            wrap_text_for_box_font(
+                font,
+                &entry.description,
+                DETAIL_W - 20 - SCROLL_W,
+                usize::MAX,
+            )
+            .lines,
+        );
+    }
+    wrapped
+}
+
+fn scrollbar_thumb(total: usize, visible: usize, offset: usize) -> (i32, i32) {
+    let track_h = LIST_H - 8;
+    assert!(total > visible, "scrollbar requires overflowing content");
+    let height = (track_h * visible as i32 / total as i32).clamp(16, track_h);
+    let top = ((track_h - height) as usize * offset / (total - visible)) as i32;
+    (top, height)
+}
+
+fn scrollbar_offset(pointer: i32, grab: i32, total: usize, visible: usize) -> usize {
+    let (_, height) = scrollbar_thumb(total, visible, 0);
+    let travel = LIST_H - 8 - height;
+    ((pointer - grab).clamp(0, travel) as usize * (total - visible) + travel as usize / 2)
+        / travel as usize
+}
+
+fn draw_scrollbar(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    right: i32,
+    total: usize,
+    visible: usize,
+    offset: usize,
+) {
+    if total <= visible {
+        return;
+    }
+    let (top, height) = scrollbar_thumb(total, visible, offset);
+    for (y, h, color) in [
+        (
+            LIST_Y + 4,
+            LIST_H - 8,
+            Renderer::create_color_16(35, 28, 18),
+        ),
+        (
+            LIST_Y + 4 + top,
+            height,
+            Renderer::create_color_16(180, 160, 100),
+        ),
+    ] {
+        let (x0, y0) = transform.to_screen(right - SCROLL_W - 2, y);
+        let (x1, y1) = transform.to_screen(right - 2, y + h);
+        renderer.fill_screen(
+            Some(&BBox::from_coords(
+                x0 as f32, y0 as f32, x1 as f32, y1 as f32,
+            )),
+            color,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_mission_details_wrap_without_dropping_status_or_description() {
+        let name = [0; 32];
+        let font = crate::native_font::Font::TrueType(crate::font::TrueTypeFont::from_parts(
+            &name,
+            18,
+            0,
+            0,
+            &name,
+            0,
+            include_bytes!("../../../../assets/core-datadir/Data/Interface/Fonts/arial.ttf"),
+        ));
+        let entry = MissionEntry {
+            mod_slug: String::new(),
+            mod_title: "Multi-team Demos".into(),
+            author: "Robin Rust port".into(),
+            source_url: String::new(),
+            license: String::new(),
+            description: "Ten multi-team combat and diplomacy demos. ".repeat(30) + "END",
+            map: "Open Battlefield".into(),
+            requires_spellforge: false,
+            version_label: "MultiTeamAllPcsCircle".into(),
+            version_zip: PathBuf::new(),
+            rhm_zip_entry: String::new(),
+            rhm_basename: "MultiTeamAllPcsCircle".into(),
+            hackable: true,
+            status: MissionStatus::Broken {
+                reason: "Unable to locate level MultiTeamAllPcsCircle.level".into(),
+            },
+            preview_image: None,
+        };
+        let lines = mission_detail_lines(&font, &entry);
+        assert!(lines.len() > ((DETAIL_H - 16) / (font.height() as i32 + 2)) as usize);
+        assert!(
+            lines
+                .iter()
+                .all(|line| font.text_width(line) <= DETAIL_W - 20 - SCROLL_W)
+        );
+        let text = lines.join(" ");
+        assert!(text.contains("Status:"));
+        assert!(text.ends_with("END"));
     }
 
-    // Blank gap before description.
-    y += 4;
-
-    if !entry.description.trim().is_empty() {
-        // The remaining height drives how much description fits; the
-        // wrap helper inside render_text_in_box_aligned clips
-        // overflow rather than letting it escape the pane.
-        let remaining_h = (DETAIL_Y + DETAIL_H) - y - 4;
-        if remaining_h > line_h {
-            let _ = render_text_in_box_aligned_font(
-                renderer,
-                font,
-                transform,
-                &entry.description,
-                info_x,
-                y,
-                info_w,
-                remaining_h,
-                TextAlign::Left,
-                VAlign::Top,
+    #[test]
+    fn dragging_scrollbars_reaches_both_ends_and_keeps_thumb_inside_track() {
+        for (total, visible) in [(19, 18), (100, 18), (10_000, 16)] {
+            let max_offset = total - visible;
+            let (_, height) = scrollbar_thumb(total, visible, 0);
+            let grab = height / 2;
+            assert_eq!(scrollbar_offset(-100, grab, total, visible), 0);
+            assert_eq!(
+                scrollbar_offset(LIST_H + 100, grab, total, visible),
+                max_offset
+            );
+            let (bottom_top, bottom_height) = scrollbar_thumb(total, visible, max_offset);
+            assert_eq!(bottom_top + bottom_height, LIST_H - 8);
+            assert_eq!(
+                scrollbar_offset(bottom_top + grab, grab, total, visible),
+                max_offset
             );
         }
     }

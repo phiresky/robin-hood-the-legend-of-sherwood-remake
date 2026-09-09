@@ -1013,6 +1013,17 @@ fn settle_terminal_debriefing(
 pub(super) fn drive_tick_exit_modals(
     mut context: TerminalDebriefingContext<'_>,
 ) -> TerminalDebriefingProgress {
+    if context.playing_back {
+        // Terminal records already carry ApplyQuitMissionUpdates. Reopening
+        // live debriefing here would retain a stale modal across the next load
+        // and try to promote the campaign or submit another run.
+        if let Some(outcome) = context.tick_exit_code {
+            super::session_policy::validate_replay_terminal(outcome, context.frame.post_commands())
+                .expect("invalid replay terminal");
+            context.game.operation.set(GameCode::LevelInProgress);
+        }
+        return TerminalDebriefingProgress::Inactive;
+    }
     if let Some(mut state) = context.ui.terminal_debriefing.take() {
         let progress = state.tick(&mut context);
         if progress == TerminalDebriefingProgress::Pending {

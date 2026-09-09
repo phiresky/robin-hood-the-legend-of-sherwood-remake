@@ -6,6 +6,7 @@
 //! profile, or network service participates.
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,11 +15,9 @@ use robin_assets::picture::Picture;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{Ambiance, GroundMarkSpriteData, LevelAssets, SimConfig};
-use robin_engine::profiles::{CivilianType, ProfileManager};
+use robin_engine::profiles::ProfileManager;
 use robin_engine::resource_ids::*;
 use robin_engine::sbfile::{SB_FILE_READ, SbFileSystem};
-use robin_engine::sound::ExclamationGroup;
-use robin_engine::sound_cache::{IndexedCache, SampleLoader, SoundCache};
 use robin_engine::sprite_variant::SpriteVariant;
 use robin_engine::titbit::SpriteRow;
 use robin_run_protocol::SpeechTimingAuthorityV1;
@@ -481,272 +480,26 @@ fn required_mission_exclamation_ids(
     Ok(ids)
 }
 
-fn build_exclamation_cache(
-    profiles: &ProfileManager,
-    reader: Arc<SbFileSystem>,
-) -> Result<IndexedCache, String> {
-    let mut resources = ResourceManager::with_files(reader.clone());
-    resources
-        .attach_resource_file("Data/Sounds/Exclamations/actors.res")
-        .map_err(|error| format!("load authoritative actors.res: {error:#}"))?;
-    let mut files = BTreeMap::<u32, String>::new();
-    for id in profiles
-        .characters
-        .iter()
-        .map(|profile| profile.exclamation_id)
-        .chain(
-            profiles
-                .soldiers
-                .iter()
-                .map(|profile| profile.exclamation_id),
-        )
-        .chain(
-            profiles
-                .civilians
-                .iter()
-                .map(|profile| profile.exclamation_id),
-        )
-        .filter(|id| *id != 0)
-    {
-        let suffix = id
-            .to_le_bytes()
-            .into_iter()
-            .filter(|byte| *byte != 0)
-            .map(char::from)
-            .collect::<String>();
-        files.insert(id, format!("actor{suffix}.dat"));
-    }
-    let mut cache = SoundCache::new();
-    for (id, filename) in files {
-        let path = format!("Data/Sounds/Exclamations/{filename}");
-        let bytes = match reader.read_all(&path) {
-            Ok(bytes) => bytes,
-            Err(status) => {
-                tracing::warn!(
-                    path,
-                    status,
-                    "authoritative exclamation definition is absent"
-                );
-                continue;
-            }
-        };
-        let (table, exclamations) =
-            robin_engine::sound_cache::parse_exclamation_file(&bytes, id & 0xffff_0000)
-                .map_err(|error| format!("parse {path}: {error}"))?;
-        let mut resolved = Vec::with_capacity(exclamations.len());
-        for (action, variants) in exclamations {
-            let paths = variants
-                .into_iter()
-                .filter_map(
-                    |variant| match resources.get_sample(table as i32, variant as usize) {
-                        Ok(path) => Some(path.to_owned()),
-                        Err(error) => {
-                            tracing::warn!(table, variant, %error, "actors.res variant is absent");
-                            None
-                        }
-                    },
-                )
-                .collect();
-            resolved.push((action, paths));
-        }
-        cache.initialize_exclamations_for_profile(&resolved);
-    }
-    Ok(cache.speech_cache)
-}
-
-fn read_sample(files: &SbFileSystem, base: &str, file_name: &str) -> Option<(Vec<u8>, u32, u32)> {
-    let normalized = file_name.replace('\\', "/");
-    let candidates = [
-        format!("{base}/{normalized}"),
-        format!("{base}/Exclamations/{normalized}"),
-    ];
-    let bytes = candidates.iter().find_map(|path| {
-        files.read_all(path).ok().or_else(|| {
-            let opus = Path::new(path).with_extension("opus");
-            files.read_all(&opus.to_string_lossy()).ok()
-        })
-    })?;
-    let size = u32::try_from(bytes.len()).ok()?;
-    // Match the interactive sample loader: a readable but unrecognized file
-    // remains an admitted sample with zero milliseconds. The simulation then
-    // rounds that to its one-frame minimum instead of silently dropping the
-    // authored sound identity.
-    let duration = wav_or_ogg_duration_ms(&bytes).unwrap_or(0);
-    Some((bytes, size, duration))
-}
-
-fn wav_or_ogg_duration_ms(bytes: &[u8]) -> Option<u32> {
-    if bytes.get(..4)? == b"OggS" {
-        let segments = *bytes.get(26)? as usize;
-        let body = bytes.get(27 + segments..)?;
-        if body.len() < 16 || body[0] != 1 || body.get(1..7)? != b"vorbis" {
-            return None;
-        }
-        let sample_rate = u32::from_le_bytes(body[12..16].try_into().ok()?);
-        if sample_rate == 0 {
-            return None;
-        }
-        let mut granule = 0;
-        let mut offset = 0;
-        while offset + 27 <= bytes.len() {
-            if bytes.get(offset..offset + 4) == Some(b"OggS") {
-                let value = u64::from_le_bytes(bytes[offset + 6..offset + 14].try_into().ok()?);
-                if value != u64::MAX {
-                    granule = value;
-                }
-                let count = bytes[offset + 26] as usize;
-                let lacing = bytes.get(offset + 27..offset + 27 + count)?;
-                offset += 27 + count + lacing.iter().map(|value| *value as usize).sum::<usize>();
-            } else {
-                offset += 1;
-            }
-        }
-        return u32::try_from(granule.checked_mul(1000)?.checked_div(sample_rate.into())?).ok();
-    }
-    if bytes.len() < 44 || bytes.get(..4)? != b"RIFF" || bytes.get(8..12)? != b"WAVE" {
-        return None;
-    }
-    let mut offset = 12;
-    let mut byte_rate = 0;
-    let mut data_size = 0;
-    while offset + 8 <= bytes.len() {
-        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().ok()?);
-        if bytes.get(offset..offset + 4)? == b"fmt " && offset + 20 <= bytes.len() {
-            byte_rate = u32::from_le_bytes(bytes[offset + 16..offset + 20].try_into().ok()?);
-        } else if bytes.get(offset..offset + 4)? == b"data" {
-            data_size = size;
-        }
-        offset = offset.checked_add(8 + size as usize)?;
-        if !offset.is_multiple_of(2) {
-            offset += 1;
-        }
-    }
-    u32::try_from(
-        u64::from(data_size)
-            .checked_mul(1000)?
-            .checked_div(u64::from(byte_rate))?,
-    )
-    .ok()
-}
-
 fn populate_ranked_sound_duration_tables(
     assets: &mut LevelAssets,
     profiles: &ProfileManager,
     speech_timing: &SpeechTimingAuthorityV1,
-    files: Arc<SbFileSystem>,
+    _files: Arc<SbFileSystem>,
 ) -> Result<(), String> {
-    // The resolver has already locked the exact signed locale root. Both
-    // authority variants therefore resolve through a single immutable search
-    // graph; the variant remains in the prepared-input seal and is checked by
-    // ranked content admission.
-    match speech_timing {
-        SpeechTimingAuthorityV1::BaseInstallation => {}
-        SpeechTimingAuthorityV1::LanguagePack { canonical_locale } => {
-            if canonical_locale.is_empty() {
-                return Err("canonical speech locale is empty".into());
-            }
-        }
-    }
-    let speech_cache = build_exclamation_cache(profiles, files.clone())?;
-    let loader: Box<SampleLoader> = Box::new(move |name| read_sample(&files, "Data/Sounds", name));
-    let frames_from_ms = |milliseconds: u32| ((milliseconds.saturating_add(39)) / 40).max(1);
-
-    let mut groups_by_profile: BTreeMap<u32, BTreeSet<ExclamationGroup>> = BTreeMap::new();
-    for profile in &profiles.characters {
-        if profile.exclamation_id != 0 {
-            groups_by_profile
-                .entry(profile.exclamation_id)
-                .or_default()
-                .insert(ExclamationGroup::Pc);
-        }
-    }
-    for profile in &profiles.soldiers {
-        if profile.exclamation_id != 0 {
-            let groups = groups_by_profile.entry(profile.exclamation_id).or_default();
-            groups.insert(ExclamationGroup::Civilian);
-            groups.insert(ExclamationGroup::Soldier);
-            if profile.vip {
-                groups.insert(ExclamationGroup::Vip);
-            }
-        }
-    }
-    for profile in &profiles.civilians {
-        if profile.exclamation_id != 0 {
-            let groups = groups_by_profile.entry(profile.exclamation_id).or_default();
-            groups.insert(ExclamationGroup::Civilian);
-            if profile.civilian_type == CivilianType::Vip {
-                groups.insert(ExclamationGroup::Vip);
-            }
-        }
-    }
-
-    let mut exclamation_durations = BTreeMap::new();
-    let mut catalog = robin_engine::engine::SpeechTimingCatalog::default();
-    for (&group_id, group) in &speech_cache.groups {
-        let prefix = group_id & 0xffff_0000;
-        if !assets
-            .audio
-            .required_exclamation_ids
-            .iter()
-            .any(|profile| profile & 0xffff_0000 == prefix)
-        {
-            continue;
-        }
-        let variants = group
-            .entry_indices
-            .iter()
-            .map(|&index| {
-                let entry = speech_cache.entries.get(index).ok_or_else(|| {
-                    format!("speech group {group_id:#010x} references missing entry {index}")
-                })?;
-                Ok(robin_engine::engine::SpeechTimingVariant {
-                    sample_identity: entry.file_name.clone(),
-                    duration_frames: loader(&entry.file_name)
-                        .map(|(_, _, milliseconds)| frames_from_ms(milliseconds)),
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let duration = variants
-            .iter()
-            .filter_map(|variant| variant.duration_frames)
-            .max();
-        catalog.groups.insert(
-            group_id,
-            robin_engine::engine::SpeechTimingGroup {
-                gaps: group.gaps,
-                variants,
-            },
+    if *speech_timing != SpeechTimingAuthorityV1::CoreAudioDurationsV1 {
+        return Err(
+            "this engine requires core audio durations; regenerate the ranked content projection"
+                .into(),
         );
-        if let Some(duration) = duration {
-            for (&profile, groups) in &groups_by_profile {
-                if profile & 0xffff_0000 == prefix {
-                    for &kind in groups {
-                        exclamation_durations.insert((kind, profile, group_id as u16), duration);
-                    }
-                }
-            }
-        }
     }
-
-    let mut source_cache = SoundCache::new();
-    source_cache.initialize_sound_source_cache(&assets.audio.sound_source_required_ids);
-    let source_durations = source_cache
-        .source_cache
-        .entries
-        .iter()
-        .filter_map(|(&id, entry)| {
-            loader(&entry.file_name).map(|(_, _, milliseconds)| (id, frames_from_ms(milliseconds)))
-        })
-        .collect();
-    assets
-        .audio
-        .publish_timing(
-            Arc::new(exclamation_durations),
-            Arc::new(catalog),
-            Arc::new(source_durations),
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    // The confined verifier mount contains retail data only. Bind the exact
+    // same core timing file to the verifier build; never reopen a user cache,
+    // derive local voice lengths, or add an ambient filesystem search root.
+    // A missing core file is a build error here and a startup error in the game.
+    robin_engine::audio_durations::AudioDurations::from_json(include_bytes!(
+        "../../../assets/core-datadir/Data/AudioDurations.json"
+    ))?
+    .populate(&mut assets.audio, profiles)
 }
 
 fn initialize_sprite_variants_for_ambiance(
@@ -808,9 +561,9 @@ mod resource_tests {
                         SBFILE_NO_ERROR
                     );
                     for _ in 0..20 {
-                        let (bytes, _, _) = read_sample(&files, "src", "lib.rs").unwrap();
+                        let bytes = files.read_all("src/lib.rs").unwrap();
                         assert_eq!(bytes, expected);
-                        assert!(read_sample(&files, "src", "../../Cargo.toml").is_none());
+                        assert!(files.read_all("src/../../Cargo.toml").is_err());
                     }
                 });
             }

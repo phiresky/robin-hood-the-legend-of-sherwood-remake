@@ -30,8 +30,7 @@ fn mission_start_input_taints(
 }
 
 /// `Write` adapter that forwards bytes to a primary sink (the
-/// `.rhrec.jsonl` file on disk on native; [`std::io::sink`] on wasm
-/// where the browser has no filesystem) and to the bounded segmented replay
+/// mission chunk on native or browser storage) and to the bounded segmented replay
 /// spool used by the script-RPC `get-replay` endpoint.
 ///
 /// Only used by `init_replay_and_rollback`; kept here (rather than in
@@ -39,6 +38,7 @@ fn mission_start_input_taints(
 struct TeeWriter {
     primary: Box<dyn std::io::Write + Send>,
     mirror: crate::replay_service::ReplaySpoolWriter,
+    skip_mirror_header: bool,
 }
 
 impl std::io::Write for TeeWriter {
@@ -46,7 +46,14 @@ impl std::io::Write for TeeWriter {
         // Reject known spool backpressure before changing the durable file. If
         // the primary performs a legitimate short write, mirror only the
         // accepted prefix and let `write_all` retry the remainder.
-        self.mirror.preflight_write(buf.len())?;
+        let mirror_len = if self.skip_mirror_header {
+            buf.iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(0, |newline| buf.len() - newline - 1)
+        } else {
+            buf.len()
+        };
+        self.mirror.preflight_write(mirror_len)?;
         let written = match self.primary.write(buf) {
             Ok(written) => written,
             Err(error) => {
@@ -64,7 +71,19 @@ impl std::io::Write for TeeWriter {
                 .poison(format!("primary replay write failed: {error}"));
             return Err(error);
         }
-        std::io::Write::write_all(&mut self.mirror, &buf[..written])?;
+        let accepted = &buf[..written];
+        let mirrored = if self.skip_mirror_header {
+            match accepted.iter().position(|byte| *byte == b'\n') {
+                Some(end) => {
+                    self.skip_mirror_header = false;
+                    &accepted[end + 1..]
+                }
+                None => &[],
+            }
+        } else {
+            accepted
+        };
+        std::io::Write::write_all(&mut self.mirror, mirrored)?;
         Ok(written)
     }
 
@@ -81,24 +100,28 @@ impl std::io::Write for TeeWriter {
 #[cfg(not(target_arch = "wasm32"))]
 fn default_replay_path() -> String {
     use std::path::PathBuf;
-    #[cfg(feature = "native-fs")]
     let dir = dirs::data_dir()
         .map(|d| d.join("robin_hood").join("replays"))
         .unwrap_or_else(|| PathBuf::from("Data/Replays"));
-    #[cfg(not(feature = "native-fs"))]
-    let dir = PathBuf::from("Data/Replays");
     // `%:z` → `+HH:MM`; we strip the inner colon so the whole stamp is
     // filesystem-safe (e.g. `2026-04-17T09-32-15+02-00`).
     let stamp = jiff::Zoned::now()
         .strftime("%Y-%m-%dT%H-%M-%S%:z")
         .to_string()
         .replace(':', "-");
-    dir.join(format!("{stamp}{}", crate::main_entry::RHREC_EXT))
-        .to_string_lossy()
-        .into_owned()
+    dir.join(format!(
+        "{stamp}-{}-{}.mission",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("valid clock")
+            .subsec_nanos()
+    ))
+    .to_string_lossy()
+    .into_owned()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(test)))]
 fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(replay_path);
     let filename = path
@@ -139,7 +162,150 @@ pub(super) fn restart_recording(
     };
     #[cfg(any(target_arch = "wasm32", test))]
     let primary: Box<dyn std::io::Write + Send> = Box::new(std::io::sink());
-    ReplayRecorder::from_recording_header(Box::new(TeeWriter { primary, mirror }), header)
+    ReplayRecorder::from_recording_header(
+        Box::new(TeeWriter {
+            primary,
+            mirror,
+            skip_mirror_header: false,
+        }),
+        header,
+    )
+}
+
+pub(super) fn init_recording(
+    replay_campaign: &robin_engine::campaign::Campaign,
+    assets: &LevelAssets,
+    args: &crate::main_entry::MissionLaunch,
+    mission_id: &str,
+    mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
+    engine_rng_seed: u64,
+    engine_sim_config: robin_engine::engine::SimConfig,
+) -> Option<crate::replay_recording::SharedReplayRecorder> {
+    // No recording while playing back (either source).
+    let is_playing_back = args.replay_data.is_some() || args.replay.is_some();
+    #[cfg(not(target_arch = "wasm32"))]
+    let replay_path = if is_playing_back {
+        None
+    } else {
+        Some(args.record.clone().unwrap_or_else(default_replay_path))
+    };
+    #[cfg(target_arch = "wasm32")]
+    let replay_path = Some(format!(
+        "mission-{}",
+        crate::save_file::unix_timestamp_now().expect("valid clock") * 1000
+            + (js_sys::Date::now() as u64 % 1000)
+    ));
+    // A fresh mission gets a fresh generation of the bounded spool. The
+    // returned sole writer publishes only complete recorder flush boundaries.
+    let rpc_spool = args.global_options.replay_recording().begin_recording();
+    // One-shot mission-map rendering exits before the first simulation
+    // frame, so producing an empty replay (and its debug log) would only be
+    // an unrelated filesystem side effect of the capture tool.
+    let mut recorder =
+        if !should_record_local_replay(is_playing_back, args.mission_start_map_output.is_some()) {
+            None
+        } else {
+            let path = replay_path.as_deref().expect("live recording path");
+            let archive = crate::replay_archive::MissionArchive::create(std::path::Path::new(path));
+            let primary = archive
+                .and_then(|archive| Ok((archive.writer()?, archive)))
+                .map_err(|error| {
+                    tracing::error!("Failed to create mission recording: {error:#}");
+                    error
+                })
+                .ok();
+
+            // `mission_id` (e.g. `"Dem_Lei_MP"`, `"Sherwood"`) is the
+            // `.rhm` filename — stamped into the header so a later
+            // `--replay` picks the right mission without threading the
+            // campaign index through. `replay_campaign` is the exact clone made
+            // immediately before Engine construction; the engine-owned campaign
+            // may already have been changed by level initialization (Sherwood
+            // clears its mission team after using it to spawn PCs).
+            primary.and_then(|(primary, archive)| {
+                let writer: Box<dyn std::io::Write + Send> = Box::new(TeeWriter {
+                    primary,
+                    mirror: rpc_spool,
+                    skip_mirror_header: false,
+                });
+                let spellforge_package = assets
+                    .attachments
+                    .spellforge_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.package().clone());
+                match ReplayRecorder::with_writer_and_spellforge_package(
+                    writer,
+                    mission_id.to_string(),
+                    mission_assets.clone(),
+                    engine_rng_seed,
+                    engine_sim_config,
+                    replay_campaign,
+                    spellforge_package,
+                ) {
+                    Ok(rec) => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            args.global_options.recording_index().recording_started(
+                                &archive.directory().join(archive.current_chunk()),
+                            );
+                            if let Err(error) = crate::set_replay_log_file(
+                                &archive.directory().join("replay.debug.log"),
+                            ) {
+                                tracing::warn!("Failed to create replay log: {error}");
+                            }
+                        }
+                        tracing::info!(
+                            "Recording mission replay → {}",
+                            archive.directory().display()
+                        );
+                        Some(crate::replay_recording::SharedReplayRecorder::archived(
+                            rec, archive,
+                        ))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to initialize replay recorder: {e}");
+                        None
+                    }
+                }
+            })
+        };
+
+    if let Some(recorder) = recorder.as_mut() {
+        for kind in mission_start_input_taints(
+            args.headless,
+            args.mission_start_reveal_all,
+            args.mission_restart,
+        ) {
+            recorder.record_input_taint(kind, 0);
+        }
+    }
+    args.global_options
+        .replay_recording()
+        .install_capture_recorder(recorder.clone());
+    recorder
+}
+
+#[cfg(test)]
+pub(crate) fn root_writer(
+    primary: Box<dyn std::io::Write + Send>,
+    mirror: crate::replay_service::ReplaySpoolWriter,
+) -> Box<dyn std::io::Write + Send> {
+    Box::new(TeeWriter {
+        primary,
+        mirror,
+        skip_mirror_header: false,
+    })
+}
+
+pub(crate) fn continuation_writer(
+    primary: Box<dyn std::io::Write + Send>,
+    mirror: crate::replay_service::ReplaySpoolWriter,
+) -> Box<dyn std::io::Write + Send> {
+    Box::new(TeeWriter {
+        primary,
+        mirror,
+        skip_mirror_header: true,
+    })
 }
 
 /// Bundle of determinism-related mission state built by
@@ -147,7 +313,7 @@ pub(super) fn restart_recording(
 /// rollback checker, and the hold-to-rewind snapshot buffer.
 pub(super) struct ReplayAndRollback {
     pub(super) recording_control: crate::replay_service::ReplayRecordingControl,
-    pub(super) recorder: Option<ReplayRecorder>,
+    pub(super) recorder: Option<crate::replay_recording::SharedReplayRecorder>,
     pub(super) player: Option<ReplayPlayer>,
     pub(super) rollback_checker: Option<RollbackChecker>,
     pub(super) rewind_buffer: RewindBuffer,
@@ -183,6 +349,7 @@ pub(super) fn init_replay_and_rollback(
     engine_rng_seed: u64,
     engine_sim_config: robin_engine::engine::SimConfig,
     is_multiplayer: bool,
+    prepared_recorder: Option<crate::replay_recording::SharedReplayRecorder>,
 ) -> ReplayAndRollback {
     // Every queued replay must be converted into `args.replay_data` before
     // mission construction. Reseeding an already-built Engine cannot recreate
@@ -196,115 +363,18 @@ pub(super) fn init_replay_and_rollback(
     );
     let pending_paused = false;
 
-    // No recording while playing back (either source).
     let is_playing_back = args.replay_data.is_some() || args.replay.is_some();
-    #[cfg(not(target_arch = "wasm32"))]
-    let replay_path = if is_playing_back {
-        None
-    } else {
-        Some(args.record.clone().unwrap_or_else(default_replay_path))
-    };
-    #[cfg(target_arch = "wasm32")]
-    let replay_path: Option<String> = None;
-    // A fresh mission gets a fresh generation of the bounded spool. The
-    // returned sole writer publishes only complete recorder flush boundaries.
-    let rpc_spool = args.global_options.replay_recording().begin_recording();
-    // One-shot mission-map rendering exits before the first simulation
-    // frame, so producing an empty replay (and its debug log) would only be
-    // an unrelated filesystem side effect of the capture tool.
-    let mut recorder =
-        if !should_record_local_replay(is_playing_back, args.mission_start_map_output.is_some()) {
-            None
-        } else {
-            // Native path owns an on-disk `.rhrec.jsonl` file so replays
-            // survive across sessions.  On wasm the browser has no
-            // filesystem — we fall back to `std::io::sink` for the
-            // primary and rely exclusively on the mirror buffer (which
-            // `get-replay` serializes straight back to the JS caller).
-            #[cfg(not(target_arch = "wasm32"))]
-            let primary: Option<Box<dyn std::io::Write + Send>> = {
-                let path = replay_path
-                    .as_deref()
-                    .expect("native replay recording has a path");
-                if let Some(parent) = std::path::Path::new(path).parent()
-                    && let Err(e) = std::fs::create_dir_all(parent)
-                {
-                    tracing::error!("Failed to create replay dir {parent:?}: {e}");
-                    None
-                } else {
-                    match std::fs::File::create(path) {
-                        Ok(f) => {
-                            tracing::info!("Recording replay → {path}");
-                            args.global_options
-                                .recording_index()
-                                .recording_started(std::path::Path::new(path));
-                            let log_path = replay_debug_log_path(path);
-                            if let Err(e) = crate::set_replay_log_file(&log_path) {
-                                tracing::warn!(
-                                    "Failed to create replay debug log {}: {e}",
-                                    log_path.display()
-                                );
-                            }
-                            Some(Box::new(f))
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to create replay file {path}: {e}");
-                            None
-                        }
-                    }
-                }
-            };
-            #[cfg(target_arch = "wasm32")]
-            let primary: Option<Box<dyn std::io::Write + Send>> = {
-                tracing::info!("Recording replay (in-memory only — wasm)");
-                Some(Box::new(std::io::sink()))
-            };
-
-            // `mission_id` (e.g. `"Dem_Lei_MP"`, `"Sherwood"`) is the
-            // `.rhm` filename — stamped into the header so a later
-            // `--replay` picks the right mission without threading the
-            // campaign index through. `replay_campaign` is the exact clone made
-            // immediately before Engine construction; the engine-owned campaign
-            // may already have been changed by level initialization (Sherwood
-            // clears its mission team after using it to spawn PCs).
-            primary.and_then(|primary| {
-                let writer: Box<dyn std::io::Write + Send> = Box::new(TeeWriter {
-                    primary,
-                    mirror: rpc_spool,
-                });
-                let spellforge_package = assets
-                    .attachments
-                    .spellforge_runtime
-                    .as_ref()
-                    .map(|runtime| runtime.package().clone());
-                match ReplayRecorder::with_writer_and_spellforge_package(
-                    writer,
-                    mission_id.to_string(),
-                    mission_assets.clone(),
-                    engine_rng_seed,
-                    engine_sim_config,
-                    replay_campaign,
-                    spellforge_package,
-                ) {
-                    Ok(rec) => Some(rec),
-                    Err(e) => {
-                        tracing::error!("Failed to initialize replay recorder: {e}");
-                        None
-                    }
-                }
-            })
-        };
-
-    if let Some(recorder) = recorder.as_mut() {
-        for kind in mission_start_input_taints(
-            args.headless,
-            args.mission_start_reveal_all,
-            args.mission_restart,
-        ) {
-            recorder.record_input_taint(kind, 0);
-        }
-    }
-
+    let recorder = prepared_recorder.or_else(|| {
+        init_recording(
+            replay_campaign,
+            &assets,
+            args,
+            mission_id,
+            mission_assets.clone(),
+            engine_rng_seed,
+            engine_sim_config,
+        )
+    });
     let player = if let Some(data) = args.replay_data.clone() {
         assert_eq!(
             data.header().mission_assets,
@@ -377,7 +447,7 @@ pub(super) fn init_replay_and_rollback(
         && !cfg!(target_arch = "wasm32")
         && !is_multiplayer
     {
-        let rollback_replay_path = recorder.as_ref().and(replay_path.clone());
+        let rollback_replay_path = args.record.clone();
         Some(RollbackChecker::new(assets, rollback_replay_path))
     } else {
         if is_multiplayer && args.rollback_check && player.is_none() {
@@ -452,6 +522,7 @@ mod tests {
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
             mirror: service.begin_recording(),
+            skip_mirror_header: false,
         };
         tee.write_all(b"complete replay record\n").unwrap();
         tee.flush().unwrap();
@@ -500,6 +571,7 @@ mod tests {
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
             mirror: service.begin_recording(),
+            skip_mirror_header: false,
         };
         assert!(tee.write_all(b"rejected\n").is_err());
         let error = service.snapshot_bytes().unwrap_err();
@@ -519,6 +591,7 @@ mod tests {
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
             mirror: service.begin_recording(),
+            skip_mirror_header: false,
         };
         assert!(tee.write_all(b"zero progress\n").is_err());
         let error = service.snapshot_bytes().unwrap_err();
@@ -538,6 +611,7 @@ mod tests {
                 fail_flush: Arc::new(AtomicBool::new(true)),
             }),
             mirror: service.begin_recording(),
+            skip_mirror_header: false,
         };
         tee.write_all(b"accepted by primary\n").unwrap();
         assert!(tee.flush().is_err());

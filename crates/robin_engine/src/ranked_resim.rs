@@ -135,13 +135,67 @@ fn resimulate_ranked_replay_inner(
     replay
         .validate_canonical_ranked_command_admission()
         .map_err(|message| RankedResimulationError::Admission { message })?;
-    let recorded_terminal = validate_terminal_recorder_shape(replay, engine.sim_config())?;
+    if hash_policy == StateHashPolicy::Validate {
+        for frame in
+            (0..replay.frame_count()).step_by(crate::multiplayer::STATE_HASH_INTERVAL as usize)
+        {
+            if replay.hash_for_frame(frame).is_none() {
+                return Err(RankedResimulationError::MissingPeriodicHash { frame });
+            }
+        }
+        replay
+            .validate_ranked_hash_coverage()
+            .map_err(|message| RankedResimulationError::Admission { message })?;
+    }
+    let recorded_terminals = validate_terminal_recorder_shape(replay, engine.sim_config())?;
 
     let replay_frames = replay.frame_count();
     let mut active_simulation_ticks = 0_u64;
     let mut terminal = None;
     let mut regenerated_hashes = std::collections::BTreeMap::new();
+    let mut saves = std::collections::BTreeMap::new();
+    let mut display = crate::engine::HostDisplayState::default();
     for frame in 0..replay_frames {
+        if let Some(marker) = replay.save_marker_for_frame(frame) {
+            let actual = state_hash(engine);
+            if actual != marker.state_hash {
+                return Err(RankedResimulationError::StateHashMismatch {
+                    frame,
+                    expected: marker.state_hash,
+                    actual,
+                });
+            }
+            let snapshot = engine.capture_persisted_state().map_err(|error| {
+                RankedResimulationError::FrameAdvance {
+                    frame,
+                    message: error.to_string(),
+                }
+            })?;
+            saves.insert(frame, (snapshot, terminal));
+        }
+        if let Some(load) = replay.load_back_for_frame(frame) {
+            if load.snapshot.is_some() {
+                return Err(RankedResimulationError::Admission {
+                    message: "ranked restores require a replay-derived save marker".into(),
+                });
+            }
+            let (snapshot, saved_terminal) =
+                saves.get(&load.to_frame).cloned().ok_or_else(|| {
+                    RankedResimulationError::Admission {
+                        message: format!("missing verified save marker {}", load.to_frame),
+                    }
+                })?;
+            *engine = Engine::restore_from_snapshot(
+                &mut display,
+                Engine::from_persisted_state(snapshot),
+                assets,
+            )
+            .map_err(|error| RankedResimulationError::FrameAdvance {
+                frame,
+                message: error.to_string(),
+            })?;
+            terminal = saved_terminal;
+        }
         // The current canonical recording writes the deterministic pre-command
         // state at frame zero and every real second thereafter. Missing loses:
         // a submitter cannot delete the checkpoint which would expose a
@@ -174,6 +228,21 @@ fn resimulate_ranked_replay_inner(
             })?
             .input
             .clone();
+        if let Some(outcome) = terminal
+            && (input.run_hourglass
+                || input.run_post_initialize
+                || !input.commands.is_empty()
+                || !input.post_commands.is_empty()
+                || !input.external_actions.is_empty()
+                || !input.post_external_actions.is_empty()
+                || !input.external_facts.is_empty())
+        {
+            return Err(RankedResimulationError::TerminalBeforeEof {
+                frame,
+                replay_frames,
+                outcome,
+            });
+        }
         let output = engine.advance_frame(assets, input).map_err(|error| {
             RankedResimulationError::FrameAdvance {
                 frame,
@@ -205,23 +274,27 @@ fn resimulate_ranked_replay_inner(
                 });
             }
         };
+        if let Some(recorded) = recorded_terminals.get(&frame) {
+            if outcome == GameCode::LevelInProgress {
+                return Err(RankedResimulationError::EofBeforeTerminal);
+            }
+            if *recorded != outcome {
+                return Err(RankedResimulationError::TerminalCommandOutcomeMismatch {
+                    recorded: *recorded,
+                    observed: outcome,
+                });
+            }
+        }
         if outcome != GameCode::LevelInProgress {
-            if frame.checked_add(1) != Some(replay_frames) {
-                return Err(RankedResimulationError::TerminalBeforeEof {
-                    frame,
-                    replay_frames,
-                    outcome,
+            if !recorded_terminals.contains_key(&frame) {
+                return Err(RankedResimulationError::TerminalCommandShape {
+                    message: format!("terminal at ordinal {frame} has no completion post-command"),
                 });
             }
             terminal = Some(outcome);
         }
     }
 
-    if hash_policy == StateHashPolicy::Validate {
-        replay
-            .validate_ranked_hash_coverage()
-            .map_err(|message| RankedResimulationError::Admission { message })?;
-    }
     let outcome = terminal.ok_or(RankedResimulationError::EofBeforeTerminal)?;
     if !matches!(
         outcome,
@@ -229,6 +302,10 @@ fn resimulate_ranked_replay_inner(
     ) {
         return Err(RankedResimulationError::UnsupportedTerminal { outcome });
     }
+    let recorded_terminal = *recorded_terminals
+        .last_key_value()
+        .expect("validated final terminal command")
+        .1;
     if recorded_terminal != outcome {
         return Err(RankedResimulationError::TerminalCommandOutcomeMismatch {
             recorded: recorded_terminal,
@@ -263,12 +340,16 @@ fn resimulate_ranked_replay_inner(
 fn validate_terminal_recorder_shape(
     replay: &ReplayData,
     sim_config: crate::engine::SimConfig,
-) -> Result<GameCode, RankedResimulationError> {
+) -> Result<std::collections::BTreeMap<u32, GameCode>, RankedResimulationError> {
     use crate::player_command::PlayerCommand;
 
     let replay_frames = replay.frame_count();
+    let mut terminals = std::collections::BTreeMap::new();
     let mut recorded_terminal = None;
     for replay_ordinal in 0..replay_frames {
+        if replay.load_back_for_frame(replay_ordinal).is_some() {
+            recorded_terminal = None;
+        }
         let frame = replay.frame(replay_ordinal).ok_or_else(|| {
             RankedResimulationError::TerminalCommandShape {
                 message: format!("replay frame {replay_ordinal} is absent"),
@@ -301,13 +382,6 @@ fn validate_terminal_recorder_shape(
                     message: "ApplyQuitMissionUpdates appears more than once".into(),
                 });
             }
-            if replay_ordinal.checked_add(1) != Some(replay_frames) {
-                return Err(RankedResimulationError::TerminalCommandShape {
-                    message: format!(
-                        "ApplyQuitMissionUpdates appears before EOF at ordinal {replay_ordinal}"
-                    ),
-                });
-            }
             if *difficulty != sim_config.difficulty {
                 return Err(RankedResimulationError::TerminalCommandShape {
                     message: "ApplyQuitMissionUpdates difficulty differs from SimConfig".into(),
@@ -315,11 +389,15 @@ fn validate_terminal_recorder_shape(
             }
             let _ = (completed_at_unix_seconds, campaign_run_nonce);
             recorded_terminal = Some(*exit_code);
+            terminals.insert(replay_ordinal, *exit_code);
         }
     }
-    recorded_terminal.ok_or_else(|| RankedResimulationError::TerminalCommandShape {
-        message: "EOF frame has no ApplyQuitMissionUpdates post-command".into(),
-    })
+    if !terminals.contains_key(&replay_frames.saturating_sub(1)) {
+        return Err(RankedResimulationError::TerminalCommandShape {
+            message: "EOF frame has no ApplyQuitMissionUpdates post-command".into(),
+        });
+    }
+    Ok(terminals)
 }
 
 #[cfg(test)]
@@ -431,6 +509,155 @@ mod tests {
         fixture_with_input(include_hash, |sim_config| {
             terminal_input(GameCode::LevelSucceeded, sim_config.difficulty)
         })
+    }
+
+    #[test]
+    fn verified_marker_restores_keep_abandoned_terminals_and_validate_post_load_hashes() {
+        let (engine, assets, base) = fixture_with_inputs(false, |config| {
+            (0..27)
+                .map(|ordinal| {
+                    if ordinal == 0 || ordinal == 25 {
+                        SimulationFrameInput::no_hourglass().with_simulation_body_allowed(false)
+                    } else if ordinal == 24 || ordinal == 26 {
+                        let mut input =
+                            SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+                                PlayerCommand::QuitMissionRequested,
+                            )]);
+                        input.post_commands.push(
+                            terminal_update(GameCode::LevelInterrupted, config.difficulty).into(),
+                        );
+                        input
+                    } else {
+                        SimulationFrameInput::default()
+                    }
+                })
+                .collect()
+        });
+        let mut file = ReplayFile::from(&base);
+        for (&ordinal, frame) in &mut file.frames {
+            if ordinal == 0 || ordinal == 25 {
+                frame.timeline_before = 0;
+                frame.timeline_after = 0;
+            } else if ordinal == 26 {
+                frame.timeline_before = 0;
+                frame.timeline_after = 1;
+            } else {
+                frame.timeline_before = ordinal - 1;
+                frame.timeline_after = ordinal;
+            }
+        }
+        file.save_markers.insert(
+            0,
+            crate::replay::ReplaySaveMarker {
+                state_hash: state_hash(&engine),
+                timeline_frame: 0,
+            },
+        );
+        file.load_backs.insert(
+            25,
+            crate::replay::ReplayLoadBack {
+                to_frame: 0,
+                is_continue: false,
+                snapshot: None,
+            },
+        );
+        let mut probe = engine.clone();
+        for frame in file.frames.values().take(12) {
+            probe.advance_frame(&assets, frame.input.clone()).unwrap();
+        }
+        file.save_markers.insert(
+            12,
+            crate::replay::ReplaySaveMarker {
+                state_hash: state_hash(&probe),
+                timeline_frame: 11,
+            },
+        );
+        let data = file.try_into().unwrap();
+        let (canonical, expected) =
+            regenerate_canonical_ranked_replay(engine.clone(), &assets, &data).unwrap();
+        assert_eq!(expected.replay_frames, 27);
+        assert!(
+            expected.active_simulation_ticks > 2,
+            "abandoned gameplay must still count toward elapsed play"
+        );
+        assert!(canonical.ranked_submission_verdict().is_ok());
+        let verified =
+            resimulate_canonical_ranked_replay(engine.clone(), &assets, &canonical).unwrap();
+        assert_eq!(
+            verified.final_deterministic_state_hash,
+            expected.final_deterministic_state_hash
+        );
+
+        let mut tainted = ReplayFile::from(&canonical);
+        tainted
+            .header
+            .rankability
+            .taint(crate::replay_rankability::InputTaintKind::StateLoad, 25);
+        tainted.header.rankability.taint(
+            crate::replay_rankability::InputTaintKind::MissionRestart,
+            24,
+        );
+        let restored: ReplayData = tainted.clone().try_into().unwrap();
+        assert!(restored.ranked_submission_verdict().is_ok());
+        tainted.header.rankability.taint(
+            crate::replay_rankability::InputTaintKind::HttpStateMutation,
+            12,
+        );
+        let tainted: ReplayData = tainted.try_into().unwrap();
+        assert!(
+            tainted.ranked_submission_verdict().is_err(),
+            "reload cannot erase abandoned gameplay taints"
+        );
+
+        let mut forged = ReplayFile::from(&canonical);
+        forged.save_markers.get_mut(&12).unwrap().state_hash ^= 1;
+        assert!(matches!(
+            resimulate_canonical_ranked_replay(
+                engine.clone(),
+                &assets,
+                &forged.try_into().unwrap()
+            ),
+            Err(RankedResimulationError::StateHashMismatch { frame: 12, .. })
+        ));
+
+        let mut forged = ReplayFile::from(&canonical);
+        forged
+            .hashes
+            .insert(25, canonical.hash_for_frame(25).unwrap() ^ 1);
+        assert!(matches!(
+            resimulate_canonical_ranked_replay(
+                engine.clone(),
+                &assets,
+                &forged.try_into().unwrap()
+            ),
+            Err(RankedResimulationError::StateHashMismatch { frame: 25, .. })
+        ));
+
+        let mut forged = ReplayFile::from(&canonical);
+        forged.frames.get_mut(&24).unwrap().input.post_commands =
+            vec![terminal_update(GameCode::LevelSucceeded, engine.sim_config().difficulty).into()];
+        assert!(matches!(
+            resimulate_canonical_ranked_replay(
+                engine.clone(),
+                &assets,
+                &forged.try_into().unwrap()
+            ),
+            Err(RankedResimulationError::TerminalCommandOutcomeMismatch { .. })
+        ));
+
+        let mut forged = ReplayFile::from(&canonical);
+        let load = forged.load_backs.get_mut(&25).unwrap();
+        load.to_frame = 25;
+        load.snapshot = Some(crate::replay::ReplaySaveSnapshot {
+            payload: b"{}".to_vec(),
+            timeline_frame: 0,
+        });
+        let forged: ReplayData = forged.try_into().unwrap();
+        assert!(forged.ranked_submission_verdict().is_err());
+        assert!(matches!(
+            resimulate_canonical_ranked_replay(engine, &assets, &forged),
+            Err(RankedResimulationError::Admission { .. })
+        ));
     }
 
     #[test]

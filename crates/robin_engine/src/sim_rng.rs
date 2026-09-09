@@ -598,7 +598,17 @@ pub fn usize(context: &SimulationContext, site: RngSite, range: impl RangeBounds
         assert!(start < end, "empty RNG range {start}..{end}");
         return start + raw as usize % (end - start);
     }
-    with_rng(context, site, |rng| rng.usize(range))
+    // Match the 64-bit native stream on every target, including wasm32.
+    // fastrand::usize uses a different reduction algorithm on 32-bit targets.
+    let widen = |bound: Bound<&usize>| match bound {
+        Bound::Included(value) => Bound::Included(*value as u64),
+        Bound::Excluded(value) => Bound::Excluded(*value as u64),
+        Bound::Unbounded => Bound::Unbounded,
+    };
+    let bounds = (widen(range.start_bound()), widen(range.end_bound()));
+    with_rng(context, site, |rng| {
+        usize::try_from(rng.u64(bounds)).expect("random index does not fit this target")
+    })
 }
 
 pub fn bool(context: &SimulationContext, site: RngSite) -> bool {
@@ -624,7 +634,12 @@ pub fn shuffle<T>(context: &SimulationContext, site: RngSite, slice: &mut [T]) {
         }
         return;
     }
-    with_rng(context, site, |rng| rng.shuffle(slice));
+    with_rng(context, site, |rng| {
+        // Preserve fastrand native shuffle order with fixed-width index draws.
+        for index in 1..slice.len() {
+            slice.swap(index, rng.u64(..=index as u64) as usize);
+        }
+    });
 }
 
 /// Original-game random fraction, including both 0 and 1.
@@ -709,6 +724,28 @@ pub mod serde_rng {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn index_draws_and_shuffle_match_fixed_width_stream() {
+        let context = super::SimulationContext::with_seed(17);
+        let mut reference = fastrand::Rng::with_seed(17);
+        for upper in [1usize, 22, 257, 65_537] {
+            for _ in 0..20 {
+                assert_eq!(
+                    super::usize(&context, super::RngSite::ScriptRand, 0..upper),
+                    reference.u64(0..upper as u64) as usize
+                );
+            }
+        }
+        let mut actual: Vec<_> = (0..100).collect();
+        let mut expected = actual.clone();
+        super::shuffle(&context, super::RngSite::ScriptRand, &mut actual);
+        for index in 1..expected.len() {
+            expected.swap(index, reference.u64(..=index as u64) as usize);
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(context.seed(), reference.get_seed());
+    }
+
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};

@@ -621,7 +621,7 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v73** (2026-09-08, reversible background patches): adds the opt-in
 ///   simulation rule and remembered activation targets needed to reverse
 ///   animated patches after saving, loading, or rewinding.
-pub const SAVE_FORMAT_VERSION: u32 = 74;
+pub const SAVE_FORMAT_VERSION: u32 = 75;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -680,6 +680,8 @@ pub struct SaveHeader {
     /// Mission and player identity frozen at save time. This is mandatory for
     /// every native Rust save; original-game saves use a separate importer.
     pub provenance: SaveProvenance,
+    /// Durable marker in the complete chronological mission recording.
+    pub replay: Option<crate::replay_archive::SaveReplayLink>,
 }
 
 impl SaveHeader {
@@ -701,6 +703,7 @@ impl SaveHeader {
             display_text,
             multiplayer_diagnostic: false,
             provenance,
+            replay: None,
         })
     }
 
@@ -804,13 +807,14 @@ impl PreparedGameSave {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_CHECKPOINT: AtomicU64 = AtomicU64::new(1);
         let snapshot = GameRuntimeSnapshot::capture(engine, host, game)?;
-        let payload = GameSaveFile {
+        let mut payload = GameSaveFile {
             header,
             engine: Engine::from_persisted_state(snapshot.engine),
             sound: snapshot.sound.into_runtime(),
             game_persistent: snapshot.game_persistent,
         };
         payload.validate_current_schema()?;
+        payload.header.replay = host.application_context().capture_save_replay(&payload)?;
         let identity = NEXT_CHECKPOINT
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
@@ -894,13 +898,14 @@ impl GameSaveFile {
     ) -> Result<Self> {
         let mut game_persistent = game.persistent.clone();
         game_persistent.draw_hidden = host.frontend.input.feedback.draw_hidden;
-        let save = Self {
+        let mut save = Self {
             header: SaveHeader::new(mission_id, mission_assets, display_text, provenance)?,
             engine: engine.clone(),
             sound: host.audio.sound.clone(),
             game_persistent,
         };
         save.validate_current_schema()?;
+        save.header.replay = host.application_context().capture_save_replay(&save)?;
         Ok(save)
     }
 
@@ -1051,7 +1056,7 @@ pub fn default_save_directory() -> PathBuf {
     if let Ok(override_dir) = std::env::var("ROBINHOOD_SAVE_DIR") {
         return PathBuf::from(override_dir);
     }
-    #[cfg(feature = "native-fs")]
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(data_dir) = dirs::data_dir() {
         return data_dir.join("robin_hood").join("saves");
     }
@@ -1091,7 +1096,7 @@ mod tests {
 
     #[test]
     fn save_format_version_includes_reversible_background_patches() {
-        assert_eq!(SAVE_FORMAT_VERSION, 74);
+        assert_eq!(SAVE_FORMAT_VERSION, 75);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

@@ -44,8 +44,6 @@ use robin_engine::profiles::MissionLocation;
 use robin_engine::resource_ids;
 use robin_engine::sbfile as engine_sbfile;
 use robin_engine::script_manager as engine_script_manager;
-use robin_engine::sound::ExclamationGroup;
-use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script as engine_sprite_script;
 use robin_engine::titbit::SpriteRow;
 
@@ -177,107 +175,6 @@ pub(super) fn setup_mission_audio(
     }
     timer.total();
     Ok(())
-}
-
-fn select_canonical_voice_pack(
-    installed_languages: Vec<crate::localization::LanguagePack>,
-    authoritative_locale: Option<&str>,
-    multiplayer: bool,
-) -> Result<Option<crate::localization::LanguagePack>, String> {
-    if let Some(authoritative_locale) = authoritative_locale {
-        return installed_languages
-            .into_iter()
-            .find(|pack| pack.has_voice && pack.locale == authoritative_locale)
-            .map(Some)
-            .ok_or_else(|| {
-                format!(
-                    "authoritative multiplayer speech timing pack `{authoritative_locale}` is not installed or has no voice data"
-                )
-            });
-    }
-    if multiplayer {
-        // Welcome explicitly selected the base installation's Data/Sounds.
-        // Do not auto-select a presentation language independently per peer.
-        return Ok(None);
-    }
-    Ok(installed_languages
-        .into_iter()
-        .filter(|pack| pack.has_voice)
-        .min_by_key(|pack| (pack.locale != "en-US", pack.locale.clone())))
-}
-
-fn canonical_speech_timing_inputs(
-    host: &Host,
-    profiles: &engine_profiles::ProfileManager,
-    sound_dir: &str,
-) -> Result<
-    (
-        std::path::PathBuf,
-        Box<engine_sound_cache::SampleLoader>,
-        engine_sound_cache::IndexedCache,
-    ),
-    String,
-> {
-    let installed_languages = host.application_context().installed_languages()?;
-    let authoritative_locale = if host.transport.net().is_some() {
-        host.transport.speech_timing_locale().map(str::to_owned)
-    } else {
-        host.application_context()
-            .canonical_speech_timing_locale()?
-    };
-    // `None` is an explicit BaseInstallation authority, including when a
-    // multiplayer Welcome selects it. Never infer timing from the active
-    // presentation locale.
-    let canonical_voice_pack =
-        select_canonical_voice_pack(installed_languages, authoritative_locale.as_deref(), true)?;
-    match canonical_voice_pack {
-        Some(pack) => {
-            let base = if pack.data_root.is_empty() {
-                std::path::PathBuf::from(format!(
-                    "__shipping_language_pack__/{}/{}",
-                    pack.locale, sound_dir
-                ))
-            } else {
-                std::path::PathBuf::from(&pack.data_root).join(sound_dir)
-            };
-            let loader = crate::audio_backend::create_language_pack_sample_loader_with_files(
-                std::path::PathBuf::from(sound_dir),
-                pack.clone(),
-                host.preparation_files()?.clone(),
-                host.frontend.resources.shipping.clone(),
-            );
-            let mut cache = engine_sound_cache::SoundCache::new();
-            let canonical_exclamations =
-                crate::process_asset_cache::build_exclamations_for_language(
-                    &pack,
-                    host.frontend.resources.shipping.as_deref(),
-                    profiles,
-                    host.preparation_files()?.clone(),
-                )
-                .map_err(|error| {
-                    format!(
-                        "authoritative speech timing pack `{}` is incomplete: {error}",
-                        pack.locale
-                    )
-                })?;
-            for exclamations in canonical_exclamations {
-                cache.initialize_exclamations_for_profile(&exclamations);
-            }
-            Ok((base, loader, cache.speech_cache))
-        }
-        None => {
-            tracing::info!("authoritative speech timing uses base Data/Sounds");
-            Ok((
-                std::path::PathBuf::from(sound_dir),
-                crate::audio_backend::create_sample_loader_with_files(
-                    std::path::PathBuf::from(sound_dir),
-                    host.preparation_files()?.clone(),
-                    host.frontend.resources.shipping.clone(),
-                ),
-                host.audio.sound.sound_cache().speech_cache.clone(),
-            ))
-        }
-    }
 }
 
 fn initialize_mission_sound_caches(
@@ -435,154 +332,6 @@ fn required_mission_exclamation_ids(
         }
     }
     Ok(ids)
-}
-
-fn populate_sound_duration_tables(
-    host: &Host,
-    assets: &mut LevelAssets,
-    profiles: &engine_profiles::ProfileManager,
-    loader: &engine_sound_cache::SampleLoader,
-    sound_dir: &str,
-    canonical_speech_loader: &engine_sound_cache::SampleLoader,
-    canonical_speech_dir: &std::path::Path,
-    canonical_speech_cache: &engine_sound_cache::IndexedCache,
-    allow_persistent_cache: bool,
-) -> Result<(), String> {
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::sync::Arc;
-
-    // Durations only depend on the sample files, so they're served from
-    // the persistent one-file cache; the probe (a full sample read) is
-    // only hit for files the cache hasn't seen, and those probes run in
-    // parallel on native.
-    let mut duration_cache = if allow_persistent_cache {
-        crate::audio_duration_cache::AudioDurationCache::load()
-    } else {
-        crate::audio_duration_cache::AudioDurationCache::fresh_for_official_projection()
-    };
-    let sample_base =
-        crate::audio_duration_cache::SampleResolver::new(std::path::Path::new(sound_dir));
-    let canonical_speech_base =
-        crate::audio_duration_cache::SampleResolver::new(canonical_speech_dir);
-
-    fn frames_from_ms(ms: u32) -> u32 {
-        ((ms.saturating_add(39)) / 40).max(1)
-    }
-
-    let mut groups_by_profile: BTreeMap<u32, BTreeSet<ExclamationGroup>> = BTreeMap::new();
-    for profile in &profiles.characters {
-        if profile.exclamation_id != 0 {
-            groups_by_profile
-                .entry(profile.exclamation_id)
-                .or_default()
-                .insert(ExclamationGroup::Pc);
-        }
-    }
-    for profile in &profiles.soldiers {
-        if profile.exclamation_id != 0 {
-            let entry = groups_by_profile.entry(profile.exclamation_id).or_default();
-            // AI `Say` uses the civilian bank for ordinary soldier
-            // remarks, while direct hit/death speech still tags
-            // soldiers distinctly.
-            entry.insert(ExclamationGroup::Civilian);
-            entry.insert(ExclamationGroup::Soldier);
-            if profile.vip {
-                entry.insert(ExclamationGroup::Vip);
-            }
-        }
-    }
-    for profile in &profiles.civilians {
-        if profile.exclamation_id != 0 {
-            let entry = groups_by_profile.entry(profile.exclamation_id).or_default();
-            entry.insert(ExclamationGroup::Civilian);
-            if profile.civilian_type == engine_profiles::CivilianType::Vip {
-                entry.insert(ExclamationGroup::Vip);
-            }
-        }
-    }
-
-    let mut exclamation_durations = BTreeMap::new();
-    let mut speech_timing_catalog = engine_api::SpeechTimingCatalog::default();
-    for (&group_id, group) in &canonical_speech_cache.groups {
-        let profile_prefix = group_id & 0xFFFF_0000;
-        if !assets
-            .audio
-            .required_exclamation_ids
-            .iter()
-            .any(|profile_id| profile_id & 0xFFFF_0000 == profile_prefix)
-        {
-            continue;
-        }
-        let exclamation_id = (group_id & 0xFFFF) as u16;
-        let mut variants = Vec::with_capacity(group.entry_indices.len());
-        for &index in &group.entry_indices {
-            let entry = canonical_speech_cache.entries.get(index).ok_or_else(|| {
-                format!("speech group {group_id:#010x} references missing cache entry {index}")
-            })?;
-            variants.push(engine_api::SpeechTimingVariant {
-                sample_identity: entry.file_name.clone(),
-                duration_frames: duration_cache
-                    .duration_ms(
-                        &canonical_speech_base,
-                        &entry.file_name,
-                        canonical_speech_loader,
-                    )
-                    .map(frames_from_ms),
-            });
-        }
-        let duration_frames = variants
-            .iter()
-            .filter_map(|variant| variant.duration_frames)
-            .max();
-        speech_timing_catalog.groups.insert(
-            group_id,
-            engine_api::SpeechTimingGroup {
-                gaps: group.gaps,
-                variants,
-            },
-        );
-        let Some(frames) = duration_frames else {
-            continue;
-        };
-        for (&profile_id, groups) in &groups_by_profile {
-            if profile_id & 0xFFFF_0000 != profile_prefix {
-                continue;
-            }
-            for &group_kind in groups {
-                exclamation_durations.insert((group_kind, profile_id, exclamation_id), frames);
-            }
-        }
-    }
-
-    let mut source_durations = BTreeMap::new();
-    for (&sample_id, entry) in &host.audio.sound.sound_cache().source_cache.entries {
-        if let Some(duration_ms) =
-            duration_cache.duration_ms(&sample_base, &entry.file_name, loader)
-        {
-            source_durations.insert(sample_id, frames_from_ms(duration_ms));
-        }
-    }
-    if allow_persistent_cache {
-        duration_cache.save_if_dirty();
-    }
-
-    tracing::info!(
-        exclamations = exclamation_durations.len(),
-        sources = source_durations.len(),
-        "Populated deterministic sound duration tables"
-    );
-    assets
-        .audio
-        .publish_timing(
-            Arc::new(exclamation_durations),
-            Arc::new(speech_timing_catalog),
-            Arc::new(source_durations),
-        )
-        .map_err(|error| error.to_string())?;
-    if let Err(error) = assets.audio.validate_ranked_timing() {
-        tracing::warn!(%error, "prepared audio timing is incomplete; ranked admission will reject it");
-    }
-    Ok(())
 }
 
 /// Frontend-only resources loaded while the interactive loading screen is
@@ -1113,8 +862,9 @@ pub(super) fn register_mission_peasant_names(
             }
             let mut generated = None;
             for _ in 0..MAX_ATTEMPTS {
-                let first = &firstnames[rng.usize(0..firstnames.len())];
-                let last = &surnames[rng.usize(0..surnames.len())];
+                // Campaign identity must use the same draws on native and wasm32.
+                let first = &firstnames[rng.u64(0..firstnames.len() as u64) as usize];
+                let last = &surnames[rng.u64(0..surnames.len() as u64) as usize];
                 let full = format!("{first} {last}");
                 if !engine.is_peasant_name_registered(&full) {
                     engine
@@ -1773,37 +1523,9 @@ pub(super) fn prepare_mission(
     ) {
         return Err(MissionLoadError::new(campaign, message));
     }
-    let sound_dir = game.global_options.sound_directory.clone();
-    let sample_loader = crate::audio_backend::create_sample_loader_with_files(
-        std::path::PathBuf::from(&sound_dir),
-        files.clone(),
-        host.frontend.resources.shipping.clone(),
-    );
-    let (canonical_speech_base, canonical_speech_loader, canonical_speech_cache) =
-        match canonical_speech_timing_inputs(host, profiles, &sound_dir) {
-            Ok(inputs) => inputs,
-            Err(error) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("Canonical speech timing load failed: {error}"),
-                ));
-            }
-        };
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    let allow_persistent_audio_cache = args.simulation_content_export.is_none();
-    #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
-    let allow_persistent_audio_cache = true;
-    if let Err(error) = populate_sound_duration_tables(
-        host,
-        &mut assets,
-        profiles,
-        &sample_loader,
-        &sound_dir,
-        &canonical_speech_loader,
-        &canonical_speech_base,
-        &canonical_speech_cache,
-        allow_persistent_audio_cache,
-    ) {
+    if let Err(error) = robin_engine::audio_durations::AudioDurations::load(&files)
+        .and_then(|timing| timing.populate(&mut assets.audio, profiles))
+    {
         return Err(MissionLoadError::new(
             campaign,
             format!("Deterministic audio metadata load failed: {error}"),
@@ -2485,7 +2207,6 @@ pub(super) fn init_audio_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::localization::LanguagePack;
     use robin_engine::replay::{ReplayData, ReplayFile, ReplayHeader};
     use std::cell::Cell;
     use std::collections::BTreeMap;
@@ -2779,50 +2500,6 @@ mod tests {
         register_mission_peasant_names(&mut names, &mut engine, &assets);
         assert!(names.iter().all(Option::is_none));
         assert_eq!(before, robin_engine::replay::state_hash(&engine));
-    }
-
-    fn language_pack(locale: &str, has_voice: bool) -> LanguagePack {
-        LanguagePack {
-            locale: locale.to_owned(),
-            native_name: locale.to_owned(),
-            data_root: locale.to_owned(),
-            has_voice,
-            has_cinematics: false,
-            voice_uses_english_fallback: false,
-            cinematics_use_english_fallback: false,
-            mission_names: BTreeMap::new(),
-        }
-    }
-
-    #[test]
-    fn multiplayer_explicit_base_timing_never_auto_selects_a_locale_pack() {
-        let installed = vec![language_pack("de-DE", true), language_pack("en-US", true)];
-        assert_eq!(
-            select_canonical_voice_pack(installed, None, true).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn explicit_locale_timing_is_strict_and_single_player_still_prefers_english() {
-        let installed = vec![language_pack("de-DE", true), language_pack("en-US", true)];
-        assert_eq!(
-            select_canonical_voice_pack(installed.clone(), Some("de-DE"), true)
-                .unwrap()
-                .map(|pack| pack.locale),
-            Some("de-DE".to_owned())
-        );
-        assert!(
-            select_canonical_voice_pack(installed.clone(), Some("fr-FR"), true)
-                .unwrap_err()
-                .contains("not installed")
-        );
-        assert_eq!(
-            select_canonical_voice_pack(installed, None, false)
-                .unwrap()
-                .map(|pack| pack.locale),
-            Some("en-US".to_owned())
-        );
     }
 
     #[test]

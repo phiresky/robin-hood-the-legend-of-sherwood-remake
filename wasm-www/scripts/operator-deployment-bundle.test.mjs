@@ -174,9 +174,11 @@ async function installValidRuntimeForRealVerifier(value) {
     await writeFile(resolve(build, 'robin.js.gz'), 'compressed js fixture');
     await writeFile(resolve(build, 'robin_bg.wasm'), wasm);
     await writeFile(resolve(build, 'robin_bg.wasm.gz'), wasmGzip);
+    await writeFile(resolve(build, 'Data/AudioDurations.json'), '{}');
     await writeFile(resolve(build, 'Data/Interface/Fonts/arial.ttf'), 'font fixture');
     await writeFile(resolve(build, 'Data/Interface/UI/marker.png'), 'image fixture');
     await writeFile(resolve(build, 'preload-assets.json'), `${JSON.stringify([
+        { path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' },
         { path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' },
         { path: 'Data/Interface/UI/marker.png', url: 'Data/Interface/UI/marker.png' },
     ], null, 2)}\n`);

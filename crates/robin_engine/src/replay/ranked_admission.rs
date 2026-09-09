@@ -2,6 +2,10 @@
 use super::*;
 
 impl ReplayData {
+    pub fn contains_state_loads(&self) -> bool {
+        !self.load_backs.is_empty()
+    }
+
     /// Ranked recordings carry one pre-frame hash at frame zero and every
     /// lockstep hash interval thereafter, with no off-cadence extras.
     pub fn validate_ranked_hash_coverage(&self) -> Result<(), String> {
@@ -30,13 +34,36 @@ impl ReplayData {
         &self,
     ) -> Result<ReplayRankability, crate::replay_rankability::RankabilityEvidenceError> {
         self.header.rankability.validate()?;
-        let mut rankability = self.header.rankability.clone();
-        for &frame in self.load_backs.keys() {
-            rankability.taint(InputTaintKind::StateLoad, frame);
+        // A marker restore can be independently reconstructed from the root.
+        // Embedded payloads cannot prove the gameplay that produced their state.
+        let verified_load_history = self.contains_state_loads()
+            && self.load_backs.values().all(|load| load.snapshot.is_none());
+        let permitted_restore = |kind| {
+            verified_load_history
+                && matches!(
+                    kind,
+                    InputTaintKind::StateLoad | InputTaintKind::MissionRestart
+                )
+        };
+        let mut rankability = ReplayRankability::rankable();
+        rankability.include_all(
+            self.header
+                .rankability
+                .taints()
+                .iter()
+                .copied()
+                .filter(|taint| !permitted_restore(taint.kind)),
+        );
+        for (&frame, load) in self.load_backs.iter() {
+            if load.snapshot.is_some() {
+                rankability.taint(InputTaintKind::StateLoad, frame);
+            }
         }
         for (&ordinal, frame) in self.frames.iter() {
             for kind in detected_input_taints(&frame.input, &frame.host_controls) {
-                rankability.taint(kind, ordinal);
+                if !permitted_restore(kind) {
+                    rankability.taint(kind, ordinal);
+                }
             }
         }
         Ok(rankability)

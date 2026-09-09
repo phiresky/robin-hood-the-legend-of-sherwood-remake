@@ -760,8 +760,8 @@ fn official_ruleset(
         competition_seed_policy: RulesetSeedPolicyV1::ServerPinned,
         allow_save_creation: true,
         allow_autosave: true,
-        allow_state_load: false,
-        allow_mission_restart: false,
+        allow_state_load: true,
+        allow_mission_restart: true,
     };
     if any {
         manifest.display_name = format!("{edition_name} / Any ruleset");

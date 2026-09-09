@@ -6377,7 +6377,7 @@ mod tests {
                     ])),
                 ),
             )
-            .expect("a random speech choice may use any sealed authored duration");
+            .expect("random playback uses the canonical maximum English duration");
 
         let (mut explicit_engine, explicit_assets) = ranked_sound_boundary_fixture(0);
         explicit_engine
@@ -6396,6 +6396,7 @@ mod tests {
     fn ranked_sound_boundary_rejects_forged_duration_and_variant() {
         for (variant, duration, expected_reason) in [
             (-1, 23, "unauthoritative duration"),
+            (-1, 17, "unauthoritative duration"),
             (0, 29, "unauthoritative duration"),
             (2, 17, "outside the 2 authored variants"),
             (-2, 17, "invalid variant -2"),

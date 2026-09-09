@@ -403,6 +403,23 @@ fn admit_authenticated_job(
             ),
         );
     }
+    if replay_data.contains_state_loads()
+        && !validated_config
+            .config()
+            .template
+            .ruleset_manifest
+            .allow_state_load
+    {
+        return authenticated_output_with_provenance(
+            authenticated,
+            replay.sha256,
+            None,
+            rejection(
+                VerificationRejectionCodeV1::CommandNotAllowed,
+                "ruleset_state_load_not_allowed",
+            ),
+        );
+    }
     let input_provenance = match replay_input_provenance(&replay_data) {
         Ok(provenance) => provenance,
         Err(()) => {

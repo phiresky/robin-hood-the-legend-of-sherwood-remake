@@ -236,23 +236,23 @@ async function validateBuildClosure(root, manifest, files) {
     const preloadPath = `${prefix}preload-assets.json`;
     if (!files.has(preloadPath)) throw new Error(`${prefix} is missing preload-assets.json`);
     const preload = json(await readFile(resolve(root, preloadPath)), preloadPath);
-    if (!Array.isArray(preload) || preload.length < 2) {
-        throw new Error(`${preloadPath} must contain a font and at least one UI image`);
+    if (!Array.isArray(preload) || preload.length < 3) {
+        throw new Error(`${preloadPath} must contain audio timings, a font and at least one UI image`);
     }
     const auxiliary = [];
     for (const [index, entry] of preload.entries()) {
         exactKeys(entry, ['path', 'url'], `${preloadPath}[${index}]`);
         if (typeof entry.path !== 'string'
-            || !/^Data\/(?:Interface\/Fonts\/arial\.ttf|Interface\/UI\/[A-Za-z0-9_.-]+\.png)$/u.test(entry.path)) {
+            || !/^Data\/(?:AudioDurations\.json|Interface\/Fonts\/arial\.ttf|Interface\/UI\/[A-Za-z0-9_.-]+\.png)$/u.test(entry.path)) {
             throw new Error(`${preloadPath}[${index}] has a non-canonical path`);
         }
         exact(entry.url, entry.path, `${preloadPath}[${index}] URL`);
         auxiliary.push(entry.path);
     }
     const sorted = [...new Set(auxiliary)].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-    if (auxiliary[0] !== 'Data/Interface/Fonts/arial.ttf'
+    if (auxiliary[0] !== 'Data/AudioDurations.json' || auxiliary[1] !== 'Data/Interface/Fonts/arial.ttf'
         || JSON.stringify(auxiliary) !== JSON.stringify(sorted)) {
-        throw new Error(`${preloadPath} must be unique, sorted, and begin with the required font`);
+        throw new Error(`${preloadPath} must be unique, sorted, and begin with the required audio timings and font`);
     }
     const expected = new Set([
         `${prefix}manifest.json`, preloadPath,

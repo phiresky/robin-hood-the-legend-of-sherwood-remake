@@ -408,6 +408,16 @@ impl ApplicationContext {
         services.replay = replay;
         Ok(self)
     }
+    pub(crate) fn capture_save_replay(
+        &self,
+        save: &crate::save_file::GameSaveFile,
+    ) -> anyhow::Result<Option<crate::replay_archive::SaveReplayLink>> {
+        // Scratch hosts and non-mission save tools intentionally have no recorder.
+        match self.services.as_ref() {
+            Some(services) => services.replay.recording().capture_save(save),
+            None => Ok(None),
+        }
+    }
     pub(crate) fn replay_recording(&self) -> crate::replay_service::ReplayRecordingControl {
         self.required_services()
             .expect("replay requires initialized application authority")

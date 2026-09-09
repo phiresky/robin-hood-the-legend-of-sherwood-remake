@@ -90,6 +90,7 @@ pub(super) struct MissionBootstrap {
     pub(super) game: Game,
     pub(super) loaded: LoadedMissionCore,
     restart_save: RestartSaveState,
+    recorder: Option<crate::replay_recording::SharedReplayRecorder>,
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -170,6 +171,7 @@ impl MissionBootstrap {
             game,
             loaded,
             restart_save: RestartSaveState::Absent,
+            recorder: None,
         };
         bootstrap.install_mission_assets(args);
         bootstrap
@@ -240,6 +242,20 @@ impl MissionBootstrap {
         callbacks: &mut RustCallbacks,
         args: &crate::main_entry::MissionLaunch,
     ) {
+        let descriptor = self
+            .game
+            .mission_assets()
+            .expect("installed mission assets")
+            .clone();
+        self.recorder = super::replay_init::init_recording(
+            &self.loaded.replay_campaign,
+            &self.loaded.assets,
+            args,
+            &descriptor.mission_basename,
+            descriptor.clone(),
+            self.loaded.engine_rng_seed,
+            self.loaded.engine_sim_config,
+        );
         let playing_back = args.replay_data.is_some() || args.replay.is_some();
         // Playback pins its frame-0 save markers in TimelineRuntime and replays
         // load-back records from those immutable snapshots. It must not create
@@ -389,6 +405,9 @@ impl MissionBootstrap {
             .clone();
         let mission_id = mission_assets.mission_basename.clone();
         let ranked_admission = self.loaded.ranked_admission.take_mission_admission();
+        args.global_options
+            .replay_recording()
+            .set_ranked_source(ranked_admission.clone());
         let ranked_multiplayer_port =
             self.host
                 .transport
@@ -420,6 +439,7 @@ impl MissionBootstrap {
             self.loaded.engine_rng_seed,
             self.loaded.engine_sim_config,
             self.host.transport.net().is_some(),
+            self.recorder.take(),
         );
         let mut timeline = TimelineRuntime::new(
             replay,
@@ -1989,10 +2009,21 @@ mod tests {
         )
         .unwrap();
         let mut callbacks = crate::main_entry::RustCallbacks::new(application_context).unwrap();
-        bootstrap.prepare_interactive_entry(
-            &mut callbacks,
-            &crate::main_entry::MissionLaunch::default(),
-        );
+        let args = crate::main_entry::MissionLaunch {
+            global_options: callbacks.application_context().clone(),
+            config: crate::main_entry::CliArgs {
+                record: Some(
+                    directory
+                        .path()
+                        .join("mission-recording")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        bootstrap.prepare_interactive_entry(&mut callbacks, &args);
         assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert_eq!(
             bootstrap.loaded.engine.campaign().values[CampaignValue::MissionLength],
@@ -2001,10 +2032,7 @@ mod tests {
 
         let mut lost = scratch_bootstrap_fixture();
         lost.game.is_sherwood = true;
-        lost.prepare_interactive_entry(
-            &mut callbacks,
-            &crate::main_entry::MissionLaunch::default(),
-        );
+        lost.prepare_interactive_entry(&mut callbacks, &args);
         assert_eq!(
             lost.loaded.engine.campaign().values[CampaignValue::MissionLength],
             23
@@ -2093,6 +2121,7 @@ mod tests {
             0,
             bootstrap.loaded.engine_sim_config,
             false,
+            None,
         );
         assert!(replay.player.is_some());
         assert!(replay.recorder.is_none());

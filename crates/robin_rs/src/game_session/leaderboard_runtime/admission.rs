@@ -1305,6 +1305,16 @@ impl RankedPreFramePlan {
             }
             Self::Authority(authority) => authority,
         };
+        if authority.content_manifest.speech_timing
+            != SimulationSpeechTimingSourceV1::CoreAudioDurationsV1
+        {
+            return (
+                robin_engine::engine::Engine::from_prepared(prepared),
+                PreparedRankedAdmission::BrowseOnly {
+                    reason: "ranked content must be regenerated with core audio durations".into(),
+                },
+            );
+        }
         let mounted_documents = prepared
             .static_projection()
             .components()
@@ -1416,6 +1426,9 @@ impl RankedPreFramePlan {
 
 fn manifest_speech_authority(manifest: &ContentManifestV1) -> SpeechTimingAuthorityV1 {
     match &manifest.speech_timing {
+        SimulationSpeechTimingSourceV1::CoreAudioDurationsV1 => {
+            SpeechTimingAuthorityV1::CoreAudioDurationsV1
+        }
         SimulationSpeechTimingSourceV1::BaseInstallation => {
             SpeechTimingAuthorityV1::BaseInstallation
         }

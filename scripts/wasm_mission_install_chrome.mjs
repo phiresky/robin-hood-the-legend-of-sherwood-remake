@@ -104,7 +104,7 @@ const MIME = {
 // Same overlay set the publish workflow preloads.
 const coreRoot = resolve('assets/core-datadir');
 const preloadPaths = [
-    'Data/Interface/Fonts/arial.ttf',
+    'Data/AudioDurations.json', 'Data/Interface/Fonts/arial.ttf',
     ...readdirSync(join(coreRoot, 'Data/Interface/UI'))
         .filter((f) => f.endsWith('.png'))
         .map((f) => `Data/Interface/UI/${f}`),

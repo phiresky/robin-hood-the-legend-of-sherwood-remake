@@ -1045,7 +1045,10 @@ impl SaveGameManager {
         }
         if slot.is_autosave() {
             return crate::autosave::read_payload(&self.save_directory, &slot.filename)
-                .map(PreparedGameSave::from)
+                .and_then(|payload| {
+                    crate::autosave::validate_metadata_payload_binding(slot, &payload)?;
+                    Ok(PreparedGameSave::from(payload))
+                })
                 .with_context(|| {
                     format!(
                         "failed to decode exact autosave slot {index} ({})",

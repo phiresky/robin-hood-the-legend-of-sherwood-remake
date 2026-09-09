@@ -93,6 +93,9 @@ pub enum InitError {
     #[error("Failed to apply soldier profile patch {path}: {message}")]
     ContentSoldierProfilePatch { path: String, message: String },
 
+    #[error("core audio timing: {message}")]
+    ContentAudioDurations { message: String },
+
     #[error("localization: {source}")]
     ContentLocalization {
         #[source]
@@ -137,6 +140,7 @@ impl InitError {
             | Self::ContentProfilesOpen { .. }
             | Self::ContentProfilesRead { .. }
             | Self::ContentSoldierProfilePatch { .. }
+            | Self::ContentAudioDurations { .. }
             | Self::ContentLocalization { .. } => InitErrorCategory::Content,
             Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
             Self::PlatformShippingDatadirInstall { .. }
@@ -696,6 +700,8 @@ fn rust_init_finish(
         Some(shipping) => files.with_asset_vfs(shipping.asset_vfs().clone()),
         None => files.snapshot(),
     });
+    robin_engine::audio_durations::AudioDurations::load(&files)
+        .map_err(|message| InitError::ContentAudioDurations { message })?;
     let localization = crate::localization::LocalizationService::initialize_with_files(
         shipping.as_deref(),
         files.clone(),

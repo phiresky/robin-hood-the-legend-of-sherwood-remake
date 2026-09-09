@@ -15,6 +15,10 @@ pub struct PendingReplay {
 pub struct ReplayService {
     pending: Mutex<Option<PendingReplay>>,
     spool: ReplaySpool,
+    capture_recorder: Mutex<Option<crate::replay_recording::SharedReplayRecorder>>,
+    ranked_source: Mutex<Option<crate::game_session::leaderboard_runtime::RankedMissionAdmission>>,
+    restored_ranked:
+        Mutex<Option<Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>>>,
     #[cfg(not(target_arch = "wasm32"))]
     export_worker: Mutex<NativeExportWorker>,
     #[cfg(target_arch = "wasm32")]
@@ -27,6 +31,9 @@ impl Default for ReplayService {
     fn default() -> Self {
         Self {
             pending: Mutex::new(None),
+            capture_recorder: Mutex::new(None),
+            ranked_source: Mutex::new(None),
+            restored_ranked: Mutex::new(None),
             spool: ReplaySpool::new(MAX_ACTIVE_REPLAY_BYTES),
             #[cfg(not(target_arch = "wasm32"))]
             export_worker: Mutex::new(NativeExportWorker::default()),
@@ -115,6 +122,10 @@ impl ReplayService {
     }
     /// Invalidates active recording without touching already frozen snapshots.
     pub(crate) fn invalidate(&self, reason: impl Into<String>) {
+        *self
+            .capture_recorder
+            .lock()
+            .expect("capture recorder poisoned") = None;
         self.begin_recording().poison(reason);
     }
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
@@ -254,6 +265,103 @@ replay_capability!(ReplayLaunches);
 /// }
 /// ```
 impl ReplayRecordingControl {
+    pub(crate) fn install_capture_recorder(
+        &self,
+        recorder: Option<crate::replay_recording::SharedReplayRecorder>,
+    ) {
+        *self
+            .0
+            .capture_recorder
+            .lock()
+            .expect("capture recorder poisoned") = recorder;
+        *self.0.ranked_source.lock().expect("ranked source poisoned") = None;
+        *self
+            .0
+            .restored_ranked
+            .lock()
+            .expect("ranked restore poisoned") = None;
+    }
+
+    pub(crate) fn set_ranked_source(
+        &self,
+        source: crate::game_session::leaderboard_runtime::RankedMissionAdmission,
+    ) {
+        *self.0.ranked_source.lock().expect("ranked source poisoned") = Some(source);
+        self.checkpoint_ranked_input();
+    }
+
+    pub(crate) fn restore_ranked_input(
+        &self,
+        input: Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>,
+    ) {
+        *self.0.ranked_source.lock().expect("ranked source poisoned") = input
+            .as_ref()
+            .ok()
+            .cloned()
+            .map(crate::game_session::leaderboard_runtime::RankedMissionAdmission::Authorized);
+        *self
+            .0
+            .restored_ranked
+            .lock()
+            .expect("ranked restore poisoned") = Some(input);
+    }
+
+    pub(crate) fn checkpoint_ranked_input(&self) {
+        let source = self
+            .0
+            .ranked_source
+            .lock()
+            .expect("ranked source poisoned")
+            .clone();
+        let Some(source) = source else {
+            return;
+        };
+        let result = (|| -> Result<(), String> {
+            let Some(recorder) = self
+                .capture_recorder()
+                .filter(|recorder| recorder.has_archive())
+            else {
+                return Ok(());
+            };
+            let replay = self.0.snapshot()?.parse_sync()?;
+            // Sherwood has no Restart checkpoint. The first save will retry
+            // once its marker supplies a real frame for the signed transcript.
+            if replay.frame_count() == 0 {
+                return Ok(());
+            }
+            if let Some(input) = source.archive_input(&replay)? {
+                recorder
+                    .persist_ranked_input(&input)
+                    .map_err(|error| format!("{error:#}"))?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            tracing::warn!("could not persist original ranked admission: {error}");
+        }
+    }
+
+    pub(crate) fn capture_recorder(&self) -> Option<crate::replay_recording::SharedReplayRecorder> {
+        self.0
+            .capture_recorder
+            .lock()
+            .expect("capture recorder poisoned")
+            .clone()
+    }
+    pub(crate) fn capture_save(
+        &self,
+        save: &crate::save_file::GameSaveFile,
+    ) -> anyhow::Result<Option<crate::replay_archive::SaveReplayLink>> {
+        match self.capture_recorder() {
+            Some(recorder) => {
+                let link = recorder.capture_save(save)?;
+                self.checkpoint_ranked_input();
+                Ok(link)
+            }
+            None => Ok(None),
+        }
+    }
+
     pub fn begin_recording(&self) -> ReplaySpoolWriter {
         self.0.begin_recording()
     }
@@ -262,6 +370,16 @@ impl ReplayRecordingControl {
     }
 }
 impl ReplayExports {
+    pub(crate) fn restored_ranked_input(
+        &self,
+    ) -> Option<Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>> {
+        self.0
+            .restored_ranked
+            .lock()
+            .expect("ranked restore poisoned")
+            .clone()
+    }
+
     pub(crate) fn same_service(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

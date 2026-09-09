@@ -340,7 +340,7 @@ fn content_receipts(
                 closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
                 projection_schema_version: 2,
                 resource_locale_root: locale.clone(),
-                speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
+                speech_timing: SimulationSpeechTimingSourceV1::CoreAudioDurationsV1,
                 components,
             };
             content_manifest.validate()?;
@@ -600,9 +600,8 @@ mod tests {
     use clap::Parser as _;
 
     #[test]
-    fn private_exporter_feature_is_storage_and_presentation_minimal() {
+    fn private_exporter_feature_is_presentation_minimal() {
         assert!(cfg!(feature = "projection-export"));
-        assert!(!cfg!(feature = "native-fs"));
         assert!(!cfg!(feature = "audio"));
         assert!(!cfg!(feature = "video"));
         let parsed = Args::try_parse_from([
