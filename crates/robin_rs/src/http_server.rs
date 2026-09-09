@@ -429,14 +429,14 @@ pub use ingress::SessionIngress;
 #[cfg(not(target_arch = "wasm32"))]
 use native_transport::NativeRequest;
 
-pub type Queue = Arc<Mutex<RequestRouter>>;
+type Queue = Arc<Mutex<RequestRouter>>;
 
-pub struct HttpServer {
+struct HttpServer {
     replay_exports: crate::replay_service::ReplayExports,
     replay_launches: crate::replay_service::ReplayLaunches,
-    pub queue: Queue,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub bind_addr: std::net::SocketAddr,
+    queue: Queue,
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    bind_addr: std::net::SocketAddr,
     #[cfg(not(target_arch = "wasm32"))]
     listener: Option<thread::JoinHandle<()>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -664,8 +664,73 @@ mod transport_lifecycle_tests {
     }
 
     #[test]
+    fn repeated_start_reports_a_listener_that_has_exited() {
+        let (mut transport, replay) = running();
+        let port = transport.port.unwrap();
+        transport
+            .server
+            .as_mut()
+            .unwrap()
+            .stop
+            .take()
+            .unwrap()
+            .send(())
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !transport
+            .server
+            .as_ref()
+            .unwrap()
+            .listener
+            .as_ref()
+            .unwrap()
+            .is_finished()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listener did not exit"
+            );
+            thread::yield_now();
+        }
+        assert!(
+            transport
+                .start(port, replay.exports(), replay.launches())
+                .unwrap_err()
+                .contains("exited")
+        );
+        transport.stop();
+        transport
+            .start(port, replay.exports(), replay.launches())
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_rebinds_after_a_completed_http_connection() {
+        use std::io::Read;
+        let (mut transport, replay) = running();
+        let port = transport.port.unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write!(
+            client,
+            "GET /info HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"));
+        transport.stop();
+        transport
+            .start(port, replay.exports(), replay.launches())
+            .expect("rebind despite TIME_WAIT");
+    }
+
+    #[test]
     fn shutdown_does_not_wait_forever_for_an_incomplete_request_body() {
-        let (mut transport, _) = running();
+        let (mut transport, replay) = running();
         let port = transport.port.unwrap();
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(client, "POST /console HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 100\r\nContent-Type: application/json\r\n\r\n{{").unwrap();
@@ -674,7 +739,8 @@ mod transport_lifecycle_tests {
         let before = std::time::Instant::now();
         transport.stop();
         assert!(before.elapsed() < Duration::from_secs(2));
-        std::net::TcpListener::bind(("127.0.0.1", port))
+        transport
+            .start(port, replay.exports(), replay.launches())
             .expect("listener released after partial body");
     }
 
@@ -788,6 +854,15 @@ impl HttpTransport {
             0
         };
         if let Some(bound_port) = self.port {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self
+                .server
+                .as_ref()
+                .and_then(|server| server.listener.as_ref())
+                .is_some_and(thread::JoinHandle::is_finished)
+            {
+                return Err("HTTP listener has exited; stop it before restarting".into());
+            }
             return if bound_port == port && self.matches_replay(&replay_exports, &replay_launches) {
                 Ok(())
             } else {
@@ -839,28 +914,29 @@ fn start(
     replay_exports: crate::replay_service::ReplayExports,
     replay_launches: crate::replay_service::ReplayLaunches,
 ) -> Result<HttpServer, String> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
-        format!(
-            "script HTTP server failed to bind 127.0.0.1:{port}: {e} \
-             (another robin instance? pass `--http-server 0` to disable, \
-             or `--http-server <port>` to pick a different port)"
-        )
-    })?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("HTTP listener nonblocking: {e}"))?;
-    let bind_addr = listener
-        .local_addr()
-        .map_err(|e| format!("HTTP listener address: {e}"))?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("HTTP runtime: {e}"))?;
     let listener = {
         let _entered = runtime.enter();
-        tokio::net::TcpListener::from_std(listener)
-            .map_err(|e| format!("HTTP listener registration: {e}"))?
+        let socket = tokio::net::TcpSocket::new_v4().map_err(|e| format!("HTTP socket: {e}"))?;
+        // Reuse a stopped listener's address after accepted connections enter
+        // TIME_WAIT. Do not enable Windows SO_REUSEADDR's port-sharing semantics.
+        #[cfg(unix)]
+        socket
+            .set_reuseaddr(true)
+            .map_err(|e| format!("HTTP socket reuse: {e}"))?;
+        socket.bind(std::net::SocketAddr::from(([127, 0, 0, 1], port))).map_err(|e| {
+            format!("script HTTP server failed to bind 127.0.0.1:{port}: {e} (another robin instance? pass `--http-server 0` to disable, or `--http-server <port>` to pick a different port)")
+        })?;
+        socket
+            .listen(128)
+            .map_err(|e| format!("HTTP listen: {e}"))?
     };
+    let bind_addr = listener
+        .local_addr()
+        .map_err(|e| format!("HTTP listener address: {e}"))?;
     tracing::info!("script HTTP server listening on http://{bind_addr}");
 
     let queue: Queue = Arc::new(Mutex::new(RequestRouter::default()));
@@ -879,6 +955,7 @@ fn start(
         .map_err(|e| format!("script HTTP server: failed to spawn listener thread: {e}"))?;
     Ok(HttpServer {
         queue,
+        #[cfg(test)]
         bind_addr,
         replay_exports,
         replay_launches,
