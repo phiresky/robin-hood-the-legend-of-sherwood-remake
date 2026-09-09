@@ -48,6 +48,12 @@ impl<'de> Deserialize<'de> for ReplyWait {
 }
 
 impl Responder {
+    /// Read-only work may release its resources after the reply consumer leaves,
+    /// even after admission. This does not cancel admitted simulation commands.
+    pub(super) fn consumer_gone(&self) -> bool {
+        self.tx.is_closed()
+    }
+
     pub(super) fn channel() -> (Self, ReplyWait) {
         let (tx, rx) = async_channel::bounded(1);
         let phase = Arc::new(Mutex::new(Phase::Queued));

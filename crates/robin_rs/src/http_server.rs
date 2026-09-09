@@ -60,7 +60,7 @@
 //!    cloned `DevState` with flags applied via
 //!    [`apply_screenshot_flags`] — the live `dev` is untouched.
 //! 3. After each throwaway render the loop reads pixels back
-//!    (`Renderer::capture_frame_rgba`), hands them to
+//!    (`Renderer::begin_capture_frame_rgba`), hands completed pixels to
 //!    [`PendingScreenshot::respond`] to reply with `image/png`, and
 //!    calls `Renderer::reset_render_target` to clear the target for
 //!    the next render.
@@ -1649,11 +1649,12 @@ pub struct ReplayStatus {
 ///    [`ScreenshotFlags`] through [`apply_screenshot_flags`].
 /// 2. Render a throwaway frame with that dev clone into the offscreen
 ///    target.
-/// 3. Read the pixels back (`Renderer::capture_frame_rgba`).
+/// 3. Submit readback (`Renderer::begin_capture_frame_rgba`) and retain the
+///    future and this responder in the mission's bounded capture queue.
 /// 4. Consume this struct via [`PendingScreenshot::respond`], handing
 ///    over the pixels so the request replies with `image/png`.
-/// 5. Call `Renderer::reset_render_target` to clear the offscreen
-///    target for the next render pass (screenshot or live).
+/// Submission clears recorded commands; completion never borrows the live
+/// renderer. Ending the mission retires outstanding replies and readbacks.
 pub struct PendingScreenshot {
     response_tx: Responder,
     request: ScreenshotRequest,

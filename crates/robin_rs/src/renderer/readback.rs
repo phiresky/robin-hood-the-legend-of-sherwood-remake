@@ -23,8 +23,6 @@ pub enum CaptureError {
     Map(String),
     #[error("GPU readback mapping callback was dropped")]
     CompletionLost,
-    #[error("browser capture requires the asynchronous capture API")]
-    AsyncRequired,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -110,7 +108,6 @@ fn submit(
 
 /// Browser GL fences only progress after returning to the event loop. Polling
 /// with Wait on that thread can time out even though the submitted work is valid.
-#[cfg(any(target_arch = "wasm32", test))]
 async fn poll_mapping<T, Y: std::future::Future<Output = ()>>(
     mut receiver: futures::channel::oneshot::Receiver<T>,
     mut poll: impl FnMut() -> Result<(), CaptureError>,
@@ -139,35 +136,21 @@ async fn complete(
         .map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-    #[cfg(not(target_arch = "wasm32"))]
-    let mapped = {
-        gpu.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|error| CaptureError::Poll(error.to_string()))?;
-        receiver.await.map_err(|_| CaptureError::CompletionLost)?
-    };
-    #[cfg(target_arch = "wasm32")]
-    let mapped = {
-        use futures::{future::Either, pin_mut};
-        let completion = poll_mapping(
-            receiver,
-            || {
-                gpu.device
-                    .poll(wgpu::PollType::Poll)
-                    .map(|_| ())
-                    .map_err(|error| CaptureError::Poll(error.to_string()))
-            },
-            || gloo_timers::future::TimeoutFuture::new(1),
-        );
-        // A lost device normally reports through map_async. Also bound the wait
-        // if a browser/driver never delivers that callback, without busy spinning.
-        let timeout = gloo_timers::future::TimeoutFuture::new(30_000);
-        pin_mut!(completion, timeout);
-        match futures::future::select(completion, timeout).await {
-            Either::Left((result, _)) => result?,
-            Either::Right(_) => return Err(CaptureError::Timeout),
-        }
-    };
+    let started = web_time::Instant::now();
+    let mapped = poll_mapping(
+        receiver,
+        || {
+            if started.elapsed().as_secs() >= 30 {
+                return Err(CaptureError::Timeout);
+            }
+            gpu.device
+                .poll(wgpu::PollType::Poll)
+                .map(|_| ())
+                .map_err(|error| CaptureError::Poll(error.to_string()))
+        },
+        yield_mapping,
+    )
+    .await?;
     mapped.map_err(|error| CaptureError::Map(error.to_string()))?;
     let result = {
         let mapped = buffer
@@ -178,6 +161,26 @@ async fn complete(
     };
     buffer.unmap();
     result
+}
+
+async fn yield_mapping() {
+    #[cfg(target_arch = "wasm32")]
+    gloo_timers::future::TimeoutFuture::new(1).await;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // The session polls each pending capture once per loop turn. Standalone
+        // native tooling can still drive the same future with block_on.
+        let mut yielded = false;
+        futures::future::poll_fn(|cx| {
+            if std::mem::replace(&mut yielded, true) {
+                std::task::Poll::Ready(())
+            } else {
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        })
+        .await;
+    }
 }
 
 pub(super) fn begin_capture_frame_rgba(
@@ -203,7 +206,7 @@ pub(super) fn begin_capture_frame_rgba(
     frame.clear_recording();
     tracing::debug!(
         elapsed_ms = submitted_at.elapsed().as_secs_f64() * 1000.0,
-        "save thumbnail GPU: encode and submit"
+        "capture GPU: encode and submit"
     );
     let submitted_at = web_time::Instant::now();
     let gpu = gpu.clone();
@@ -212,7 +215,7 @@ pub(super) fn begin_capture_frame_rgba(
         let captured = complete(&gpu, buffer, layout).await;
         tracing::debug!(
             elapsed_ms = submitted_at.elapsed().as_secs_f64() * 1000.0,
-            "save thumbnail GPU: map and unpack"
+            "capture GPU: map and unpack"
         );
         captured
     })
@@ -233,60 +236,106 @@ pub(super) async fn capture_presented_frame_rgba_async(
     gpu: &GpuContext,
     frame: &FrameState,
 ) -> Result<CapturedFrame, CaptureError> {
+    begin_capture_presented_frame_rgba(gpu, frame).await
+}
+
+pub(super) fn begin_capture_presented_frame_rgba(
+    gpu: &GpuContext,
+    frame: &FrameState,
+) -> PendingCapture {
     let encoder = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("capture presented frame"),
         });
-    let (buffer, layout) = submit(gpu, frame, encoder)?;
-    complete(gpu, buffer, layout).await
+    let submitted = submit(gpu, frame, encoder);
+    let gpu = gpu.clone();
+    Box::pin(async move {
+        let (buffer, layout) = submitted?;
+        complete(&gpu, buffer, layout).await
+    })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn capture_frame_rgba(
     gpu: &GpuContext,
     pipelines: &PipelineStore,
     resources: &GpuResources,
     frame: &mut FrameState,
 ) -> Result<CapturedFrame, CaptureError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        pollster::block_on(capture_frame_rgba_async(gpu, pipelines, resources, frame))
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        use futures::FutureExt;
-        // Retain immediate-completion captures, but never block the browser
-        // waiting for a GL fence. Dropping a pending future drops its buffer;
-        // wgpu retains submitted resources, and the callback tolerates a dropped
-        // receiver. No mapped view has been obtained at this point.
-        // TODO: migrate browser screenshot consumers to async so they can also
-        // capture when mapping requires another browser event-loop turn.
-        capture_frame_rgba_async(gpu, pipelines, resources, frame)
-            .now_or_never()
-            .ok_or(CaptureError::AsyncRequired)?
-    }
+    pollster::block_on(capture_frame_rgba_async(gpu, pipelines, resources, frame))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn capture_presented_frame_rgba(
     gpu: &GpuContext,
     frame: &FrameState,
 ) -> Result<CapturedFrame, CaptureError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        pollster::block_on(capture_presented_frame_rgba_async(gpu, frame))
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        use futures::FutureExt;
-        capture_presented_frame_rgba_async(gpu, frame)
-            .now_or_never()
-            .ok_or(CaptureError::AsyncRequired)?
-    }
+    pollster::block_on(capture_presented_frame_rgba_async(gpu, frame))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    #[ignore = "requires browser WebGL2; run capture tests with wasm-bindgen-test-runner --include-ignored"]
+    async fn browser_gpu_captures_keep_submitted_pixels_across_event_loop_turns() {
+        use std::sync::Arc;
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = wgpu::Backends::GL;
+        let instance = Arc::new(wgpu::Instance::new(descriptor));
+        // Browser GL discovers its context through a canvas surface even when
+        // the renderer itself only renders into an offscreen logical target.
+        let canvas = web_sys::OffscreenCanvas::new(2, 2).expect("browser canvas");
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas))
+            .expect("browser GL surface");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            })
+            .await
+            .expect("browser must provide WebGL2 adapter");
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("async capture browser test"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::MemoryUsage,
+                trace: wgpu::Trace::Off,
+            })
+            .await
+            .expect("browser WebGL2 device");
+        let gpu = GpuContext {
+            instance,
+            adapter: Arc::new(adapter),
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            surface_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        };
+        let mut renderer = crate::renderer::Renderer::offscreen(gpu, 2, 2);
+        renderer.render_gpu_rect(0, 0, 2, 2, 255, 0, 0, 255);
+        let red = renderer.begin_capture_frame_rgba();
+        let presented_red = renderer.begin_capture_presented_frame_rgba();
+        renderer.render_gpu_rect(0, 0, 2, 2, 0, 255, 0, 255);
+        let green = renderer.begin_capture_frame_rgba();
+        // All three submissions precede completion and reuse the logical
+        // target. Returning to JS must not change any submitted frame.
+        gloo_timers::future::TimeoutFuture::new(1).await;
+        assert_eq!(red.await.unwrap(), (2, 2, [255, 0, 0, 255].repeat(4)));
+        assert_eq!(
+            presented_red.await.unwrap(),
+            (2, 2, [255, 0, 0, 255].repeat(4))
+        );
+        assert_eq!(green.await.unwrap(), (2, 2, [0, 255, 0, 255].repeat(4)));
+    }
 
     #[test]
     fn mapping_polls_again_after_yielding_and_preserves_callback_result() {
