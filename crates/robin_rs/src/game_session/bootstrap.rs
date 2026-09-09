@@ -1260,7 +1260,7 @@ impl HeadlessMissionBuilder {
     ) -> HeadlessBuildOutcome {
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
-            crate::http_server::peek_pending_replay_mission_id().is_some(),
+            crate::replay_service::process().pending_mission().is_some(),
         ) {
             return HeadlessBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
@@ -1384,7 +1384,7 @@ impl InteractiveMissionBuilder {
 
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
-            crate::http_server::peek_pending_replay_mission_id().is_some(),
+            crate::replay_service::process().pending_mission().is_some(),
         ) {
             return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
@@ -1915,7 +1915,7 @@ mod tests {
 
     #[test]
     fn replay_bootstrap_creates_no_restart_recording_or_autosave() {
-        let _spool = crate::http_server::replay_spool_test_lock();
+        let _spool = crate::replay_service::replay_spool_test_lock();
         let mut bootstrap = scratch_bootstrap_fixture();
         let directory = tempfile::tempdir().unwrap();
         let save_root = directory.path().to_string_lossy().into_owned();
