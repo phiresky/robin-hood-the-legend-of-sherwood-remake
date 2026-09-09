@@ -539,6 +539,35 @@ mod browser_transport_tests {
     use super::*;
 
     #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn stop_rejects_an_already_deferred_browser_promise_without_another_tick() {
+        use futures::FutureExt as _;
+        let replay = Arc::new(crate::replay_service::ReplayService::default());
+        let mut transport = HttpTransport::default();
+        transport
+            .start(0, replay.exports(), replay.launches())
+            .unwrap();
+        let mut ingress = transport.attach();
+        let value = serde_wasm_bindgen::to_value(
+            &serde_json::json!({"method": "set-paused", "params": {"paused": true}}),
+        )
+        .unwrap();
+        let mut promise = Box::pin(wasm_rpc::rh_rpc(value));
+        assert!(promise.as_mut().now_or_never().is_none());
+        let request = ingress.take_requests().pop().expect("queued request");
+        ingress.defer_request(
+            DeferredRequest::Step(StepKind::SetPaused { paused: true }),
+            request.response_tx,
+            true,
+        );
+        transport.stop();
+        assert_eq!(
+            promise.await.unwrap_err().as_string().as_deref(),
+            Some("HTTP transport stopped")
+        );
+        assert!(ingress.take_pending_steps().is_empty());
+    }
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
     fn early_requests_survive_owner_transfer_and_stop_allows_rebinding() {
         let replay = Arc::new(crate::replay_service::ReplayService::default());
         let mut early = HttpTransport::default();
@@ -2729,6 +2758,10 @@ pub mod wasm_rpc {
         let queue = BROWSER_QUEUE
             .with(|binding| binding.borrow().upgrade())
             .ok_or_else(|| JsValue::from_str("RPC bridge not initialized"))?;
+        let retirement = queue
+            .lock()
+            .expect("queue mutex poisoned")
+            .retirement_receiver();
         let (tx, rx) = async_channel::bounded(1);
         queue
             .lock()
@@ -2737,10 +2770,11 @@ pub mod wasm_rpc {
                 payload,
                 response_tx: Responder::Wasm(tx),
             });
-        let reply = rx
-            .recv()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?;
+        use futures::FutureExt as _;
+        let reply = futures::select_biased! {
+            _ = retirement.recv().fuse() => return Err(JsValue::from_str("HTTP transport stopped")),
+            reply = rx.recv().fuse() => reply.map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?,
+        };
         reply_to_js(reply)
     }
 

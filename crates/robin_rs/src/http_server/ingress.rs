@@ -6,22 +6,43 @@ use std::sync::Weak;
 type Requests = Arc<Mutex<VecDeque<HttpRequest>>>;
 
 /// Deserializing diagnostics never restores live request authority.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct RequestRouter {
     retired: bool,
+    #[serde(skip, default = "retirement_channel")]
+    retirement: (async_channel::Sender<()>, async_channel::Receiver<()>),
     #[serde(skip)]
     active: Weak<Mutex<VecDeque<HttpRequest>>>,
     #[serde(skip)]
     idle: VecDeque<HttpRequest>,
 }
 
+fn retirement_channel() -> (async_channel::Sender<()>, async_channel::Receiver<()>) {
+    async_channel::bounded(1)
+}
+
+impl Default for RequestRouter {
+    fn default() -> Self {
+        Self {
+            retired: false,
+            retirement: retirement_channel(),
+            active: Weak::new(),
+            idle: VecDeque::new(),
+        }
+    }
+}
+
 impl RequestRouter {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn is_retired(&self) -> bool {
         self.retired
     }
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn retirement_receiver(&self) -> async_channel::Receiver<()> {
+        self.retirement.1.clone()
+    }
     pub(super) fn retire(&mut self) {
         self.retired = true;
+        self.retirement.0.close();
         for request in self.idle.drain(..) {
             request
                 .response_tx
@@ -135,6 +156,7 @@ impl SessionIngress {
     }
 
     pub(super) fn take_requests(&mut self) -> Vec<HttpRequest> {
+        self.cancel_stopped_work();
         self.requests
             .lock()
             .expect("session RPC queue poisoned")
@@ -196,6 +218,7 @@ impl SessionIngress {
     }
 
     pub fn take_pending_steps(&mut self) -> Vec<PendingStep> {
+        self.cancel_stopped_work();
         std::mem::take(&mut self.steps)
     }
 
@@ -216,6 +239,7 @@ impl SessionIngress {
         sim_frame: u32,
         predicate: impl Fn(&ScreenshotRequest) -> bool,
     ) -> Vec<PendingScreenshot> {
+        self.cancel_stopped_work();
         let (ready, waiting) =
             std::mem::take(&mut self.screenshots)
                 .into_iter()
@@ -225,6 +249,21 @@ impl SessionIngress {
                 });
         self.screenshots = waiting;
         ready
+    }
+
+    fn cancel_stopped_work(&mut self) {
+        if self
+            .router
+            .as_ref()
+            .is_some_and(|router| router.lock().expect("RPC router poisoned").is_retired())
+        {
+            for step in self.steps.drain(..) {
+                step.respond_err("HTTP transport stopped");
+            }
+            for screenshot in self.screenshots.drain(..) {
+                screenshot.respond_err("HTTP transport stopped");
+            }
+        }
     }
 }
 
@@ -286,6 +325,31 @@ mod tests {
 
     fn router() -> Queue {
         Arc::new(Mutex::new(RequestRouter::default()))
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn transport_stop_cancels_deferred_work_before_another_mission_tick() {
+        let router = router();
+        let mut ingress = SessionIngress::with_router(Some(router.clone()));
+        let (step, step_reply) = request(HttpPayload::StepForward {
+            request: StepRequest::default(),
+        });
+        let (shot, shot_reply) = request(HttpPayload::Screenshot(ScreenshotRequest {
+            frame: Some(900),
+            ..ScreenshotRequest::default()
+        }));
+        assert!(ingress.defer(step, true).is_none());
+        assert!(ingress.defer(shot, true).is_none());
+        router.lock().unwrap().retire();
+        assert!(ingress.take_pending_steps().is_empty());
+        assert!(ingress.take_pending_screenshots(900).is_empty());
+        assert!(
+            matches!(step_reply.try_recv().unwrap(), Err(error) if error == "HTTP transport stopped")
+        );
+        assert!(
+            matches!(shot_reply.try_recv().unwrap(), Err(error) if error == "HTTP transport stopped")
+        );
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
