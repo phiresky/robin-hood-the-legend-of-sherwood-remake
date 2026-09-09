@@ -2375,19 +2375,34 @@ mod tests {
     }
 
     #[test]
-    fn foreign_live_save_retires_the_open_recording_and_rejects_export() {
+    fn foreign_live_save_retires_recording_until_matching_bootstrap_restores_valid_export() {
         let _serial = crate::replay_service::replay_spool_test_lock();
         let mut assets = LevelAssets::new();
-        let engine = Engine::new_for_test(
+        let mut engine = Engine::new_for_test(
             1024.0,
             768.0,
             robin_engine::campaign::Campaign::default(),
             &mut assets,
         )
         .unwrap();
-        let host = Host::scratch(1024.0, 768.0);
-        let game = Game::default();
-        let identity = GameRuntimeSnapshot::identity_of_live(&engine, &host, &game).unwrap();
+        let mut host = Host::scratch(1024.0, 768.0);
+        let mut game = Game::default();
+        let pristine = engine.clone();
+        let checkpoint = crate::save_file::PreparedGameSave::capture_session_restart(
+            &engine,
+            &host,
+            &game,
+            crate::save_file::SaveHeader::new(
+                1,
+                test_mission_assets("foreign"),
+                "Restart".into(),
+                crate::save_file::SaveProvenance::new("Restart".into(), 0, "Player".into())
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let bootstrap_identity = checkpoint.replay_identity().unwrap();
         let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
         timeline.replay_recorder = Some(
             ReplayRecorder::with_writer(
@@ -2400,6 +2415,33 @@ mod tests {
             )
             .unwrap(),
         );
+        timeline.register_bootstrap_save(Some(BootstrapSaveBoundary::capture(
+            &engine,
+            &host,
+            &game,
+            Some(bootstrap_identity),
+        )));
+        engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetFastForward.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .unwrap();
+        let foreign = crate::save_file::PreparedGameSave::capture_session_restart(
+            &engine,
+            &host,
+            &game,
+            checkpoint.header.clone(),
+        )
+        .unwrap();
+        let identity = foreign.replay_identity().unwrap();
+        assert_ne!(identity, bootstrap_identity);
+        foreign
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(timeline.current_frame());
         timeline.begin_recording(&mut frame, true);
@@ -2430,6 +2472,64 @@ mod tests {
         let mut next = MissionFrame::new(1);
         timeline.begin_recording(&mut next, true);
         assert_eq!(next.recorder_state, RecorderFrameState::Inactive);
+
+        checkpoint
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        next.bind_timeline(timeline.current_frame());
+        timeline.note_save_load_event(
+            crate::main_entry::SaveLoadEvent::LoadApplied {
+                identity: bootstrap_identity,
+                is_continue: false,
+            },
+            &mut next,
+            &engine,
+            &assets,
+        );
+        assert_eq!(timeline.recording_validity, RecordingValidity::Linear);
+        assert!(timeline.replay_recorder.is_some());
+        assert!(timeline.sealed_replay_header.is_none());
+        assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
+        assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
+        assert_eq!(
+            timeline
+                .recorded_save_frames_by_identity
+                .get(&bootstrap_identity),
+            Some(&(ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO)),
+        );
+        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline.begin_recording(&mut next, true);
+        next.commit_timeline_after(timeline.advance_frame());
+        timeline.finish_recording(&mut next);
+        let restored_hash = robin_engine::replay::state_hash(&engine);
+        let replay = crate::replay_service::process()
+            .snapshot()
+            .unwrap()
+            .parse_sync()
+            .unwrap();
+        assert_eq!(replay.frame_count(), 1);
+        assert_eq!(replay.load_back_for_frame(0).unwrap().to_frame, 0);
+        assert_eq!(
+            replay.save_marker_for_frame(0).unwrap().state_hash,
+            robin_engine::replay::state_hash(&pristine),
+        );
+        // Validate the new export's actual restore boundary, not merely that
+        // clearing the invalid flag made bytes available again.
+        let mut playback = timeline_for_trace_test(FrameContract::Headless);
+        playback.replay_player = Some(ReplayPlayer::new(replay));
+        let mut manager = EngineManager::new(pristine);
+        playback
+            .apply_playback_timeline_events(
+                &mut Host::scratch(1024.0, 768.0),
+                &mut Game::default(),
+                &mut manager,
+                &assets,
+            )
+            .unwrap();
+        assert_eq!(
+            robin_engine::replay::state_hash(&manager.engine),
+            restored_hash
+        );
     }
 
     #[test]
