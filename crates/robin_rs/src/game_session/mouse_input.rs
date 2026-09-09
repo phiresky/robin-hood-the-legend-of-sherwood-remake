@@ -2393,7 +2393,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         } else {
                             desc.debriefing.lose_text_table_id
                         };
-                        if !text_res.has_text_resource(table_id) {
+                        if !text_res.has_resource(table_id) {
                             return None;
                         }
                         match text_res.get_string(table_id, 0) {

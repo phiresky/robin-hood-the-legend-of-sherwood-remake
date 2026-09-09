@@ -116,7 +116,7 @@ pub(super) fn drive_lost_sherwood_gate(
         );
         let per_mission_text = pseudo_red.as_ref().and_then(|descriptor| {
             let table_id = descriptor.debriefing.lose_text_table_id;
-            if !resources.text.has_text_resource(table_id) {
+            if !resources.text.has_resource(table_id) {
                 return None;
             }
             match resources.text.get_string(table_id, 0) {

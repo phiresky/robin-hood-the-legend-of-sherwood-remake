@@ -418,7 +418,8 @@ pub struct ResourceData {
 /// These fields are deliberately isolated from the resident resource values.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct ResourceLifetime {
-    /// Reference counts per resource.
+    /// Legacy serialized reference counts; no live owner increments them.
+    /// TODO: remove this field only with an explicit shipping-format migration.
     references: HashMap<ResourceId, u32>,
     /// On-disk locations for recovery after dismiss.
     file_entries: HashMap<ResourceId, ResourceFileEntry>,
@@ -1171,39 +1172,6 @@ impl ResourceManager {
     }
 
     // ===================================================================
-    // Reference counting
-    // ===================================================================
-
-    /// Increment the reference count for a resource.
-    pub fn add_reference(&mut self, id: ResourceId) -> Result<()> {
-        let count = self
-            .lifetime
-            .references
-            .get_mut(&id)
-            .ok_or_else(|| anyhow!("add_reference: resource {id} not found"))?;
-        *count += 1;
-        Ok(())
-    }
-
-    /// Decrement the reference count.  When it reaches zero the resource's
-    /// picture data is dismissed (evicted from memory).
-    pub fn release_reference(&mut self, id: ResourceId) -> Result<()> {
-        let count = self
-            .lifetime
-            .references
-            .get_mut(&id)
-            .ok_or_else(|| anyhow!("release_reference: resource {id} not found"))?;
-        if *count == 0 {
-            bail!("release_reference: resource {id} already at zero");
-        }
-        *count -= 1;
-        if *count == 0 {
-            self.dismiss_resource(id);
-        }
-        Ok(())
-    }
-
-    // ===================================================================
     // Existence queries (non-mutating)
     // ===================================================================
 
@@ -1219,9 +1187,16 @@ impl ResourceManager {
             })
     }
 
-    /// True if a text resource is loaded or registered.
-    pub fn has_text_resource(&self, id: ResourceId) -> bool {
-        self.data.strings.contains_key(&id) || self.lifetime.references.contains_key(&id)
+    /// Whether any payload or archive entry exists for this ID.
+    /// This does not validate its type or readability: callers must still use
+    /// the typed getter, so wrong-type resources cannot become optional absence.
+    pub fn has_resource(&self, id: ResourceId) -> bool {
+        self.lifetime.file_entries.contains_key(&id)
+            || self.data.pictures.contains_key(&id)
+            || self.data.encoded_pictures.contains_key(&id)
+            || self.data.mouse_entries.contains_key(&id)
+            || self.data.strings.contains_key(&id)
+            || self.data.waves.contains_key(&id)
     }
 
     /// Iterate over all loaded resources. Yields `(id, type_tag)`.
@@ -2091,7 +2066,7 @@ mod tests {
     fn new_manager_is_empty() {
         let mgr = ResourceManager::new();
         assert!(!mgr.has_picture_resource(1));
-        assert!(!mgr.has_text_resource(1));
+        assert!(!mgr.has_resource(1));
     }
 
     #[test]
@@ -2101,21 +2076,30 @@ mod tests {
     }
 
     #[test]
-    fn reference_counting() {
-        let mut mgr = ResourceManager::new();
-        mgr.lifetime.references.insert(1, 0);
-        mgr.add_reference(1).unwrap();
-        mgr.add_reference(1).unwrap();
-        assert_eq!(mgr.lifetime.references[&1], 2);
-        mgr.release_reference(1).unwrap();
-        assert_eq!(mgr.lifetime.references[&1], 1);
-    }
-
-    #[test]
-    fn release_at_zero_is_error() {
-        let mut mgr = ResourceManager::new();
-        mgr.lifetime.references.insert(1, 0);
-        assert!(mgr.release_reference(1).is_err());
+    fn legacy_reference_counts_round_trip_without_classifying_resource_types() {
+        let mut manager = ResourceManager::new();
+        manager.lifetime.references.insert(42, 7);
+        let mut restored: ResourceManager = bitcode::decode(&bitcode::encode(&manager)).unwrap();
+        assert_eq!(restored.lifetime.references[&42], 7);
+        assert!(!restored.has_picture_resource(42));
+        assert!(!restored.has_resource(42));
+        for (tag, expected) in [(b"TEXT", true), (b"WAVE", true), (b"PIC ", true)] {
+            restored.lifetime.file_entries.insert(
+                42,
+                ResourceFileEntry {
+                    file_path: "not-opened.res".to_owned(),
+                    file_offset: 0,
+                    resource_type: *tag,
+                },
+            );
+            assert_eq!(restored.has_resource(42), expected);
+        }
+        restored.lifetime.file_entries.clear();
+        restored
+            .data
+            .strings
+            .insert(42, vec!["resident".to_owned()]);
+        assert!(restored.has_resource(42));
     }
 }
 

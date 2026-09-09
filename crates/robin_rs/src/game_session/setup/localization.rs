@@ -222,7 +222,7 @@ pub(super) fn resolve_short_briefings(
     // Absence is optional; a registered table that cannot be read is not.
     // In particular, never silently discard an authored text ID because
     // its entry failed to decode.
-    if text_res.has_text_resource(table_id) {
+    if text_res.has_resource(table_id) {
         let count = text_res.get_string_count(table_id).map_err(|error| {
             ResourcePreparationError::malformed(
                 "Data/Text/Level.res",
