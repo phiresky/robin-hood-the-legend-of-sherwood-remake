@@ -991,8 +991,11 @@ impl OptionsTaskState {
                             == crate::ingame_menu::gameplay::GameplaySetting::CampaignPresentation
                         {
                             format!(
-                                "Campaign Presentation: {}",
-                                self.controller.gameplay.campaign_presentation.label()
+                                "{}: {}",
+                                base_label,
+                                self.localized_gameplay.campaign_presentation(
+                                    self.controller.gameplay.campaign_presentation
+                                )
                             )
                         } else {
                             toggle_label(base_label, setting.is_selected(&self.controller.gameplay))
@@ -2041,7 +2044,7 @@ mod tests {
 
     #[test]
     fn options_pager_covers_every_integrated_gameplay_setting() {
-        let total = crate::ingame_menu::gameplay::OPTION_LABELS.len();
+        let total = crate::ingame_menu::gameplay::GameplaySetting::ALL.len();
         assert_eq!(total, 46, "update this contract when settings are added");
         assert_eq!(OptionsPager::page_count(total), 4);
         let covered = (0..OptionsPager::page_count(total))
@@ -2052,7 +2055,7 @@ mod tests {
         assert!(
             OptionsPager { page: 3 }
                 .visible_range(total)
-                .contains(&crate::ingame_menu::gameplay::FOG_OF_WAR_OPTION_INDEX)
+                .contains(&crate::ingame_menu::gameplay::GameplaySetting::FogOfWar.index())
         );
     }
 
@@ -2064,7 +2067,7 @@ mod tests {
             OptionRowAction::AdjustGameplay(_)
         ));
         assert_eq!(
-            crate::ingame_menu::gameplay::OPTION_LABELS.len(),
+            crate::ingame_menu::gameplay::GameplaySetting::ALL.len(),
             46,
             "Manage Content must not consume a gameplay-setting index"
         );

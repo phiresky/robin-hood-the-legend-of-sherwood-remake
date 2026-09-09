@@ -853,6 +853,48 @@ pub struct GameSaveFile {
     pub game_persistent: GamePersistentState,
 }
 
+/// Encoded immutable runtime fields shared by publications of one capture.
+/// Only the small slot header is serialized again for a Continue mirror.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct SerializedSave {
+    header: SaveHeader,
+    engine: Box<serde_json::value::RawValue>,
+    sound: Box<serde_json::value::RawValue>,
+    game_persistent: Box<serde_json::value::RawValue>,
+}
+impl SerializedSave {
+    pub(crate) fn new(save: &GameSaveFile) -> Result<Self> {
+        Ok(Self {
+            header: save.header.clone(),
+            engine: serde_json::value::to_raw_value(&save.engine)?,
+            sound: serde_json::value::to_raw_value(&save.sound)?,
+            game_persistent: serde_json::value::to_raw_value(&save.game_persistent)?,
+        })
+    }
+    pub(crate) fn encode(&self, display_text: &str) -> Result<Vec<u8>> {
+        // Borrow the encoded fields: neither cloning nor serializing engine
+        // state is necessary to publish a differently named slot.
+        #[derive(Serialize, Deserialize)]
+        struct Publication<'a> {
+            header: SaveHeader,
+            #[serde(borrow)]
+            engine: &'a serde_json::value::RawValue,
+            #[serde(borrow)]
+            sound: &'a serde_json::value::RawValue,
+            #[serde(borrow)]
+            game_persistent: &'a serde_json::value::RawValue,
+        }
+        let mut header = self.header.clone();
+        header.display_text = display_text.to_owned();
+        Ok(serde_json::to_vec_pretty(&Publication {
+            header,
+            engine: &self.engine,
+            sound: &self.sound,
+            game_persistent: &self.game_persistent,
+        })?)
+    }
+}
+
 impl GameSaveFile {
     /// Test-only convenience for snapshots that do not exercise host-owned
     /// persistent game flags. Production saves must use

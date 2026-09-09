@@ -22,6 +22,7 @@ use std::sync::{Mutex, OnceLock};
     any(target_os = "windows", target_os = "linux", target_os = "macos")
 ))]
 pub mod auto_update;
+pub mod gameplay_settings;
 pub mod leaderboard_signing;
 pub mod localization;
 #[cfg(not(target_arch = "wasm32"))]

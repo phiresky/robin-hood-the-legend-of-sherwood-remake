@@ -30,22 +30,53 @@ fn apply_post_save_ui_state(
     game: &mut crate::game::Game,
     input: &mut MissionInput,
     outcome: &crate::main_entry::OperationOutcome,
+    menu_text: Option<&crate::ingame_menu::resources::MenuText>,
 ) {
     if outcome.reset_input() {
         input.reset_after_engine_request(host);
     }
     if let Some(kind) = notices.select_banner(outcome.banner) {
-        let text = match kind {
-            SaveBannerKind::Saved => "Game saved.",
-            SaveBannerKind::Loaded => "Game loaded.",
-            SaveBannerKind::Autosaved => "Game autosaved.",
-            SaveBannerKind::AutosaveFailed => "Autosave failed - check the log.",
-            SaveBannerKind::SaveFailed => "Save failed - check the log before retrying.",
-        };
-        // TODO(refactor): replace these literals with MT_MSG_GAME_SAVED and
-        // MT_MSG_GAME_LOADED once the localized text ownership is explicit.
-        game.display_message(text.to_string(), 100);
+        let text = save_banner_text(kind, menu_text, |key| {
+            host.application_context()
+                .port_text(key)
+                .expect("save banners require localized text")
+        });
+        game.display_message(text, 100);
     }
+}
+
+fn save_banner_text(
+    kind: SaveBannerKind,
+    menu: Option<&crate::ingame_menu::resources::MenuText>,
+    port: impl Fn(crate::localization::PortTextKey) -> &'static str,
+) -> String {
+    use crate::ingame_menu::resources::{MT_MSG_GAME_LOADED, MT_MSG_GAME_SAVED, MenuText};
+    use crate::localization::PortTextKey;
+    let original_id = match kind {
+        SaveBannerKind::Saved => Some(MT_MSG_GAME_SAVED),
+        SaveBannerKind::Loaded => Some(MT_MSG_GAME_LOADED),
+        _ => None,
+    };
+    if let Some(id) = original_id {
+        return match menu {
+            Some(menu) => menu.get(id),
+            None => {
+                tracing::warn!(
+                    "save banner has no loaded menu text; using the standard English resource fallback"
+                );
+                MenuText::english_fallbacks_only().get(id)
+            }
+        };
+    }
+    port(match kind {
+        SaveBannerKind::Autosaved => PortTextKey::GameAutosaved,
+        SaveBannerKind::AutosaveFailed => PortTextKey::AutosaveFailed,
+        SaveBannerKind::SaveFailed => PortTextKey::SaveFailed,
+        SaveBannerKind::Saved | SaveBannerKind::Loaded => {
+            unreachable!("original banner handled above")
+        }
+    })
+    .to_owned()
 }
 
 /// Drop pending load-type requests while a replay is playing back.
@@ -356,6 +387,7 @@ pub(super) async fn process_operation_and_save(
         game,
         input,
         &save_load,
+        resources.menu.as_ref().map(|menu| &menu.menu_text),
     );
 
     Ok(ControlFlow::Continue(SavesPrepared(
@@ -374,6 +406,42 @@ pub(super) async fn process_operation_and_save(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn banners_use_retail_text_ids_and_port_catalogue_without_shared_numeric_keys() {
+        use super::{SaveBannerKind, save_banner_text};
+        use crate::ingame_menu::resources::{MT_MSG_GAME_LOADED, MT_MSG_GAME_SAVED, MenuText};
+        let mut menu = MenuText::english_fallbacks_only();
+        let mut strings = vec![String::new(); MT_MSG_GAME_LOADED + 1];
+        strings[MT_MSG_GAME_SAVED] = "Gespeichert aus SXT".into();
+        strings[MT_MSG_GAME_LOADED] = "Geladen aus SXT".into();
+        menu.replace_strings_for_test(strings);
+        let german = |key| crate::localization::port_text(Some("de-DE"), key);
+        assert_eq!(
+            save_banner_text(SaveBannerKind::Saved, Some(&menu), german),
+            "Gespeichert aus SXT"
+        );
+        assert_eq!(
+            save_banner_text(SaveBannerKind::Loaded, Some(&menu), german),
+            "Geladen aus SXT"
+        );
+        assert_eq!(
+            save_banner_text(SaveBannerKind::Autosaved, Some(&menu), german),
+            "Spiel automatisch gespeichert."
+        );
+        assert!(
+            save_banner_text(SaveBannerKind::SaveFailed, Some(&menu), german)
+                .contains("fehlgeschlagen")
+        );
+        assert!(
+            save_banner_text(SaveBannerKind::AutosaveFailed, Some(&menu), german)
+                .contains("fehlgeschlagen")
+        );
+        assert_eq!(
+            save_banner_text(SaveBannerKind::Saved, None, german),
+            "Game saved."
+        );
+    }
+
     #[test]
     fn only_initial_nonurgent_autosave_can_defer_thumbnail_completion() {
         use super::can_defer_initial_autosave;

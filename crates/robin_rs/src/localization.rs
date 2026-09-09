@@ -918,6 +918,14 @@ fn store_display_path(store: &PreferenceStore) -> PathBuf {
 /// stable keyed catalogue alongside the locale service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortTextKey {
+    GameplayLabel(crate::gameplay_settings::GameplaySetting),
+    GameplayTooltip(crate::gameplay_settings::GameplaySetting),
+    GameAutosaved,
+    CampaignClassicMap,
+    CampaignProgressTree,
+    CampaignSherwoodMuseum,
+    AutosaveFailed,
+    SaveFailed,
     Language,
     Automatic,
     Apply,
@@ -1069,6 +1077,66 @@ pub const FEATURE40_PORT_TEXT_KEYS: &[PortTextKey] = &[
 ];
 
 pub fn port_text(locale: Option<&str>, key: PortTextKey) -> &'static str {
+    let language = locale
+        .map(locale_primary)
+        .unwrap_or_else(|| "en".to_owned());
+    match key {
+        PortTextKey::CampaignClassicMap => {
+            return if language == "de" {
+                "Klassische Karte"
+            } else {
+                "Classic map"
+            };
+        }
+        PortTextKey::CampaignProgressTree => {
+            return if language == "de" {
+                "Fortschrittsbaum"
+            } else {
+                "Progress tree"
+            };
+        }
+        PortTextKey::CampaignSherwoodMuseum => {
+            return if language == "de" {
+                "Sherwood-Museum"
+            } else {
+                "Sherwood museum"
+            };
+        }
+        PortTextKey::GameplayLabel(setting) | PortTextKey::GameplayTooltip(setting) => {
+            let (label, help) = setting
+                .text(&language)
+                .or_else(|| setting.text("en"))
+                .expect("every gameplay setting has English catalogue text");
+            return if matches!(key, PortTextKey::GameplayLabel(_)) {
+                label
+            } else {
+                help
+            };
+        }
+        PortTextKey::GameAutosaved => {
+            return if language == "de" {
+                "Spiel automatisch gespeichert."
+            } else {
+                "Game autosaved."
+            };
+        }
+        PortTextKey::AutosaveFailed => {
+            return if language == "de" {
+                "Automatisches Speichern fehlgeschlagen – siehe Protokoll."
+            } else {
+                "Autosave failed - check the log."
+            };
+        }
+        PortTextKey::SaveFailed => {
+            return if language == "de" {
+                "Speichern fehlgeschlagen – vor erneutem Versuch das Protokoll prüfen."
+            } else {
+                "Save failed - check the log before retrying."
+            };
+        }
+        _ => {}
+    }
+
     if let Some(text) = feature40_text::text(locale.unwrap_or("en-US"), key)
         .or_else(|| feature40_text::text("en-US", key))
     {

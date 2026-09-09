@@ -37,146 +37,9 @@ const OPTION_COLUMN_RIGHT_X: i32 = 330;
 const OPTION_ROW_START_Y: i32 = 100;
 const OPTION_ROW_GAP: i32 = 6;
 const OPTION_COLUMN_WIDTH_LIMIT: i32 = 280;
-pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
-#[cfg(test)]
-pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
-#[cfg(test)]
-pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
-#[cfg(test)]
-pub(crate) const TIMED_MISSIONS_OPTION_INDEX: usize = 34;
-#[cfg(test)]
-pub(crate) const DYNAMIC_AMBIENCE_OPTION_INDEX: usize = 35;
-#[cfg(test)]
-pub(crate) const DIPLOMACY_OPTION_INDEX: usize = 36;
-#[cfg(test)]
-pub(crate) const NPC_FACTION_WARS_OPTION_INDEX: usize = 37;
-#[cfg(test)]
-pub(crate) const MORE_COMBAT_GESTURES_OPTION_INDEX: usize = 38;
-#[cfg(test)]
-pub(crate) const GESTURE_QUALITY_DAMAGE_OPTION_INDEX: usize = 39;
-#[cfg(test)]
-pub(crate) const COMBAT_GESTURE_GUIDE_OPTION_INDEX: usize = 40;
-#[cfg(test)]
-pub(crate) const COMBAT_GESTURE_COACH_OPTION_INDEX: usize = 41;
-#[cfg(test)]
-pub(crate) const PLAN_QUICK_ACTIONS_OPTION_INDEX: usize = 42;
-#[cfg(test)]
-pub(crate) const FOG_OF_WAR_OPTION_INDEX: usize = 43;
-pub(crate) const SPELLFORGE_OPTION_INDEX: usize = 44;
-
-/// Stable identity for every persisted Gameplay row.
-///
-/// Display order is defined by [`GameplaySetting::ALL`]. Simulation authority
-/// and mutation dispatch match this type, never a rendered row position.
-#[repr(usize)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GameplaySetting {
-    FixHardReactionTimes,
-    ControlTacticalUnits,
-    EnableUnbinding,
-    ShowProductionForecast,
-    ReusableCloaks,
-    CampaignPresentation,
-    CleanHandsNpcKillsInvalidate,
-    ShowDetailedXp,
-    ShowSpeedrunTracker,
-    ShowCleanHandsTracker,
-    ShowGhostTracker,
-    ShowPileOfBonesTracker,
-    ShowNewAchievementTrackers,
-    ShowAchievementBadges,
-    ShowAchievementDebrief,
-    TouchCameraGestures,
-    SherwoodTrading,
-    AutosaveEnabled,
-    AppleCombatInterrupt,
-    WaspReliableAcquisition,
-    StoneGroundDistraction,
-    StoneLongerRange,
-    NetSelectiveImmunity,
-    AleReliableDistraction,
-    NoiseDistractionFeedback,
-    PreviewAppleEffect,
-    PreviewStoneDirectEffect,
-    PreviewStoneDistractionArea,
-    PreviewNetCaptureArea,
-    PreviewNetCrumplePrediction,
-    PreviewAleEffect,
-    PreviewPurseEffect,
-    PreviewWaspArea,
-    DetailedSaveMetadata,
-    EnableTimedMissions,
-    EnableDynamicAmbience,
-    Diplomacy,
-    NpcFactionWars,
-    MoreCombatGestures,
-    GestureQualityDamage,
-    ShowCombatGestureGuide,
-    CombatGestureCoach,
-    PlanQuickActions,
-    FogOfWar,
-    EnableSpellforgeMissions,
-    ReversibleBackgroundPatches,
-}
+pub(crate) use crate::gameplay_settings::GameplaySetting;
 
 impl GameplaySetting {
-    pub(crate) const ALL: [Self; 46] = [
-        Self::FixHardReactionTimes,
-        Self::ControlTacticalUnits,
-        Self::EnableUnbinding,
-        Self::ShowProductionForecast,
-        Self::ReusableCloaks,
-        Self::CampaignPresentation,
-        Self::CleanHandsNpcKillsInvalidate,
-        Self::ShowDetailedXp,
-        Self::ShowSpeedrunTracker,
-        Self::ShowCleanHandsTracker,
-        Self::ShowGhostTracker,
-        Self::ShowPileOfBonesTracker,
-        Self::ShowNewAchievementTrackers,
-        Self::ShowAchievementBadges,
-        Self::ShowAchievementDebrief,
-        Self::TouchCameraGestures,
-        Self::SherwoodTrading,
-        Self::AutosaveEnabled,
-        Self::AppleCombatInterrupt,
-        Self::WaspReliableAcquisition,
-        Self::StoneGroundDistraction,
-        Self::StoneLongerRange,
-        Self::NetSelectiveImmunity,
-        Self::AleReliableDistraction,
-        Self::NoiseDistractionFeedback,
-        Self::PreviewAppleEffect,
-        Self::PreviewStoneDirectEffect,
-        Self::PreviewStoneDistractionArea,
-        Self::PreviewNetCaptureArea,
-        Self::PreviewNetCrumplePrediction,
-        Self::PreviewAleEffect,
-        Self::PreviewPurseEffect,
-        Self::PreviewWaspArea,
-        Self::DetailedSaveMetadata,
-        Self::EnableTimedMissions,
-        Self::EnableDynamicAmbience,
-        Self::Diplomacy,
-        Self::NpcFactionWars,
-        Self::MoreCombatGestures,
-        Self::GestureQualityDamage,
-        Self::ShowCombatGestureGuide,
-        Self::CombatGestureCoach,
-        Self::PlanQuickActions,
-        Self::FogOfWar,
-        Self::EnableSpellforgeMissions,
-        Self::ReversibleBackgroundPatches,
-    ];
-
-    pub(crate) const fn index(self) -> usize {
-        self as usize
-    }
-
-    pub(crate) fn from_index(index: usize) -> Option<Self> {
-        Self::ALL.get(index).copied()
-    }
-
     pub(crate) const fn requires_host_authority(self) -> bool {
         matches!(
             self,
@@ -203,178 +66,56 @@ impl GameplaySetting {
     }
 }
 
-/// Toggle rows shown on the screen, in display order.
-pub(crate) const OPTION_LABELS: &[&str] = &[
-    "Fix Hard Reaction Times",
-    "Control Tactical Units",
-    "Allow Untying NPCs",
-    "Sherwood Production Forecast",
-    "Reusable Cloaks",
-    "Campaign Presentation",
-    "NPC Kills Break Clean Hands",
-    "Detailed Sword/Bow XP",
-    "Speedrun Clock",
-    "Clean Hands Tracker",
-    "Ghost Tracker",
-    "Pile-o-Bones Tracker",
-    "Additional Achievement Trackers",
-    "Campaign Achievement Badges",
-    "Achievement Debrief Details",
-    "Touch Camera Gestures",
-    "Sherwood Item Trading",
-    "Rotating Autosaves",
-    "Apple Combat Interrupt",
-    "Reliable Wasp Acquisition",
-    "Stone Ground Distraction",
-    "Longer Stone Range",
-    "Selective Net Immunity",
-    "Reliable Ale Distraction",
-    "Stone Distraction Feedback",
-    "Preview Apple Effect",
-    "Preview Stone Direct Hit",
-    "Preview Stone Noise Area",
-    "Preview Net Capture Area",
-    "Predict Net Crumpling",
-    "Preview Ale Effect",
-    "Preview Purse Effect",
-    "Preview Wasp Area",
-    "Detailed Save Metadata",
-    "Authored Mission Timers",
-    "Dynamic Ambience Gameplay",
-    "Mission Diplomacy",
-    "NPC Faction Wars",
-    "More Combat Gestures",
-    "Gesture Quality Damage",
-    "Show Combat Gesture Guide",
-    "Combat Gesture Coach",
-    "Plan Quick Actions",
-    "Fog of War",
-    "Allow Spellforge Missions (Next Launch)",
-    "Reversible Background Patches (Next Launch)",
-];
-
-const OPTION_TOOLTIPS: &[&str] = &[
-    "Use the intended Hard reaction-time multiplier.",
-    "Allow high-level commands for actors authored with the tactical command interface.",
-    "Allow a hero with Tie to release a tied NPC.",
-    "Show live item-production forecasts in Sherwood.",
-    "Allow heroes with shipped cape art to put their cloaks back on.",
-    "Cycle the campaign-map presentation.",
-    "Count hostile deaths caused by other NPCs against Clean Hands.",
-    "Show detailed sword and bow experience progress.",
-    "Show the current mission speedrun clock.",
-    "Show live Clean Hands achievement progress.",
-    "Show live Ghost achievement progress.",
-    "Show live Pile-o-Bones achievement progress.",
-    "Show live progress for the additional mission achievements.",
-    "Show achievement badges in campaign presentations.",
-    "Include achievement details in mission debriefs.",
-    "Enable one-finger camera panning, anchored pinch zoom, and touch inertia.",
-    "Allow the host to sell Sherwood production inventory for campaign ransom.",
-    "Keep rotating campaign and mission autosaves according to the autosave policy.",
-    "Let direct apple hits interrupt active swordfights.",
-    "Increase initial wasp acquisition from 50 to 75 world units.",
-    "Allow ground-thrown stones to attract eligible hostiles within 240 world units.",
-    "Use base range 300 for stones instead of the shipped 200.",
-    "Skip VIPs, riders, and Stuteley while catching other people in the net circle.",
-    "Let outdoor non-VIP soldiers with no beer interest accept ale at potency 20.",
-    "Play the optional impact cue for a ground-thrown stone distraction.",
-    "Explain apple daze, scent, and combat-interrupt eligibility while aiming.",
-    "Explain stone direct-hit damage and concussion while aiming.",
-    "Show the 240-unit ground-stone distraction area.",
-    "Show the original 40-unit net capture area and friendly-capture behavior.",
-    "Predict victim and terrain conditions that crumple a net.",
-    "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
-    "Explain purse value and money-interest conditions.",
-    "Show wasp acquisition range and target eligibility.",
-    "Show mission and player provenance, relative age, and expanded save details.",
-    "Enforce time limits authored by Rust JSON missions.",
-    "Advance authored day, night, and fog gameplay schedules.",
-    "Enable mission-authored and runtime faction relationships.",
-    "Allow hostile non-player factions to perceive and fight one another.",
-    "Recognize nine additional sword gestures as composite two-strike techniques.",
-    "Scale sword damage to the recognized gesture's deterministic quality tier.",
-    "Show reference paths for the additional combat gestures while swordfighting.",
-    "Briefly show the recognized or nearest gesture and its quality after drawing.",
-    "Allow the rebindable Plan modifier and touch HUD to queue quick actions.",
-    "Enable shared allied sight, explored terrain, and temporary hostile intelligence.",
-    "Allow executable Spellforge custom missions. This takes effect on the next mission launch.",
-    "Repeat animated terrain triggers to reverse their animation, obstacles and doors. Applies to newly launched missions; off preserves original one-shot patches.",
-];
-
-pub(crate) fn option_tooltip(index: usize) -> &'static str {
-    OPTION_TOOLTIPS
-        .get(index)
-        .copied()
-        .unwrap_or_else(|| panic!("gameplay option tooltip index {index} is out of range"))
-}
-
-/// Port-owned Gameplay strings shared by the blocking options screen and the
-/// cooperative pause-side state. Keeping one resolved catalogue snapshot
-/// prevents the multiplayer-safe path from silently falling back to English.
-#[derive(Debug, Clone, Copy)]
+/// Locale snapshot shared by the standalone and cooperative options screens.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LocalizedGameplayText {
-    spellforge_label: &'static str,
-    spellforge_tooltip: &'static str,
-    manage_content: &'static str,
+    locale: Option<String>,
 }
-
 impl LocalizedGameplayText {
-    pub(crate) fn from_application_context(
-        application_context: &crate::host::ApplicationContext,
-    ) -> Self {
-        let required = |key| {
-            application_context
-                .port_text(key)
-                .unwrap_or_else(|error| panic!("Gameplay screen lost localized text: {error}"))
-        };
+    pub(crate) fn from_application_context(context: &crate::host::ApplicationContext) -> Self {
         Self {
-            spellforge_label: required(PortTextKey::SpellforgeGameplayAllowLabel),
-            spellforge_tooltip: required(PortTextKey::SpellforgeGameplayAllowTooltip),
-            manage_content: required(PortTextKey::SpellforgeManageContent),
+            locale: context
+                .active_locale()
+                .expect("Gameplay screen requires localized text"),
         }
     }
-
     #[cfg(test)]
     pub(crate) fn for_locale(locale: &str) -> Self {
         Self {
-            spellforge_label: crate::localization::port_text(
-                Some(locale),
-                PortTextKey::SpellforgeGameplayAllowLabel,
-            ),
-            spellforge_tooltip: crate::localization::port_text(
-                Some(locale),
-                PortTextKey::SpellforgeGameplayAllowTooltip,
-            ),
-            manage_content: crate::localization::port_text(
-                Some(locale),
-                PortTextKey::SpellforgeManageContent,
-            ),
+            locale: Some(locale.to_owned()),
         }
     }
-
-    pub(crate) fn option_label(self, index: usize) -> &'static str {
-        if index == SPELLFORGE_OPTION_INDEX {
-            self.spellforge_label
-        } else {
-            OPTION_LABELS
-                .get(index)
-                .copied()
-                .unwrap_or_else(|| panic!("gameplay option label index {index} is out of range"))
-        }
+    pub(crate) fn option_label(&self, index: usize) -> &'static str {
+        let setting = GameplaySetting::from_index(index).expect("valid gameplay row");
+        crate::localization::port_text(self.locale.as_deref(), setting.label_key())
     }
-
-    pub(crate) fn option_tooltip(self, index: usize) -> &'static str {
-        if index == SPELLFORGE_OPTION_INDEX {
-            self.spellforge_tooltip
-        } else {
-            option_tooltip(index)
-        }
+    pub(crate) fn option_tooltip(&self, index: usize) -> &'static str {
+        let setting = GameplaySetting::from_index(index).expect("valid gameplay row");
+        crate::localization::port_text(self.locale.as_deref(), setting.tooltip_key())
     }
-
-    pub(crate) fn manage_content(self) -> &'static str {
-        self.manage_content
+    pub(crate) fn campaign_presentation(
+        &self,
+        mode: robin_engine::gameplay_config::CampaignPresentationMode,
+    ) -> &'static str {
+        use robin_engine::gameplay_config::CampaignPresentationMode::*;
+        let key = match mode {
+            ClassicMap => PortTextKey::CampaignClassicMap,
+            ProgressTree => PortTextKey::CampaignProgressTree,
+            SherwoodMuseum => PortTextKey::CampaignSherwoodMuseum,
+        };
+        crate::localization::port_text(self.locale.as_deref(), key)
     }
+    pub(crate) fn manage_content(&self) -> &'static str {
+        crate::localization::port_text(self.locale.as_deref(), PortTextKey::SpellforgeManageContent)
+    }
+}
+#[cfg(test)]
+fn english_labels() -> Vec<&'static str> {
+    let text = LocalizedGameplayText::for_locale("en-US");
+    GameplaySetting::ALL
+        .iter()
+        .map(|setting| text.option_label(setting.index()))
+        .collect()
 }
 
 /// Elide a localized label at grapheme boundaries. The full text remains in
@@ -425,7 +166,7 @@ pub(crate) fn fit_button_label(
 }
 
 fn standalone_page_count() -> usize {
-    OPTION_LABELS
+    GameplaySetting::ALL
         .len()
         .div_ceil(STANDALONE_OPTIONS_PER_PAGE)
         .max(1)
@@ -434,7 +175,7 @@ fn standalone_page_count() -> usize {
 fn standalone_visible_option_range(page: usize) -> std::ops::Range<usize> {
     let page = page.min(standalone_page_count() - 1);
     let start = page * STANDALONE_OPTIONS_PER_PAGE;
-    start..(start + STANDALONE_OPTIONS_PER_PAGE).min(OPTION_LABELS.len())
+    start..(start + STANDALONE_OPTIONS_PER_PAGE).min(GameplaySetting::ALL.len())
 }
 
 fn standalone_option_rect(
@@ -479,7 +220,8 @@ fn build_standalone_frame(
     for (visible_index, option_index) in visible.enumerate() {
         let (x, y, field_w, field_h) =
             standalone_option_rect(visible_index, visible_count, field_w, field_h);
-        let enabled = option_index != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable;
+        let enabled =
+            option_index != GameplaySetting::SherwoodTrading.index() || sherwood_trading_editable;
         let label = fit_button_label(
             resources,
             localized.option_label(option_index),
@@ -600,6 +342,7 @@ pub async fn show_gameplay(
 
 /// Owned, one-frame state for the gameplay settings page.
 pub struct GameplayScreenState {
+    localized: LocalizedGameplayText,
     working: GameplayConfig,
     original: GameplayConfig,
     page: usize,
@@ -638,6 +381,7 @@ impl GameplayScreenState {
         input_state.seed_mouse_from_window(event_pump, transform);
 
         Self {
+            localized: LocalizedGameplayText::from_application_context(application_context),
             working,
             original: *config,
             page,
@@ -734,9 +478,13 @@ impl GameplayScreenState {
                 ID_CONTENT => {
                     self.content_requested = true;
                 }
-                id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
+                id if (ID_OPT_BASE..ID_OPT_BASE + GameplaySetting::ALL.len() as u32)
+                    .contains(&id) =>
+                {
                     let index = (id - ID_OPT_BASE) as usize;
-                    if index != SHERWOOD_TRADING_OPTION_INDEX || self.sherwood_trading_editable {
+                    if index != GameplaySetting::SherwoodTrading.index()
+                        || self.sherwood_trading_editable
+                    {
                         apply_option_toggle(&mut self.working, index);
                     }
                 }
@@ -766,7 +514,7 @@ impl GameplayScreenState {
             render_text_virt_font(renderer, font, self.transform, "Gameplay Tweaks", 30, 80);
         }
 
-        for i in 0..OPTION_LABELS.len() as u32 {
+        for i in 0..GameplaySetting::ALL.len() as u32 {
             if let Some(w) = self.frame.widget(ID_OPT_BASE + i) {
                 widget_bridge::draw_widget_radio(
                     renderer,
@@ -777,14 +525,18 @@ impl GameplayScreenState {
                 );
             }
         }
-        if self.frame.widget(ID_OPT_BASE + 5).is_some()
+        if self
+            .frame
+            .widget(ID_OPT_BASE + GameplaySetting::CampaignPresentation.index() as u32)
+            .is_some()
             && let Some(font) = resources.label_font_any()
         {
             render_text_virt_font(
                 renderer,
                 font,
                 self.transform,
-                self.working.campaign_presentation.label(),
+                self.localized
+                    .campaign_presentation(self.working.campaign_presentation),
                 30,
                 335,
             );
@@ -1052,6 +804,35 @@ mod tests {
     ];
 
     #[test]
+    fn every_setting_has_keyed_text_and_german_uses_the_catalogue() {
+        let en = LocalizedGameplayText::for_locale("en-US");
+        let de = LocalizedGameplayText::for_locale("de-DE");
+        let unknown = LocalizedGameplayText::for_locale("zz-ZZ");
+        for (index, setting) in GameplaySetting::ALL.into_iter().enumerate() {
+            assert_eq!(setting.index(), index);
+            assert_eq!(GameplaySetting::from_index(index), Some(setting));
+            assert!(!en.option_label(index).is_empty());
+            assert!(!en.option_tooltip(index).is_empty());
+            assert_ne!(en.option_label(index), de.option_label(index));
+            assert_ne!(en.option_tooltip(index), de.option_tooltip(index));
+            assert_eq!(unknown.option_label(index), en.option_label(index));
+            assert_eq!(unknown.option_tooltip(index), en.option_tooltip(index));
+            assert_eq!(
+                serde_json::from_str::<GameplaySetting>(&serde_json::to_string(&setting).unwrap())
+                    .unwrap(),
+                setting
+            );
+        }
+        assert!(GameplaySetting::from_index(GameplaySetting::ALL.len()).is_none());
+        assert_eq!(
+            de.campaign_presentation(
+                robin_engine::gameplay_config::CampaignPresentationMode::ProgressTree
+            ),
+            "Fortschrittsbaum"
+        );
+    }
+
+    #[test]
     fn standalone_pages_cover_every_gameplay_option_once() {
         assert_eq!(standalone_page_count(), 4);
         assert_eq!(standalone_visible_option_range(0), 0..12);
@@ -1062,7 +843,7 @@ mod tests {
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
             .collect();
-        assert_eq!(covered, (0..OPTION_LABELS.len()).collect::<Vec<_>>());
+        assert_eq!(covered, (0..GameplaySetting::ALL.len()).collect::<Vec<_>>());
     }
 
     #[test]
@@ -1100,14 +881,14 @@ mod tests {
         for locale in SHIPPING_LOCALES {
             let localized = LocalizedGameplayText::for_locale(locale);
             assert_eq!(
-                localized.option_label(SPELLFORGE_OPTION_INDEX),
+                localized.option_label(GameplaySetting::EnableSpellforgeMissions.index()),
                 crate::localization::port_text(
                     Some(locale),
                     PortTextKey::SpellforgeGameplayAllowLabel,
                 )
             );
             assert_eq!(
-                localized.option_tooltip(SPELLFORGE_OPTION_INDEX),
+                localized.option_tooltip(GameplaySetting::EnableSpellforgeMissions.index()),
                 crate::localization::port_text(
                     Some(locale),
                     PortTextKey::SpellforgeGameplayAllowTooltip,
@@ -1117,8 +898,16 @@ mod tests {
                 localized.manage_content(),
                 crate::localization::port_text(Some(locale), PortTextKey::SpellforgeManageContent)
             );
-            assert!(!localized.option_label(SPELLFORGE_OPTION_INDEX).is_empty());
-            assert!(!localized.option_tooltip(SPELLFORGE_OPTION_INDEX).is_empty());
+            assert!(
+                !localized
+                    .option_label(GameplaySetting::EnableSpellforgeMissions.index())
+                    .is_empty()
+            );
+            assert!(
+                !localized
+                    .option_tooltip(GameplaySetting::EnableSpellforgeMissions.index())
+                    .is_empty()
+            );
             assert!(!localized.manage_content().is_empty());
         }
     }
@@ -1131,7 +920,7 @@ mod tests {
             .flat_map(|locale| {
                 let localized = LocalizedGameplayText::for_locale(locale);
                 [
-                    localized.option_label(SPELLFORGE_OPTION_INDEX),
+                    localized.option_label(GameplaySetting::EnableSpellforgeMissions.index()),
                     localized.manage_content(),
                 ]
             })
@@ -1146,7 +935,7 @@ mod tests {
     #[test]
     fn every_gameplay_row_has_a_live_setting_mapping() {
         let baseline = GameplayConfig::default();
-        for (index, label) in OPTION_LABELS.iter().enumerate() {
+        for (index, label) in english_labels().iter().enumerate() {
             let mut config = baseline;
             let selected_before = is_option_selected(&config, index);
             apply_option_toggle(&mut config, index);
@@ -1169,7 +958,7 @@ mod tests {
 
     #[test]
     fn multiplayer_authority_classification_covers_every_simulation_row() {
-        let authoritative: Vec<_> = (0..OPTION_LABELS.len())
+        let authoritative: Vec<_> = (0..GameplaySetting::ALL.len())
             .filter(|index| option_requires_host_authority(*index))
             .collect();
         assert_eq!(
@@ -1193,7 +982,7 @@ mod tests {
     #[test]
     fn gameplay_rows_preserve_independent_setting_mappings() {
         assert_eq!(
-            OPTION_LABELS,
+            english_labels(),
             [
                 "Fix Hard Reaction Times",
                 "Control Tactical Units",
@@ -1243,7 +1032,10 @@ mod tests {
                 "Reversible Background Patches (Next Launch)",
             ]
         );
-        assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
+        let text = LocalizedGameplayText::for_locale("en-US");
+        for setting in GameplaySetting::ALL {
+            assert!(!text.option_tooltip(setting.index()).is_empty());
+        }
 
         let mut config = GameplayConfig::default();
         assert!(is_option_selected(&config, 0));
@@ -1256,39 +1048,69 @@ mod tests {
         assert!(is_option_selected(&config, 13));
         assert!(is_option_selected(&config, 14));
         assert!(is_option_selected(&config, 15));
-        assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
-        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::SherwoodTrading.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::AutosaveEnabled.index()
+        ));
         assert!(is_option_selected(&config, 33));
         assert!(is_option_selected(
             &config,
-            DETAILED_SAVE_METADATA_OPTION_INDEX
-        ));
-        assert!(is_option_selected(&config, TIMED_MISSIONS_OPTION_INDEX));
-        assert!(is_option_selected(&config, DYNAMIC_AMBIENCE_OPTION_INDEX));
-        assert!(is_option_selected(&config, DIPLOMACY_OPTION_INDEX));
-        assert!(is_option_selected(&config, NPC_FACTION_WARS_OPTION_INDEX));
-        assert!(is_option_selected(
-            &config,
-            MORE_COMBAT_GESTURES_OPTION_INDEX
+            GameplaySetting::DetailedSaveMetadata.index()
         ));
         assert!(is_option_selected(
             &config,
-            GESTURE_QUALITY_DAMAGE_OPTION_INDEX
+            GameplaySetting::EnableTimedMissions.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::EnableDynamicAmbience.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::Diplomacy.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::NpcFactionWars.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::MoreCombatGestures.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::GestureQualityDamage.index()
         ));
         assert!(!is_option_selected(
             &config,
-            COMBAT_GESTURE_GUIDE_OPTION_INDEX
+            GameplaySetting::ShowCombatGestureGuide.index()
         ));
         assert!(!is_option_selected(
             &config,
-            COMBAT_GESTURE_COACH_OPTION_INDEX
+            GameplaySetting::CombatGestureCoach.index()
         ));
-        assert!(is_option_selected(&config, PLAN_QUICK_ACTIONS_OPTION_INDEX));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::PlanQuickActions.index()
+        ));
         // Fog of war is opt-in, matching GameplayConfig and its dedicated test.
-        assert!(!is_option_selected(&config, FOG_OF_WAR_OPTION_INDEX));
-        assert!(is_option_selected(&config, SPELLFORGE_OPTION_INDEX));
+        assert!(!is_option_selected(
+            &config,
+            GameplaySetting::FogOfWar.index()
+        ));
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::EnableSpellforgeMissions.index()
+        ));
 
-        apply_option_toggle(&mut config, SPELLFORGE_OPTION_INDEX);
+        apply_option_toggle(
+            &mut config,
+            GameplaySetting::EnableSpellforgeMissions.index(),
+        );
         assert!(!config.enable_spellforge_missions);
 
         apply_option_toggle(&mut config, 1);
@@ -1357,14 +1179,14 @@ mod tests {
         assert!(!config.item_gameplay.net_selective_immunity);
         assert!(config.item_gameplay.ale_reliable_distraction);
         assert_eq!(config.autosave_enabled, autosave_enabled);
-        apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
+        apply_option_toggle(&mut config, GameplaySetting::SherwoodTrading.index());
         assert!(!config.sherwood_trading);
 
-        apply_option_toggle(&mut config, PLAN_QUICK_ACTIONS_OPTION_INDEX);
+        apply_option_toggle(&mut config, GameplaySetting::PlanQuickActions.index());
         assert!(!config.plan_quick_actions);
 
         let autosave_enabled = config.autosave_enabled;
-        apply_option_toggle(&mut config, DETAILED_SAVE_METADATA_OPTION_INDEX);
+        apply_option_toggle(&mut config, GameplaySetting::DetailedSaveMetadata.index());
         assert!(!config.detailed_save_metadata);
         assert_eq!(config.autosave_enabled, autosave_enabled);
     }
@@ -1373,10 +1195,19 @@ mod tests {
     fn autosave_has_an_independent_gameplay_toggle() {
         let mut config = GameplayConfig::default();
         let before = config;
-        assert_eq!(OPTION_LABELS[AUTOSAVE_OPTION_INDEX], "Rotating Autosaves");
-        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
-        apply_option_toggle(&mut config, AUTOSAVE_OPTION_INDEX);
-        assert!(!is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        assert_eq!(
+            english_labels()[GameplaySetting::AutosaveEnabled.index()],
+            "Rotating Autosaves"
+        );
+        assert!(is_option_selected(
+            &config,
+            GameplaySetting::AutosaveEnabled.index()
+        ));
+        apply_option_toggle(&mut config, GameplaySetting::AutosaveEnabled.index());
+        assert!(!is_option_selected(
+            &config,
+            GameplaySetting::AutosaveEnabled.index()
+        ));
         assert_eq!(
             config.fix_hard_reaction_times,
             before.fix_hard_reaction_times
@@ -1404,10 +1235,10 @@ mod tests {
     fn every_combat_gesture_setting_is_independently_toggleable() {
         let mut config: GameplayConfig = serde_json::from_str("{}").expect("empty legacy config");
         for index in [
-            MORE_COMBAT_GESTURES_OPTION_INDEX,
-            GESTURE_QUALITY_DAMAGE_OPTION_INDEX,
-            COMBAT_GESTURE_GUIDE_OPTION_INDEX,
-            COMBAT_GESTURE_COACH_OPTION_INDEX,
+            GameplaySetting::MoreCombatGestures.index(),
+            GameplaySetting::GestureQualityDamage.index(),
+            GameplaySetting::ShowCombatGestureGuide.index(),
+            GameplaySetting::CombatGestureCoach.index(),
         ] {
             assert!(!is_option_selected(&config, index));
             apply_option_toggle(&mut config, index);
@@ -1423,9 +1254,15 @@ mod tests {
     fn fog_of_war_has_an_independent_default_off_toggle() {
         let mut config = GameplayConfig::default();
         let before = config;
-        assert_eq!(OPTION_LABELS[FOG_OF_WAR_OPTION_INDEX], "Fog of War");
-        assert!(!is_option_selected(&config, FOG_OF_WAR_OPTION_INDEX));
-        apply_option_toggle(&mut config, FOG_OF_WAR_OPTION_INDEX);
+        assert_eq!(
+            english_labels()[GameplaySetting::FogOfWar.index()],
+            "Fog of War"
+        );
+        assert!(!is_option_selected(
+            &config,
+            GameplaySetting::FogOfWar.index()
+        ));
+        apply_option_toggle(&mut config, GameplaySetting::FogOfWar.index());
         assert!(config.fog_of_war);
         assert_eq!(config.diplomacy, before.diplomacy);
         assert_eq!(config.npc_faction_wars, before.npc_faction_wars);

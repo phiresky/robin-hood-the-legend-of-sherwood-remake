@@ -76,41 +76,44 @@ pub(super) async fn execute(
             // `slot = Some(idx)` ⇒ player-chosen slot.
             let (result, explicit_slot) = match slot {
                 Some(idx) => (
-                    save_manager
-                        .write_save_from_engine(
-                            host,
-                            game,
-                            idx,
-                            engine,
-                            mission_id,
-                            Some(profiles),
-                            thumb_ref,
-                        )
-                        .map(|_committed| ()),
-                    true,
-                ),
-                None => (
-                    save_manager.write_continue_save(
+                    save_manager.write_save_and_continue(
                         host,
                         game,
+                        idx,
                         engine,
                         mission_id,
                         Some(profiles),
                         thumb_ref,
                     ),
+                    true,
+                ),
+                None => (
+                    save_manager
+                        .write_continue_save(
+                            host,
+                            game,
+                            engine,
+                            mission_id,
+                            Some(profiles),
+                            thumb_ref,
+                        )
+                        .map(|()| None),
                     false,
                 ),
             };
-            if let Err(err) = result {
+            if let Err(err) = &result {
                 tracing::error!("Save failed: {err:#}");
                 outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 tracing::info!("Save completed (mission={mission_id})");
                 event = replay_save_written_event(engine, host, game);
-                // Mirror the manual save into the Continue slot. The
-                // guard keeps Continue→Continue copies from clobbering
-                // themselves; Restart / Sherwood slots also skip the
-                // mirror and the banner branch.
+                if let Ok(Some(error)) = result {
+                    tracing::warn!("Continue mirror failed: {error}");
+                    notices.enqueue_save_failed(format!("Continue mirror: {error}"));
+                }
+                // Persistence already mirrored the capture where required.
+                // Continue/Restart skip mirroring; Sherwood also suppresses
+                // the ordinary saved banner, but retains its Continue mirror.
                 if explicit_slot {
                     let is_special = slot
                         .and_then(|idx| save_manager.get(idx))
@@ -119,19 +122,6 @@ pub(super) async fn execute(
                         is_special,
                         Some(SpecialSlot::Continue) | Some(SpecialSlot::Restart)
                     );
-                    if !is_continue_or_restart
-                        && let Err(err) = save_manager.write_continue_save(
-                            host,
-                            game,
-                            engine,
-                            mission_id,
-                            Some(profiles),
-                            thumb_ref,
-                        )
-                    {
-                        tracing::warn!("Continue-mirror after save failed: {err:#}");
-                        notices.enqueue_save_failed(format!("Continue mirror: {err:#}"));
-                    }
                     // Show "Game saved." banner unless the slot is one
                     // of the filtered types (Restart / Sherwood).
                     let is_sherwood = matches!(is_special, Some(SpecialSlot::Sherwood));
@@ -265,7 +255,7 @@ pub(super) async fn execute(
                 }
                 return outcome;
             }
-            match save_manager.write_quick_save(
+            match save_manager.write_quick_save_and_continue(
                 host,
                 game,
                 engine,
@@ -277,21 +267,12 @@ pub(super) async fn execute(
                     tracing::error!("Quick save failed: {err:#}");
                     outcome.banner = Some(SaveBannerKind::SaveFailed);
                 }
-                _ => {
+                Ok(mirror_error) => {
                     tracing::info!("Quick save written (mission={mission_id})");
                     event = replay_save_written_event(engine, host, game);
-                    // QuickSave is neither Continue nor Restart, so the
-                    // Continue-slot mirror runs.
-                    if let Err(err) = save_manager.write_continue_save(
-                        host,
-                        game,
-                        engine,
-                        mission_id,
-                        Some(profiles),
-                        thumb_ref,
-                    ) {
-                        tracing::warn!("Continue-mirror after quick-save failed: {err:#}");
-                        notices.enqueue_save_failed(format!("Continue mirror: {err:#}"));
+                    if let Some(error) = mirror_error {
+                        tracing::warn!("Continue mirror after quick save failed: {error}");
+                        notices.enqueue_save_failed(format!("Continue mirror: {error}"));
                     }
                     outcome.banner = Some(SaveBannerKind::Saved);
                 }

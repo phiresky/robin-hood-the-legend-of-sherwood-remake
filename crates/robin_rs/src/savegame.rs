@@ -597,18 +597,6 @@ impl SaveGameManager {
     /// Save the current engine state to the "Continue" auto-save slot.
     /// Called after every successful manual save and at mission quit.
     ///
-    /// We re-serialize the live engine via `write_save_from_engine`
-    /// rather than byte-copying from the just-written manual save.  In
-    /// practice the engine is unchanged between the two writes so the
-    /// contents are equivalent, and re-serializing shares the same
-    /// write path with every other save kind (Quick/Restart/Sherwood).
-    ///
-    /// `game` is threaded through so the [`GamePersistentState`] tail
-    /// (widget-enable flags + campaign-map display bits) survives the
-    /// Continue slot — without it the next `apply_to_with_game` would
-    /// see `game_persistent = None` and keep the live Game's values,
-    /// which for the Continue flow is "whatever the player last did
-    /// after the save", not the saved state.
     pub fn write_continue_save(
         &mut self,
         host: &mut Host,
@@ -652,7 +640,7 @@ impl SaveGameManager {
 
     /// Save the current engine state to the "QuickSave" slot.
     /// The previous quick save (if any) is rotated to "ExQuickSave".
-    pub fn write_quick_save(
+    fn write_quick_save_payload(
         &mut self,
         host: &mut Host,
         game: &crate::game::Game,
@@ -660,7 +648,8 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
+    ) -> Result<save_file::SerializedSave> {
+        Self::require_synchronous_storage()?;
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
         self.reconcile_quick_slots()?;
@@ -686,7 +675,8 @@ impl SaveGameManager {
             current.text.clone(),
             provenance,
         )?;
-        let bytes = serde_json::to_vec_pretty(&save).context("preparing quick save")?;
+        let payload = save_file::SerializedSave::new(&save)?;
+        let bytes = payload.encode(&current.text)?;
         Self::sync_slot_metadata_from_header(&mut current, &save.header)?;
         Self::sync_slot_campaign_metadata(
             &mut current,
@@ -730,7 +720,7 @@ impl SaveGameManager {
         self.publish_thumbnail(idx, thumbnail);
         self.sync_slot_metadata_from_save(idx, &save, profiles)?;
         self.publish_index().map_err(anyhow::Error::msg)?;
-        Ok(())
+        Ok(payload)
     }
 
     /// Save the current engine state to the "Restart" auto-save slot.
@@ -1415,6 +1405,7 @@ impl SaveGameManager {
         self.write_save_from_engine_with_diagnostic(
             host, game, index, engine, mission_id, profiles, thumbnail, false,
         )
+        .map(|(committed, _)| committed)
     }
 
     /// Write a local multiplayer diagnostic. It is deliberately tagged in
@@ -1433,6 +1424,7 @@ impl SaveGameManager {
         self.write_save_from_engine_with_diagnostic(
             host, game, index, engine, mission_id, profiles, thumbnail, true,
         )
+        .map(|(committed, _)| committed)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1446,7 +1438,7 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
         multiplayer_diagnostic: bool,
-    ) -> Result<CommittedSave> {
+    ) -> Result<(CommittedSave, save_file::SerializedSave)> {
         Self::require_synchronous_storage()?;
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
@@ -1477,9 +1469,90 @@ impl SaveGameManager {
         );
         metadata.validate_published_metadata()?;
         save.validate_current_schema()?;
-        let bytes =
-            serde_json::to_vec_pretty(&save).context("serialize synchronous save payload")?;
+        let payload = save_file::SerializedSave::new(&save)?;
+        let bytes = payload.encode(&metadata.text)?;
+        let committed = self.commit_synchronous(index, metadata, &bytes, thumbnail)?;
+        Ok((committed, payload))
+    }
+
+    /// Publish the selected slot first, then mirror the same capture if its
+    /// slot policy requires it. Some reports only mirror failure; Err means
+    /// the primary publication failed.
+    pub(crate) fn write_save_and_continue(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        index: usize,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<Option<String>> {
+        let (committed, payload) = self.write_save_from_engine_with_diagnostic(
+            host, game, index, engine, mission_id, profiles, thumbnail, false,
+        )?;
+        let index = self.resolve_handle(committed.slot())?;
+        if matches!(
+            self.catalog[index].special,
+            Some(SpecialSlot::Continue | SpecialSlot::Restart)
+        ) {
+            return Ok(None);
+        }
+        Ok(self
+            .mirror_captured_continue(index, &payload, thumbnail)
+            .err()
+            .map(|e| format!("{e:#}")))
+    }
+
+    pub(crate) fn write_quick_save_and_continue(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<Option<String>> {
+        let payload =
+            self.write_quick_save_payload(host, game, engine, mission_id, profiles, thumbnail)?;
+        let index = self
+            .find_by_filename(save_file::special_slots::QUICK)
+            .context("published quick save lost its slot")?;
+        Ok(self
+            .mirror_captured_continue(index, &payload, thumbnail)
+            .err()
+            .map(|e| format!("{e:#}")))
+    }
+
+    #[cfg(test)]
+    fn write_quick_save(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        self.write_quick_save_payload(host, game, engine, mission_id, profiles, thumbnail)
+            .map(|_| ())
+    }
+
+    fn mirror_captured_continue(
+        &mut self,
+        source: usize,
+        payload: &save_file::SerializedSave,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
+        let mut metadata = self.catalog[source].clone();
+        let target = &self.catalog[index];
+        metadata.filename = target.filename.clone();
+        metadata.special = target.special;
+        metadata.text = target.text.clone();
+        let bytes = payload.encode(&metadata.text)?;
         self.commit_synchronous(index, metadata, &bytes, thumbnail)
+            .map(|_| ())
     }
 
     fn commit_synchronous(
@@ -3060,6 +3133,164 @@ mod tests {
         )
         .unwrap();
         game
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mirrored_saves_share_one_snapshot_and_one_replay_marker() {
+        use crate::replay_archive::MissionArchive;
+        use crate::replay_recording::SharedReplayRecorder;
+        use robin_engine::replay::ReplayRecorder;
+        for quick in [false, true] {
+            for fail_mirror in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let (engine, _, profiles, mut host) = fresh_save_session("Single capture");
+                let game = game_for_save(&profiles, 17);
+                let archive = MissionArchive::create(&root.path().join("replay")).unwrap();
+                let recorder = ReplayRecorder::with_writer(
+                    archive.writer().unwrap(),
+                    "Mission_17".into(),
+                    game.mission_assets().unwrap().clone(),
+                    0,
+                    Default::default(),
+                    engine.campaign(),
+                )
+                .unwrap();
+                let recorder = SharedReplayRecorder::archived(recorder, archive);
+                host.application_context()
+                    .replay_recording()
+                    .install_capture_recorder(Some(recorder.clone()));
+                let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+                let target = manager
+                    .ensure_special_slot(save_file::special_slots::CONTINUE, "Resume here")
+                    .unwrap();
+                if fail_mirror {
+                    std::fs::create_dir(manager.save_path(target)).unwrap();
+                }
+                let source = if quick {
+                    assert_eq!(
+                        manager
+                            .write_quick_save_and_continue(
+                                &mut host,
+                                &game,
+                                &engine,
+                                17,
+                                Some(&profiles),
+                                None,
+                            )
+                            .unwrap()
+                            .is_some(),
+                        fail_mirror
+                    );
+                    manager
+                        .find_by_filename(save_file::special_slots::QUICK)
+                        .unwrap()
+                } else {
+                    let source = manager.create("Checkpoint 雪".into(), 17);
+                    assert_eq!(
+                        manager
+                            .write_save_and_continue(
+                                &mut host,
+                                &game,
+                                source,
+                                &engine,
+                                17,
+                                Some(&profiles),
+                                None,
+                            )
+                            .unwrap()
+                            .is_some(),
+                        fail_mirror
+                    );
+                    source
+                };
+                assert_eq!(
+                    recorder.next_ordinal(),
+                    1,
+                    "mirror must not capture another replay boundary"
+                );
+                let primary = GameSaveFile::read_from(&manager.save_path(source)).unwrap();
+                assert!(primary.header.replay.is_some());
+                if !fail_mirror {
+                    let mirror = GameSaveFile::read_from(&manager.save_path(target)).unwrap();
+                    assert_eq!(mirror.header.display_text, "Resume here");
+                    assert_eq!(primary.header.timestamp_unix, mirror.header.timestamp_unix);
+                    assert_eq!(primary.header.replay, mirror.header.replay);
+                    assert_eq!(
+                        primary.replay_identity().unwrap(),
+                        mirror.replay_identity().unwrap()
+                    );
+                    let mut primary_json = serde_json::to_value(primary).unwrap();
+                    let mut mirror_json = serde_json::to_value(mirror).unwrap();
+                    primary_json["header"]["display_text"] = serde_json::Value::Null;
+                    mirror_json["header"]["display_text"] = serde_json::Value::Null;
+                    assert_eq!(primary_json, mirror_json);
+                    let reopened =
+                        SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+                    for index in [source, target] {
+                        let payload = reopened.preflight_exact_slot(index).unwrap();
+                        reopened.validate_slot_identity(index, &payload).unwrap();
+                    }
+                } else {
+                    assert!(
+                        manager.save_path(source).is_file(),
+                        "mirror failure must preserve primary"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn failed_primary_does_not_publish_continue_and_skipped_slots_do_not_mirror() {
+        let root = tempfile::tempdir().unwrap();
+        let (engine, _, profiles, mut host) = fresh_save_session("Mirror policy");
+        let game = game_for_save(&profiles, 17);
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        let source = manager.create("Rejected".into(), 17);
+        persistence::inject_failure(persistence::FailurePoint::BeforePayload);
+        assert!(
+            manager
+                .write_save_and_continue(
+                    &mut host,
+                    &game,
+                    source,
+                    &engine,
+                    17,
+                    Some(&profiles),
+                    None
+                )
+                .is_err()
+        );
+        assert!(
+            manager
+                .find_by_filename(save_file::special_slots::CONTINUE)
+                .is_none()
+        );
+        assert!(!manager.save_path(source).exists());
+        let restart = manager
+            .ensure_special_slot(save_file::special_slots::RESTART, "Restart")
+            .unwrap();
+        assert!(
+            manager
+                .write_save_and_continue(
+                    &mut host,
+                    &game,
+                    restart,
+                    &engine,
+                    17,
+                    Some(&profiles),
+                    None
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            manager
+                .find_by_filename(save_file::special_slots::CONTINUE)
+                .is_none()
+        );
     }
 
     #[test]

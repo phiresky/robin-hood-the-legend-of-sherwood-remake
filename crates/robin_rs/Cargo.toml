@@ -26,7 +26,7 @@ bitflags = { workspace = true, features = ["serde"] }
 enum-map = { workspace = true, features = ["serde"] }
 indexmap.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 serde_urlencoded = "0.7"
 percent-encoding = "2.3"
 url = "2"
