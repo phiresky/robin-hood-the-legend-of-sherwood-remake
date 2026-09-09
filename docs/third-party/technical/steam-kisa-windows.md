@@ -2,16 +2,12 @@
 
 - Original source: [Steam — Kisa's Windows 10/11 compatibility guide](https://steamcommunity.com/sharedfiles/filedetails/?id=640978579)
 - Author / publication: Kisa ♥ / Steam Community
-- Language / date: English; posted 2016-03-08; later revision date not fully verified
-- Access: Guide text inspected
+- Language / date: English; posted 2016-03-08; updated 2026-05-02
+- Access: Full guide retrieved directly; only the newest 10 of 78 comments included
 - Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
-
-Kisa separates startup problems from low frame rates. The guide proposes Windows XP SP3 compatibility for startup, then describes an older combination of DirectDraw replacement files and DxWnd for performance.
-
-Its manual recipe names DxWnd V2_02_90 and reports that some later builds do not behave the same way. It discusses RGB565 color handling, cursor behavior, and launch order.
-
-These are historical instructions, not tested recommendations for the current Steam package. No linked executable was downloaded or run. Compare this guide with newer maintainer notes before attributing an old workaround to every edition.
+- Retrieved: 2026-09-09
+- Archived copy: lookup failed (archive.org rate limit); not checked
+- Format: header notes, then the page text converted from the original HTML
 
 ## Converted text from the original HTML
 

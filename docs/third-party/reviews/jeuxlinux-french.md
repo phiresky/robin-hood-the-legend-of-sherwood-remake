@@ -3,15 +3,11 @@
 - Original source: [Jeuxlinux — French Linux overview](https://www.jeuxlinux.fr/a184-Robin_Hood_La_legende_de_Sherwood.html)
 - Author / publication: jerhum / Jeuxlinux
 - Language / date: French; 2007-12-25
-- Access: Indexed presentation and section list inspected; direct retrieval failed
+- Access: Full page retrieved directly
 - Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
-
-The presentation introduces the story, character-based tactics, urban infiltration, and forest convoy attacks. It emphasizes choosing between careful stealth and combat, including the usefulness of reduced guard visibility at night.
-
-The article's section list includes character descriptions, installation, a short reference section, links, and a portfolio. Those later sections have not been substantively inspected here.
-
-This adds French coverage aimed at Linux players. It should not be used as evidence for an installation command or performance measurement, since the accessible excerpt contains neither. The gameplay advice remains a source account rather than an engine-verified rule.
+- Retrieved: 2026-09-09
+- Archived copy: lookup failed (archive.org rate limit); not checked
+- Format: header notes, then the page text converted from the original HTML plus the full licensed text
 
 ## Converted text from the original HTML
 
@@ -594,3 +590,94 @@ Les articles consultables sur ce site sont soumis à la double licence : [GNU Fr
 
 
 [](https://validator.w3.org/check?uri=referer) [ ](https://jigsaw.w3.org/css-validator/check/referer?profile=css3) [](https://www.spip.net)
+
+## Full text
+
+Licence: the page footer states that articles on jeuxlinux.fr are published under a dual licence, the GNU Free Documentation License and Creative Commons Attribution-ShareAlike 3.0 (CC BY-SA 3.0). Conditions: attribution to the author (jerhum, jeuxlinux.fr) and the same licence for any redistribution or derivative. The article text is reproduced below unchanged; site navigation, unrelated article teasers and image placeholders are omitted. A few characters in the original are mojibake (for example "CÅ"ur" for "Cœur") and are kept as retrieved.
+
+Page facts: title "Robin Hood : La légende de Sherwood", article number a184, author jerhum, publication date 25 décembre 2007, 3 reader votes (score value not shown in the text rendering), sections Présentation, Personnages, Installation, En bref, Liens, Portfolio (six screenshots). Retrieved directly on 2026-09-09.
+
+### Présentation
+
+A son retour des croisades, Robin de Locksley découvre une Angleterre changée.
+Le roi Richard CÅ"ur de Lion n'est pas rentré de la Terre Sainte et le prince Jean s'est installé sur le trône en son absence. Le shérif de Nottingham profitant de la situation, impose d'énormes taxes sur les paysans. Il a de plus fait passer Robin pour mort afin de s'approprier ses terres.
+Face à cette situation, Robin des bois, défenseur des pauvres et des opprimés, se retranche dans la forêt de Sherwood accompagné de quelques rebelles.
+Ils luttent contre les imposteurs, en pillant les plus riches afin de redistribuer au plus pauvres, tout en attendant le retour de leur souverain.
+
+Créé par les mêmes développeurs que Desperado, Robin Hood : La légende de Sherwood nous offre un gameplay proche de commando.
+
+Les déplacements et les combats se contrôlent à la souris. On se retrouve soit à envahir les imposantes fortifications des villes de Nottingham, York, Leicester, Derby et Lincoln ou bien à attaquer des convois bien gardés dans la forêt de Sherwood.
+
+La victoire dépendra de vos choix tactiques. Choisir de vous infiltrer dans les châteaux en évitant soigneusement les rondes des gardes ou d'affronter avec courage l'ennemi, armé de votre épée et de votre arc. Vous pourrez par exemple profiter de la vision réduite des gardes durant la nuit ou employer les diverses capacités et les nombreux ustensiles de vos hommes pour détourner l'attention des soldats à la solde du Prince ou avancer vers votre but en décochant quelques flèches bien placées et employant la force des armes ...
+
+### Personnages
+
+**Robin des bois**
+Leader charismatique des rebelles de la forêt de Sherwood. Il s'engage pour les pauvres, qu'ils soient normands ou saxons, et est un fidèle vassal du Roi légitime, Richard CÅ"ur de Lion.
+**Arme favorite :** Bâton (en forêt) ; Epée (en ville) ; Arc
+**Aptitudes particulières :** Coup de poing ; Lancer de bourse ; Grimper, sauter
+
+**Lady Marianne**
+Cette jeune femme issue de la noblesse aidera Robin à plusieurs reprises, que ce soit en espionnant pour son compte ou en participant à la bataille… Robin en est éperdument amoureux.
+**Arme favorite :** Epée ; Arc
+**Aptitudes particulières :** Guérisseuse connaissant les plantes médicinales ; Observation et espionnage
+
+**Petit Jean**
+Un bûcheron bienveillant au physique impressionnant. Sa Force sereine est un atout de poids dans le combat de Robin.
+**Arme favorite :** Bâton
+**Aptitudes particulières :** Coup de poing ; Courte-échelle
+
+**Frère Tuck**
+Le confesseur de Lady Marianne. Brasseur de bière exceptionnel, d'ailleurs sa production est principalement destinée à étancher sa propre soif.
+**Arme favorite :** Massue
+**Aptitudes particulières :** Saouler ses adversaires ; Transporte toujours de la nourriture ; Ficeler des adversaires inconscients ; Lancer de nids de guêpes
+
+**Will Scarlet**
+Will est le neveu de Robin. Sa prédilection pour la couleur rouge lui a valu son surnom « Ecarlate ». Individu agressif et brutal, il a choisi de se battre au coté de son Oncle pour venger l'honneur bafoué de sa famille.
+**Arme favorite :** Fléau
+**Aptitudes particulières :** Lance-pierre ; Etrangler l'adversaire ; Bouclier pour se protéger des flèches
+
+**Stuteley**
+Il était le chef du groupe de paysans que Robin a sauvé de la potence. C'est un bricoleur de talent qui aide Robin à établir le quartier général de sa bande dans la forêt de Sherwood.
+**Arme favorite :** Hâche
+**Aptitudes particulières :** Lancer de filet ; Lancer de pommes ; Se déguiser en mendiant ; Ficeler des adversaires inconscients
+
+### Installation
+
+Un problème à l'installation ou à l'utilisation de ce logiciel ?
+Consultez notre Faq ! (lien : http://www.jeuxlinux.fr/a58-FAQ_:_probleme_a_linstallation_ou_au_lancement_dun_jeu.html)
+
+Un setup est disponible sur le CD rom (Uniquement la version de runesoft). Ouvrir un terminal et aller dans l'arborescence du lecteur cd-rom. Il y contient un fichier setup.sh qu'il faut exécuter `sh setup.sh`
+
+### En bref
+
+Développeur : Spellbound Software
+Genre : stratégie temps-réel
+Langue : Anglais
+Mode de jeu : Solo
+Licence : Commercial
+Configuration :
+
+| | |
+|---|---|
+| Processeur | Pentium III 600 Mhz |
+| Mémoire | 128 Mo de RAM |
+| Carte graphique | Carte graphique : carte 3D |
+| Accélération graphique | requise |
+
+### Liens
+
+- Site officiel : http://www.robinhood-game.com/
+- Version de démonstration : http://www.3ddownloads.com/Strategy/Robin Hood/Demos/rh-linux-demo-x86.run
+- Acheter la version francaise sur novatux : http://novatux.com/shop/detail.php?article=158
+
+### Portfolio
+
+Six screenshots (document IDs 1999 to 2004), not reproduced.
+
+### Notes on the content (English)
+
+- The installation section corrects the earlier summary: the page does give an installation command. The Runesoft CD version ships a `setup.sh` in the CD root, run with `sh setup.sh` from a terminal. No performance measurements are given.
+- Cities named: Nottingham, York, Leicester, Derby, Lincoln. Developer credited as Spellbound Software, "same developers as Desperado" (sic), gameplay compared to Commandos.
+- Character sheet gives favourite weapons and special abilities per character, including Robin's purse throw and climbing, Marianne's healing and spying, Little John's leg-up (courte-échelle), Tuck's beer, food, tying-up and wasp-nest throw, Will's slingshot, strangling and arrow shield, and Stuteley's net, apples, beggar disguise and tying-up.
+- System requirements given: Pentium III 600 MHz, 128 MB RAM, 3D card required. Language listed as English only, single-player only.

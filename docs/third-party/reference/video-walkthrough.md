@@ -7,20 +7,7 @@
 - Checked: 2026-09-09
 - Retrieved: 2026-09-09
 - Archived copy: [Wayback Machine, 2016-10-08](http://web.archive.org/web/20161008184941/https://www.youtube.com/watch?v=zK7oTCW4SJM)
-- Format: header notes, original summary, then the complete metadata
-
-A video titled Robin Hood The Legend of Sherwood Walkthrough Gameplay. Its description identifies the 2002 Spellbound game.
-
-**Research use:** a potential visual reference for original rendering, animation, sound, interface, and mission play. A written guide cannot establish the exact timing of an animation or how a particular interaction looks, so recorded play can complement the text references.
-
-**Coverage limit:** only the title, date, and description were inspected. This entry makes no claim that the video covers the whole campaign, a particular difficulty, or an unmodified release. Those details and useful timestamps remain TODO.
-
-## Complete metadata (from the page's embedded player data, retrieved 2026-09-09)
-
-- Title: Robin Hood The Legend of Sherwood Walkthrough Gameplay; channel UPlayNetwork (channel id UCRDrPY1NcBSjut1q65-Ydbg); category Gaming.
-- Published and uploaded 2016-10-08 11:47:59 (UTC−7); length 620 seconds (10:20); 7,730 views at retrieval.
-- Description lists developer Spellbound Entertainment; publishers Strategy First, Mindscape, Freeverse Software, Wanadoo, Meridian4; initial release 2002; the channel's Facebook page, a playlist (PLBoUiIRdzfJk2Xrk1OqTP-6_dwC56qct4) and a Google+ page; and a one-sentence description of the game as a 2002 stealth-based real-time tactics game by Spellbound Studios.
-- At ten minutes it cannot cover the campaign; which mission it shows is still unverified (video not watched).
+- Format: header notes, then the page text converted from the original HTML
 
 ## Converted text from the original HTML
 

@@ -2,16 +2,12 @@
 
 - Original source: [The Tacticians Database — user-supplied article](https://tactdb.blogspot.com/2014/02/robin-hood-legend-of-sherwood-2002.html)
 - Author / publication: The Tacticians Database; author unverified
-- Language / date: English; URL indicates February 2014
-- Access: Title retrieved; article body unavailable
+- Language / date: English; 2014-02-26 (feed timestamp)
+- Access: Article body retrieved through the Blogger feed API (page itself not retrievable)
 - Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
-
-The retrieved title identifies Robin Hood The Legend of Sherwood; 2002 Stealth Strategy Game.
-
-The browser returned an empty text body. A direct HTML fetch also yielded only the page title after extracting visible text. No review content, rating, or substantive argument could be verified.
-
-**TODO:** inspect an accessible archived capture or restored original before adding a summary. The date is inferred only from the URL's year/month path.
+- Retrieved: 2026-09-09, via the Blogger feed API
+- Archived copy: lookup failed (archive.org rate limit); not checked
+- Format: header notes, then the page text converted from the original HTML
 
 ## Converted text from the original HTML
 

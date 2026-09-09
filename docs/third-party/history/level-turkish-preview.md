@@ -5,16 +5,9 @@
 - Language / date: Turkish; June 2002 issue identified by archive filename, printed page 15
 - Access: Substantial indexed PDF passage inspected
 - Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
-
-This preview highlights ordinary recruits, a choice between stealth and fighting, and the ability to prepare up to three actions per character. It presents gesture-based melee as a response to the medieval setting's emphasis on close combat.
-
-The article attributes larger characters and more animation to improvements in the Desperados engine, including a compression technique. Those are prerelease reporting claims, not measurements made here.
-
-The indexed release estimate says June 2003, which conflicts with the eventual 2002 PC release. Preserve it as an estimate or possible source/extraction error, not release evidence. The issue date likewise comes from the archive filename rather than an inspected cover.
+- Format: header notes, then the page text converted from the original HTML
 
 ## Converted text from the original HTML
-
 
 ### history__level-turkish-preview.txt
 
@@ -119,7 +112,9 @@ paylaqacaItz.
                                                              bulandrran                        Ace0f
                                                                      fakatbrItijrli.lbuakamadlorm
                                                          ve benceniyi platformoyunuolanTurrican
-                                                                                                                                                                                                                       R A B t n l t R.           07
+
+
+                                                                                                                                                                                                                       R A B t n l t R.           07
 
 
 ffi
@@ -127,7 +122,6 @@ ffi
       ffi
             ffi
                              $*                                       ir lAi{Airx
-
 
 
                                                                               ,ior r L-Lr - tlcak v - " bLt :n 1:l !) oN ar | - ep5i                 !!k
@@ -167,8 +161,6 @@ Ldml! yeri rcllou-. : r'-:s                                                     
                                                                                                                                                                       l a r n ao o g r ug e l ' c f o
 
 
-
-
                                                                                                                                                                                                                                 q o e C o a - t e l' } r o o
                                                                                                                                                                                t..a           J : 1 r { -. -           u,
                                                                                                                                                                                'nn
@@ -188,7 +180,9 @@ k ! a n a b irls " z B L r. r ' a d a .o y L r n !a r k - . n a t r a r ( k r ! 
 a \ie ste!,"ceksL^   z CkLtnmLtyor                                                    r e re r e o y ^ a y a . an4 z o y u n c ak a y r k a r . k t e rs e ; c bc            C e a rS o ld o y J - u u z e rn d e! a 5 n a y ab ! 5 a a 0 n t d a d u
                                                                                       (eks"iz oy.;ndaI I a\,f rtc.h tlir unaaak                                              v - r d u V e < o n . r r ' rd a h a s o n r al ! 4 G Ss e r i e r n ic n n e
                                                                                                                                                                              c l a T a{Kr e v a me : 1T € a c K L
-                                                                                                                                                    Irrt   .tI I l3
+
+
+                                                                                                                                                    Irrt   .tI I l3
   I
 
   I
@@ -230,8 +224,6 @@ a \ie ste!,"ceksL^   z CkLtnmLtyor                                              
        ff.dBllaf0rce:ta$lil0rcGdru$er
 
 
-
-
 T
     neland[$1u**,*ilT$orrwrnr
 .lt
@@ -251,7 +243,8 @@ ranl k olayar n dcindu$ubir Avrupa kasaoasn
                                                                             $eygoremedk Nefandus,2003'ijn batrn
 d a 9 e g y o r C i d d ia n l a r n d ak a r a nr k o l a y l a r .S i _   da haztrve de nazrro acak.o
 zi bilmek isterneyece!in             z kadar korkungger
-    . - . : n a b a y d k , h a t t ag u n e r c eb a t n d a n
+
+    . - . : n a b a y d k , h a t t ag u n e r c eb a t n d a n
   i r l i k a k m a dk V a h t B a t ' d aa t k o t t u r m a n r n
             r e r i r o r! e . r e n t d on d , , d r ok . D e s o e .
 r d d o \q e r ( e l ' t e nd e s o r y r l a r d ag o r d - g i n e r y
@@ -302,11 +295,9 @@ v u r a nu s t ab i r o k ( u O y u n u ns e n a r y o sbue l i b i r         ot
                                                                                  cak.York Katedrane qizlicegirip davanza yan-                             b rgokdonems lahie inizdengegecekve bazen
 
 
-
                                                                                                                                                 EU
-                                                                                                                                                                     n 0 B m lt t 0 0 0 r l [ [ B t                $ r 15
 
-
+                                                                                                                                                                     n 0 B m lt t 0 0 0 r l [ [ B t                $ r 15
 
 
                                                                                                                                                      Iiir. ffrloll
@@ -404,9 +395,8 @@ boye bir sistemchtiyagduyulmuSDUfmanabi
                                                                                          of Robin llood
                                                                                          (1938) onsuz  bu-
                                                                                          giinleregelemezdi
-16I          l ( 0tfl$ I ur0: AtTEnMATH
 
-
+16I          l ( 0tfl$ I ur0: AtTEnMATH
 
 
              . /ar.Jt r..(          - ( b . s . , , ; . , 1d J D a a -
@@ -461,8 +451,8 @@ Ne d me( b rlez yaratk arm I amal                                               
                                                                                   5imd gele rr oyLrnunkon!s!na, Aftermathd'0er                                            islftyhgiirmsk
                                                                                                                                                                 Qrlmtyrcr[rnr          lsmliyff.
                                                                                   X COM oyunan. n aks'e oyun.uyuhayl lmitslT
-                                                                                                                                                                    U f0 : l t l t R M t t I S         D l     ( Bttfl$ a ll
 
+                                                                                                                                                                    U f0 : l t l t R M t t I S         D l     ( Bttfl$ a ll
 
 
                                                                                                                                                               cak Altar tasaflmcafl younur tcmposunuyuk-
@@ -535,7 +525,8 @@ onceemnnzdCk adamSays son (le.ecektst                                        mek
                                                                            c l a r d r l e d iek r k a d a .i y i b r y a p a yz e k ay a r a t a b i
                                                                            l i re r s eb u n uy a p m a kh a yi z o r o l a b i r T a k t i ks a
                                                                            v a 5k r s mn n s r a t a b a n lo l m a s tp a n l a n r y odr ,n
-ji "  ocukar a iletj5imklrrmanrntUrluyol ar n                                                               s y u n l a r t" l n d i a n lao -
+
+ji "  ocukar a iletj5imklrrmanrntUrluyol ar n                                                               s y u n l a r t" l n d i a n lao -
                                                                           n d r g r mz n d i a n a- l o n e o
 ''lf
       dan bihaberbaz "buyukler"taraTLncjan                                nes" adl desktopadventureve b r text adventu-
@@ -586,9 +577,8 @@ ne Tab i bun ar yalnzca Lucasarts                  etiketyle ta           bi'ni 
                                                                           q u m e z a r ag i r e b i l m eik( i n o n c e" " E j d e rM t l h r u '           h!ml[ 0 ldy'ill 0tmddrm Im[ lrlior lqyrrlnl
                                                                                                                                                               hirDliili olrtrHltrrl..
                                                                           a d rv e r i l e na n a h t a r np a r g a l a n tno p l a m a sg e r e k -
-                                                                                             t0tA t J0iltt {il0 I[t t Pra n't I0M0tr tlil Bt $ I l0
 
-
+                                                                                             t0tA t J0iltt {il0 I[t t Pra n't I0M0tr tlil Bt $ I l0
 
 
  geCirilerek,
@@ -610,7 +600,6 @@ ne Tab i bun ar yalnzca Lucasarts                  etiketyle ta           bi'ni 
  acrr) Yap mcrfirma olan CollectiveInc, aynl                     ulaSamad   0 ntz yerlerdekamErnzr kul anmanrz,
  rnotoruve ddvdSs stemin X-Boxe n hazrrladtgl                    Hong Kong'ungeleneksel     Eek'gekarabalaryla
  "Buffy,the VampireSlayer"ieinde kullanryor                      srk bir tak p ya da hareketligondollarrizerinde
-
 
 
               geurudeld
@@ -644,7 +633,8 @@ yrkmasr,afdtndank hcrgeri ga!rnp duvarasrg-                      ki arkeolojilda
                                                                                           kaztlarlailgili gok
 ra'r.asr.
        duvarda^sekipta(la ataraI be]inc,ni^                      eglencelibir programvardt.
-              ilgrsayar
+
+              ilgrsayar
                       oyunu dLinyas
                                   nda kimi d kl itai
                af, dcinumnoktalarrreefsancv kt ikler
@@ -689,11 +679,9 @@ l a r ak a r 5s o r u m l uu k a n m v a T M e s e l a( r y u n u n             
 g e n e a m a c b i e k r s r n e dn , " Ol t i d y e b r r dm T a                sonrada bckcrdinal emrnbunu ke:fetmesn                               o T a d a ka r a z nn d c g e r n ib r h a y ia r t t l r a c a k t r
 
 
-
                                                                                                                                                             tt0G2002
-                                                                                                                            $ l M c t T Y4 r l l x S t             g r 21
 
-
+                                                                                                                            $ l M c t T Y4 r l l x S t             g r 21
 
 
                                                                                                               Iiit .         l(rrE$tmolsi
@@ -705,7 +693,6 @@ g e n e a m a c b i e k r s r n e dn , " Ol t i d y e b r r dm T a              
                                                                                                               Blzc          . $il cltytllt$hh filijii hllrf
                                                                                                                             lohrlr fl g0hdystaceldIi 06riitiiy0f.
                                                                                                               $ nrr        trI $!s tsrral lylo|ln.
-
 
 
                                                                                                           Io,r Ko          re |:qlaj(ettrf
@@ -783,7 +770,8 @@ goreceksinizHazrrgorselgUzelklerimdenbahsef           etkienerekSehrinz igintehl
                                                                                                         biz
                                                                                                               Hepniz mlrtluka/rn,iyi geceler,iyi oyunar.
                                                                                                                     Eiiklan& Batui 0okha[@louel.co
-                rradanbir grin.0glenedogruerken-                            adamiki gamepad'i  elegeEirmekiEinkor-
+
+                rradanbir grin.0glenedogruerken-                            adamiki gamepad'i  elegeEirmekiEinkor-
                 denofisegidiyorum.          ge-
                                     Drgkapryr                               kunqbir mricadele          LJstelik
                                                                                               halindeler.     tele-                                                             dekafanrkrrarrm".Du-
@@ -818,9 +806,8 @@ kombinasyonuna yakmbirperlomans  yakaladtgmt
      5rmlaaErlankapt ve o korkungmanzara.                                   birini vermezseniz
                                                                                              hayattavermem.Bak                                                                     b a s r pe, l b i r l i 0 ii l e o y -
      Televizyonundnrinde4-5 tane l<ocakoca                                  gelmeyinilstiimekrranm ha! Benim ol-                                                            v e r d i k .P S 2 ' n i ng e l i 5 i n d e n
-                                                                                                                                                              H A t 0 ' L UG U l l I t I r D 0 $ Y AI                        23
 
-
+                                                                                                                                                              H A t 0 ' L UG U l l I t I r D 0 $ Y AI                        23
 
 
   Bugi.inedek Xbox Uzerinegok yazrpcizdik.Sistemdzellikleri,
@@ -852,7 +839,8 @@ vermedenyazmayan iyet lyim.                                                     
    H a o ' y ut a ( t r( v e B u r a kb e s m ee i l e o y u n u na q t          S r n ry a p t t .l j e     nrousel<avye <omblnasyonuna              yaktn b r performansya<alad!, n
 y e c a f < o r k u n t! a b l . Y e n i b l r g e ya l l n d r g r n d ao< ih e y e c a bn i l eb a -       q o r u y o r u zN. g a nd m a d ah a l ab i r a zz o r u < v a r a m a o n u t n
                                                                                                                                                                                              d r gn d a
- herley gayetgilzelgidiyorveadamhayatrndanmutlu.Sonraken-               -Eeee
+
+ herley gayetgilzelgidiyorveadamhayatrndanmutlu.Sonraken-               -Eeee
  dimizegunusoruyoruz: "Ulannedenondakikadrr buadamoynu-                 -tJbisoft'danmai geldi E3'de dzel                         yeni oyunlargdsterile-
  yor da bizseyrediyoruz?//
                         Burakba6rflS      iEinde
@@ -933,7 +921,8 @@ ra devrediyoruzoyunu.Bu stradabenimakltma bir geygeliyor.Si-           y i m .B 
 nan'ayaklagryorqmusulcave Eudiyaloggeqiyoraramrzda:                    rekendendaha gfizel.Bir an duvara                              veordairkilipka-
 -Sinanbu ay benyeni Tom Clancyoyunlanntyaztyorumya.                    lryorum.u zaygemisinde
                                                                                            oldu$umdan
- daha doOrusuinceoluklar var. Ve fenerin                                    EafarklrvebaSka  teknikdzelliklerydnLin-                                Karsla$ry0                      U s t e l i kb u r r k l a f l nh i E
+
+ daha doOrusuinceoluklar var. Ve fenerin                                    EafarklrvebaSka  teknikdzelliklerydnLin-                                Karsla$ry0                      U s t e l i kb u r r k l a f l nh i E
  rsrqrbu oluklar n sadecebir ydnLinden
                                      par-                                   deniistilnler.
                                                                                         Amabanasorarsanrz     kimse                                 b i r lb i r d i                h o $ n u td e g i lv e b i r b i r -
@@ -1011,9 +1000,8 @@ mun en iyi grafik i oyunlarrnrkoydukyan                                    Halo'
 yana. DC iqin lVlorrowind,PS2 iqin lMetal                                  ra yerdebir kaq giirevdaha geEiyor.Ama                                                           g
                                                                                                                                                    E rk m a d rg a l i b a .
 G e a rS o l i d2 v e X b o x H a l o .U E r jd e o l d u k -              s o n u n d aH a l or j z e r i n d e kdii l e r i k i r k l a                                             itetI trdotoha.ron.n
-   2 6r [ 0 $ Y t r E - 0 Y I t 2 0 0 2 G t I l Y 0 R
 
-
+   2 6r [ 0 $ Y t r E - 0 Y I t 2 0 0 2 G t I l Y 0 R
 
 
   Tiirki$c'de
@@ -1045,11 +1033,9 @@ o y u n l a ng o r m eq a n s r n rnze y a z t l <l < i                  o l a c
 0 mayacak.                                                               b a y lra n a l ( a d a rm u h a b b e te d e blie c e -             S ozpanef          l erden     aqrl mr5l <ara     en,
 
 
-
                                                                                                                           rtvtt                                       82002
-                                                                                                                       E - 0 I U l l2 0 0 2 [ E t l I 0 n r 0 0 8 Y t I          27
 
-
+                                                                                                                       E - 0 I U l l2 0 0 2 [ E t l I 0 n r 0 0 8 Y t I          27
 
 
                                                                                                                           vebedeni rseni zn a l a b i l e c e l < s i n i z .
@@ -1123,9 +1109,9 @@ bolazrmagrikersiniz       oradamazal.
 i a hl ) .
      Fuaral(atrlacak    olanfirmalarba
                                                                                                                     O h lrfo5yllr]hn uo                  dUy|ln|ayrl.Yarloybhtytfl.
-  . 32 I   lIGtlHrE GlBl$
 
 
+  . 32 I   lIGtlHrE GlBl$
 
 
    avaagrktrur
@@ -1160,8 +1146,6 @@ Eggek       kadt h[ anrr,ikiantru...
                        nn tahmin edemeyecelinizkadar karan|k Akgamolup da e etek Eekilince      tezgaherlar tezgal tar n adr le aynrydr
 
 
-
-
 BIIAYlIE                             IK?
                        I nc el e d i g i omi
                                            y uz n l a rrn
@@ -1178,9 +1162,8 @@ BIIAYlIE                             IK?
 
 
                                                                                                                          0!2
-                                                                                                                                                             lilcrrr r 0lnll r 33
 
-
+                                                                                                                                                             lilcrrr r 0lnll r 33
 
 
                                                                                                                tll           2002
@@ -1287,8 +1270,6 @@ illnlnum Slslom. Irflr| irm r i;{                   |ntfl|nl
                                                                                                           [.,[|t: tlr?l ldbrr r€t t|b &bbrar
 
 
-
-
  'lt trl
                                                                t %e0,,,                                                                              -%e0            %e2*
            , oydlht" $dul trutda          Srltcrl & h yetytttulr0||dnF           Y0l[Fynl Yol n ty|l| !d[              .0trt" ssrm
@@ -1297,7 +1278,9 @@ illnlnum Slslom. Irflr| irm r i;{                   |ntfl|nl
  tftn t0'!l la rhmrfiebmdftoft||s                                                $hh lF itln mu LnE| fl&-              lntr *fi Finlshitt.          o]rdr,     hd, m lrh lS (lh lFlt rh| idr
  8ru onflt rmr,dr||.
                                                                                  Y*r0u,nr...                           Cr 0!rdt...                             cH ?t).
-                                                                                                                                                              2002 JtJ             lI0fi.I cuP I lilctt t                     t r30
+
+
+                                                                                                                                                              2002 JtJ             lI0fi.I cuP I lilctt t                     t r30
 
 
                                                                                                                                                                                    'D'
@@ -1389,7 +1372,8 @@ iyi. Bu da iyi haberolsa gerek.                                               f 
                                                                                                                                                                    EAS     oyunun gerqekEi olrnasriqinher
                                                                                                                                                               $eyryapmrS.una,maglaflyeniden     oynayama-
                                                                                                                                                               man z da             i . HatrrlarsanrziincekiFIFA
-                                                  oyunlaflnrnhepsindemaEbittiktensonrao maqryenj-         Kel kafa!
+
+                                                  oyunlaflnrnhepsindemaEbittiktensonrao maqryenj-         Kel kafa!
                                                   den oynayabiliyordu
                                                                     nuz.2oO2 FIFA World Cup'taise        2002 FIFA World Cup'l b e l k id e e n d n e m l id z e l l i $ i ,
                                                   maEbittiktensonraoyunuyenidenbaglatmaSansrnrz          Diinya Kupasrheyecannl               verebilmesi.Peki
@@ -1478,12 +1462,11 @@ hGrtr sisbr . tI{0, 128M0[ , n ia t. hft         faullerdeyeredr.i!Ulleri,
      llfiU                                       nik tarzda.                                                                                  llgruE I ftrat@leud.Gom.tF
 
 
-
                                                                                                                                                   0,    2
-                                                                                                                                                                A R t 0 R DB
+
+
+                                                                                                                                                                A R t 0 R DB
                                                                                                                                                                            SA I I t t C n y                  r iilc .tMt t 43
-
-
 
 
 $awl|n0                 giinc
@@ -1519,8 +1502,9 @@ i E i n d eb u l a b id i i l i n i zs a n d r< l a r ry . l f Z c ak a         
 r a k t e r i r i za q a b ii y o r . B L r r a d alfl r s i i r Lyl a r a r l   l < a r . < r lyao5r b i r c o ( ! c y i i ( e q l e c i i y o r s u n u z .
 e Q y aq r( s a d ah e p s i nt a ! y a m y o r s | n u z B L rd I               U b s o f tb a r r b a 5 k a   b r o y u ny a p m a s r n kaa " ; r n
 r u r n d ae n y i l e r i n la l m a l (z o r L t n d af tsz A y r c a          q i z g i s i n i< o r u m u vs e 0 r L a y aq o < < - " y iifb l r i !
-                                                                                                                                                                              Y ilttil iIE I          tCE|.l t r 45
 
+
+                                                                                                                                                                              Y ilttil iIE I          tCE|.l t r 45
 
 
                                                                                                                                                        da Army       pekEokaqldanzayfikaltyor.
@@ -1595,7 +1579,8 @@ askererleoynadrgrntzt              aslaunutturmayacak bakarsanrz                
                                                                                                                                                      niz bir                  bu, ama mucizebeklemeyin.@
                                                                                                                                                                   .             Giinodi
                                                                                                                                                                                       I ilr        cn@hvol.crE.t
-                     ruz mli, bilyul(oyunafl yara
+
+                     ruz mli, bilyul(oyunafl yara
          H iq dLlfundU                                                               T a r n a mb e < i G 0 b a 0 p e ' a l i 0 r sC o u n l e r -            < e f d i i g n c l e: i r a r r a c rv ; r s a d e c e .0 d a a E < '
 J
                                                                                 S t r i k e ' d a nq L l z e0 m a y a b l f . A m a b N r . a n l r ( '       q a s a ! L ' m . r d ; r nb a q< ab i r i 5 ey a r a r r r r y o rY i
@@ -1633,9 +1618,9 @@ ar .llternatifleryarat yor.                                                     
                                                                                 y e f b d u m i < o n r n Lgr !i b i d u r L r y o 'S. i n ge p a -           n e s n e l e rbi e l i r e y d r e( r s t i c a y a ( l a ' r r v e e n
                                                                                 y e r b d L l m l e r i n ibnl r k o n u s L
                                                                                                                            y ro < .H e rb o l u m u n         s a k l n! e ( i y e e ( r a n d a fs i l e r .E l n d e l <ai l e t i n
-                                                                                                                                                                           G I . | l B A t0 P E n t I t 0 [ $I l l t c E l t l ' t r
-                                                                                                                                                                                                                                   E4 ?
 
+                                                                                                                                                                           G I . | l B A t0 P E n t I t 0 [ $I l l t c E l t l ' t r
+                                                                                                                                                                                                                                   E4 ?
 
 
                                                                                                                                                                        adamrve                     r nd e 0 i ! i ky e r l e r i nhi e mk r o -
@@ -1711,9 +1696,9 @@ l a m t e s p i te d e nc l h a z tR e c o n , d a bn a 5 k a s k u l -         
                                                                                                                                                                                            nHrr.rIfFlffi                       F itrlt.
                                                                                                                                                                          llbrr!mor         lrnu' 8tt
                                                                                                                                                                                            Imn tgbttr
-50I lt{ctrr r I $PrDtnMril
 
 
+50I lt{ctrr r I $PrDtnMril
 
 
         " A r a n r z d aq i z g ir o f f a n a r v e s o n ub e l i r              konusunsdoar u n                                                                  g e l i n c eb,i r eb i r l m i n it a k i pe d e ne p e yg r i z e l
@@ -1763,7 +1748,8 @@ r a ? G e r i s ib a y r ra 5 a ! . . . G e r E qi e r i d i j n r i sb i l e t 
                                                                                     s i z b u n l a r ro l < u d u ! u n uszr r a d ag o k t a nE r k m r 5
                                                                                     o a c a k t r , A z s o n r aa q r k l a y a c a ! r o
                                                                                                                                          my u n u n a                 tEltEllt0lu
- versiyonuinstalliIn ortalannda bir yerdetakr-                                    b i r a zd a k a f l S rokl a b i l i y o r . 0 y u n u n
+
+ versiyonuinstalliIn ortalannda bir yerdetakr-                                    b i r a zd a k a f l S rokl a b i l i y o r . 0 y u n u n
 Iryor. Dikkat etmenizgerekendiler bir nokta                                       kontrollerinda           tamamenustala$mak
 da, o gLlzelanimasyonlarrve grafikleri izlemek                                    krsasrirede        yaprlabilecek         bir ig de-
 iEin maalesefen az bir GeForcekarta sahipol-                                      0 i l ,i s t e d i g i nai zn d ai s t e d i 6 i nhi za -
@@ -1853,7 +1839,8 @@ ftff$lsrnda
                                                                                                                                                               i l k g d r e v i n i o l a c a k .S o n r a s rm r ? l < o r k m a y r n ,
                                                                                                                                                               her5ey              y e n i b a q r y o ro l a c a k . . . " "o
                                                                                                                                                                                            & 8a$ I noliaD@lGrcl.corr.tr
-fi     slr st.ire
+
+fi     slr st.ire
                 d n c eJ a n e ' sS i f f u a t i o n so y u nf i r            Ancak tabii bu proje de gLimegitti, en az ndan                                           Ne var <i senaryotasar m pek iyi oturtula
                                                                                 h a y l i y e n ib i r f i r m a o l a n R u sk d k e n l il \ 4a d D o c         m a r n r sq, o g uz a m a nk e n d i n i zbi i r s a v a s r inq i n
                                                                                 S o f t w a r eo l a y rd e v r a l a n ad e k b y e y d i .A n l a 5 r -         d e g i b i h i s s e t m e n ipze k m r i m k u no l m u y o r .
@@ -1899,7 +1886,8 @@ ftff$lsrnda
                                                                                a d e ts e f e f b e r l i sk e n a r y o sdua s i z i no l a y l a n             . 6 t i b i q ' m d es r r - r y p ,o a . a l l a r . A r c a , t a b i
                                                                                tl SAF ve Luftwaffeperspektifinden                       gbrmenize                d L 5 - kq . a ' k La l i r e i n i 1 g e t i f d i 6 ib i r a v a - t a ;
                                                                                r m K a nt a n y o r .                                                            d a , J a r ,y o | d e o i l .\ i s p r t e n p s { i c i s t e " i l e rm c -
-                                              -Jnt
+
+                                              -Jnt
                                                                                                                                            J I i t t ' s t I T l l ( $ Q U t D 8 0 Ii tl                C E t Er r 5 3
 
 
@@ -1966,7 +1954,8 @@ fisnilEr$iElun. t${n. l2l      I m$. l2 llll Ml     lrdr.
 
 LEUEt
    iloru
- !     SormaV      n! Sakrnsormayrn.        RIIVInede-     Hemdeuzaykonulul!Hemder.i!boyutlu                             grafik Dahagoknegatif
+
+ !     SormaV      n! Sakrnsormayrn.        RIIVInede-     Hemdeuzaykonulul!Hemder.i!boyutlu                             grafik Dahagoknegatif
        mekdiyesoranr         yakanm.Bel<iuvkulu-           m o t o r vu a r l ! lq o ki l g i n €d e 6 i lm i ?" A l l a ha l -  Yok,yok,yok!
  I    yum/y0rgunum,          DlmpouSmLllurn.      tersey   lah,adarnlar        nasrlyapmr;acaba?"diyorsunuz Tamtersinebakrn n en e l e rE r k t rO                                . y u n ubni -
 olabilir.AmasonuE          olarakbenbuoyunun        is-    de{ilmi? Bensizestiyleyeyim.                   Yapamamrllar. rasgaripbi arabi                       var.TamEiizemedim
@@ -2014,7 +2003,8 @@ RII\/bir stratejioyunu.Hemdesrratabanlr!                  yapmakzorundasrnrz.   
                                                                                         lafl bir yerdetamamlamalr
                                                                                         d e d i lm i ?                           t EUEr
                                                                                                                                      iloru
-        . B i l o i s a v aorv u na r r n r nb e l i r g i nb i r d u r a k -    bu galrgmaarrn bir araya gelmesive profesyo-                                  grafikleri           sesleriEokagrfl bir sistemgerek
+
+        . B i l o i s a v aorv u na r r n r nb e l i r g i nb i r d u r a k -    bu galrgmaarrn bir araya gelmesive profesyo-                                  grafikleri           sesleriEokagrfl bir sistemgerek
 |
 r       lama dijneminegirdigininden kayetedi-                                    nel bir Irijne ddnrilmesigrjn geEtikQe
                                                                                                                       daha                                     lirmiyor.                                           y r i k s e ikr t i f a -
@@ -2073,11 +2063,11 @@ Srnrkestirmeleriasla mLjmkijnolamtyor.Ama                                       
                                                                                 edenbir yaptm bu.
                                                                                      Flanker2.5 hayli gerQek€i                                                                       l/l-llt b         ffml - lb          l0 (./.{|)
                                                                                                              bir oyun,ancak
-wan comma der                                                                     I I         Bu yaztatildeOmahaPlajr'nagitmek                                                                            moda!
+
+wan comma der                                                                     I I         Bu yaztatildeOmahaPlajr'nagitmek                                                                            moda!
 
           ] y i ( i T o n rH a n k sg i d i p E r R y a n ' n k q r n
   I
-
 
 
  y a p m c a f l n r nh a l i ? S p i e l b e r ga m c a o m a h a
@@ -2136,7 +2126,8 @@ v e t r l r nq r a { i k l e rb i L m a po l a r a ke i z i l n r i sA. n c a k 
 - e l s t e . e . , e o p o i g c rl e " . 6 n q i b , ; e y i n g i z . -
                                                                                   kamad 6r betonbunkerlar tLlfeklehavayauEU-                                        tEUEL
                                                                                                                                                                         l'10ru
-        H i d d e n& D a n g e r o upsi y a s a y E
+
+        H i d d e n& D a n g e r o upsi y a s a y E
                                                   a r k a l r ! o ko l -           Special Air Services...                                                       g a l r gl m a s ri y i o u r d ud i y e s i mg e i y o rt a m b u
 I
                                                                                    Eh, tam geeengrinaklrmdanbun ar geqerken                                      noktada.Her ne <adaridare etsede, dost ve
@@ -2192,7 +2183,8 @@ m n herbiri farl<lrbir konudaiyi, her ne kadar                                  
 tam bir FRP havasrtasrmasada genelyetenek-                                        b u l a b ii r s e n i zd d r t k i ! i N a z i a v l a m a y ag i d e b i -                      . ndlhll S: nolus$!n - trsm l0 (o,ll0)
 l e r i k i r n i nh a n g id u r u m l a r d sa a i k a a b i l e c e 6 i n i    l i r s i n i z . . i n s adna h an e i s t e r ?                                                   0ho!thctr - llrl 0l (|hlll
 hayli etkiliyor.                                                                         Hmmrn,belki yapay zeka Llzerindede biraz                                tEUEI.
-         e n e1 9 6 9 . S i z h a t r r l a m a z s r nbrez l k ia m a                                  dahaqok GTA 3'e
+
+         e n e1 9 6 9 . S i z h a t r r l a m a z s r nbrez l k ia m a                                  dahaqok GTA 3'e
                                                                                  raz GTA'danalmrS.oynanrg                                                           gdzebatrfllamazd. Bununyanrndaazrmsanma
  I
                                                                                  benziyor.Ama arabanrnigindengiirevinizbo-                                          yacak kadarda karbktergrafidi ve animasyonu
@@ -2257,7 +2249,8 @@ nrindentarksrz Tarz olarak biraz Driver'danbi                                   
                                                                                 !ok daha iyi q ktt. Harita ardal<ive araElardaki                                                                   lEbst-[|Erm(o,ll0)
                                                                                 ayflntr rist dLizeyde.
                                                                                                     0 l(lasikarabalardaha iyi
-            l < a b ue d i n ,o z l e m i s t i fz d i m i ? g d y l cb e n -         d r Araba denrisl(e     t dylesaqlantarltc ar san
+
+            l < a b ue d i n ,o z l e m i s t i fz d i m i ? g d y l cb e n -         d r Araba denrisl(e     t dylesaqlantarltc ar san
     m
                                                                                                                                                                               8 {i lqi|l . hlo://wl{lr,rag8.cofl
                                                                                                                                                                                                              /ofhood
@@ -2327,17 +2320,16 @@ kip tal(mdan ge ip sizi traf sfef etm""< lstiyof
 lar. l<abuledip etn'tenrenin               bi farkrnt qorerre
 d i r n .B e l k ia r a h a l a fa r a s r n d u
                                                a f a< f a r k a r v a r
-                                                                                                                                                                                                                                                                                 !
+
+                                                                                                                                                                                                                                                                                 !
                                                                                                                                                                                                                                                                                      q
 $
                                                                                                                                                        dtgar dalar l
                                                                                                                                  Ya$m urdindi,solucanlar
 
 
-
                                  onms blast
                                                                                                                                              TI
-
 
 
                                                                                                                                                                                        - y o r D r \ ' 1 ' tt ; . q r l d r ! e r ra ' I ' 5 . 1 1( c l . l , v ; L - a {
@@ -2420,7 +2412,8 @@ $
                                                                                                                                                                                       rEvEr
                                                                                                                                                                                          Noru
                                                                                                                                                                                             [rlfFxm€
- I       Qok kijtri oyun oynadm ve incelemesini                                   yor. ilk gdzr.lnL.ize
+
+ I       Qok kijtri oyun oynadm ve incelemesini                                   yor. ilk gdzr.lnL.ize
                                                                                                     Earpan:ey,arcadeve zama-                                     t o pg i b i                b a s l r y ovreb ut a k l a l a rm i n i -
  I       yazdrmama bu seferdurum farkit. Rage                                      na karsryan! modlanndanbaskabir aiterna-                                      m u m1 0                   siiruior Hatta rakipleriniz
  -
@@ -2476,7 +2469,8 @@ d e n i l g i E e k e b irl .                                                   
                                                                                                                                                                                              $cs|rl||y2.0-fiht||0n88)
                                                                                                                                                                                                 EIr nhr - ta lt (ti9
                                                                                                                                                                1EUEII{fiU
-       '1912'
+
+       '1912'
                 i y i l a r d a( s a v a qz a r n a n) , y a r l ib e n           d e no y u n ad a h l l e d i d i H e r 5 c y it . l i b a s tr d a f                  p i s l ( d i l ! n a n d a ns a d e c eb ' l ( a ! , .B t r
                                                                                                                                                                  yirnribe5
        lfa < ve haylaz b r qocul<kcnDL-rl(e              Nu (em                   a d r r a d f l i z y o r d u ( D L r k eN L r k e nFt o r e v e r             a r a d a ,o y ur d a h e r p a t f O rn o y u n ut d a o d L r i u
@@ -2525,9 +2519,8 @@ Sorlradab     n l n d a nd a v a T q e qdi i v e D u ( e y e n i                
                                                                                   a r l a r v a r D i i l m a n l a fn r zd a < l a s i <D u k eN u -                                   Llo fltcn
                                                                                   l ( e r no y ! n a f l n d a nf a r l ( s r z .N o r m a d o m u z l a r
                                                                                   J " v an o l i .d o r , z l a r .o l . d a . r f ! r : r ' d 6 , , r /
-                                                                                                                               DUIT        TTE : flIilIIIIITII               Pn0JIGII lilCIltltt r03
 
-
+                                                                                                                               DUIT        TTE : flIilIIIIITII               Pn0JIGII lilCIltltt r03
 
 
   ilk.DukeNukem'de            olduguqibi Duke,u             yandan i q i n d k        e l a s i kF P S ' l e r doel d u q g
@@ -2564,15 +2557,12 @@ luyorsunuz.       Ayflcaoyununbu bdlijmleriaOrr-                          silahr
 Irklrolarakplatformmateryalleri                  ieeriyor.ya-             kullanacadrnrz         tul sayrsr    0€ijgeqmiyor:       Ctrl,Alt         ze)@
 ni kayanzeminler,          yerdenyiikselen           arevrer    ve        ve Space.      SpacetuluylaDuke,un              klasiktekme-                                           tB k IfF t@toYd.co||.F
 benzeri   leyleriatlatmayaEalt!tyorsunuz.                     oyun siniatabiliyorsunuz.                Bunununutulmamrg              olma-
-64 r i ctLtt$t r rlSA l(l3l
 
-
+64 r i ctLtt$t r rlSA l(l3l
 
 
 Bu oyunlarr       yerdevurun!
          gOrdUgtiniiz
-
-
 
 
 e.t. the extna tennestnial
@@ -2601,8 +2591,6 @@ d a q o k d e g i g i kE e y l evr a r . V l e s ea , e h e n n a l -         oy
                                                                                                                                                                1 . l r l r m .H r n ' - . 1 0 6 2 [ d r a k t e r . 1 5 1 2 1 r z q i r
                                                                                                                                                                q p r e k e 4d o y T a 1 1 t i!g ' P n q lI o r a n r r r q e r i J o r
                                                                                                                                                                O y u n uo y n a m a s a n ldza o l u r . E h e h o
-
-
 
 
                                                                                               I
@@ -2642,9 +2630,8 @@ ambu ance onlven
                                                                                                                                                                  g i n d e ng e q e b i l . Iqte bu l(adar. Bil oyunu
                                                                                                                                                                                                                  -
                                                                                                                                                                 a l r nI ( A m a n         5 a k ay a p r y o r ! e d i t d r ) o
-                                                                                                                                                                                               l(lSA l(l$l r lilCItI                      t r 05
 
-
+                                                                                                                                                                                               l(lSA l(l$l r lilCItI                      t r 05
 
 
                                                                                                                                                                                                     ntnats
@@ -2669,11 +2656,7 @@ ambu ance onlven
   personkamerastndanoynantyor,ama bu defa                                         p r c a m ?T a m a mb e l k i k u s u r s u zb i r o y u nd e ! i l ,                 IEYE1
 
 
-
-
                                                                                                                                                                                                         I
-
-
 
 
                                                                                                                                                                                 v. l. p.
@@ -2707,7 +2690,8 @@ v e d i z i n i z ik u l l a n r y o r s u n uDz i. z i n i z l ea j a n l a n n
 
                                                                                                                                                                   tEUEt
                                                                                                                                                                      itoru
-                                                                                                                                                                                                           HABERLER
+
+                                                                                                                                                                                                           HABERLER
                                                                                                                                                                                                            66. . . . . Kablolardakifrsrlttlar
                                                                                                                                                                                                            I-AN&INTERNET
                                                                                                                                                                                                            68 . . . . . SoF:
@@ -2720,15 +2704,11 @@ v e d i z i n i z ik u l l a n r y o r s u n uDz i. z i n i z l ea j a n l a n n
                                                                                                                                                                                                            69....             . Lagilacr
 
 
-
-
                                                                                                                                                               ,-                      :,,           :r
                                                                                                                                                             . r l t: . l: : : t . r ai t : i . r l r i l
                                                                                                                                                             '. r. :.r, .l r,:r':
                                                                                                                                                                                  :a
                                                                                                                                                                " : 4 , a . : . '' .. :. : : : : , : .
-
-
 
 
 1,,r,:,r:: i'ri :.:,:::,.:.1 II:"                                                                     yapt klan basn a9 k amastndanse(tiqimizal nt larla
@@ -2775,9 +2755,8 @@ tara KavulacaK                                                                  
 l J l k e m i z dOen I n eO y u n c u l uakd r n ab r i l k ei m z aa t m r !o a n s a
                                                                                         gerekecek.
 nanecom llO serverrnmaalesc{kapattr.Kapanr5sebeplerini lar gibi bir riyelikricretiodenmesi
-                                                                                                                             0 r . r it t r 07
 
-
+                                                                                                                             0 r . r it t r 07
 
 
                                                                                                                          U0oul- DaG
@@ -2818,7 +2797,6 @@ nanecom llO serverrnmaalesc{kapattr.Kapanr5sebeplerini lar gibi bir riyelikricre
  geciyor Ka e ku5alrnalanise bambaSkab r eglencetabi ki
 
 
-
 O y u r o a s e q t . 9 r n rsz, n r l rg e l . 5rt i ' < e n- a s r lo i r y o l t a Kp e r m e ' 1 igz e r e k t i 9
 n i b i l m e n i zC o kd n e m l i .K u l a n d r l r n rvzu r u 5t e k n i k l e r i n d ebnu y ue r e k a -
 d a r h e r g e y eh a k j mo m a l s n r z A y f c a t r i m o y u n b o y u n c aa a c a l r nz q u -
@@ -2842,14 +2820,12 @@ Dark Age of Came/otdevasaon ine b r oyun oldu!u !in ulkemizdekop-
 ya olarak bile bulunmuyor OyuIu wwlr',/.gamestop.com  sitesiyantnda
 eBay g bi a rtveri$sitelerindentem n edebilirsjniz. o
                                                               Suml llm0mk I [rxEk@lEv0l.col.tn
-                                                                                                                                                                              utIt['tA0              E t 69
 
 
+                                                                                                                                                                              utIt['tA0              E t 69
 
 
                                                                                                                                                                       .''rlFrMI'|,
-
-
 
 
      lag'denhkmqolanlana
@@ -2919,10 +2895,9 @@ n u s ud e g i i M i n l m i z ee t m e y eg e l n - m a n tk l d e g i la m a l
                                                                                                                                                  blr ittr           yanaSrnaya         ba5layrnDahane dye-
 ce Bu konuda yapabileceoirniz                       bir      meden once ufak ufak gelerek                            Ama sohbet bol olduqundandiier                 yirnAlah versinkarde5iml6)
 rk tey mevcut Oncelkle e!er mo-                              kendin be i eder Sdy/edi0m tarz                         oyuncularsizegok laf atar ve UO s -                     lual Aln|cml        i iuFrl@lorol.com.tr
-     7 0 , c o i r s o rM
+
+     7 0 , c o i r s o rM
                         r Asrrn
-
-
 
 
                GOA{SO{-17
@@ -2962,9 +2937,9 @@ megaemin@leuel.com.tF
                                   m r o L n a, l S e n a r y o youy u n ab a i l k a l m a k( n o z e ne h a zr       drrmekten  mui u uk duyarrn Gelingelin,Halooynarz be-
                                   ladk'arn soycyenyapmc lar,f, mde (ok faz a aqk nokta                                ralrer.) on;mizdek ay ycpyenoyunlarla  gb.tjlmekuzere,
                                   brrakm! arj mesea RedQueenq br del D r tekfo ol e                                   Bye&snlc LIFE lS SHORT, PLAY MORE! o
-72t       'lcEttME
 
 
+72t       'lcEttME
 
 
             s|nda sadeceakla zarar de!l, aynrza                Arcade'de,arcademak ne erindekigibi ttirn ra-                       b u ' 1 l a ro' e l i . t i l er. 4 m d - i ! i . d e y a o r r a y ag a l 5 r
@@ -3003,7 +2978,8 @@ FighterEok farkl . Hem de nasl?                                nuz, ki bu gok ad
 Traininggibi kendi halinde4 ayfl mod bulunu-                   er de yapt rabiliyorsunuzTfia'da isesizdenbif                      karakteri                         k u l a n a biiy o r s u n uvze b u
 yor (ee, agresf mod'ar da var evet).Bunlardan                  kaEkombinehareketyapmanrzisteniyofve                               5e<loeisTat
                                                                                                                                            stionizoe tut-l.1,So uyor.Ol-it-r-
- 0ylnamrn rrml !r0l0r!mrn'oiimilllyor.                               l r llrldrll ar[|rry0r'l0F
+
+ 0ylnamrn rrml !r0l0r!mrn'oiimilllyor.                               l r llrldrll ar[|rry0r'l0F
                                                                                              [0lrl0f.
 
  du0unuzkarakterleArcadeveya Kumite
@@ -3052,9 +3028,8 @@ man, ona yaptrqtnz hareketiyaparaks ze yum
 ruk atiyor Buradakaraktennzi ge i$tirmekta-
 mamen sizeba!|| Ona istedi0inizyaptrrabtirsi-
 niz Eoltimdene karkenkarakterinizkaydedebi-
-7 4 r l i l c f l . t t t r u l E T l , At l G l l I E R4
 
-
+7 4 r l i l c f l . t t t r u l E T l , At l G l l I E R4
 
 
                                                             veya karSnrzdakineyanartoplaryollayamlyorsu-      Hareketlerin      olmasrnrn dr5rndabir
@@ -3113,12 +3088,9 @@ degil H gbir zaman [/]atrix'dekigibi be5f t yuk             re eyenduvarlarbulun
 sekliktesaniyelerce                                         bilyor.                                          Feidegil.di0er         n de saglanve giysr-
 
 
-
-
                                                                                     LEVrL                                    2002
-                                                                                                                f t t T I n{ r l   GEtttr?5
 
-
+                                                                                                                f t t T I n{ r l   GEtttr?5
 
 
 lerirnrikemrnel  Tekken TagTournarnent'rn da   te vurabilmeniz  de dahil.Ayncabazenimkansrz
@@ -3162,12 +3134,9 @@ hatalarla da kar5raSryorsunuzBuhatalara, raki- ler,harikaanimasyon   ar ve en cj
 binizyerdeyken  onadizinizlebirkaedefaListijs- ler gorerek ve farkndaolarakyapmantz,    Virtua               rrrt ltrtEr | fit{l@hrrl.coll.t!
 
 
-
-
                                                lrr8n, omdddm M hFrfimhlon itrt.                 ho, EEr,       dolot ltl.
- 7 0 r l f l C t l E i l t I f 0 i L 0 n l l l Y Cl lI t l P| 0 l l Sl lI P
 
-
+ 7 0 r l f l C t l E i l t I f 0 i L 0 n l l l Y Cl lI t l P| 0 l l Sl lI P
 
 
 worldrall
@@ -3225,12 +3194,9 @@ Toz,toprakve ralli!Colin'e
   o zamanhiganlayamryorsunuz    (l59alsayfasrnr srm bu unuyor.Buradankaydettiginizreplay'la-   2+5=0.9ise,eee,neyse,   olmadr.Bastan alayrm.
 
 
-
-
                                                                                     LtYtl            !02002
-                                                                                         It0 .0 ftAU.I C
 
-
+                                                                                         It0 .0 ftAU.I C
 
 
 Di!errallioyunlanyla  oranlarsak,
@@ -3316,15 +3282,12 @@ yolaye.idengirr"enz ge.ekiyor.   Ederon san'    oyunlarrndaarabayryolda tutablle
                                                                                                                    E 'lo F|ir rrh t$lrt
 ye sonunda  yolagiremezseniz,  PS2sizialtpyo-   lktansanrzbu oyunu kacrrmayrn.    o                                r U rill qunrl
 lun ortasrnakoyuyor. Kaldr!rnrz yerdendevam                    tlEl flg ft I flrr|@lorol.Gon.tt   tEvEliloIU
-  70 r ltcft Eflt r ttt         e : G [ 0 t 1 8I 0 G t 0 [ r
 
-
+  70 r ltcft Eflt r ttt         e : G [ 0 t 1 8I 0 G t 0 [ r
 
 
 maxI m0
                                                      I
-
-
 
 
 Bakrnburada
@@ -3389,7 +3352,8 @@ Bakrnburada
                                                                                                      uuEliloru
 
                                                                                    r.trIt                     00200t
- (     ilenrscooez: FatdlJJdgement     rrr?          nrzdakinevurulmadanonu vurmak.Story,arca-                  Bo[im
+
+ (     ilenrscooez: FatdlJJdgement     rrr?          nrzdakinevurulmadanonu vurmak.Story,arca-                  Bo[im
  d     Hrrm, ley,zatenb,zde P52icinK sa <!                          gibi oyunu oykrltabanltoyna
                                                      de salonlanndaki                                     nun en
  sa yapmayrdr.i5LinLlyorduk
@@ -3463,11 +3427,10 @@ Bakrnburada
                                                     (?). Bundagrafiklerinve sagmasapanmodelle
    ]{0ruErf,{i-&
 IEUEL                                               melerinde pay oldukgafazla
-8 0 r l r { c r r r M r 2 0 0 2f t t t w 0 R H cr [ P
+
+8 0 r l r { c r r r M r 2 0 0 2f t t t w 0 R H cr [ P
                                                                         d
                                                                                        ,\
-
-
 
 
 2002fifa.
@@ -3553,10 +3516,10 @@ SrrageldiDiinya
 
 
                                                                                                        ttvtl                     0t               200t
-Lastikvebiftekkokusunun
+
+Lastikvebiftekkokusunun
                      karrgtrlr
                             an...
-
 
 
       l-l    ooters:RoadTrip,Arnerika'da gelen                            bat,yorqevreelemanlarr                zayrfve yenraqla'
@@ -3599,8 +3562,6 @@ SrrageldiDiinya
                                                                                                 geldin", "Naaber5e-
 
 
-
-
                                                                                                                                      Et hr     wr. lrdl.cr
                                                                                                                                      , |.I|r   lrft ll|rrld
                                                                                                                                       lblnn    t$lr
@@ -3615,7 +3576,8 @@ SrrageldiDiinya
 
                                                                                                                            tEUEI
                                                                                                                                ltoru
-Gelin,60" e$imlivirajlarda
+
+Gelin,60" e$imlivirajlarda
                          kaptgaltm
   r         -ta, -sn,'t.t.'-n varrsov-nuolarakAvru- layanlar                           yardrm,Eokluyan$modla- mis.Zorlukve
                                                                            iEinsririicri                                                    eranlafligin on sevyelik
@@ -3663,8 +3625,6 @@ SrrageldiDiinya
                                                                                                                          frp.
 
 
-
-
                                                                                                                                      filh|,ubrhlrrl
                                                                                                                                        ml'.S,l|'rrErkllrL
                                                                                                                                       t!t. lr a.lxt h irttu nf,tr'ml
@@ -3674,10 +3634,9 @@ SrrageldiDiinya
 
 
                                                                                            lEIII                         001           t002
-                                                                                                0 A ! t c tD r c t I , 0 t u T t 0 1
+
+                                                                                                0 A ! t c tD r c t I , 0 t u T t 0 1
                                                                                                                                    x {0 t M t r /   r Y M r r i R U $ f lr l c E t E i l t t rS S
-
-
 
 
 raJrmanrush
@@ -3729,8 +3688,6 @@ f(olsuz
                                                                                                                    [EUE[llolu
 
 
-
-
 dancedancerevolution
 Budansrbizeliitfedermisiniz?
   I
@@ -3772,8 +3729,10 @@ Budansrbizeliitfedermisiniz?
 
                                                                                                                                  tEUH.
                                                                                                                                      r{oTU
-I $ I B A T T J i U $ T A S IT J E I | I I ( I I I I G H2T
-                                                                                                                                              Jtltl IilIGHI 2        r STn EJi U8IA8II                           O7
+
+I $ I B A T T J i U $ T A S IT J E I | I I ( I I I I G H2T
+
+                                                                                                                                              Jtltl IilIGHI 2        r STn EJi U8IA8II                           O7
 
 
          Bu yazrnrnne br.iytikzorluklarlayaz ldr-                               lar. Tamamenetkisiz kaldrklaflndanya ka-
@@ -3844,8 +3803,8 @@ etkisizhalegetirir                                                      prlanate
 nnr 9eKer                                                               z i r s a 6 as o l aa d , m l a kn u l l a n myae t e n e E i n i -LaunchingS                                 ar rizerindekul-
         D L l S m a nn s i l a h l a n ne l l e r i n d eant o t - ze kaltyor.Harcadrgr                   9i.iE miktaflnrn      az ol- l a n d r C r n t z                        Son seviyedesahip
 !rnrzdaresmeneyapacaklarrnr                            gagrrryor, masrnedeniyle                  istediginiz     srklrktakul ana o l d u q uu z u nm e n z i il l e                                 ou$rnan-
-      8 8 r S r S A r t J l U S T t S t! J E I t X i l t 8 l | l 2
 
+      8 8 r S r S A r t J l U S T t S t! J E I t X i l t 8 l | l 2
 
 
                                                                           2. Seviye:Hedefezararvererekhavaya EoKyaval/ gokfazlazarar ue(iyor,ne
@@ -3919,10 +3878,9 @@ sGlfilmEnlr
      ketsizhalegetirir                                              S!fl:Enortalamadurum;neeokhrzlr,ne                                         sarsanrz                           yeroeyuvar anacaK-
 
 
-
                                                                                                                tct                         00                                         2
-                                                                                                                                          JtDt t       G i l T2 r g T R
 
+                                                                                                                                          JtDt t       G i l T2 r g T R
 
 
   trr. Bu srradayeredLilmi.l!              olanrakiplbri-                yapacaksrnrz                yapa-
@@ -3996,7 +3954,8 @@ ten dahaCokkombovuru5oluyor.Geritu-                                    ratijrri 
 v eA d r mt u s l a f l n d abni r i n eb a sl t t u t u n .      ateg edince parlalandtqrntgiiriim ve he-                                     den indim ve kend                 i data terffinalinde
 B u s a y e dsei z ik r s as r j r e J i 6 isnaev u n m a s t z men alagrdak drli5ma                rr dldL.irorim.igte,                       b u l d u m .B u r a d am a v i       itdrlerin iiniinde
 b r r a k a c aokl s ad a d i i n e r eikk i n c ib i r v u r u s konlrol odas na kolayca ulalrntlttm, Diirt                                   bulunandrigmeye                     , Jan bana hemen
-          g 0 r 8 r I t r E J l u s r t E rr J t 0 t r                   G l t TI
+
+          g 0 r 8 r I t r E J l u s r t E rr J t 0 t r                   G l t TI
 
 
                                                                                 giderken,ileridecamI bir yaprgtirdom. oradaki                                                      kullanarak        ortadakisritu-
@@ -4072,12 +4031,9 @@ o $3elerlts0nc'lmyol etrrH[nu ldry t0lrl                                        
      b u l d u mv e y u k a n E t k t t m A    . n a k t s m ad o d r u rar kiiprLil0             odayadijliip enaga6rindimve n Earj aletini                                                 I S t eb i r q i z l i b d l g e
 
 
-
-
                                                                                                               IVI
-                                                                                                                                             Jt0t t t0[r 2 r trI
 
-
+                                                                                                                                             Jt0t t t0[r 2 r trI
 
 
 dahabulmultum!Soladdndrim                  ve kaprdan ettim ve 0zerineallad m. Boru geri qekil-
@@ -4151,8 +4107,8 @@ ltm. Zfthtmt Sarj ettikten sonra kaprdan                                    iler
 drlafl Erktrm. Izgaranrn hemen ristrlnde                                    aqrldrve daha eok Storm rizerimesaldrr-                                    Tavandakl lazeri                      ktan sonra camll
 durdum ve beklemeyebaSiadrm.Aqagtda                                         dr. HepsiniiildiirdilktensonraaErlankapr-                                  k o r i d o r d a ni l e r l          bagladrm. Burada
 b e l l i a r a l r k l a r l ad r l a f l Q r k a nb i r b o r u f a r k   d a n q i r d i mv e d n c ez r r h r m rs, o n r ad a s i l a -           firar etmig bir esirle                  laltrm, onu takip
-          02 r 8I[tItJl               USTT I JtDt t                     E[I 2
 
+          02 r 8I[tItJl               USTT I JtDt t                     E[I 2
 
 
                                                                             havalandrrma            bo5lulundan         hafifqea5a!r az dncekini ba!rnagelenlerden                                  hiEhabe-
@@ -4229,9 +4185,8 @@ Prri llc ryncl g8fl yollayr lrSnia,
 
 
                                                                                                    LEV
-                                T A C T t C tEt $ P t 0A G t A C I l 0 i l t r l l                    G t A Es 0 U D 2 s 0 t t l $0 f U B t n I Y I $ T n r r J i u s l t s t r                          93
 
-
+                                T A C T t C tEt $ P t 0A G t A C I l 0 i l t r l l                    G t A Es 0 U D 2 s 0 t t l $0 f U B t n I Y I $ T n r r J i u s l t s t r                          93
 
 
 IACIICAI. ESPIOilAGT cil0|ll
@@ -4289,8 +4244,8 @@ k r n ,t a r n a m d r rT h e r m a lG o g g l e s ' ta l t n .          b a c a
                                                                          d n c eS h e l lI C o r e ' d a nq r k m a m r z
                                                                          r e k l i . H e m e na s a n s d r l leF ' e Q r k r i r .
                                                                          SlEll " I Hff lfi celd i9 inlz yoldan
-  9 4 r 8 r [ [ T t J l U S r t $ t r T t I T t G . t $ P t 0 i l A GAt G l l 0 l { t r l I                                   G t A n$ 0 U 0 2
 
+  9 4 r 8 r [ [ T t J l U S r t $ t r T t I T t G . t $ P t 0 i l A GAt G l l 0 l { t r l I                                   G t A n$ 0 U 0 2
 
 
                                                                              s a H a r r i e r ,/ S t i n g e r ' rhne d e f i n dheing
@@ -4374,8 +4329,8 @@ metmii. HemenRation ve Stinger Launc-                                       onem
 j e t e k i l i t l e n d i g i n i z d he ,e d e fk r r m r zy a d d -       * B o o k ' u a t e s ev e r e b i l i r s i n i z .                       rek [izerlnde r m r z r g r ka r b u l u n d u r a n
 necektir;hemenate! edin. N,4Limkrin
                                 olur-                                         .i. Qi5yapanaskerina trna geEipyuka                                        panele!arptl n. Bagkana        vurmamaya             da
-                                     r r c f l E f l . E 8 P t 0 t { [ E lt c l l 0 i l t | E r r r .G t t R 8 0 0 2 $ 0 s 0 t l t B I R I t r 8 I I I T J I U S T A SI I 9 5
 
+                                     r r c f l E f l . E 8 P t 0 t { [ E lt c l l 0 i l t | E r r r .G t t R 8 0 0 2 $ 0 s 0 t l t B I R I t r 8 I I I T J I U S T A SI I 9 5
 
 
  d z e ng i i s t e r i nD. a h as o n r a0 l g a ' n r ne l e k t -        . l E m m a ' n r snr r t r nC a 4t a k r n .
@@ -4454,7 +4409,8 @@ tekrar deneyin.                                                               o 
    . ! E m m a ' y a C o o l a n tS p r a ys r k , n .                            . t SEWASE                                                          () orun
                                                                               SIEUI       IREIIIIEilItAoll.llY:
                                                                                                               Bukri
-                   9 6 r $ I n t I t J l u g r r $ l r T t 0 T t c. t S p t 0A G tA G I | 0 [ r | r r f l . E E t R8 0 1 . t 02 8 0 i r $ 0 f r .
+
+                   9 6 r $ I n t I t J l u g r r $ l r T t 0 T t c. t S p t 0A G tA G I | 0 [ r | r r f l . E E t R8 0 1 . t 02 8 0 i r $ 0 f r .
 
 
                                                                                p a t l " , " - E k r a n aE o ky a k r nb a k r y o r s u n / / , 9 e l i p S, n a k ele kozlaflnr paylaSacak.
@@ -4489,8 +4445,6 @@ o m srhnrgsrgoltol00*ec [, ir! doir|ym,                                        n
          Sl|tl.t.I C0nE        82C0llPUI[[fi00il11          sonunoa           t r i ne k i p m a n l a fzl n  a e k o a r a <0 l g a ' n r n      d a k u l l a n r pS nger' brrakrnve kosmaya
           H a v e E m m ay a ny a n aV           , i r r i sq a l t l a c a k g d n d e r d ib0iir h e d i y e dy iea l r y o r s u n u z : b a ! l a y r p            at n.
          m ? Zamangdsterecek,                    So idusArsenal               F i g l -F r e q u e " cByl a d e .K u l l a r m ai<g i n                * Ma k i i t r j f e ka t e s iR          : a yb us a l d r f l -
-
-
 
 
                   o llrdmlrnfonmist,0br' aannl r nlda                                     o lltc l|| hlq    r tlrtm. EF Glcyin[ahn,                                  o nay                         Iad        na8rm deiil.
@@ -4532,11 +4486,9 @@ o m srhnrgsrgoltol00*ec [, ir! doir|ym,                                        n
                                                                                                     devamedin. SonundaFortune                                       a g r l a na l z r n a       s r k r n .B U t L l sn a l d r flla f l n -
 
 
-
-
                                                                                                                    TET
-                                 I l c I l c A l E E P t 0t E r r G f l 0 i l i t t I A t E t t [ 8 0 U 0 2 t 0 [ $ 0 t U S I t r y r E I I                                      tJt usrtSl
 
+                                 I l c I l c A l E E P t 0t E r r G f l 0 i l i t t I A t E t t [ 8 0 U 0 2 t 0 [ $ 0 t U S I t r y r E I I                                      tJt usrtSl
 
 
                                                                         saldrflsr  var ki, bunayakalanacaitnlza                         bi-
@@ -4603,7 +4555,9 @@ k rl r Ek u l l a n r y o r s u nBuizr .d ez t p l a d t S     b it r   tayt izl
 o 80[dB tnrl0 lc cok0iidiydi, rm |tz                                         .:. Hard:LiquidSnake
       InrlmEtl, m luyu.                                                      .l Extreme:HideoKojima
                                                                                                                                                 o Yo ilhlr'mz
-                                    B u ay        gal rdeni zl erdeydik       s evgiliyol-
+
+
+                                    B u ay        gal rdeni zl erdeydik       s evgiliyol-
 haberler                sf to+     c u t a r .b l o  yana  bir bu    yana     yalpalanrp
                                    durduk. i r araaz kal srn        al abo r a    bileolu-
                                    y0r0uk. l yanrkl an,         kanaltedaviler i,         ka-
@@ -4638,9 +4592,8 @@ teknikservis            sf tto
                                                                   zamanlaeskiyorve EeCmSte
                                    vefdiqimiz        L€vel Hit 6dii ii yeni ve daha baFnll
                                    iiriinlerin !          9 e e e r l i l i 6 i n ik a y b e d e bl i y o r .
-1 0 4r o o l i r i r I r l t A B t n [ E R
 
-
+1 0 4r o o l i r i r I r l t A B t n [ E R
 
 
   metrxlxparphelia
@@ -4675,8 +4628,6 @@ sistemikurabiliyorsunuz.                                                        
 $ i r n d i l i ls<a d e c e
 
 
-
-
                                     geh!gehlkonsolageh!lsudanucuz!
                                                              l(onsol     grlgrncastna
                                                                   fiyatlarr       dilgiiyor!
@@ -4693,8 +4644,6 @@ $ i r n d i l i ls<a d e c e
                                                             z e rb i r i n d i r i my a p a c a q rdnrri ! L i - modemkiti srirdijpiyasaya.                 Bdyle- n a a y a ku y d u r m a z sPa ,Co y u n l a r t -
                                                             nrjrl<en   bombayrSonypatlatt ve c e G a m e c u bs ea h i p l e rsia d e c e                              n r nz i r v e d oe l d u ! ug i i ne r i E o l <
                                                             P l a y s t a t i o2n' n i nf i y a t r n l          3 5 $ ' ak a b l oa, d s l ,d i a l - u pg i b ia l - arar z. aD
-
-
 
 
                     giiriiyoruz
@@ -4714,12 +4663,9 @@ Microsoft Internet Explorer rqin yenl bir ya-                                   
 Ina Qrktr.Hem Internet Explorer 5, hem de                                          2oo5 yhnda Qrkacagrkonusunda hem fikir El-                                     gabitlik Internet                             geL$tirilirse ayn.                  t
 
 
-
-
                                                                                                                                      tE[
-                                                                                                                                                                                               Hr Br Rr r n r D0il I NMA r 105
 
-
+                                                                                                                                                                                               Hr Br Rr r n r D0il I NMA r 105
 
 
                                                                                                                     I n t e l ,A l t 4 D ' ysi o l l a d id e s e kh i q d ey a a n o l ,
@@ -4803,7 +4749,6 @@ Ina Qrktr.Hem Internet Explorer 5, hem de                                       
                                                                                                                                                  n a l r s a c a ko.
 
 
-
 )      3 D L a b s ' r nY e n i Qi p i                                                      kag ay rar Beklendigi iizere I)u Jeni Cip                                olsa gerek fi leni (-I) s ne cizelbir kop.t.r
        Gegeu ay profesyoncl grafik kartla.lnln lider                                        sadeceprofesvonelleri deEil ovuncularr da                                korunra sisf.emieklemig.Bu saycdcCD bir
       lerinden sDlabsin Creatj\€ taralindan satnl                                           hcdef al5,or. Bu viizden NaIIDL,1.ile pek srcak                          PC'ye takrlillrnda ne Cahyor ne de kopyalan
@@ -4821,9 +4766,8 @@ Ina Qrktr.Hem Internet Explorer 5, hem de                                       
                                                                                                                                                                                 T'
                                                             maslna daha bir                 Dion CD lcrinin kopyalanmasrndan
                                                                                                                            srkrlrlr;                                 belkt delika]nLLkadrnabir $et'lerkapar.o
-1 0 0r ! 0 i l l m l r l C t n E $ P l ntt[ 0
 
-
+1 0 0r ! 0 i l l m l r l C t n E $ P l ntt[ 0
 
 
                                                                                                   ire ELD
@@ -4912,11 +4856,9 @@ Sistemineyazrkki enzayrfyanr   sadeceofis PC'lerinekoymasrEok                   
                                gim bir kalite qizqisivar.                                   E L Di l eb i r l i k t ge e l e n2 y e d e k
 
 
-
                                                                                                                                    ty
-                                                                                                                                                                                              i i l cfl .rfl r I ooi m fir I 107
 
-
+                                                                                                                                                                                              i i l cfl .rfl r I ooi m fir I 107
 
 
  Samsung
@@ -4941,8 +4883,6 @@ zr.inurlUge      !rl<abllmesi        kl 17" monitdrlerde
 ilk defa bu .adar yriksel.Edziniirlik 96riyo
 r u z . I k i n c ii i z e l l i ! ii s e H i g h l i g hfto n k s l y o n u .
 Bu fonksiyonlamonitijrllnsizinseqtiginizbir
-
-
 
 
  Abit AT7
@@ -4988,9 +4928,8 @@ gtne kadar hep4 IDE portu lle gormeyealrstr-                                    
                                                                                     b u l a s m a m ro! a b i l i r s i n i zB. u n u nq o k
                                                                                     b i i y u ki k i a v a n t a j r v a rB. i r i n c i s Ii R Q E a l < r s m a l a -
                                                                                     fl ve sorunlarndan sonsuzakadar kudulacaksr-
-              0 0 t 'rl N t / t A!
 
-
+              0 0 t 'rl N t / t A!
 
 
  Sozlii$ilmrizlinsonboli.imri
@@ -5068,9 +5007,8 @@ ten olduiu iEinel<ranl<art ureticileriel<rankart-                               
                                                                                                                                                                                                                            aulunad
                                                                                                                                                                                                                                  nerin-
                                                                                                                                                                         i k b i l gs n eg d r ek a r a rv e r i r .o
-                                                                                                                                               t Z ' s z 0 N t r 0 0 N A l I M l1 1 0 9
 
-
+                                                                                                                                               t Z ' s z 0 N t r 0 0 N A l I M l1 1 0 9
 
 
 B ' n c i g r , n B r i e v e o k u f ub l q s a y a [ y ag [ e r , D o n d r r f P . ] l , Ir l                Boiazi0i(21212172S2S          Multimedya(2121212
@@ -5160,9 +5098,8 @@ yaptrk:r l) Inmiyor
                                                     Ill Plu$                                            IntelCreate& ShaFe                lntelPocketPCCamcna
                                         l(0nuEmDa/Multimedya:
                                                         42$ | fnpa: 65$                                                                   Empa:119$
- 1 1 0I 0 0 f l r A r r E r i l l r s r n r l s
 
-
+ 1 1 0I 0 0 f l r A r r E r i l l r s r n r l s
 
 
                                                                           a
@@ -5269,9 +5206,9 @@ nununoyununminimurngereksinim- ,ramve illemcinde     sorunolmadEnl       sizoyna
 lerni kar5rlayamamasrndankaynakla- kabuledersek(konlarrda arkada;a-      oyunlardan sodumayabailadrmLllt                                            unuz.
 nryor Ancakbetaolduouiqinpek        rrnn bilgisayarlannda
                                                        veyabir teknik    ren yarom
-      l l 2 r $ A n r r D Asr r{ n c E G r
 
 
+      l l 2 r $ A n r r D Asr r{ n c E G r
 
 
                                                                K$KNEffi&XXK
@@ -5341,8 +5278,6 @@ nryor Ancakbetaolduouiqinpek        rrnn bilgisayarlannda
                                                          biri o an N/laryJaneWatson'dan(KirstenDunst)                                    (dt I mJhLeremevi' en dnerli ozellil.ler                     ,rder
 
 
-
-
                            l                                                          gibiEoksrkrisimlervar.                           edin derim. llenr.iz                fiyatlanagrklanmadr
                                                                                                                                                                                              ama
     Bu yaz istanbul'unkonsertrafiq                                                    Muse'ukaerranlar   ilin iyi                      n e ra n o u r u m                  , gozunuzsitedeolsJh
@@ -5371,9 +5306,8 @@ lenlerarasrndaSuede,Tricky,Muse,                                                
 GrooveArmada, JayJayJohanson                                                         munuzuve caoiflntzL nazrr ran cI4...neyse                                €
 
                                                                                                                         YEI,                       00
-                                                                                                                                                                                        S A N l L 0 l l { G I R C E G rT l l 3
 
-
+                                                                                                                                                                                        S A N l L 0 l l { G I R C E G rT l l 3
 
 
                                                                                                                      newffiw
@@ -5429,8 +5363,6 @@ GrooveArmada, JayJayJohanson                                                    
                                                                                   E p r s o d led e f r g U r a no l a n M a s t e ra r b u 5 e f e r                          Giivcn 0alak           gurel@lcvEl.com.tF
 
 
-
-
 t   lE             FAtxt                                         pacayrher an kaptrrabiirs n z (tabii                   en pratik ve ekonomikformat
     Bir filrnisinemadaizlemenn zevkr                             maa5rnzr da) Yine de kaliteliseyir                     VCD den baskasrde!il. Ayr ca so
     bambaSkadrr       ama evde koltugunu                         zevkindenyana bir sinemasever                          kaktanalp, evde htisranau!radrk,
@@ -5450,9 +5382,9 @@ t   lE             FAtxt                                         pacayrher an ka
     Dolby Digita{,Surroundderken,                                dLiSrinuyor
                                                                           olabilirsiniz
                                                                                       ama hala                          lon com tr adresindebulabilirsiniz.
-ll0 r rnP
 
 
+ll0 r rnP
 
 
                    ANTASY                                                                                                                   LAYING
@@ -5526,11 +5458,9 @@ d klenm sayesnde merakrmdeprelmey-"baSla                                   n rke
                                                                                                                                                           ler, vs. hepsineb|]]kitaptayer verilecek Hadi
 
 
-
                                                                                                                                           Ytl
-                                                                                                                                                                rnP I l17
 
-
+                                                                                                                                                                rnP I l17
 
 
                                                     sahneleflnn nasrlolacadrnt gostermek ieinge-
@@ -5598,12 +5528,12 @@ Starkiler
                                                   ugurmuF,X-Wing'inihangafaparketmittir.Ama
                                                   savairl heyeca,1tnda'1         olsa gerek, Leia'yage-
                                                   Cekya$amdakiadryla"Carrie'diye seslenir.8u
-    ssewm
+
+    ssewm
 rMpRffi             nvaI
                ffiH$s
         nMosTxfwp
 Georgeamcaakltntbagrnadevsirdimi ne?
-
 
 
                                                                                       l r l l l r n d \ ry d o m a yd. o g t u o u l n r u y o ' u n5 a h s e r ,
@@ -5670,10 +5600,9 @@ Georgeamcaakltntbagrnadevsirdimi ne?
      Ben bazran gibi EpisodeT icin "eocukfi rni" ya
 
 
-
-
      iloI                                                                                                                              ttlttr                                  0s                   2012
- l s y a ne d i y o r u ma r t r k s r r ab e n d e e e e e e
+
+ l s y a ne d i y o r u ma r t r k s r r ab e n d e e e e e e
 
                aa arud nereyekadarqrdecekou bcv                           olrenecekIi 5cycr vardr B r konuyL]ne ka-
                 e? yik; F rat dclgryeg rd ya 5 ay(rr i)                   d a r i y if J l l r s e n z on m u t a k ab m e d ! n z o r
@@ -5740,10 +5669,9 @@ kadar buyLiyeceg          m dirsunelenr rer 7.:r.an                       ire gL
                                                                                                                                                       i(if de lok mltliryum o
 
 
-
-
                                                                                                                                                                                                                           lrrs
-(lliq kin$rni[
+
+(lliq kin$rni[
              biryenlone                 grrcficncr.
                       rarnrl i0i[0alal0mast      0lnliia$hnda
                                                            hcplmlr
@@ -5813,9 +5741,9 @@ vannak           yordeyir.D
                                                                                    san ve bu onun igin karartrr                                                sefe varsa,ben mki de bu o
 
 
-
      troI                                                                                                                         tfvEl                                  08                          002
-                                                                                 aa
+
+                                                                                 aa
                                                             .i.'iOnCg
              ... :
 
@@ -5824,7 +5752,6 @@ vannak           yordeyir.D
                        . a ,l i r
 rr-:i:,                ii' :r- ii::riil,
              .r::'
-
 
 
            Sadeceu y k u d a no n c ed e ! i l ,b u y u d u k t esno n r a
@@ -5878,7 +5805,6 @@ rr-:i:,                ii' :r- ii::riil,
                                          olma$drhenhalde"                                                                                                        bu ya       o
 
 
-
           a y n ry e r ek o y a m a z s l n zM a s a a r , g e r l e g n e               n e r e ka l d r 0m u q B e h r e n gk i t a b t n t o
                                                                                                                                               nnsozunde
           k a d a ry a n s i t r f soa k a d a rb a 5 a rrrs a y ra n e k p ! i          d o g u mt a r i h i19 3 9 , o u m t a r i h l1 9 6 8d i y o r 2 9
@@ -5916,12 +5842,9 @@ rr-:i:,                ii' :r- ii::riil,
       l . e L r t a n , , q - r u . l * . 1 a , , n o 5 r i ro , " y e t                  l e d e b r k t a p o l m a s rd a g e r e k m y o r B r l y U
 
 
-
-
                                                                                                                                                                                                                               | 121
- 1 2 2I r i r B o x & o u I B o x
 
-
+ 1 2 2I r i r B o x & o u I B o x
 
 
  Merhabaokur k t es, naapryorsunuz,
@@ -5999,9 +5922,8 @@ h a , t a b l k h a t ad a y a p y o t n zy, a n l! k o n u t u p        iu, cep
                                                                                          bttigin, dahafazla eve ve                                   yeni projeleremza     L hale qel r z, o ur mu
 
                                                                                                                               ET
-                                                                                                                                                                        | l r B 0 r & 0 u r B 0I r 1 2 3
 
-
+                                                                                                                                                                        | l r B 0 r & 0 u r B 0I r 1 2 3
 
 
  olur As|ndaf krr fenadeoil,ama yoktanyonga                                            ken baziunsurlansizlerile paya$makistedim Nl-           prolelerini phesizetkileyecektir.
@@ -6080,9 +6002,8 @@ Merhaba                                                                         
 On.elikliolarakayltkLcvolderqisinisrreklio arak                                        kadrnlarrn da oyunlarlagittikgeartanbiCimdeilgr-   SevgiliEnis,
 in.e -"diqirni
              be rrtmekisterim.Yalntzdikkatm te-                                        lenmeyebaSlamasr    oyun tirketlernin gelecekteki Aslrnda        ay o bana "Adi" dryenelemanage-
-1 2 4r r i r B o x & o u r B o x
 
-
+1 2 4r r i r B o x & o u r B o x
 
 
 reqindenfazlareaksiyon     qdsterdrm,br yorum       br brzdegrhzve bu ulkenn genqvatandallarola
@@ -6109,8 +6030,6 @@ gdnderipd z kapaklarrnrzr
                                    Ama ma'          degrtti.Oyunartrkyaprmcrlar
                                                                               rCrnsadeceqorun-
 ha ledeya da magtacjylemi ya? Donerb4a5rnl          tlden oteyegitmiyor Yok GeForce5882falan
-
-
 
 
 adamrrgr.lld6rndanEe' rokdrld-maazalah. tr,         qrkmrs.
@@ -6147,9 +6066,9 @@ bihaberebeveynler o acaktr qrinkljbunlaflnsebe-     oyun cd si var ama %95 rni 1
                                                                      brjyrjkSirketler                                  dalot 2, 6 |               3 ve daha nlcemrikemmel
                                                     kdpekba|qrhavuzuhalineget rdi Birzamaniar                          yaprmvar Yani             AvP2 de Ny'arine
                                                                                                                                                                 oynamay
-126r ttuEt c0
 
 
+126r ttuEt c0
 
 
          Strlil* L3't*s'r1"4'eyilk:*eltnre
@@ -6198,7 +6117,6 @@ dosyasin       bLrn!
                                                                                                                                 W.!?.11,
 
 
-
                                                                                         ilv,l;ex
                                                                                               $}avne
                                                                                                    FPS
@@ -6224,8 +6142,6 @@ dosyasin       bLrn!
                                                                                        baSatrn.
                                                                                               G0fdiik      hems z Sa!lracak,
                                                                                                       eriniz                hemde!01hoq!nLrzag decek
-
-
 
 
  "3*r{iffifitc-lst nir:#itiit;rsv*nlaru
@@ -6303,7 +6219,8 @@ vermen
                                                                                                                    ula$abrl
                                                                                                                         I v€                                 k adafr o'bol r k2 D uny aS a v a '
                                                                                       i r aqfp'i nFl a t npr n, s av duabir l.r 1 ' SJ v ghr
-                                                        I , E U E Ict
+
+                                                        I , E U E Ict
                                                                    ,       t 127
 
 
@@ -6356,7 +6273,6 @@ vermen
  Japonlarrdakatryor
 
 
-
   0nigami!
  SagdakrSey,dostlarm, elif ze b r adet makas
  a|p Saret yederdendogru b r gekildekesti$i
@@ -6368,7 +6284,6 @@ rnrzbu kapak,deoerliLevelCD'lerinz bundan
 gorrnenizisaglayacak        son derecelaydaltb r
 eserdr Deneyin,goreceksiniz
 A m a b u r a d ad e n e n m i lvi a r T7
-
 
 
  Yenindihinegindilr
@@ -6383,7 +6298,8 @@ g d n d e n nT a b i ig o n d e r d i k l e r l n ryzal nnn a m i n i k
 bir text dokllman/ndakendiad n z ve ma ltnizi
 . a l . c | ' e ^ e ! ' n o o n , / 1 e s . r ' z ' r ) , a n ,d a y a
 z lmasrn st yorsantzo bagkatabii
-                                                                      1 2 8r t f U E l .c 0
+
+                                                                      1 2 8r t f U E l .c 0
  = n'=
  :€q
                     =a d
@@ -6440,13 +6356,9 @@ z lmasrn st yorsantzo bagkatabii
                                                                         dosyasrnrkurmaya  Salr$mayrn.
 
 
-
-
                                                                         1- CDmizdeki     videolann     birgogu   azyerkaplamasr            rqin
                                                                         Divxsrkr$trrma    pfogramrile     s kr$trnldr0rndan,        buvide.
                                                                         olarrseyredebi    menizginbllgisayaanrzda               Divxenco-
-
-
 
 
 ffi
@@ -6465,8 +6377,6 @@ ffi
                                                   llankness             e c eg e r e k ecno d e co l o m akt o l a r abk : l gs a v anr , z ai n -
 
 
-
-
 ffi                                                 llalo               diriliklMedia  Player'a   entegfedilecektir
 
                                          $triilent:
@@ -6474,8 +6384,6 @@ ffi                                                 llalo               dirilikl
                                               Uinlua li0nen 4           Shareware    bdlumiinde,
                                                                                               bilgisayarrnrzr
                                                                                                            kullanmanrzrko-
-
-
 
 
 ffi                                           PR|lGBAMTAR               layla$trracak programlar
@@ -6518,11 +6426,10 @@ GounteF    1.3- 1.4
                                                                                                  DRIVERS
                                                                                              D i r e c u8 1 - D i v X 0
                                                                                                                       5l
-                                                                                                                                                     TUR]K|YE'NiN
+
+                                                                                                                                                     TUR]K|YE'NiN
                                                                                                                                                               BJRNUI\4ARAII
                                                                                                                                                                         OYUNDERGiSi
-
-
 
 
                    tre2
@@ -6565,8 +6472,6 @@ iislri*.          skro\,enshield                                                
                   l'd!n"(;€   fnlT   i" '1,."         ll    Lin^rrnh   hord.   SnlllPF   lb",l                                                     Gnlll las m
                                                                                                                                                    otd|n|hc[r&'                 dldrdrfrlru.l.r0t||.rr
                                                                                                                                                    Yrzrlilerlemdl Adrosl:
-
-
 
 
                   lle[siol'ailaydt...

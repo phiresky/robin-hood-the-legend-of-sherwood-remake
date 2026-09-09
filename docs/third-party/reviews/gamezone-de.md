@@ -7,11 +7,7 @@
 - Checked: 2026-09-09
 - Retrieved: not retrieved
 - Archived copy: none found in the Wayback Machine (checked 2026-09-09)
-- Format: header notes, original summary, then an access record
-
-The opening places the game in the medieval struggle against Prince John and frames it as a real-time tactics game evolving the Desperados formula. It particularly emphasizes increased player freedom.
-
-**Coverage limit:** the retrieved material establishes the review's identity, date, author, and opening argument. The full verdict and score have not been verified. Gamezone.de is a different publication from the English-language GameZone cited by review aggregators; their reviews and scores must not be merged.
+- Format: header notes, then the page text converted from the original HTML plus an access record
 
 ## Access record (2026-09-09)
 
