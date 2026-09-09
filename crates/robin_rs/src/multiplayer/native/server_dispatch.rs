@@ -186,7 +186,7 @@ pub(super) async fn run_server_outgoing_pump(
                     PlayerId::HOST,
                     "authoritative host cannot reconnect itself for a stale input"
                 );
-                let sender = context.peers.lock().take_sender(&player_id.0);
+                let sender = context.peers.lock().sessions.detach_writer(&player_id.0);
                 if let Some(sender) = sender {
                     tracing::warn!(
                         ?player_id,
@@ -212,8 +212,8 @@ pub(super) async fn run_server_outgoing_pump(
                 let senders = {
                     let mut peers = context.peers.lock();
                     peers.readiness.reset();
-                    peers.clear_ready();
-                    peers.take_senders()
+                    peers.sessions.clear_ready();
+                    peers.sessions.detach_all_writers()
                 };
                 tracing::warn!(
                     peers = senders.len(),
@@ -239,6 +239,7 @@ pub(super) async fn run_server_outgoing_pump(
                         "another multiplayer snapshot transition is already pending"
                     );
                     let awaiting = peers
+                        .sessions
                         .senders()
                         .map(|(seat, _)| seat)
                         .copied()
@@ -252,7 +253,7 @@ pub(super) async fn run_server_outgoing_pump(
                     // Keep the peer-state lock until every current writer has
                     // queued Prepare. Otherwise its reader could disconnect,
                     // empty the readiness set, and queue Commit first.
-                    for sender in peers.senders().map(|(_, sender)| sender) {
+                    for sender in peers.sessions.senders().map(|(_, sender)| sender) {
                         queue_peer_message(sender, prepare.clone(), Delivery::Required)?;
                     }
                     take_committed_snapshot_transition(&mut peers)
@@ -333,6 +334,7 @@ pub(super) async fn run_server_outgoing_pump(
                 let sender = {
                     let peers = context.peers.lock();
                     let expected_controller = peers
+                        .sessions
                         .ranked_identity(&to.0)
                         .and_then(|identity| identity.durable_public_key)
                         .map(PublicKey32::from_bytes);
@@ -342,7 +344,7 @@ pub(super) async fn run_server_outgoing_pump(
                     {
                         None
                     } else {
-                        peers.sender(&to.0).cloned()
+                        peers.sessions.sender(&to.0).cloned()
                     }
                 };
                 match sender {
@@ -396,8 +398,9 @@ pub(super) async fn run_server_outgoing_pump(
                 let sender = {
                     let peers = context.peers.lock();
                     peers
+                        .sessions
                         .is_sim_connected(&to.0)
-                        .then(|| peers.sender(&to.0).cloned())
+                        .then(|| peers.sessions.sender(&to.0).cloned())
                         .flatten()
                 };
                 match sender {
@@ -430,8 +433,9 @@ pub(super) async fn run_server_outgoing_pump(
                 let sender = {
                     let peers = context.peers.lock();
                     peers
+                        .sessions
                         .is_sim_connected(&to.0)
-                        .then(|| peers.sender(&to.0).cloned())
+                        .then(|| peers.sessions.sender(&to.0).cloned())
                         .flatten()
                 };
                 match sender {
@@ -609,7 +613,11 @@ fn broadcast_with_delivery(
     );
     let to_send: Vec<UnboundedSender<NetMsg>> = {
         let p = context.peers.lock();
-        p.senders().map(|(_, sender)| sender).cloned().collect()
+        p.sessions
+            .senders()
+            .map(|(_, sender)| sender)
+            .cloned()
+            .collect()
     };
     for sender in to_send {
         queue_peer_message(&sender, msg.clone(), delivery)?;
@@ -628,6 +636,7 @@ pub(super) fn broadcast_msg_required(context: &ServerContext, msg: NetMsg) -> Re
     let to_send: Vec<(u8, UnboundedSender<NetMsg>)> = {
         let peers = context.peers.lock();
         peers
+            .sessions
             .senders()
             .map(|(seat, sender)| (*seat, sender.clone()))
             .collect()
