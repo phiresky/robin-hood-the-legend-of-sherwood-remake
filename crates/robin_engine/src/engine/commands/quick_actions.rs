@@ -3,9 +3,8 @@
 //! The parent dispatcher alone decides when shared recording runs. Nested replay
 //! enters that same dispatcher; it must not bypass preflight or batch semantics.
 
-use super::{
-    determine_use_command, recorded_ground_target_titbit_layer, recorded_interaction_quick_phase,
-};
+use super::object_use::determine_use_command;
+use super::{recorded_ground_target_titbit_layer, recorded_interaction_quick_phase};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
 use crate::engine::movement::PlannedRecordedGroupMoveOutcome;
