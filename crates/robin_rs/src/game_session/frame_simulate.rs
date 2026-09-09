@@ -1288,11 +1288,14 @@ impl InteractiveFrameSimulation {
         reset_input_after_tick_request(host, input);
 
         if ui_task_exit_requested {
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
+            let application_context = host.application_context().clone();
             let post_initialized = runtime.cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
-                    host,
-                    &mut display,
+                    &mut host.frontend,
+                    &mut host.audio,
+                    &mut host.effects,
+                    &application_context,
+                    host.transport.local_seat(),
                     assets,
                     &mut manager.engine,
                     dev,
@@ -1302,7 +1305,7 @@ impl InteractiveFrameSimulation {
                 )
             });
             frame.run_post_initialize = post_initialized;
-            host.frontend.engine_display = display;
+
             if history_commit_pending {
                 runtime.commit_simulation_history(
                     host,
@@ -1343,11 +1346,14 @@ impl InteractiveFrameSimulation {
         if terminal_progress == TerminalDebriefingProgress::EmergencyExit
             || lost_sherwood_progress == LostSherwoodGateProgress::Exit
         {
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
+            let application_context = host.application_context().clone();
             let post_initialized = runtime.cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
-                    host,
-                    &mut display,
+                    &mut host.frontend,
+                    &mut host.audio,
+                    &mut host.effects,
+                    &application_context,
+                    host.transport.local_seat(),
                     assets,
                     &mut manager.engine,
                     dev,
@@ -1357,7 +1363,7 @@ impl InteractiveFrameSimulation {
                 )
             });
             frame.run_post_initialize = post_initialized;
-            host.frontend.engine_display = display;
+
             if history_commit_pending {
                 runtime.commit_simulation_history(
                     host,
@@ -1422,15 +1428,18 @@ impl InteractiveFrameSimulation {
                 return None;
             }
             let paused = execution == FrameExecutionMode::Paused;
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
+            let application_context = host.application_context().clone();
             let mission_transitioning = !game
                 .operation
                 .is(robin_engine::game_operation::GameCode::LevelInProgress);
             frame.run_hourglass &= game.should_run_hourglass(false, mission_transitioning, paused);
             let simulation_frame = frame.hourglass_input();
             let result = game.run_engine_tick(
-                host,
-                &mut display,
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                host.transport.local_seat(),
                 assets,
                 engine,
                 dev,
@@ -1438,7 +1447,7 @@ impl InteractiveFrameSimulation {
                 false,
                 paused,
             );
-            host.frontend.engine_display = display;
+
             result
         });
 
