@@ -310,12 +310,11 @@ impl SpellforgeTrustStore {
 #[cfg(not(target_arch = "wasm32"))]
 fn load_serialized(directory: &str) -> Result<Option<String>, String> {
     let path = SpellforgeTrustStore::store_path(directory);
-    if !path.exists() {
-        return Ok(None);
+    match std::fs::read_to_string(&path) {
+        Ok(serialized) => Ok(Some(serialized)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("read {}: {error}", path.display())),
     }
-    std::fs::read_to_string(&path)
-        .map(Some)
-        .map_err(|error| format!("read {}: {error}", path.display()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -383,6 +382,19 @@ mod tests {
             package_vm_abi: Some("spellforge-v1-sha256:00".to_owned()),
             compressed_bytes: 123,
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_trust_store_is_not_confused_with_a_filesystem_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_str().unwrap();
+        assert!(load_serialized(root).unwrap().is_none());
+        let path = SpellforgeTrustStore::store_path(root);
+        std::os::unix::fs::symlink(&path, &path).unwrap();
+        // exists() returns false for a symlink loop, hiding this read error.
+        assert!(load_serialized(root).is_err());
+        assert!(SpellforgeTrustStore::load(root).is_err());
     }
 
     #[test]

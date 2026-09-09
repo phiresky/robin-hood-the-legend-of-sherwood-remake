@@ -1701,23 +1701,21 @@ impl SaveGameManager {
     /// Load the thumbnail for a slot if one exists on disk.
     pub fn load_thumbnail(&self, index: usize) -> Option<Thumbnail> {
         let slot = self.catalog.get(index)?;
-        if slot.is_autosave() {
-            return match crate::autosave::read_thumbnail(&self.save_directory, &slot.filename) {
-                Ok(thumbnail) => thumbnail,
-                Err(error) => {
-                    tracing::warn!(
-                        filename = slot.filename,
-                        "failed to load autosave thumbnail: {error:#}"
-                    );
-                    None
-                }
-            };
+        let result = if slot.is_autosave() {
+            crate::autosave::read_thumbnail(&self.save_directory, &slot.filename)
+        } else {
+            Thumbnail::read_optional_from(&self.thumb_path(index))
+        };
+        match result {
+            Ok(thumbnail) => thumbnail,
+            Err(error) => {
+                tracing::warn!(
+                    filename = slot.filename,
+                    "failed to load save thumbnail: {error:#}"
+                );
+                None
+            }
         }
-        let path = self.thumb_path(index);
-        if !path.exists() {
-            return None;
-        }
-        Thumbnail::read_from(&path).ok()
     }
 
     /// Load a save file and apply it to the given engine, replacing its
@@ -1782,7 +1780,14 @@ impl SaveGameManager {
                 }
             };
         }
-        self.save_path(index).exists()
+        let path = self.save_path(index);
+        match path.try_exists() {
+            Ok(exists) => exists,
+            Err(error) => {
+                tracing::error!(path = %path.display(), "could not check save payload existence: {error}");
+                false
+            }
+        }
     }
 
     /// Replace only auto-managed slots, preserving manual and Original

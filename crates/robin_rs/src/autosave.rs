@@ -945,20 +945,18 @@ pub(crate) fn read_payload(save_directory: &str, filename: &str) -> Result<GameS
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn payload_exists(save_directory: &str, filename: &str) -> Result<bool> {
     validate_generated_filename(filename)?;
-    Ok(Path::new(save_directory)
+    let path = Path::new(save_directory)
         .join(filename)
-        .with_extension("json")
-        .exists())
+        .with_extension("json");
+    path.try_exists()
+        .with_context(|| format!("checking autosave payload {}", path.display()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn read_thumbnail(save_directory: &str, filename: &str) -> Result<Option<Thumbnail>> {
     validate_generated_filename(filename)?;
     let path = Path::new(save_directory).join(format!("{filename}_thumb.png"));
-    if !path.exists() {
-        return Ok(None);
-    }
-    Thumbnail::read_from(&path).map(Some)
+    Thumbnail::read_optional_from(&path)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1276,6 +1274,22 @@ fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn native_payload_and_thumbnail_checks_report_filesystem_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_str().unwrap();
+        let filename = "Autosave_1_0000";
+        assert!(!payload_exists(root, filename).unwrap());
+        assert!(read_thumbnail(root, filename).unwrap().is_none());
+        for name in [format!("{filename}.json"), format!("{filename}_thumb.png")] {
+            let path = directory.path().join(name);
+            std::os::unix::fs::symlink(&path, &path).unwrap();
+        }
+        assert!(payload_exists(root, filename).is_err());
+        assert!(read_thumbnail(root, filename).is_err());
+    }
 
     #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test::wasm_bindgen_test]

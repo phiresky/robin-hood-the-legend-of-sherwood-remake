@@ -316,6 +316,22 @@ impl Thumbnail {
         atomic_write(path, &encoded)
     }
 
+    /// Read an optional thumbnail, distinguishing absence from unreadable or
+    /// corrupt data. Callers may omit failed previews only after reporting the error.
+    pub(crate) fn read_optional_from(path: &Path) -> Result<Option<Self>> {
+        match Self::read_from(path) {
+            Ok(thumbnail) => Ok(Some(thumbnail)),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Read a thumbnail written by [`write_to`](Self::write_to).
     pub fn read_from(path: &Path) -> Result<Self> {
         let bytes =
@@ -1883,6 +1899,34 @@ mod tests {
         assert_eq!(loaded.width, THUMB_WIDTH);
         assert_eq!(loaded.height, THUMB_HEIGHT);
         assert_eq!(loaded.pixels, pixels);
+    }
+
+    #[test]
+    fn optional_thumbnail_distinguishes_missing_corrupt_and_valid_files() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("preview.png");
+        assert!(Thumbnail::read_optional_from(&path).unwrap().is_none());
+        fs::write(&path, b"not a png").unwrap();
+        assert!(Thumbnail::read_optional_from(&path).is_err());
+        let thumbnail = Thumbnail::from_pixels(1, 1, vec![0]).unwrap();
+        thumbnail.write_to(&path).unwrap();
+        assert_eq!(
+            Thumbnail::read_optional_from(&path)
+                .unwrap()
+                .unwrap()
+                .pixels,
+            vec![0]
+        );
+        assert!(Thumbnail::read_optional_from(dir.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn optional_thumbnail_preserves_filesystem_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("loop.png");
+        std::os::unix::fs::symlink(&path, &path).unwrap();
+        assert!(Thumbnail::read_optional_from(&path).is_err());
     }
 
     #[test]
