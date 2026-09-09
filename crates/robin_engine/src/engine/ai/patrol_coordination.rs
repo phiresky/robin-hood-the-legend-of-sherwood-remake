@@ -308,11 +308,13 @@ impl EngineInner {
                 let obstacles_owned = scratch.ai_sight_obstacles.clone();
                 let obstacles = obstacles_owned.list();
 
-                for &member in &theoretical {
-                    if member == npc_id {
-                        continue;
-                    }
-                    if let Some(snap) = snaps.get(&member) {
+                let (patrol, missed) = patrol_assembly::assemble_patrol(
+                    theoretical
+                        .iter()
+                        .copied()
+                        .filter(|&member| member != npc_id)
+                        .filter_map(|member| snaps.get(&member).map(|snap| (member, snap))),
+                    |&(member, snap)| {
                         // `initialize_patrol`: admit only if
                         // `is_detecting_360_degrees(member) &&
                         // ai_state == Default && (is_civilian() ||
@@ -347,72 +349,21 @@ impl EngineInner {
                             snap.is_able_to_fight,
                         );
                         if admit {
-                            ai.patrol.push(member);
                             chief_assigns.push((member, npc_id));
-                        } else if snap.is_alive {
-                            ai.missed_patrol_members.push(member);
                         }
-                    }
-                }
-
-                // Patrol initialization orders members by squared distance:
-                // subtract the full 3-D ground
-                // positions, stretch world Y by the inverse isometric
-                // aspect ratio, then take the squared norm.  Map Y is
-                // `world_y - z`, so reconstruct world Y before taking
-                // the delta.
-                //
-                // Preserve the Original's insertion semantics too:
-                // it advances only while `new_distance > old_distance`,
-                // so a tie is inserted before existing entries.
-                let snap_ref = &snaps;
-                let patrol_distance = |member: EntityId| {
-                    let snap = snap_ref.get(&member).unwrap_or_else(|| {
-                        panic!(
-                            "patrol member {} is missing its owner-boundary snapshot",
-                            member.index()
+                        (admit, snap.is_alive)
+                    },
+                    |&(_, snap)| {
+                        (
+                            patrol_assembly::projected_patrol_world(snap.position, snap.ground_z),
+                            snap.position,
                         )
-                    });
-                    let dx = snap.position.x - chief_pos.x;
-                    let dy_world =
-                        (snap.position.y + snap.ground_z) - (chief_pos.y + chief_snap.ground_z);
-                    let dy = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let dz = snap.ground_z - chief_snap.ground_z;
-                    dx * dx + dy * dy + dz * dz
-                };
-                let mut sorted_patrol = Vec::with_capacity(ai.patrol.len());
-                for member in std::mem::take(&mut ai.patrol) {
-                    let distance = patrol_distance(member);
-                    let insert_at = sorted_patrol
-                        .iter()
-                        .position(|&existing| {
-                            patrol_distance_inserts_before(distance, patrol_distance(existing))
-                        })
-                        .unwrap_or(sorted_patrol.len());
-                    sorted_patrol.insert(insert_at, member);
-                }
-                ai.patrol = sorted_patrol;
-
-                // Arrange left/right pairs: for each pair, ensure
-                // even-index member is to the left of the odd-index
-                // one (relative to chief).  Uses a 2D determinant.
-                let patrol_size = ai.patrol.len();
-                for i in (1..patrol_size).step_by(2) {
-                    let even_h = ai.patrol[i - 1];
-                    let odd_h = ai.patrol[i];
-                    if let (Some(even_s), Some(odd_s)) =
-                        (snap_ref.get(&even_h), snap_ref.get(&odd_h))
-                    {
-                        let ex = even_s.position.x - chief_pos.x;
-                        let ey = even_s.position.y - chief_pos.y;
-                        let ox = odd_s.position.x - chief_pos.x;
-                        let oy = odd_s.position.y - chief_pos.y;
-                        // 2D determinant: if even is on the wrong side, swap
-                        if ex * oy - ey * ox < 0.0 {
-                            ai.patrol.swap(i - 1, i);
-                        }
-                    }
-                }
+                    },
+                    patrol_assembly::projected_patrol_world(chief_pos, chief_snap.ground_z),
+                    chief_pos,
+                );
+                ai.patrol = patrol.into_iter().map(|(id, _)| id).collect();
+                ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
             }
 
             // ── Refresh patrol positions ──

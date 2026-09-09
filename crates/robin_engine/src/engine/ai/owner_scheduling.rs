@@ -1000,79 +1000,46 @@ impl EngineInner {
         let chief_snap = snapshot(chief_id);
         let obstacles_owned = self.build_ai_sight_obstacles(assets);
         let obstacles = obstacles_owned.list();
-        let mut patrol = Vec::new();
-        let mut missed = Vec::new();
-
-        for &member in theoretical {
-            if member == chief_id {
-                continue;
-            }
-            let snap = snapshot(member);
-            // Original evaluates omnidirectional detection first in the `&&`
-            // chain. An active, outdoor member therefore emits its LOS query
-            // even when its later AI-state / able-to-fight gate rejects it.
-            // Pre-gating visibility on those later predicates loses the
-            // chief-to-member prefix and lets common return-to-duty processing's
-            // reciprocal member queries appear first in the frame trace.
-            let admit = patrol_member_admitted(
-                chief_snap.is_active && snap.is_active,
-                || {
-                    patrol_member_visible_from_raw_world(
-                        chief_snap.detection_position_world,
-                        chief_snap.is_rider,
-                        chief_real_view_radius,
-                        chief_snap.in_building,
-                        snap.detection_position_world,
-                        snap.posture,
-                        snap.is_rider,
-                        snap.direction as i16,
-                        snap.in_building,
-                        obstacles,
-                    )
-                },
-                snap.ai_state,
-                snap.is_civilian,
-                snap.is_able_to_fight,
-            );
-            if admit {
-                patrol.push((member, snap));
-            } else if snap.is_alive {
-                missed.push(member);
-            }
-        }
-
-        let square_distance = |snap: PatrolSnap| {
-            // Squared distance subtracts the actors' raw 3D world-position
-            // values. In particular, it does not use AI `Position(actor)`,
-            // which teleports a door-passing actor to its gate endpoint.
-            let dx = snap.raw_position_world.x - chief_snap.raw_position_world.x;
-            let dy = (snap.raw_position_world.y - chief_snap.raw_position_world.y)
-                * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = snap.raw_position_world.z - chief_snap.raw_position_world.z;
-            dx * dx + dy * dy + dz * dz
-        };
-        let mut sorted: Vec<(EntityId, PatrolSnap)> = Vec::with_capacity(patrol.len());
-        for entry in patrol {
-            let distance = square_distance(entry.1);
-            let insert_at = sorted
+        let (sorted, missed) = patrol_assembly::assemble_patrol(
+            theoretical
                 .iter()
-                .position(|existing| {
-                    patrol_distance_inserts_before(distance, square_distance(existing.1))
-                })
-                .unwrap_or(sorted.len());
-            sorted.insert(insert_at, entry);
-        }
-        for pair_end in (1..sorted.len()).step_by(2) {
-            let even = sorted[pair_end - 1].1.position;
-            let odd = sorted[pair_end].1.position;
-            let ex = even.x - chief_snap.position.x;
-            let ey = even.y - chief_snap.position.y;
-            let ox = odd.x - chief_snap.position.x;
-            let oy = odd.y - chief_snap.position.y;
-            if ex * oy - ey * ox < 0.0 {
-                sorted.swap(pair_end - 1, pair_end);
-            }
-        }
+                .copied()
+                .filter(|&member| member != chief_id)
+                .map(|member| (member, snapshot(member))),
+            |&(_, snap)| {
+                // Original evaluates omnidirectional detection first in the `&&`
+                // chain. An active, outdoor member therefore emits its LOS query
+                // even when its later AI-state / able-to-fight gate rejects it.
+                // Pre-gating visibility on those later predicates loses the
+                // chief-to-member prefix and lets common return-to-duty processing's
+                // reciprocal member queries appear first in the frame trace.
+                let admit = patrol_member_admitted(
+                    chief_snap.is_active && snap.is_active,
+                    || {
+                        patrol_member_visible_from_raw_world(
+                            chief_snap.detection_position_world,
+                            chief_snap.is_rider,
+                            chief_real_view_radius,
+                            chief_snap.in_building,
+                            snap.detection_position_world,
+                            snap.posture,
+                            snap.is_rider,
+                            snap.direction as i16,
+                            snap.in_building,
+                            obstacles,
+                        )
+                    },
+                    snap.ai_state,
+                    snap.is_civilian,
+                    snap.is_able_to_fight,
+                );
+                (admit, snap.is_alive)
+            },
+            // Distance uses raw 3D coordinates, not the AI door gate endpoint.
+            |&(_, snap)| (snap.raw_position_world, snap.position),
+            chief_snap.raw_position_world,
+            chief_snap.position,
+        );
 
         let patrol_ids: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
         {
@@ -1089,7 +1056,7 @@ impl EngineInner {
                 });
             ai.needs_patrol_reinit = false;
             ai.patrol = patrol_ids.clone();
-            ai.missed_patrol_members = missed;
+            ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
         }
         for member in patrol_ids {
             self.world
@@ -1105,10 +1072,6 @@ impl EngineInner {
                 })
                 .patrol_chief = Some(chief_id);
         }
-
-        // TODO: share this sorting/admission core with the initialization
-        // paths that run before the per-owner hourglass instead of retaining
-        // the equivalent delayed-path implementation in patrol coordination.
     }
 
     pub(in crate::engine) fn drain_direct_ai_owner_boundary_mode(

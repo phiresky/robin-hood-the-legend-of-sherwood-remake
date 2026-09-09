@@ -5417,17 +5417,13 @@ impl EngineInner {
         // Remove from index lists
         self.world.pc_ids.retain(|&i| i != id);
         self.world.original_pc_registry_ids.retain(|&i| i != id);
-        self.players.seats[0].selection.retain(|&i| i != id);
-        // Any pending path request for this actor is cancelled when
-        // the element tears down.  Entity removal implies all its
-        // elements die, so drop the retry-queue entries eagerly
-        // instead of waiting for the next retry pass to notice the
-        // owner is gone.
-        self.orders.failed_path_requests.retain(|r| r.owner != id);
-        self.orders
-            .pending_move_requests
-            .retain(|(eid, _)| *eid != id);
-        self.orders.pending_path_requests.retain_not_owned_by(id);
+        self.players.remove_entity(id);
+        self.orders.remove_entity(id);
+        for (_, entity) in self.world.entities.occupied_mut() {
+            if let Some(ai) = entity.ai_controller_mut() {
+                ai.remove_entity(id);
+            }
+        }
     }
 
     /// Retire a replaced PC from Original's live party registry without
@@ -5474,7 +5470,9 @@ impl EngineInner {
         // `MSG_UNSELECT_CHARACTER`: clears selection, hides portrait
         // highlight, etc.  The selection list is authoritative, so
         // removing the id here mirrors the message's observable effect.
-        self.players.seats[0].selection.retain(|&id| id != pc_id);
+        for seat in &mut self.players.seats {
+            seat.selection.retain(|&id| id != pc_id);
+        }
 
         // Non-playable status — survives into the handful of frames
         // between clearing selection and wiping the slot.  After

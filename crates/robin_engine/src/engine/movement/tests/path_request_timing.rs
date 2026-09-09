@@ -339,7 +339,7 @@ mod suite {
         let first = queue.pop_to_start().expect("removed owner starts");
         queue.set_in_flight(first, Some(vec![MapPoint::new(20.0, 20.0)]));
 
-        queue.retain_not_owned_by(removed);
+        queue.remove_entity(removed);
 
         assert!(queue.ignore_next_path);
         assert!(queue.in_flight.is_some(), "logical head remains in flight");
@@ -363,12 +363,49 @@ mod suite {
             crate::pathfinder::PathFinderSpeed::Medium,
         ));
 
-        queue.retain_not_owned_by(removed);
+        queue.remove_entity(removed);
 
         assert!(queue.ignore_next_path);
         assert_eq!(queue.waiting.len(), 2);
         assert_eq!(queue.waiting[0].owner, removed);
         assert_eq!(queue.waiting[1].owner, successor);
+    }
+
+    #[test]
+    fn target_teardown_keeps_cancelled_head_completion_and_unrelated_order() {
+        let owner = EntityId::Pc(PcId(3));
+        let removed = EntityId::Soldier(SoldierId(4));
+        let successor = EntityId::Soldier(SoldierId(5));
+        for in_flight in [false, true] {
+            let mut head = request(owner, crate::pathfinder::PathFinderSpeed::Fast);
+            head.antagonist = Some(removed);
+            let mut queue = PendingPathRequestQueue::restore_v48_waiting(vec![
+                head.clone(),
+                request(successor, crate::pathfinder::PathFinderSpeed::Medium),
+                head,
+                request(owner, crate::pathfinder::PathFinderSpeed::Fast),
+            ]);
+            if in_flight {
+                let head = queue.pop_to_start().unwrap();
+                queue.set_in_flight(head, None);
+            }
+            queue.remove_entity(removed);
+            queue.remove_entity(removed);
+            assert!(queue.ignore_next_path);
+            if !in_flight {
+                let head = queue.pop_to_start().unwrap();
+                queue.set_in_flight(head, None);
+            }
+            let (completed, valid) = queue.take_completed().unwrap();
+            assert_eq!(completed.request.antagonist, Some(removed));
+            assert!(
+                !valid,
+                "cancelled head still consumes its normal result slot"
+            );
+            assert_eq!(queue.pop_to_start().unwrap().owner, successor);
+            assert_eq!(queue.pop_to_start().unwrap().owner, owner);
+            assert!(queue.pop_to_start().is_none());
+        }
     }
 
     #[test]
