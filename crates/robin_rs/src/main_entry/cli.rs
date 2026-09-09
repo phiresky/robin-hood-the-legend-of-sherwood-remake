@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 
 use clap::Parser;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::host::ApplicationContext;
 use crate::replay_format::COMPACT_PREFIX;
@@ -43,7 +43,7 @@ fn parse_replay_spec(s: &str) -> Result<String, String> {
 }
 
 pub(super) fn requested_replay_data(
-    args: &CliArgs,
+    args: &MissionLaunch,
 ) -> Result<Option<engine_replay::ReplayData>, String> {
     if let Some(data) = args.replay_data.clone() {
         return Ok(Some(data));
@@ -56,7 +56,7 @@ pub(super) fn requested_replay_data(
 }
 
 /// Robin Hood — The Legend of Sherwood (Rust port)
-#[derive(Parser, Debug, Clone, Deserialize)]
+#[derive(Parser, Debug, Clone, Serialize, Deserialize)]
 #[command(version, about)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct CliArgs {
@@ -114,31 +114,6 @@ pub struct CliArgs {
     /// The replay's header picks the mission to load.
     #[arg(long, value_parser = parse_replay_spec)]
     pub replay: Option<String>,
-
-    /// Decoded replay payload supplied by the wasm shell over script RPC.
-    ///
-    /// Kept separate from `replay` so the engine can be seeded before
-    /// construction without serializing an already-decoded replay back
-    /// into a command-line string.
-    #[arg(skip)]
-    #[serde(skip)]
-    pub replay_data: Option<engine_replay::ReplayData>,
-
-    /// Evidence for this cold mission reconstruction, owned by the run loop.
-    /// Never inherited by an unrelated launch or accepted from configuration.
-    #[arg(skip)]
-    #[serde(skip)]
-    #[doc(hidden)]
-    pub mission_restart: bool,
-
-    /// Process-internal authority request installed only by the native
-    /// official projection exporter. It is deliberately not a public CLI or
-    /// configuration-file surface.
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    #[arg(skip)]
-    #[serde(skip)]
-    pub simulation_content_export:
-        Option<crate::official_projection_export::SimulationContentExportRequest>,
 
     /// Runtime rollback consistency checker: rewind a short window of
     /// engine state and re-simulate it to detect desyncs.
@@ -308,14 +283,6 @@ pub struct CliArgs {
     #[clap(skip)]
     #[serde(skip)]
     pub pending_distributed_mod: Option<std::sync::Arc<[u8]>>,
-    /// Exact cold-restored mission mount retained across engine construction,
-    /// the complete mission session, and same-mission restarts. Saves and
-    /// replays keep their executable package in their own persisted payload;
-    /// this owner exists only for process-local archive/cache lifetimes.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub resolved_mission_assets:
-        Option<std::sync::Arc<crate::mission_asset_restore::ResolvedMissionAssets>>,
 
     /// Internal one-shot render request used by the `render_mission_map`
     /// example. The mission session captures the complete level through the
@@ -366,6 +333,62 @@ pub struct CliArgs {
     pub preserve_forced_mission_campaign: bool,
 }
 
+/// Process-owned mission request, prepared from the raw CLI/URL configuration.
+/// Decoded payloads and asset/export authority can only be installed in process;
+/// deserialization always starts with an unprepared request.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MissionLaunch {
+    /// Parsed launcher configuration and existing tool/menu options.
+    pub config: CliArgs,
+    /// Already-decoded replay, installed before engine construction so the
+    /// canonical header supplies the initial world, seed and simulation config.
+    #[serde(skip)]
+    pub replay_data: Option<engine_replay::ReplayData>,
+    /// Evidence for this cold reconstruction; reset for unrelated launches.
+    #[serde(skip)]
+    pub mission_restart: bool,
+    /// Exact admitted asset mount, retained throughout the session and its
+    /// same-mission restarts. Persisted replay/save formats retain their own
+    /// executable packages; this lease owns only process-local mount lifetimes.
+    #[serde(skip)]
+    pub resolved_mission_assets:
+        Option<std::sync::Arc<crate::mission_asset_restore::ResolvedMissionAssets>>,
+    /// Authority installed only by the native official projection exporter.
+    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+    #[serde(skip)]
+    pub simulation_content_export:
+        Option<crate::official_projection_export::SimulationContentExportRequest>,
+}
+
+impl From<CliArgs> for MissionLaunch {
+    fn from(config: CliArgs) -> Self {
+        // CliArgs::default installs process-wide options. Do not construct a
+        // discarded default configuration while preserving the parsed options.
+        Self {
+            config,
+            replay_data: None,
+            mission_restart: false,
+            resolved_mission_assets: None,
+            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+            simulation_content_export: None,
+        }
+    }
+}
+
+impl std::ops::Deref for MissionLaunch {
+    type Target = CliArgs;
+    fn deref(&self) -> &CliArgs {
+        &self.config
+    }
+}
+
+impl std::ops::DerefMut for MissionLaunch {
+    fn deref_mut(&mut self) -> &mut CliArgs {
+        &mut self.config
+    }
+}
+
 /// Exact executable-package handoff for one live custom mission. Archive
 /// identity/mount lifetime lives in `resolved_mission_assets`; this structure
 /// never carries a path which Lua startup could reopen.
@@ -393,10 +416,6 @@ impl Default for CliArgs {
             debug_surfaces: false,
             record: None,
             replay: None,
-            replay_data: None,
-            mission_restart: false,
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            simulation_content_export: None,
             rollback_check: true,
             sherwood: false,
             force_main_menu: false,
@@ -422,7 +441,6 @@ impl Default for CliArgs {
             global_options: ApplicationContext::default(),
             pending_lua_mission: None,
             pending_distributed_mod: None,
-            resolved_mission_assets: None,
             mission_start_map_output: None,
             mission_start_map_frame: 0,
             mission_start_reveal_all: false,
@@ -659,6 +677,40 @@ mod tests {
     use robin_engine::campaign::Campaign;
 
     #[test]
+    fn parsed_configuration_cannot_install_runtime_launch_authority() {
+        let raw: super::CliArgs = serde_json::from_value(serde_json::json!({
+            "headless": true,
+            "mission-restart": true,
+            "replay-data": {},
+            "resolved-mission-assets": {},
+            "simulation-content-export": {}
+        }))
+        .unwrap();
+        let launch = super::MissionLaunch::from(raw);
+        assert!(launch.headless);
+        assert!(!launch.mission_restart);
+        assert!(launch.replay_data.is_none());
+        assert!(launch.resolved_mission_assets.is_none());
+        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+        assert!(launch.simulation_content_export.is_none());
+
+        let injected: super::MissionLaunch = serde_json::from_value(serde_json::json!({
+            "config": {"headless": true},
+            "mission_restart": true,
+            "replay_data": {},
+            "resolved_mission_assets": {},
+            "simulation_content_export": {}
+        }))
+        .unwrap();
+        assert!(injected.headless);
+        assert!(!injected.mission_restart);
+        assert!(injected.replay_data.is_none());
+        assert!(injected.resolved_mission_assets.is_none());
+        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+        assert!(injected.simulation_content_export.is_none());
+    }
+
+    #[test]
     #[cfg(feature = "multiplayer")]
     fn browser_join_route_requires_interactive_preflight_before_mission_bootstrap() {
         let key = iroh::SecretKey::from_bytes(&[7; 32]);
@@ -858,14 +910,25 @@ mod tests {
         }
         .try_into()
         .expect("valid replay fixture");
-        let args = super::CliArgs {
-            replay: Some("this-path-must-never-be-read".into()),
+        let args = super::MissionLaunch {
+            config: super::CliArgs {
+                replay: Some("this-path-must-never-be-read".into()),
+                ..Default::default()
+            },
             replay_data: Some(data),
             ..Default::default()
         };
 
         let selected = requested_replay_data(&args).unwrap().unwrap();
         assert_eq!(selected.header().rng_seed, 0x55aa);
+        let serialized = serde_json::to_value(&args).unwrap();
+        assert!(serialized.get("replay_data").is_none());
+        assert!(serialized.get("mission_restart").is_none());
+        assert!(serialized.get("resolved_mission_assets").is_none());
+        assert!(serialized.get("simulation_content_export").is_none());
+        let restored: super::MissionLaunch = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.replay, args.replay);
+        assert!(restored.replay_data.is_none());
     }
 
     #[test]

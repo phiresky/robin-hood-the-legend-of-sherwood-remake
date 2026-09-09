@@ -116,7 +116,9 @@ fn run() -> anyhow::Result<i32> {
         launcher_args.push(OsString::from("--proto"));
         launcher_args.push(OsString::from(proto));
     }
-    let mut game_args = robin_rs::main_entry::try_parse_cli_from(launcher_args)?;
+    let mut game_args = robin_rs::main_entry::MissionLaunch::from(
+        robin_rs::main_entry::try_parse_cli_from(launcher_args)?,
+    );
     game_args.mission_start_map_output = Some(output.clone());
     game_args.mission_start_map_frame = args.frame;
     game_args.mission_start_reveal_all = args.reveal_all;

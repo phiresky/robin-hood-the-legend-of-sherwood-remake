@@ -138,7 +138,7 @@ async fn capture_full_frame_zero_screenshot(
         campaign,
         profiles,
         application_context,
-        &game_args,
+        &robin_rs::main_entry::MissionLaunch::from(game_args),
     )
     .await
     {

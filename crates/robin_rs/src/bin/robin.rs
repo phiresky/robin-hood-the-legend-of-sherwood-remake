@@ -58,6 +58,7 @@ fn main() {
 /// run the async game on a dedicated thread (driven by `pollster`).
 #[cfg(not(target_arch = "wasm32"))]
 fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
+    let args = robin_rs::main_entry::MissionLaunch::from(args);
     let (campaign, profiles, shipping) = match robin_rs::main_entry::rust_init() {
         Ok(c) => {
             tracing::info!("Rust initialization complete.");
@@ -432,7 +433,7 @@ async fn wasm_main(
     .shared();
     let _ = pool_init.clone().now_or_never();
     wasm_bindgen_futures::spawn_local(pool_init.clone());
-    let args = robin_rs::main_entry::parse_cli();
+    let args = robin_rs::main_entry::MissionLaunch::from(robin_rs::main_entry::parse_cli());
     let init_start = web_time::Instant::now();
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
