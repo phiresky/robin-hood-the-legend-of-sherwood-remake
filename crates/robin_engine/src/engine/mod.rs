@@ -1273,56 +1273,6 @@ impl EngineInner {
         }
     }
 
-    // ─── Script globals ──────────────────────────────────────────
-
-    //
-    // Backs the `InitScriptGlobal` script native. Will become live once
-    // that native is wired in `crates/robin_engine/src/natives/`;
-    // currently exercised only by `engine::tests::script_globals`.
-    #[allow(dead_code)] // port-in-progress: awaiting `IInitGlobal` native plumbing
-    pub(crate) fn init_script_global(&mut self, id: usize, value: i32) {
-        // Resize the array to `id + 16` when `id` is out of range,
-        // giving scripts a 16-slot slack window of valid reads/writes
-        // past the last initialised index. Any script that pokes within
-        // this window sees `0` defaults.
-        if id + 16 > self.scripts.globals.len() {
-            self.scripts.globals.resize(id + 16, 0);
-        }
-        self.scripts.globals[id] = value;
-    }
-
-    //
-    // Backs the `SetScriptGlobal` script native. Will become live once
-    // that native is wired in `crates/robin_engine/src/natives/`;
-    // currently exercised only by `engine::tests::script_globals` /
-    // `script_global_set_out_of_range_panics`.
-    #[allow(dead_code)] // port-in-progress: awaiting `ISetGlobal` native plumbing
-    pub(crate) fn set_script_global(&mut self, id: usize, value: i32) {
-        if id < self.scripts.globals.len() {
-            self.scripts.globals[id] = value;
-        } else {
-            panic!(
-                "Script global ID {} out of range (max {})",
-                id,
-                self.scripts.globals.len()
-            );
-        }
-    }
-
-    /// Get a script global variable.
-    pub fn get_script_global(&self, id: usize) -> i32 {
-        self.scripts
-            .globals
-            .get(id)
-            .copied()
-            .unwrap_or_else(|| panic!("Script global ID {} out of range", id))
-    }
-
-    /// Check if a script global ID is valid.
-    pub fn is_valid_script_global_id(&self, id: usize) -> bool {
-        id < self.scripts.globals.len()
-    }
-
     // ─── Entity management ──────────────────────────────────────
 
     /// Add an entity to the world. Returns its EntityId.

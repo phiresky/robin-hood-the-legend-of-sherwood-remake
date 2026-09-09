@@ -22,27 +22,6 @@ fn swordfight_test_assets() -> LevelAssets {
 }
 
 #[test]
-fn script_globals() {
-    let mut engine = EngineInner::new();
-    engine.init_script_global(5, 42);
-    assert_eq!(engine.get_script_global(5), 42);
-    // `init_script_global` resizes to `id + 16`, giving scripts a
-    // 16-slot slack window of valid reads beyond the last-initialised
-    // index.
-    assert_eq!(engine.scripts.globals.len(), 5 + 16);
-    for i in 6..(5 + 16) {
-        assert_eq!(engine.get_script_global(i), 0);
-    }
-
-    engine.set_script_global(5, 99);
-    assert_eq!(engine.get_script_global(5), 99);
-
-    assert!(engine.is_valid_script_global_id(5));
-    assert!(engine.is_valid_script_global_id(20));
-    assert!(!engine.is_valid_script_global_id(21));
-}
-
-#[test]
 fn opened_scroll_status_forces_bonus_three_sprite() {
     let mut engine = EngineInner::new();
     let mut conversion = vec![0; crate::order::OrderType::NonanimationEnd as usize + 1];
@@ -67,13 +46,6 @@ fn opened_scroll_status_forces_bonus_three_sprite() {
     assert_eq!(scroll.element.sprite.frame_count, 0);
     assert_eq!(scroll.object.animation, crate::order::OrderType::BonusThree);
     assert_eq!(scroll.element.custom_minimap_dot, 1);
-}
-
-#[test]
-#[should_panic(expected = "out of range")]
-fn script_global_set_out_of_range_panics() {
-    let mut engine = EngineInner::new();
-    engine.set_script_global(100, 1);
 }
 
 #[test]
