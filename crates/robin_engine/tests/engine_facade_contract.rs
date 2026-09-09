@@ -132,9 +132,6 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
 
     let mut allowed = vec![
         "advance_frame",
-        // Mutates only the non-authoritative presentation clone used for
-        // render interpolation; it cannot open the live simulation owner.
-        "apply_spatial_presentation",
         "host_console",
         "finish_mission_bootstrap",
         "parity_replay_setup",

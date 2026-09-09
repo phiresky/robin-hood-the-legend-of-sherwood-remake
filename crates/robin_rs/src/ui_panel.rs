@@ -18,7 +18,7 @@ use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
-use robin_engine::engine::Engine;
+use robin_engine::engine::EngineInner;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
@@ -1348,7 +1348,7 @@ impl PortraitBarItem {
 }
 
 pub(crate) fn portrait_bar_items(
-    engine: &Engine,
+    engine: &EngineInner,
     seat: PlayerId,
     screen_width: u16,
 ) -> (Vec<PortraitBarItem>, bool) {
@@ -1442,7 +1442,7 @@ fn blit_to_screen_widget(
 /// life_points=5 (set by wound handling). They render as burned portraits
 /// with the health gauge visible. Fully dead PCs have life_points<=0
 /// and are NOT in coma — their scrolls are hidden entirely.
-fn is_pc_in_coma(engine: &Engine, entity: &Entity) -> bool {
+fn is_pc_in_coma(engine: &EngineInner, entity: &Entity) -> bool {
     let profile_idx = match entity.pc_data() {
         Some(pc) => pc.profile_index,
         None => return false,
@@ -1592,7 +1592,7 @@ fn render_allied_portrait_layer(
 /// or physical-display refresh. This is presentation-only animation state.
 pub(crate) fn prepare_auto_queue_animations(
     frontend: &mut HostFrontend,
-    engine: &Engine,
+    engine: &EngineInner,
     seat: PlayerId,
     screen_width: u16,
 ) {
@@ -1626,7 +1626,7 @@ pub(crate) fn prepare_auto_queue_animations(
 fn render_auto_queue_ticks(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
-    engine: &Engine,
+    engine: &EngineInner,
     seat: PlayerId,
     identity: crate::host::QueueStripIdentity,
     members: &[EntityId],
@@ -1672,7 +1672,7 @@ fn render_allied_portrait(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    engine: &Engine,
+    engine: &EngineInner,
     profiles: &engine_profiles::ProfileManager,
     seat: PlayerId,
     item: &PortraitBarItem,
@@ -1846,7 +1846,7 @@ fn render_allied_portrait(
 }
 
 fn allied_visage_kind(
-    engine: &Engine,
+    engine: &EngineInner,
     profiles: &engine_profiles::ProfileManager,
     members: &[EntityId],
 ) -> AlliedVisageKind {
@@ -2058,7 +2058,7 @@ fn blit_centered_between_scrolls(
 #[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
     frontend: &HostFrontend,
-    engine: &Engine,
+    engine: &EngineInner,
     local_seat: PlayerId,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
@@ -3340,7 +3340,7 @@ pub fn draw_screen_tooltip(
 /// itself to the screen bounds each frame.
 pub fn draw_pc_info_overlay(
     frontend: &HostFrontend,
-    engine: &Engine,
+    engine: &EngineInner,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
@@ -3431,7 +3431,7 @@ pub fn draw_pc_info_overlay(
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
 pub fn render_macro_dotted_chains(
     frontend: &HostFrontend,
-    engine: &Engine,
+    engine: &EngineInner,
     renderer: &mut Renderer,
 ) {
     use robin_engine::macro_store::DISTANCE_DOT;
@@ -3576,7 +3576,7 @@ pub fn hit_test_portrait(
 /// Uses engine state to determine burned/selected per slot, and maps
 /// the click Y to the appropriate sub-area.
 pub fn hit_test_portrait_detailed(
-    engine: &Engine,
+    engine: &EngineInner,
     local_seat: PlayerId,
     portraits: &PortraitCache,
     screen_width: u16,

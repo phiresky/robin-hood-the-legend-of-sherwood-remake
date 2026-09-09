@@ -16,7 +16,7 @@ use robin_engine::coordinates::{GroundPoint, MapPoint};
 use robin_engine::element as engine_element;
 use robin_engine::element::{ElementKind, Entity, OutlineColorName, Posture, RenderingProperties};
 use robin_engine::engine as engine_api;
-use robin_engine::engine::{DevState, Engine, LevelAssets};
+use robin_engine::engine::{DevState, EngineInner, LevelAssets};
 use robin_engine::markers::GroundMark;
 use robin_engine::mask as engine_mask;
 use robin_engine::position_interface as engine_position_interface;
@@ -55,7 +55,7 @@ pub(crate) struct FramePresentationInputs {
 }
 
 impl FramePresentationInputs {
-    pub(crate) fn prepare(host: &HostDraw<'_>, engine: &Engine) -> Self {
+    pub(crate) fn prepare(host: &HostDraw<'_>, engine: &EngineInner) -> Self {
         let graphic_config = host.graphic_config();
         let dynamic = graphic_config.dynamic_ambience_visuals;
         Self {
@@ -199,7 +199,11 @@ fn rasterize_fog_region(
 
 /// Composite the smooth visibility field after every world-space pass and
 /// before HUD rendering, so unseen sprites and effects cannot leak through.
-pub(crate) fn render_fog_of_war(host: &HostDraw<'_>, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn render_fog_of_war(
+    host: &HostDraw<'_>,
+    engine: &EngineInner,
+    renderer: &mut Renderer,
+) {
     if !engine.fog_of_war_enabled() {
         return;
     }
@@ -273,7 +277,7 @@ const ALPHA_JUMPZONE: u32 = 64;
 ///     polygons.
 pub(crate) fn render_door_overlays(
     host: &HostDraw<'_>,
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
     renderer: &mut Renderer,
     shift_held: bool,
@@ -502,7 +506,7 @@ pub(crate) fn render_door_overlays(
         // ── 5. Hovered-jump branch ──
         // Iterate selected PCs and, on the FIRST PC that has the Jump
         // contextual action, take the result of
-        // [`Engine::get_nearest_jumpable_jump_line`] unconditionally —
+        // [`EngineInner::get_nearest_jumpable_jump_line`] unconditionally —
         // including None.  Subsequent selected PCs are NOT consulted:
         // an early-return loop (not a combinator) so multi-PC
         // selections where the first jumper cannot reach the sector
@@ -544,7 +548,7 @@ pub(crate) fn render_door_overlays(
 
     // ── 6. Hovered-patch branch ──
     // Local cursor selection is host presentation state. Read it directly
-    // instead of mutating a render cache inside the authoritative Engine.
+    // instead of mutating a render cache inside the authoritative EngineInner.
     if let Some(patch) = host
         .frontend
         .input
@@ -612,7 +616,7 @@ pub(crate) fn render_door_overlays(
 pub(crate) fn render_view_cone_overlay(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
     selected_view_element: Option<engine_element::EntityId>,
     dev: &engine_api::DevState,
@@ -909,7 +913,7 @@ fn shadow_polygon_slice_radius(
 fn render_all_view_cones(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
@@ -1025,14 +1029,14 @@ fn render_all_view_cones(
 
 /// Render every active destination marker.
 ///
-/// For each active mark, check on-screen and blit. Engine-owned command
+/// For each active mark, check on-screen and blit. EngineInner-owned command
 /// marks advance inside `perform_hourglass`; host-owned trajectory-
 /// preview marks advance on the same hourglass cadence without entering
 /// sim state.
 pub(crate) fn render_ground_marks(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
-    engine: &Engine,
+    engine: &EngineInner,
     _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
@@ -1054,7 +1058,7 @@ fn render_ground_mark_set(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     ground_mark: &GroundMark,
-    engine: &Engine,
+    engine: &EngineInner,
     renderer: &mut Renderer,
 ) {
     if ground_mark.is_empty() {
@@ -1161,7 +1165,7 @@ fn render_ground_mark_set(
 
 #[allow(clippy::too_many_arguments)]
 fn render_character_masks_clipped(
-    engine: &Engine,
+    engine: &EngineInner,
     renderer: &mut Renderer,
     layer: u16,
     world_bbox: &engine_coordinates::MapBBox,
@@ -1182,7 +1186,7 @@ fn render_character_masks_clipped(
 }
 
 fn sprite_screen_masks(
-    engine: &Engine,
+    engine: &EngineInner,
     mask_indices: &[engine_mask::MaskIndex],
     view: engine_coordinates::MapPoint,
     zoom: f32,
@@ -1205,7 +1209,7 @@ fn sprite_screen_masks(
 
 #[allow(clippy::too_many_arguments)]
 fn applicable_sprite_masks(
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
     actor_layer: u16,
     sprite_world_bbox: &engine_coordinates::MapBBox,
@@ -1246,7 +1250,7 @@ fn entity_visual_map_position(entity: &Entity) -> MapPoint {
 pub(crate) fn render_entities_gpu(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
     dev: &DevState,
     renderer: &mut Renderer,
@@ -1676,7 +1680,7 @@ fn uses_pixel_fog_visibility(entity: &Entity) -> bool {
 
 fn transition_crenel_climb_up_mask_position(
     entity: &robin_engine::element::Entity,
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
 ) -> Option<engine_coordinates::WorldPoint3D> {
     use robin_engine::order::OrderType;
@@ -1730,7 +1734,7 @@ fn transition_crenel_climb_up_mask_position(
 #[allow(clippy::too_many_arguments)]
 fn render_sprite_mask_debug_overlay(
     host: &HostDraw<'_>,
-    engine: &Engine,
+    engine: &EngineInner,
     renderer: &mut Renderer,
     sprite_world_bbox: &engine_coordinates::MapBBox,
     actor_position: engine_coordinates::MapPoint,
@@ -1822,7 +1826,7 @@ fn map_to_screen(host: &HostDraw<'_>, point: engine_coordinates::MapPoint) -> (i
 pub(crate) fn render_selection_outlines_gpu(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
-    engine: &Engine,
+    engine: &EngineInner,
     _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
@@ -2010,7 +2014,7 @@ fn render_entity_fallback(
 /// Must be called after `flush_base_layer` (GPU phase active) and before
 /// `render_entities_gpu`.
 pub(crate) fn render_bg_animations_gpu(
-    engine: &Engine,
+    engine: &EngineInner,
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     _assets: &LevelAssets,
@@ -2031,7 +2035,7 @@ pub(crate) fn render_bg_animations_gpu(
 
 fn render_fx_entities_gpu<I>(
     entity_ids: I,
-    engine: &Engine,
+    engine: &EngineInner,
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     renderer: &mut Renderer,

@@ -4,7 +4,7 @@ use crate::host::HostDraw;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer, SurfaceHandle};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
-use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine::{EngineInner, LevelAssets};
 use robin_engine::minimap as engine_minimap;
 use robin_engine::minimap::UIState;
 use robin_engine::sprite::BBox;
@@ -17,7 +17,7 @@ use robin_engine::sprite::BBox;
 pub(crate) fn render_minimap(
     host: &HostDraw<'_>,
     display: &engine_api::HostDisplayState,
-    engine: &Engine,
+    engine: &EngineInner,
     assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
@@ -338,7 +338,7 @@ fn level_size_for(host: &HostDraw<'_>) -> engine_coordinates::MapSize {
 }
 
 fn render_minimap_fog(
-    engine: &Engine,
+    engine: &EngineInner,
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     renderer: &mut Renderer,

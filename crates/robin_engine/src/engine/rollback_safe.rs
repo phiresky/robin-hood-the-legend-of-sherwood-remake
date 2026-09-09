@@ -44,7 +44,7 @@ use crate::player_command::PlayerInput;
 ///
 /// This value is deliberately detached from [`Engine`]. Reading it cannot
 /// mutate simulation state, and applying it is only supported on an owned
-/// presentation clone through [`Engine::apply_spatial_presentation`].
+/// presentation clone through [`PresentationEngine::apply_spatial_presentation`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpatialPresentationSnapshot {
     poses: BTreeMap<EntityId, SpatialPresentationPose>,
@@ -297,6 +297,69 @@ impl Engine {
                 .collect(),
         }
     }
+}
+
+/// Host-only world copy with interpolation authority, but no simulation authority.
+///
+/// The read-only projection is `EngineInner`, not `Engine`: callers cannot clone
+/// the projection into an authoritative engine or acquire snapshot/tick APIs.
+/// Serialized diagnostics deliberately have no live-state decoder.
+///
+/// ```no_run
+/// use robin_engine::engine::{Engine, EngineInner, PresentationEngine};
+/// fn render(source: &Engine) {
+///     let presentation = PresentationEngine::new(source);
+///     let view: &EngineInner = presentation.view();
+///     let _ = view.frame_counter();
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use robin_engine::engine::Engine;
+/// let _ = Engine::apply_spatial_presentation;
+/// ```
+/// ```compile_fail,E0599
+/// use robin_engine::engine::PresentationEngine;
+/// let _ = PresentationEngine::advance_frame;
+/// ```
+/// ```compile_fail,E0599
+/// use robin_engine::engine::PresentationEngine;
+/// let _ = PresentationEngine::restore_from_snapshot;
+/// ```
+/// ```compile_fail,E0308
+/// use robin_engine::engine::{Engine, PresentationEngine};
+/// fn forbidden(view: &PresentationEngine) -> Engine { view.view().clone() }
+/// ```
+/// ```compile_fail,E0308
+/// use robin_engine::engine::{EngineInner, PresentationEngine};
+/// fn forbidden(view: &mut PresentationEngine) -> &mut EngineInner { view.view() }
+/// ```
+#[derive(serde::Serialize)]
+pub struct PresentationEngine {
+    // Use a tagged diagnostic envelope, never Engine's transparent wire shape.
+    presentation: EngineInner,
+}
+
+impl<'de> serde::Deserialize<'de> for PresentationEngine {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom(
+            "presentation engines must be copied from an authoritative engine",
+        ))
+    }
+}
+
+impl PresentationEngine {
+    pub fn new(authoritative: &Engine) -> Self {
+        Self {
+            presentation: authoritative.inner.clone_authoritative_state(),
+        }
+    }
+
+    pub fn view(&self) -> &EngineInner {
+        &self.presentation
+    }
 
     /// Apply an absolute interpolation sample to an owned presentation clone.
     ///
@@ -345,7 +408,7 @@ impl Engine {
                 pose
             };
 
-            let entity = self.inner.get_entity_mut(id).unwrap_or_else(|| {
+            let entity = self.presentation.get_entity_mut(id).unwrap_or_else(|| {
                 panic!("presentation clone lost current entity {id:?} while sampling")
             });
             let element = entity.element_data_mut();
@@ -358,7 +421,9 @@ impl Engine {
             }
         }
     }
+}
 
+impl Engine {
     /// Encode a native engine snapshot through the bounded-stack facade codec.
     pub fn encode_native_snapshot(&self) -> Vec<u8> {
         self.try_encode_native_snapshot().expect(
@@ -5691,11 +5756,11 @@ mod tests {
         let current_hash = crate::replay::state_hash(&current);
         let previous_spatial = previous.spatial_presentation_snapshot();
         let current_spatial = current.spatial_presentation_snapshot();
-        let mut presentation = current.clone();
+        let mut presentation = PresentationEngine::new(&current);
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
-        let first_sample_hash = crate::replay::state_hash(&presentation);
-        let sampled = presentation.get_entity(pc_id).expect("sampled PC");
+        let first_sample_hash = crate::replay::state_hash(presentation.view());
+        let sampled = presentation.view().get_entity(pc_id).expect("sampled PC");
         assert_eq!(
             sampled.element_data().position(),
             crate::coordinates::WorldPoint3D::new(10.0, 15.0, 2.5)
@@ -5711,7 +5776,7 @@ mod tests {
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
         assert_eq!(
-            crate::replay::state_hash(&presentation),
+            crate::replay::state_hash(presentation.view()),
             first_sample_hash,
             "repeating one display sample must be idempotent"
         );
@@ -5751,12 +5816,13 @@ mod tests {
             .set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
         let previous_spatial = previous.spatial_presentation_snapshot();
         let current_spatial = current.spatial_presentation_snapshot();
-        let mut presentation = current.clone();
+        let mut presentation = PresentationEngine::new(&current);
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.0);
 
         assert_eq!(
             presentation
+                .view()
                 .get_entity(pc_id)
                 .expect("sampled PC")
                 .element_data()
@@ -5766,6 +5832,7 @@ mod tests {
         );
         assert_eq!(
             presentation
+                .view()
                 .get_entity(spawned_id)
                 .expect("sampled spawned FX")
                 .element_data()
@@ -5773,6 +5840,16 @@ mod tests {
             crate::coordinates::MapPoint::new(12.0, 34.0),
             "spawned entity must use its current fixed-tick transform"
         );
+    }
+
+    #[test]
+    fn presentation_diagnostics_cannot_restore_live_presentation_or_simulation() {
+        let (engine, _, _, _) = selection_boundary_fixture();
+        let presentation = PresentationEngine::new(&engine);
+        let diagnostic = serde_json::to_value(&presentation).expect("presentation diagnostic");
+        assert!(diagnostic.get("presentation").is_some());
+        assert!(serde_json::from_value::<PresentationEngine>(diagnostic.clone()).is_err());
+        assert!(serde_json::from_value::<Engine>(diagnostic).is_err());
     }
 
     fn adjacent_select_and_cancel(pc_id: EntityId) -> Vec<SimCommand> {
