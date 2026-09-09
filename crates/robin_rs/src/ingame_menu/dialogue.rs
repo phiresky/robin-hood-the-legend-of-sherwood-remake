@@ -190,6 +190,47 @@ impl DialogueSentence {
     }
 }
 
+/// Construct the same round, unlabelled Skip/Stop pair for both dialogue drivers.
+/// Geometry is virtual; alpha masks are attached by the caller with its renderer.
+fn dialogue_buttons(
+    (virt_x, virt_y): (i32, i32),
+    (ok_w, ok_h): (i32, i32),
+    (cancel_w, cancel_h): (i32, i32),
+    skip_tooltip: &str,
+    stop_tooltip: &str,
+) -> FrameWnd {
+    let btn_w = ok_w.max(cancel_w);
+    let btn_h = ok_h.max(cancel_h);
+    let spacing = 8;
+    let total_w = 2 * btn_w + spacing;
+    let start_x = virt_x + (WIN_W - total_w) / 2;
+    let btn_y = (virt_y + 384).min(virt_y + WIN_H - btn_h - 16);
+    let mut frame = FrameWnd::default();
+    frame.enabled = true;
+    frame.input_enabled = true;
+    for (id, resource, x, tooltip) in [
+        (
+            ID_SKIP,
+            robin_engine::resource_ids::RHID_OK,
+            start_x,
+            skip_tooltip,
+        ),
+        (
+            ID_STOP,
+            robin_engine::resource_ids::RHID_CANCEL,
+            start_x + btn_w + spacing,
+            stop_tooltip,
+        ),
+    ] {
+        let mut button = widget_bridge::make_button_with_resource(
+            id, "", true, resource, x, btn_y, btn_w, btn_h,
+        );
+        button.base_mut().set_tooltip_text(tooltip);
+        frame.add_widget_absolute(button);
+    }
+    frame
+}
+
 /// Play out a sequence of dialogue sentences.  Returns
 /// [`DialogResult::Completed`] when the player saw every sentence and
 /// [`DialogResult::Aborted`] if they pressed Stop / Escape.
@@ -228,54 +269,14 @@ pub async fn show_dialogue(
     let virt_x = (MENU_W - WIN_W) / 2;
     let virt_y = (MENU_H - WIN_H) / 2;
 
-    // Skip / Stop are the round `RHID_OK` / `RHID_CANCEL` wax-seal
-    // sprites with no label, centred horizontally as a pair at y=384
-    // like the original dialogue window.
-    let (ok_w, ok_h) = resources.ok_button_dimensions();
-    let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
-    let btn_w = ok_w.max(cancel_w);
-    let btn_h = ok_h.max(cancel_h);
-    let n = 2i32;
-    let spacing = 8;
-    let total_w = n * btn_w + (n - 1) * spacing;
-    let start_x = virt_x + (WIN_W - total_w) / 2;
-    let btn_y = (virt_y + 384).min(virt_y + WIN_H - btn_h - 16);
-
-    // Build a FrameWnd with Skip and Stop buttons.
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
-    frame.add_widget_absolute(widget_bridge::make_button_with_resource(
-        ID_SKIP,
-        "",
-        true,
-        robin_engine::resource_ids::RHID_OK,
-        start_x,
-        btn_y,
-        btn_w,
-        btn_h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button_with_resource(
-        ID_STOP,
-        "",
-        true,
-        robin_engine::resource_ids::RHID_CANCEL,
-        start_x + btn_w + spacing,
-        btn_y,
-        btn_w,
-        btn_h,
-    ));
+    let mut frame = dialogue_buttons(
+        (virt_x, virt_y),
+        resources.ok_button_dimensions(),
+        resources.cancel_button_dimensions(),
+        &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
+        &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
+    );
     widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
-
-    // Per-widget tooltip text rendered by the hover-tooltip loop below.
-    let skip_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE);
-    let stop_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON);
-    if let Some(w) = frame.widget_mut(ID_SKIP) {
-        w.base_mut().set_tooltip_text(&skip_tooltip);
-    }
-    if let Some(w) = frame.widget_mut(ID_STOP) {
-        w.base_mut().set_tooltip_text(&stop_tooltip);
-    }
 
     // ── Animation state ────────────────────────────────────────────
     let mut mouth_frame: u8 = 0;
@@ -569,50 +570,14 @@ impl DialogueModalState {
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
 
-        // Same round wax-seal Skip / Stop pair as `show_dialogue`.
-        let (ok_w, ok_h) = resources.ok_button_dimensions();
-        let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
-        let btn_w = ok_w.max(cancel_w);
-        let btn_h = ok_h.max(cancel_h);
-        let n = 2i32;
-        let spacing = 8;
-        let total_w = n * btn_w + (n - 1) * spacing;
-        let start_x = virt_x + (WIN_W - total_w) / 2;
-        let btn_y = (virt_y + 384).min(virt_y + WIN_H - btn_h - 16);
-
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
-        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
-            ID_SKIP,
-            "",
-            true,
-            robin_engine::resource_ids::RHID_OK,
-            start_x,
-            btn_y,
-            btn_w,
-            btn_h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button_with_resource(
-            ID_STOP,
-            "",
-            true,
-            robin_engine::resource_ids::RHID_CANCEL,
-            start_x + btn_w + spacing,
-            btn_y,
-            btn_w,
-            btn_h,
-        ));
+        let mut frame = dialogue_buttons(
+            (virt_x, virt_y),
+            resources.ok_button_dimensions(),
+            resources.cancel_button_dimensions(),
+            &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
+            &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
+        );
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
-
-        let skip_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE);
-        let stop_tooltip = resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON);
-        if let Some(w) = frame.widget_mut(ID_SKIP) {
-            w.base_mut().set_tooltip_text(&skip_tooltip);
-        }
-        if let Some(w) = frame.widget_mut(ID_STOP) {
-            w.base_mut().set_tooltip_text(&stop_tooltip);
-        }
 
         let mut input_state = ModalInputState::new();
         input_state.seed_mouse_from_window(event_pump, transform);
@@ -1293,6 +1258,32 @@ mod tests {
         }
         fn num_channels(&self) -> u32 {
             0
+        }
+    }
+
+    #[test]
+    fn dialogue_button_pair_shares_dimensions_spacing_and_tooltips() {
+        for (ok, cancel, expected_y, expected_h) in
+            [((20, 30), (40, 50), 404, 50), ((40, 80), (20, 30), 387, 80)]
+        {
+            let frame = dialogue_buttons((10, 20), ok, cancel, "Continue", "Abandon");
+            assert!(frame.enabled && frame.input_enabled);
+            assert_eq!(frame.widgets().len(), 2);
+            for (id, x, tooltip) in [(ID_SKIP, 214, "Continue"), (ID_STOP, 262, "Abandon")] {
+                let button = frame.widget(id).unwrap().base();
+                assert!(button.enabled);
+                assert!(button.text.is_empty());
+                assert_eq!(button.tooltip_text, tooltip);
+                assert_eq!(
+                    button.bbox,
+                    engine_coordinates::ScreenBBox::from_coords(
+                        x as f32,
+                        expected_y as f32,
+                        (x + 40) as f32,
+                        (expected_y + expected_h) as f32,
+                    )
+                );
+            }
         }
     }
 
