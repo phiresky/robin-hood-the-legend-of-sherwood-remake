@@ -255,8 +255,7 @@ pub struct CliArgs {
 /// Process-owned mission request, prepared from the raw CLI/URL configuration.
 /// Decoded payloads and asset/export authority can only be installed in process;
 /// deserialization always starts with an unprepared request.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MissionLaunch {
     /// Raw CLI/URL configuration, without process or mission handoffs.
     pub config: CliArgs,
@@ -345,6 +344,21 @@ pub struct MissionLaunch {
     /// team.
     #[serde(skip)]
     pub preserve_forced_mission_campaign: bool,
+}
+
+impl<'de> Deserialize<'de> for MissionLaunch {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Serialize, Deserialize)]
+        struct Configuration {
+            #[serde(default)]
+            config: CliArgs,
+        }
+        // Decode configuration only. Recompute its effective startup policy;
+        // defaulting a skipped context would silently discard nondefault flags.
+        // No services, decoded payloads, leases or restart evidence are restored.
+        let decoded = Configuration::deserialize(deserializer)?;
+        Ok(Self::from(decoded.config))
+    }
 }
 
 impl From<CliArgs> for MissionLaunch {
@@ -723,6 +737,32 @@ mod tests {
                 "{name} belongs to MissionLaunch"
             );
         }
+    }
+
+    #[test]
+    fn decoded_launch_configuration_retains_flags_without_runtime_authority() {
+        let launch = super::MissionLaunch::from(super::CliArgs {
+            no_sound: true,
+            no_script: true,
+            goldeneye: true,
+            highlander2: true,
+            no_fog: true,
+            whatsup: true,
+            no_default_loose: true,
+            check_sound_data: true,
+            debug_surfaces: true,
+            ..Default::default()
+        });
+        let wire = serde_json::to_value(&launch).unwrap();
+        let decoded: super::MissionLaunch = serde_json::from_value(wire).unwrap();
+        assert_eq!(
+            serde_json::to_value(decoded.global_options.options()).unwrap(),
+            serde_json::to_value(launch.global_options.options()).unwrap()
+        );
+        assert!(crate::host::ReadyApplicationContext::try_from(decoded.global_options).is_err());
+        assert!(decoded.replay_data.is_none());
+        assert!(decoded.resolved_mission_assets.is_none());
+        assert!(!decoded.mission_restart);
     }
 
     #[test]
