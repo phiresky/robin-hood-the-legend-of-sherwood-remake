@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **121 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **127 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -17,154 +17,160 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 
 ## Walkthroughs and mechanics
 
-| Source record | Original language | Evidence inspected |
+| Source record | Original language | Full text in Markdown? |
 | --- | --- | --- |
-| [Steven W. Carter — campaign walkthrough](guides/gamefaqs-swcarter.md) | English | Page text inspected |
-| [Radu Bebe — enemies, weapons, and hints](guides/gamefaqs-radu-bebe.md) | English | Page text inspected |
-| [OzzyRockerPL — scoring system](guides/steam-scoring.md) | English | Page text inspected |
-| [OlogGuy7 — combat guide](guides/steam-combat.md) | English | Page text inspected |
-| [Royal collectibles and the secret ending](guides/steam-secret-ending.md) | English | Page text inspected |
-| [GRYOnline — Polish campaign walkthrough](guides/gry-online-walkthrough.md) | Polish | Indexed article introduction and section index inspected |
-| [GRYOnline — The Escape](guides/gry-online-the-escape.md) | Polish | Indexed chapter excerpt inspected |
-| [GRYOnline — The Letter](guides/gry-online-the-letter.md) | Polish | Indexed chapter excerpt inspected |
-| [Roman Ficnar — Czech walkthrough and controls](guides/abcgames-czech.md) | Czech | Substantial page text inspected through direct HTML retrieval |
-| [Amiga Future — German complete-solution lead](guides/amiga-future-german.md) | German | Indexed attribution and opening inspected; direct retrieval failed |
-| [Jeuxvideo.com — French tips index](guides/jeuxvideo-french-tips.md) | French | Index inspected |
-| [Square Faction — royal relics and bonus ending](guides/square-faction-relics.md) | Russian | Page text inspected |
-| [Gamez.ru — Russian campaign walkthrough lead](guides/gamez-russian.md) | Russian | Indexed passage inspected; direct retrieval failed |
-| [A. Kondrashov — Russian review and mission guidance](guides/kondrashov-russian.md) | Russian | Article opening and indexed gameplay passages inspected |
-| [Gameswelt — basic tactics](guides/gameswelt-tactics.md) | German | Indexed article text inspected |
-| [iDNES — Czech walkthrough, part 1](reference/idnes-walkthrough.md) | Czech | Substantial indexed text inspected |
-| [iDNES — Czech walkthrough, part 2](guides/idnes-part-2.md) | Czech | Substantial indexed text inspected |
-| [大众软件 / Ali213 — Chinese campaign guide](guides/ali213-chinese.md) | Simplified Chinese | Substantial article text and mission passages inspected |
-| [MogelPower — controls, awareness, and manual links](guides/mogelpower-controls.md) | German | Page text and attachment descriptions inspected |
-| [GameStar — Lösung für Räuber und Wegelagerer](guides/gamestar-january-2003.md) | German | Substantial indexed PDF text inspected; direct PDF retrieval failed |
-| [Steam — Spanish cheat-code reference](guides/steam-spanish-cheats.md) | Spanish | Guide text inspected |
-| [Steam — pre-existing corpses and spared-life statistics](guides/steam-spared-lives-report.md) | English | Opening and all six replies inspected through direct HTML retrieval |
-| [Steam — camp production and mission type discussion](guides/steam-camp-production-report.md) | English | Opening and sole reply inspected through direct HTML retrieval |
-| [Steam — which characters can search bodies?](guides/steam-body-search.md) | English | Opening and both replies inspected through direct HTML retrieval |
-| [Steam — castle access after rescuing Stuteley](guides/steam-second-mission-castle.md) | Opening and both replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
-| [Steam — side-mission loop reported since 2019](guides/steam-small-missions-report.md) | Opening and all six replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
-| [Cheater.cz — Miky’s Czech walkthrough](guides/cheater-miky-czech.md) | Czech | Opening, later mission passages, and character descriptions inspected. |
-| [GOG — accessing castle-recapture missions](guides/gog-castle-recapture.md) | English | Indexed opening and three replies inspected; thread marked solved. |
+| [Steven W. Carter — campaign walkthrough](guides/gamefaqs-swcarter.md) | English | Yes |
+| [Radu Bebe — enemies, weapons, and hints](guides/gamefaqs-radu-bebe.md) | English | Yes |
+| [OzzyRockerPL — scoring system](guides/steam-scoring.md) | English | Yes |
+| [OlogGuy7 — combat guide](guides/steam-combat.md) | English | Yes |
+| [Royal collectibles and the secret ending](guides/steam-secret-ending.md) | English | Yes |
+| [GRYOnline — Polish campaign walkthrough](guides/gry-online-walkthrough.md) | Polish | Yes |
+| [GRYOnline — The Escape](guides/gry-online-the-escape.md) | Polish | Yes |
+| [GRYOnline — The Letter](guides/gry-online-the-letter.md) | Polish | Yes |
+| [Roman Ficnar — Czech walkthrough and controls](guides/abcgames-czech.md) | Czech | Yes |
+| [Amiga Future — German complete-solution lead](guides/amiga-future-german.md) | German | Yes |
+| [Jeuxvideo.com — French tips index](guides/jeuxvideo-french-tips.md) | French | Yes |
+| [Square Faction — royal relics and bonus ending](guides/square-faction-relics.md) | Russian | Yes |
+| [Gamez.ru — Russian campaign walkthrough lead](guides/gamez-russian.md) | Russian | Yes |
+| [A. Kondrashov — Russian review and mission guidance](guides/kondrashov-russian.md) | Russian | Yes |
+| [Gameswelt — basic tactics](guides/gameswelt-tactics.md) | German | Yes |
+| [iDNES — Czech walkthrough, part 1](reference/idnes-walkthrough.md) | Czech | Yes |
+| [iDNES — Czech walkthrough, part 2](guides/idnes-part-2.md) | Czech | Yes |
+| [大众软件 / Ali213 — Chinese campaign guide](guides/ali213-chinese.md) | Simplified Chinese | Yes |
+| [MogelPower — controls, awareness, and manual links](guides/mogelpower-controls.md) | German | Yes |
+| [GameStar — Lösung für Räuber und Wegelagerer](guides/gamestar-january-2003.md) | German | Yes |
+| [Steam — Spanish cheat-code reference](guides/steam-spanish-cheats.md) | Spanish | Yes |
+| [Steam — pre-existing corpses and spared-life statistics](guides/steam-spared-lives-report.md) | English | Yes |
+| [Steam — camp production and mission type discussion](guides/steam-camp-production-report.md) | English | Yes |
+| [Steam — which characters can search bodies?](guides/steam-body-search.md) | English | Yes |
+| [Steam — castle access after rescuing Stuteley](guides/steam-second-mission-castle.md) | English | No |
+| [Steam — side-mission loop reported since 2019](guides/steam-small-missions-report.md) | English | No |
+| [Cheater.cz — Miky’s Czech walkthrough](guides/cheater-miky-czech.md) | Czech | No |
+| [GOG — accessing castle-recapture missions](guides/gog-castle-recapture.md) | English | No |
+| [Sina / 怡采强档 — Chinese campaign walkthrough continuation](guides/sina-yicai-chinese.md) | Simplified Chinese | Substantial indexed mission passages inspected; direct retrieval failed. |
 
 ## Reviews and player impressions
 
-| Source record | Original language | Evidence inspected |
+| Source record | Original language | Full text in Markdown? |
 | --- | --- | --- |
-| [GameSpot — contemporary review](reviews/gamespot.md) | English | Article text inspected |
-| [WorthPlaying — contemporary review](reviews/worthplaying.md) | English | Indexed article text inspected |
-| [Game Over Online — contemporary review](reviews/game-over.md) | English | Indexed article text inspected |
-| [Jeuxvideo.com — French contemporary review](reviews/jeuxvideo-com.md) | French | Article text inspected |
-| [Gamezone.de — German contemporary review](reviews/gamezone-de.md) | German | Indexed opening inspected |
-| [Metacritic — reception overview and review leads](reviews/metacritic.md) | English | Indexed listing inspected |
-| [MobyGames — critic and player review index](reviews/mobygames-reception.md) | English | Indexed review listing inspected |
-| [Brad's Tech Talk — playthrough impressions and tips](reviews/brads-tech-talk.md) | English | Page text inspected |
-| [MeriStation — El de la capucha](reviews/meristation-spanish.md) | Spanish | Indexed opening inspected |
-| [Multiplayer.it — Italian review](reviews/multiplayer-it.md) | Italian | Article excerpts inspected |
-| [PPA — Polish review of the MorphOS port](reviews/ppa-morphos.md) | Polish | Substantial article text inspected |
-| [Gamers’ Temple — review](reviews/gamers-temple.md) | English | Article text inspected |
-| [Altered Gamer — Lend Me Your Bow](reviews/altered-gamer.md) | English | Article text inspected |
-| [Gamekult — Robin Hood : le desperado des bois](reviews/gamekult.md) | French | Indexed article body and verdict inspected |
-| [Clubic — contemporary French review](reviews/clubic.md) | French | Article text inspected |
-| [BatteCave — On m'appelle Robin des Bois !](reviews/batteman-morphos.md) | French | Article text inspected |
-| [Old-Games.ru — Russian retrospective](reviews/old-games-redwings.md) | Russian | Article text inspected |
-| [Gameindustry — Sherwood is a Sure Thing](reviews/gameindustry.md) | English | Article text inspected |
-| [GRYOnline — Polish contemporary review](reviews/gry-online.md) | Polish | Article text inspected |
-| [Neoseeker — Christian Gamer's player review](reviews/neoseeker-christian-gamer.md) | English | Indexed review text inspected |
-| [SpazioGames — Italian contemporary review](reviews/spaziogames.md) | Italian | Article text inspected |
-| [iDNES — Czech contemporary review](reviews/idnes.md) | Czech | Article opening and campaign discussion inspected |
-| [LEVEL — Turkish magazine review](reviews/level-turkish.md) | Turkish | Substantial indexed PDF passage inspected; direct PDF retrieval failed |
-| [4Gamer — Japanese review of the English edition](reviews/4gamer-japanese.md) | Japanese | Article text inspected |
-| [GameFAQs — Challenging but fun](reviews/gamefaqs-guybrush999.md) | English | Review text inspected |
-| [PC Games — Nicht ganz der Stoff, aus dem die Helden sind](reviews/pcgames.md) | German | Article page and indexed text inspected; continuation pages not inspected |
-| [Games.cz — Leon's contemporary review](reviews/tiscali-leon.md) | Czech | Article text and verdict inspected |
-| [Jeuxlinux — French Linux overview](reviews/jeuxlinux-french.md) | French | Indexed presentation and section list inspected; direct retrieval failed |
-| [GOGJ — Japanese play impressions](reviews/gogj-japanese.md) | Japanese | Article body and visible comments inspected. |
-| [GameSurf — contemporary Italian review](reviews/gamesurf-italian.md) | Italian | Substantial indexed opening and verdict inspected; direct article retrieval failed. |
-| [Filmweb — Polish retrospective](reviews/filmweb-kruk.md) | Polish | Substantial indexed review text and score inspected; direct retrieval failed. |
-| [Mac Life — German Mac review](reviews/maclife-mac.md) | German | Substantial indexed article and test-result table inspected; direct retrieval failed. |
+| [GameSpot — contemporary review](reviews/gamespot.md) | English | Yes |
+| [WorthPlaying — contemporary review](reviews/worthplaying.md) | English | Yes |
+| [Game Over Online — contemporary review](reviews/game-over.md) | English | Yes |
+| [Jeuxvideo.com — French contemporary review](reviews/jeuxvideo-com.md) | French | Yes |
+| [Gamezone.de — German contemporary review](reviews/gamezone-de.md) | German | Yes |
+| [Metacritic — reception overview and review leads](reviews/metacritic.md) | English | Yes |
+| [MobyGames — critic and player review index](reviews/mobygames-reception.md) | English | Yes |
+| [Brad's Tech Talk — playthrough impressions and tips](reviews/brads-tech-talk.md) | English | Yes |
+| [MeriStation — El de la capucha](reviews/meristation-spanish.md) | Spanish | Yes |
+| [Multiplayer.it — Italian review](reviews/multiplayer-it.md) | Italian | Yes |
+| [PPA — Polish review of the MorphOS port](reviews/ppa-morphos.md) | Polish | Yes |
+| [Gamers’ Temple — review](reviews/gamers-temple.md) | English | Yes |
+| [Altered Gamer — Lend Me Your Bow](reviews/altered-gamer.md) | English | Yes |
+| [Gamekult — Robin Hood : le desperado des bois](reviews/gamekult.md) | French | Yes |
+| [Clubic — contemporary French review](reviews/clubic.md) | French | Yes |
+| [BatteCave — On m'appelle Robin des Bois !](reviews/batteman-morphos.md) | French | Yes |
+| [Old-Games.ru — Russian retrospective](reviews/old-games-redwings.md) | Russian | Yes |
+| [Gameindustry — Sherwood is a Sure Thing](reviews/gameindustry.md) | English | Yes |
+| [GRYOnline — Polish contemporary review](reviews/gry-online.md) | Polish | Yes |
+| [Neoseeker — Christian Gamer's player review](reviews/neoseeker-christian-gamer.md) | English | Yes |
+| [SpazioGames — Italian contemporary review](reviews/spaziogames.md) | Italian | Yes |
+| [iDNES — Czech contemporary review](reviews/idnes.md) | Czech | Yes |
+| [LEVEL — Turkish magazine review](reviews/level-turkish.md) | Turkish | Yes |
+| [4Gamer — Japanese review of the English edition](reviews/4gamer-japanese.md) | Japanese | Yes |
+| [GameFAQs — Challenging but fun](reviews/gamefaqs-guybrush999.md) | English | Yes |
+| [PC Games — Nicht ganz der Stoff, aus dem die Helden sind](reviews/pcgames.md) | German | Yes |
+| [Games.cz — Leon's contemporary review](reviews/tiscali-leon.md) | Czech | Yes |
+| [Jeuxlinux — French Linux overview](reviews/jeuxlinux-french.md) | French | Yes |
+| [GOGJ — Japanese play impressions](reviews/gogj-japanese.md) | Japanese | No |
+| [GameSurf — contemporary Italian review](reviews/gamesurf-italian.md) | Italian | No |
+| [Filmweb — Polish retrospective](reviews/filmweb-kruk.md) | Polish | No |
+| [Mac Life — German Mac review](reviews/maclife-mac.md) | German | No |
+| [Macworld — Men in Tights](reviews/macworld.md) | English | Substantial indexed article text inspected. |
+| [VidaExtra — Spanish retrospective](reviews/vidaextra-spanish.md) | Spanish | Article body and verdict inspected. |
+| [GameFAQs — A Great Strategy game!](reviews/gamefaqs-rios-always.md) | English | Review text inspected; PC URL used to avoid platform-mirror ambiguity. |
 
 ## Compatibility and configuration
 
-| Source record | Original language | Evidence inspected |
+| Source record | Original language | Full text in Markdown? |
 | --- | --- | --- |
-| [PCGamingWiki — compatibility and technical reference](technical/pcgamingwiki.md) | English | Indexed article text inspected |
-| [Ready2Play — maintainer's Steam guide](technical/steam-ready2play.md) | English | Page text inspected |
-| [Psojed — languages and fonts](technical/steam-language-fonts.md) | English | Page opening and configuration discussion inspected |
-| [ubuntuusers — archived native Linux instructions](technical/ubuntuusers-native-linux.md) | German | Page text inspected |
-| [ModDB — historical Windows 1.1 patch record](technical/moddb-patch-1-1.md) | English | File listing and description inspected; binary not downloaded |
-| [Speedrun.com — recording a wrapped game](technical/speedrun-capture-report.md) | English discussion | Discussion text inspected |
-| [Holarse — native Linux installation and save problems](technical/holarse-linux.md) | German | Page text inspected; linked installer and troubleshooting pages not retrieved |
-| [CodeWeavers — CrossOver compatibility record](technical/codeweavers-crossover.md) | English | Compatibility overview and version listing inspected |
-| [Lutris — native Desura installer and language selection](technical/lutris-desura-script.md) | English | Installer source and maintainer notes inspected; script not executed |
-| [Steam — Kisa's Windows 10/11 compatibility guide](technical/steam-kisa-windows.md) | English | Guide text inspected |
-| [Steam — Naxyň's FPS/font fix and retirement note](technical/steam-naxyn-fps.md) | English body | Guide body and visible comments inspected |
-| [Steam — Naxyň's Polish localization package](technical/steam-polish-localization.md) | Polish | Guide body and visible comment excerpt inspected |
-| [Steam — Spanish selection still launches English](technical/steam-spanish-language-report.md) | Spanish | Full retrieved discussion inspected |
-| [Steam — cart-ambush completion dialog loop](technical/steam-ambush-dialog-loop.md) | English | Opening and sole reply inspected through direct HTML retrieval |
-| [Steam — repeated ambushes and language-switch outcomes](technical/steam-repeated-ambushes.md) | Opening and all ten replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
-| [Steam — rescue mission still missing after an update](technical/steam-rescue-update-report.md) | Opening and all six replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
-| [Steam — longstanding kidnapping progression reports](technical/steam-kidnapping-localization.md) | Opening and replies across both pages inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
-| [Steam — missing saves while using a performance fix](technical/steam-save-visibility-report.md) | Full opening inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
-| [Steam — first-level scroll crash under DxWnd](technical/steam-scroll-crash-report.md) | Full opening inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
-| [RH Mods — Spellforge Editor](technical/rhmods-spellforge.md) | English | Page description inspected |
-| [RH Mods — Asset Editor](technical/rhmods-asset-editor.md) | English | Page description inspected |
-| [RH Mods — Developer Console](technical/rhmods-developer-console.md) | English | Page description inspected |
-| [RH Mods — Profile Tool](technical/rhmods-profile-tool.md) | English | Page description inspected |
-| [RH Mods — Rhuce](technical/rhmods-rhuce.md) | English | Page description inspected |
-| [GOG — intermittent city-mission save crashes](technical/gog-save-crash.md) | English | Opening and substantial indexed replies inspected; browser and search copies expose differing post counts. |
-| [GOG — historical profile-based widescreen experiments](technical/gog-widescreen.md) | English | Substantial indexed first-page discussion inspected; second page not inspected. |
-| [GOG — executable naming and flickering report](technical/gog-flicker-executable-name.md) | English | Indexed opening and all four replies inspected. |
-| [GOG — York mission unlocked after reloading the prior ending](technical/gog-post-ransom-progression.md) | English | Both indexed posts inspected. |
-| [GOG — ambush completion loop through Porting Kit](technical/gog-mac-ambush-loop.md) | English | Substantial indexed single-post report inspected; direct retrieval failed. |
+| [PCGamingWiki — compatibility and technical reference](technical/pcgamingwiki.md) | English | Yes |
+| [Ready2Play — maintainer's Steam guide](technical/steam-ready2play.md) | English | Yes |
+| [Psojed — languages and fonts](technical/steam-language-fonts.md) | English | Yes |
+| [ubuntuusers — archived native Linux instructions](technical/ubuntuusers-native-linux.md) | German | Yes |
+| [ModDB — historical Windows 1.1 patch record](technical/moddb-patch-1-1.md) | English | Yes |
+| [Speedrun.com — recording a wrapped game](technical/speedrun-capture-report.md) | English discussion | Yes |
+| [Holarse — native Linux installation and save problems](technical/holarse-linux.md) | German | Yes |
+| [CodeWeavers — CrossOver compatibility record](technical/codeweavers-crossover.md) | English | Yes |
+| [Lutris — native Desura installer and language selection](technical/lutris-desura-script.md) | English | Yes |
+| [Steam — Kisa's Windows 10/11 compatibility guide](technical/steam-kisa-windows.md) | English | Yes |
+| [Steam — Naxyň's FPS/font fix and retirement note](technical/steam-naxyn-fps.md) | English body | Yes |
+| [Steam — Naxyň's Polish localization package](technical/steam-polish-localization.md) | Polish | Yes |
+| [Steam — Spanish selection still launches English](technical/steam-spanish-language-report.md) | Spanish | Yes |
+| [Steam — cart-ambush completion dialog loop](technical/steam-ambush-dialog-loop.md) | English | Yes |
+| [Steam — repeated ambushes and language-switch outcomes](technical/steam-repeated-ambushes.md) | English | No |
+| [Steam — rescue mission still missing after an update](technical/steam-rescue-update-report.md) | English | No |
+| [Steam — longstanding kidnapping progression reports](technical/steam-kidnapping-localization.md) | English | No |
+| [Steam — missing saves while using a performance fix](technical/steam-save-visibility-report.md) | English | No |
+| [Steam — first-level scroll crash under DxWnd](technical/steam-scroll-crash-report.md) | English | No |
+| [RH Mods — Spellforge Editor](technical/rhmods-spellforge.md) | English | No |
+| [RH Mods — Asset Editor](technical/rhmods-asset-editor.md) | English | No |
+| [RH Mods — Developer Console](technical/rhmods-developer-console.md) | English | No |
+| [RH Mods — Profile Tool](technical/rhmods-profile-tool.md) | English | No |
+| [RH Mods — Rhuce](technical/rhmods-rhuce.md) | English | No |
+| [GOG — intermittent city-mission save crashes](technical/gog-save-crash.md) | English | No |
+| [GOG — historical profile-based widescreen experiments](technical/gog-widescreen.md) | English | No |
+| [GOG — executable naming and flickering report](technical/gog-flicker-executable-name.md) | English | No |
+| [GOG — York mission unlocked after reloading the prior ending](technical/gog-post-ransom-progression.md) | English | No |
+| [GOG — ambush completion loop through Porting Kit](technical/gog-mac-ambush-loop.md) | English | No |
 
 ## Releases, ports, and development
 
-| Source record | Original language | Evidence inspected |
+| Source record | Original language | Full text in Markdown? |
 | --- | --- | --- |
-| [RuneSoft — official port product page](history/runesoft.md) | English | Page text inspected |
-| [GOG — edition, extras, and preservation update](history/gog-edition.md) | English | Product text and changelog inspected |
-| [GOG Database — package and version history](history/gogdb.md) | English | Indexed record inspected |
-| [Wikipedia — overview and bibliography](history/wikipedia.md) | English | Article text inspected |
-| [GameSpot — prerelease gameplay preview](history/gamespot-preview.md) | English | Article body inspected |
-| [Steam — localized store description](history/steam-edition.md) | Spanish storefront | Indexed product text inspected |
-| [MeriStation — Spanish demo announcement](history/meristation-spanish-demo.md) | Spanish | Indexed announcement inspected |
-| [Obligement — Apollo port licensing and schedule report](history/obligement-apollo-news.md) | French | Indexed relevant passage inspected |
-| [macinplay — German Mac preview](history/macinplay-mac-preview.md) | German | Article text inspected |
-| [Academic research — Medieval Soundspace in the New Digital Leisure Time Media](history/medieval-soundspace.md) | English | Abstract and relevant PDF text inspected |
-| [LEVEL — Turkish prerelease preview](history/level-turkish-preview.md) | Turkish | Substantial indexed PDF passage inspected |
-| [GamerSky — Chinese demo announcement](history/gamersky-demo.md) | Simplified Chinese | Indexed announcement and download metadata inspected |
-| [Sector — firsthand Czech localization report](history/sector-czech-localization.md) | Slovak | Indexed article text inspected; direct retrieval failed |
-| [iDNES — Robin Hood in computer games](history/idnes-adaptations.md) | Czech | Article text inspected |
-| [Games.cz — July 2002 release-window correction](history/tiscali-release-revision.md) | Czech | Indexed article text inspected; direct retrieval failed |
-| [Games.cz — completion and regional schedule report](history/tiscali-gold.md) | Czech | Article text inspected; linked press release could not be retrieved |
-| [Games.cz — Czech distribution agreement and trailer](history/tiscali-localization-announcement.md) | Czech | Indexed article text inspected |
-| [GamingOnLinux — platform limitations of a 2013 bundle](history/gamingonlinux-bundle-rights.md) | English | Relevant article passage inspected |
-| [Steam — October 2024 community editor announcement](history/steam-spellforge-announcement.md) | Full announcement and embedded video description inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
-| [GameSurf — August 2002 Italian preview](history/gamesurf-preview.md) | Italian | Indexed opening and closing assessment inspected; direct retrieval failed. |
-| [GameSurge — July 2002 promotional feature description](history/gamesurge-july-2002.md) | English | Substantial indexed Robin Hood passage inspected; direct retrieval failed. |
-| [GOG — March 2012 release announcement](history/gog-2012-launch.md) | English | Indexed announcement text inspected; discussion not exhaustively inspected. |
+| [RuneSoft — official port product page](history/runesoft.md) | English | Yes |
+| [GOG — edition, extras, and preservation update](history/gog-edition.md) | English | Yes |
+| [GOG Database — package and version history](history/gogdb.md) | English | Yes |
+| [Wikipedia — overview and bibliography](history/wikipedia.md) | English | Yes |
+| [GameSpot — prerelease gameplay preview](history/gamespot-preview.md) | English | Yes |
+| [Steam — localized store description](history/steam-edition.md) | Spanish storefront | Yes |
+| [MeriStation — Spanish demo announcement](history/meristation-spanish-demo.md) | Spanish | Yes |
+| [Obligement — Apollo port licensing and schedule report](history/obligement-apollo-news.md) | French | Yes |
+| [macinplay — German Mac preview](history/macinplay-mac-preview.md) | German | Yes |
+| [Academic research — Medieval Soundspace in the New Digital Leisure Time Media](history/medieval-soundspace.md) | English | Yes |
+| [LEVEL — Turkish prerelease preview](history/level-turkish-preview.md) | Turkish | Yes |
+| [GamerSky — Chinese demo announcement](history/gamersky-demo.md) | Simplified Chinese | Yes |
+| [Sector — firsthand Czech localization report](history/sector-czech-localization.md) | Slovak | Yes |
+| [iDNES — Robin Hood in computer games](history/idnes-adaptations.md) | Czech | Yes |
+| [Games.cz — July 2002 release-window correction](history/tiscali-release-revision.md) | Czech | Yes |
+| [Games.cz — completion and regional schedule report](history/tiscali-gold.md) | Czech | Yes |
+| [Games.cz — Czech distribution agreement and trailer](history/tiscali-localization-announcement.md) | Czech | Yes |
+| [GamingOnLinux — platform limitations of a 2013 bundle](history/gamingonlinux-bundle-rights.md) | English | Yes |
+| [Steam — October 2024 community editor announcement](history/steam-spellforge-announcement.md) | English | No |
+| [GameSurf — August 2002 Italian preview](history/gamesurf-preview.md) | Italian | No |
+| [GameSurge — July 2002 promotional feature description](history/gamesurge-july-2002.md) | English | No |
+| [GOG — March 2012 release announcement](history/gog-2012-launch.md) | English | No |
+| [Macworld — Mac conversion reaches duplication](history/macworld-gold-master.md) | English | Full article text inspected. |
+| [amiga-news.de — Linux PowerPC availability report](history/amiga-news-linux-ppc.md) | English translation | Indexed news item inspected. |
 
 ## Indexes, media, and sources awaiting access
 
-| Source record | Original language | Evidence inspected |
+| Source record | Original language | Full text in Markdown? |
 | --- | --- | --- |
-| [Steam Community — guide discovery index](reference/steam-guide-index.md) | Multiple languages | Guide listing inspected |
-| [Print review and cover-disc leads](reference/magazine-indexes.md) | German | Indexed listings inspected |
-| [UPlayNetwork — gameplay walkthrough video](reference/video-walkthrough.md) | Video | Indexed title and description inspected; video not watched |
-| [IGN — user-supplied article lead](reference/ign-review.md) | English | User-supplied URL; browser retrieval blocked |
-| [GamersGlobal — user-supplied article lead](reference/gamersglobal-retrospective.md) | German | User-supplied URL; browser retrieval failed |
-| [The Tacticians Database — user-supplied article](reference/tacticians-database.md) | English | Title retrieved; article body unavailable |
-| [JuegoMania — Spanish cheat reference](reference/juegomania-cheats.md) | Spanish | Indexed cheat list inspected |
-| [Speedrun.com — leaderboard and research community](reference/speedrun-community.md) | English interface | Leaderboard, category metadata, and forum listing inspected |
-| [PC Savegames — annotated campaign checkpoint catalogue](reference/nicouzouf-savegames.md) | English listing | Checkpoint catalogue and package metadata inspected; saves not downloaded. |
+| [Steam Community — guide discovery index](reference/steam-guide-index.md) | Multiple languages | Yes |
+| [Print review and cover-disc leads](reference/magazine-indexes.md) | German | Yes |
+| [UPlayNetwork — gameplay walkthrough video](reference/video-walkthrough.md) | Video | Yes |
+| [IGN — user-supplied article lead](reference/ign-review.md) | English | Yes |
+| [GamersGlobal — user-supplied article lead](reference/gamersglobal-retrospective.md) | German | Yes |
+| [The Tacticians Database — user-supplied article](reference/tacticians-database.md) | English | Yes |
+| [JuegoMania — Spanish cheat reference](reference/juegomania-cheats.md) | Spanish | Yes |
+| [Speedrun.com — leaderboard and research community](reference/speedrun-community.md) | English interface | Yes |
+| [PC Savegames — annotated campaign checkpoint catalogue](reference/nicouzouf-savegames.md) | English listing | No |
 
 ## Related games supplied by the user
 
-| Source record | Original language | Evidence inspected |
+| Source record | Original language | Full text in Markdown? |
 | --- | --- | --- |
-| [MogelPower — Conquests of the Longbow walkthrough](related-games/mogelpower-longbow.md) | German | Page text inspected; different game |
+| [MogelPower — Conquests of the Longbow walkthrough](related-games/mogelpower-longbow.md) | German | Yes |
 
 ## Adding sources
 
@@ -178,7 +184,7 @@ Searches covered reviews, walkthroughs, scoring, combat, collectibles, technical
 
 Original pages were preferred. Where direct reading failed, retrieved search-index excerpts support only the limited summaries explicitly identified as such. Index entries do not imply that every linked chapter or video was reviewed. No installers, mods, trainers, or compatibility changes were executed. No claim in this collection has been checked against the engine or reproduced in gameplay during this task.
 
-These are original summaries and bibliographic records, not full-text preservation. Existing material in the neighboring interview directory is linked rather than duplicated.
+These are original summaries and bibliographic records; records marked “Yes” in the tables also include the converted source text in their Markdown file. Existing material in the neighboring interview directory is linked rather than duplicated.
 
 ### Questions requiring game or edition verification
 
@@ -249,7 +255,7 @@ Further comparison targets:
 - [Camp production](guides/steam-camp-production-report.md): check primary missions, sieges, and ambushes separately; healing may follow different rules.
 - [Dialog loop](technical/steam-ambush-dialog-loop.md): obtain an exact mission and build before diagnosing.
 - [Native Linux saves](technical/holarse-linux.md): linked detailed troubleshooting was inaccessible; compare symptoms with MorphOS reports without assuming one cause.
-- [GameStar tips](guides/gamestar-january-2003.md): substantial opening recovered, but remaining pages still need inspection.
+- [GameStar tips](guides/gamestar-january-2003.md): full extracted text is now included; the magazine-layout extraction remains noisy in places.
 
 No fixes, localization archives, or installers were executed.
 
@@ -282,3 +288,11 @@ The [GameSurf preview](history/gamesurf-preview.md) and [Siege of Lincoln discus
 [CheatBook's walkthrough](https://www.cheatbook.de/wfiles/robinhoodlos.htm) was identified as a mirror of the existing Steven W. Carter guide and was not counted again. Original [GameZone](https://www.gamezone.com/reviews/robin_hood_the_legend_of_sherwood_pc_review/) and [GameSpy](http://pc.gamespy.com/pc/robin-hood-the-legend-of-sherwood/5621p1.html) review URLs were located through bibliographic references, but their bodies could not be retrieved. They remain follow-up leads rather than completed review records.
 
 Research notes were consolidated into this README; future access notes and follow-up leads belong here.
+
+#### Mac reception, port milestones, and Chinese walkthrough continuation
+
+Added six non-Steam records, bringing the collection to 127. The [Macworld review](reviews/macworld.md) now has substantive text beyond its earlier opening-only lead. A separate [Mac gold-master report](history/macworld-gold-master.md) and [Linux PowerPC news item](history/amiga-news-linux-ppc.md) distinguish production status, distribution arrangements, and architecture-specific installation.
+
+The [VidaExtra retrospective](reviews/vidaextra-spanish.md) adds a critical view of repeated maps and combat controls. The [rios_always review](reviews/gamefaqs-rios-always.md) is counted once using its PC URL; its Linux mirror does not prove Linux testing. The [Sina / 怡采强档 continuation](guides/sina-yicai-chinese.md) differs in wording and numbering from yago's Ali213 guide, but its individual author and relationship to other Chinese republications remain unverified.
+
+The Obligement review body still could not be retrieved. The Macworld magazine scan remains a comparison lead; its rating was not inferred from the missing web-page graphic. Linked port downloads were not downloaded or executed.
