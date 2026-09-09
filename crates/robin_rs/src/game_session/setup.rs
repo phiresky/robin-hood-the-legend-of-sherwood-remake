@@ -1313,13 +1313,15 @@ impl MissionEngineResources {
         // diagnostics for malformed archives as well as missing ones; required
         // mission data is still rejected by the later preparation stages.
         let mut text = ResourceManager::with_files(files.clone());
-        if let Err(error) = text.attach_or_from_shipping("Data/Text/Level.res", shipping) {
-            tracing::warn!("Failed to load text resource file: {error}");
+        if let Err(error) = attach_mission_archive(&mut text, "Data/Text/Level.res", shipping) {
+            tracing::warn!("Optional mission text archive unavailable: {error}");
         }
 
         let mut cursor = ResourceManager::with_files(files);
-        if let Err(error) = cursor.attach_or_from_shipping("Data/Interface/DEFAULT.RES", shipping) {
-            tracing::warn!("Failed to load cursor resource file: {error}");
+        if let Err(error) =
+            attach_mission_archive(&mut cursor, "Data/Interface/DEFAULT.RES", shipping)
+        {
+            tracing::warn!("Optional mission interface archive unavailable: {error}");
         }
         Self { text, cursor }
     }
@@ -1334,6 +1336,18 @@ impl MissionEngineResources {
     ) {
         engine_setup_resources(&mut self.cursor, host)
     }
+}
+
+/// Preserve archive identity and the decoder's full table/entry error chain.
+/// The caller, not this shared diagnostic boundary, decides optionality.
+fn attach_mission_archive(
+    resources: &mut ResourceManager,
+    path: &str,
+    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+) -> Result<(), String> {
+    resources
+        .attach_or_from_shipping(path, shipping)
+        .map_err(|error| format!("{path}: {error:#}"))
 }
 
 fn engine_setup_resources(
@@ -1466,33 +1480,40 @@ impl<Interface> MissionProcessResources<Interface> {
     pub(super) fn resolve_short_briefings(
         &mut self,
         level_descriptors: Option<&assets_res_descr::LevelDescriptors>,
-    ) -> std::collections::HashMap<u32, String> {
+    ) -> Result<std::collections::HashMap<u32, String>, String> {
         let Some(descriptor) = level_descriptors else {
-            return std::collections::HashMap::new();
+            return Ok(std::collections::HashMap::new());
         };
         let table_id = descriptor.short_briefing.text_table_id;
-        let mut resolved = match self.text.get_string_count(table_id) {
-            Ok(count) => (0..count)
-                .filter_map(|index| {
-                    self.text
-                        .get_string(table_id, index)
-                        .ok()
-                        .map(|text| (index as u32, text.to_string()))
-                })
-                .collect(),
-            Err(error) => {
-                tracing::warn!(
-                    "Short-briefing text table {table_id} unavailable in Level.res: {error}"
-                );
-                std::collections::HashMap::new()
+        let mut resolved = std::collections::HashMap::new();
+        // Some demos and custom missions omit the legacy table entirely.
+        // Absence is optional; a registered table that cannot be read is not.
+        // In particular, never silently discard an authored text ID because
+        // its entry failed to decode.
+        if self.text.has_text_resource(table_id) {
+            let count = self.text.get_string_count(table_id).map_err(|error| {
+                format!("Data/Text/Level.res short-briefing table {table_id}: {error:#}")
+            })?;
+            for index in 0..count {
+                let text = self.text.get_string(table_id, index).map_err(|error| {
+                    format!(
+                        "Data/Text/Level.res short-briefing table {table_id}, entry {index}: {error:#}"
+                    )
+                })?;
+                resolved.insert(index as u32, text.to_owned());
             }
-        };
+        } else {
+            tracing::debug!(
+                table_id,
+                "Optional short-briefing table absent from Data/Text/Level.res"
+            );
+        }
         for (index, text) in descriptor.custom_short_briefings.iter().enumerate() {
             if let Some(text) = text {
                 resolved.insert(index as u32, text.clone());
             }
         }
-        resolved
+        Ok(resolved)
     }
 }
 
@@ -1873,7 +1894,16 @@ pub(super) fn extract_minimap_widget_setup(
     let metadata = cursor_res
         .get_picture_opacity_metadata(resource_ids::RHMAP_CORNER)
         .unwrap_or_else(|error| panic!("minimap engine picture metadata: {error:#}"));
-    let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
+    // An empty optional picture collection is supported. Metadata errors for
+    // a present resource must not masquerade as the widget being absent.
+    if metadata.iter().all(Option::is_none) {
+        return None;
+    }
+    let (btn_w, btn_h) = cursor_res
+        .get_dimension(resource_ids::RHMAP_CORNER)
+        .unwrap_or_else(|error| {
+            panic!("Data/Interface/DEFAULT.RES minimap corner dimensions: {error:#}")
+        });
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
     let button_hit_mask = metadata.get(1).and_then(Clone::clone).map(|metadata| {
         metadata
@@ -3424,6 +3454,117 @@ mod tests {
         let mut resources = ResourceManager::with_files(files);
         resources.attach_resource_file("stage.res").unwrap();
         resources
+    }
+
+    fn short_briefing_archive(entries: &[&[u16]]) -> Vec<u8> {
+        let mut bytes = b"SRES".to_vec();
+        bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(b"TEXT");
+        bytes.extend_from_slice(&123u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for entry in entries {
+            bytes.extend_from_slice(&(entry.len() as u16).to_le_bytes());
+            for unit in *entry {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        bytes
+    }
+
+    fn short_briefing_process(text: ResourceManager) -> MissionProcessResources {
+        MissionProcessResources {
+            text,
+            interface: ResourceManager::new(),
+            audio_backend: None,
+        }
+    }
+
+    #[test]
+    fn optional_short_briefing_absence_keeps_custom_text_ids() {
+        let mut process = short_briefing_process(ResourceManager::new());
+        assert!(process.resolve_short_briefings(None).unwrap().is_empty());
+        let mut descriptor = assets_res_descr::LevelDescriptors::default();
+        descriptor.short_briefing.text_table_id = 123;
+        assert!(
+            process
+                .resolve_short_briefings(Some(&descriptor))
+                .unwrap()
+                .is_empty()
+        );
+        descriptor.custom_short_briefings = vec![None, Some("custom only".into())];
+        assert_eq!(
+            process.resolve_short_briefings(Some(&descriptor)).unwrap(),
+            std::collections::HashMap::from([(1, "custom only".into())])
+        );
+    }
+
+    #[test]
+    fn short_briefing_overrides_preserve_legacy_entries_and_sparse_ids() {
+        let mut process = short_briefing_process(interface_stage_fixture());
+        let mut descriptor = assets_res_descr::LevelDescriptors::default();
+        descriptor.short_briefing.text_table_id = 123;
+        descriptor.custom_short_briefings = vec![None, None, Some("extra".into())];
+        assert_eq!(
+            process.resolve_short_briefings(Some(&descriptor)).unwrap(),
+            std::collections::HashMap::from([(0, "stage fixture".into()), (2, "extra".into()),])
+        );
+        descriptor.custom_short_briefings[0] = Some(String::new());
+        assert_eq!(
+            process.resolve_short_briefings(Some(&descriptor)).unwrap(),
+            std::collections::HashMap::from([(0, String::new()), (2, "extra".into())])
+        );
+    }
+
+    #[test]
+    fn malformed_mission_text_archive_reports_path_table_and_entry() {
+        use std::sync::Arc;
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let path = "Data/Text/Level.res";
+        vfs.install_preloaded_asset(path, short_briefing_archive(&[&[65], &[0xd800]]))
+            .unwrap();
+        let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
+        let mut text = ResourceManager::with_files(files);
+        let error = attach_mission_archive(&mut text, path, None).unwrap_err();
+        assert!(error.contains(path), "{error}");
+        assert!(error.contains("resource 123 (TEXT)"), "{error}");
+        assert!(error.contains("string 1: invalid UTF-16"), "{error}");
+    }
+
+    #[test]
+    fn short_briefing_wrong_resource_kind_is_not_optional_absence() {
+        let mut process = short_briefing_process(interface_stage_fixture());
+        let mut descriptor = assets_res_descr::LevelDescriptors::default();
+        descriptor.short_briefing.text_table_id = resource_ids::RHID_GROUND_FOCUS;
+        // Overrides do not mask corrupt registered tables. They replace
+        // valid base entries or supply text when the base is absent.
+        descriptor.custom_short_briefings = vec![Some("override".into())];
+        let error = process
+            .resolve_short_briefings(Some(&descriptor))
+            .unwrap_err();
+        assert!(error.contains("Data/Text/Level.res short-briefing table"));
+        assert!(error.contains("not found"), "{error}");
+    }
+
+    #[test]
+    fn optional_minimap_setup_accepts_absent_and_empty_picture_collections() {
+        assert!(extract_minimap_widget_setup(&mut ResourceManager::new()).is_none());
+        let mut bytes = b"SRES".to_vec();
+        bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(b"PICC");
+        bytes.extend_from_slice(&resource_ids::RHMAP_CORNER.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // picture count
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("empty-corner.res", bytes)
+            .unwrap();
+        let files = std::sync::Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
+        let mut cursor = ResourceManager::with_files(files);
+        cursor.attach_resource_file("empty-corner.res").unwrap();
+        assert!(cursor.has_picture_resource(resource_ids::RHMAP_CORNER));
+        assert!(extract_minimap_widget_setup(&mut cursor).is_none());
     }
 
     #[test]
