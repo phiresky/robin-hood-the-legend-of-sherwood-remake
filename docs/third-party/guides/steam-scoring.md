@@ -8,12 +8,13 @@ How points are calculated in *Robin Hood: Legend of Sherwood*.
 - Updated: 9 July 2022
 - Categories: Achievements, Gameplay Basics, Maps or Levels, Secrets, Walkthroughs
 - Language: English
+- Source: [Steam Community guide](https://steamcommunity.com/sharedfiles/filedetails/?id=2829972690)
 
 ## Guide index
 
+- Overview
 - Introduction
 - Points
-- Overview
 - Table with maximum scores
 - Links
 - Comments
@@ -129,23 +130,23 @@ There is a swordsman that can become an ally if a player talks with one of the b
 
 | Mission | Location | Coffers | Killed | Tied | Other | Score |
 | --- | --- | ---: | ---: | ---: | --- | ---: |
-| Finding Godwin | Lincoln | £1,500 | 0 | 38 | — | 3,810 |
-| Rescuing Stuteley | Nottingham | £1,100 | 4 | 81 | — | 6,980 (max 7,270) |
-| Scarlet Night | Leicester | £2,000 | 0 | 74 | — | 6,380 |
-| Confessions of an Outlaw | Nottingham | £3,900 | 0 | 104 | — | 8,670 |
-| The Prince and the Outlaw | Derby | £2,500 | 0 | 84 | Sceptre | 8,130 |
-| Pillaging | Sherwood | £100 | 0 | 53 | — | 4,720 |
-| The Evening Visitor | Leicester | £1,500 | 0 | 56 | The Doomsday Book | 6,070 |
-| The Godfather in Prison | Lincoln | £5,000 | 3 | 68 | — | 6,410 |
-| The Lock-up and the Friar | Derby | £3,500 | 0 | 85 | The Coronation Spoon | 8,300 |
-| The Silver Arrow | Nottingham | £8,500 | 0 | 103 | The Sword of State | 10,060 |
-| A Wedding and a Funeral | York | £6,000 | 1 | 125 | The Ampulla; Guy of Gisbourne | 11,500 |
-| The Escape | Nottingham | £7,500 | 0 | 117 | King Richard's Sigil | 10,940 |
-| The Letter | York | £8,600 | 1 | 102 | The Crown | 10,050 |
-| Free Lincoln * | Lincoln | £2,000 | 0 | 90 | — | 7,500 |
-| The Black Castle | Derby | £1,500 | 1 | 66 | — | 5,820 |
-| The March on York | York | £1,000 | 0 | 126 | — | 9,920 |
-| Last Challenge | Nottingham | £1,100 | 1 | 154 | Sheriff of Nottingham | 12,040 |
+| Finding Godwin | Lincoln | 1500£ | 0 | 38 | — | 3810 |
+| Rescuing Stuteley | Nottingham | 1100£ | 4 | 81 | — | 6980 (max 7270) |
+| Scarlet Night | Leicester | 2000£ | 0 | 74 | — | 6380 |
+| Confessions of an Outlaw | Nottingham | 3900£ | 0 | 104 | — | 8670 |
+| The Prince and the Outlaw | Derby | 2500£ | 0 | 84 | Sceptre | 8130 |
+| Pillaging | Sherwood | 100£ | 0 | 53 | — | 4720 |
+| The Evening Visitor | Leicester | 1500£ | 0 | 56 | The Doomsday Book | 6070 |
+| The Godfather in Prison | Lincoln | 5000£ | 3 | 68 | — | 6410 |
+| The Lock-up and the Friar | Derby | 3500£ | 0 | 85 | The Coronation Spoon | 8300 |
+| The Silver Arrow | Nottingham | 8500£ | 0 | 103 | The Sword of State | 10060 |
+| A Wedding and a Funeral | York | 6000£ | 1 | 125 | The Ampulla; Guy of Gisbourne | 11500 |
+| The Escape | Nottingham | 7500£ | 0 | 117 | King Richard's Sigil | 10940 |
+| The Letter | York | 8600£ | 1 | 102 | The Crown | 10050 |
+| Free Lincoln * | Lincoln | 2000£ | 0 | 90 | — | 7500 |
+| The Black Castle | Derby | 1500£ | 1 | 66 | — | 5820 |
+| The March on York | York | 1000£ | 0 | 126 | — | 9920 |
+| Last Challenge | Nottingham | 1100£ | 1 | 154 | Sheriff of Nottingham | 12040 |
 
 ## Links
 
@@ -160,6 +161,6 @@ Guide release: v1.0 on July 9, 2022.
 
 **deamonpog — 5 April 2023:** Have you ever been able to collect all coins from coffers in the Rescuing Stutely mission?
 
-## Source
+## Editorial note
 
-Hand-cleaned from `originals/guides__steam-scoring.txt`; Steam navigation, ratings, profile controls, and footer material have been omitted while retaining the guide's complete text, links, and comments.
+Steam navigation, ratings, profile controls, and footer material have been omitted; the guide text, links, and comments are retained in full.

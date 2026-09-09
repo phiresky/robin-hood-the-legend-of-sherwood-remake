@@ -1,55 +1,111 @@
-# iDNES — Czech walkthrough, part 2
+# Robin Hood — Part 2 of the game guide
 
 - Original source: [Robin Hood: 2. část průvodce hrou](https://www.idnes.cz/hry/robin-hood-2-cast-pruvodce-hrou.A021208_robinhoodlosnavod2_bw)
 - Author / publication: Tomáš Krajča / iDNES.cz
-- Language / date: Czech; 2002-12-15
-- Access: Substantial indexed article text inspected
-- Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
+- Date: 15 December 2002, 12:00
+- Original language: Czech
+- The mapped text capture contains the complete article; site chrome and unrelated recommendations are omitted.
 
-This continuation covers missions numbered 9–25 in the author's route, including the prince's meeting, Ranulph, the Derby assault, and forest ambushes. The numbering follows the author's campaign choices rather than proving a fixed global mission order.
+## English translation
 
-Inspected passages discuss nonlethal handling of Ranulph, securing incapacitated enemies, and using allied formations during a castle assault by drawing opponents toward them. The article also discusses blazons in connection with Derby.
+### Robin Hood — Part 2 of the game guide
 
-Read alongside [part 1](../reference/idnes-walkthrough.md) and other campaign guides to compare alternative solutions. Search-index access does not guarantee that every map, caption, or step has been inspected.
+Tomáš Krajča
 
-## Converted text from the original HTML
+15 December 2002, 12:00
 
+The game Robin Hood: The Legend of Sherwood deserves great attention. This second part provides tips and a complete walkthrough for missions 9–25.
 
-### guides__idnes-part-2.html
+The translation below follows the complete mission sequence and preserves tactical details, quantities, character names, rewards, and asides.
 
-_Source: `originals/guides__idnes-part-2.html`._
+#### Meeting King John
 
-[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.
+Marian has managed to arrange a meeting between Robin and the king, but Robin must get past the many sheriff’s men guarding him. First go around the two guards at the gate and stun the fellow sitting beside the wall on the right, together with the girl he has taken out. Pay the beggar and stun the two gate guards one after the other: first one, whom you quickly carry away and tie up, then the other, without attracting the attention of the large patrol on the left. Next comes the tricky group of guards facing away. I found nothing better than trying to stun as many as possible from behind and hitting the rest with a staff or Will’s cudgel, weapons whose primary effect is to stun an enemy. After some practice I managed it without killing any of them.
 
+Read the beggar’s scroll; you will learn something about the guards’ movements in the first courtyard. Climb up and go left along the walkway. Always wait until a guard turns around, then punch him once. Continue this way to the stairs down. Clearing the courtyard is not at all easy; I solved it with brute force. First I lured the first guard by the gate and stunned him with Will’s cudgel, then Robin stunned the rear of the five-man guard unit while Will and the outlaw with the wooden club dealt with the rest. Then came the sleeping knight by the stairs and the remaining archer on the walkway.
 
-### guides__idnes-part-2.txt
+If you want to do a good deed (and you should—why else would you want to be Robin Hood, right?), help the woman by the stairs on the right heal her son. Marian can do it, for example; healing herbs are lying by the wall on the left. Your reward is a four-leaf clover. Do not use the main gate; enter the small tower from the right-hand walkway. Clear this smaller circular walkway of enemies, if possible without the patrol below noticing: run out, have Robin stun an unaware guard, pick him up, carry him into the tower, and tie him there. You can gradually clear the whole walkway this way. The patrol below can be lured away and stunned in various ways; you can even stun it in combat—your creativity is the limit. Once the large patrol is pacified, also stun the sleeping knight on the north side of the courtyard and deal with the waiting crossbowmen, who are looking the other way and will therefore meet their fate. Continue along the walkway (do not climb down to the knights); you should encounter several more shooters. Observe their routes and you will handle them without trouble. It is no problem if you attract a little attention from the guards below, as long as they do not run after you.
 
-_Source: `originals/guides__idnes-part-2.txt`._
+Enter the door at the far right and help the poor man being tormented by five men-at-arms. This completes an older quest and raises your reputation in Leicester. Then go upstairs, sneak behind the large patrol with Robin and Marian, stun the three men-at-arms in the next tower, and listen to the conversation between the traitorous King John and the Sheriff of Nottingham. Return by the same route, unnoticed, all the way to Sherwood Forest.
 
----  
-  
-[ ](https://www.idnes.cz/ "iDNES.cz")
+#### Meeting Little John
 
-[Premium](https://www.idnes.cz/ucet/platba-mesicni-a5po19n99?zdroj=topmenu)
+The sheriff’s men are plundering a settlement on the edge of Sherwood Forest. One man dared to stand up to them and now lies on the ground, stunned and horribly beaten. Rescuing him is therefore literally Robin’s duty. First stun the guards in the clearing on the left with Robin’s fists; simply take them from top to bottom and leave the archers for last. Tie them up and continue to the crossroads. Will’s mace or Harald’s club should do the work here. A little to the south, in the forest, you will find a desperate mother and, nearby, a four-leaf clover. In the southeast corner of the level there are many soldiers; if you want, fight them and free the two women they are holding captive. Then head straight up. Stun all enemies in both groves; several men-at-arms on the right and several archers at upper left and upper right should remain. First have Robin stun the two men-at-arms beside the captive. Then quickly run to the archers above them; you should be able to stun all but one. Fight the last one fairly and send him to the land of dreams. Then quickly help Robin, using Harald and Will, deal with the mounted knight—stun him at least briefly and then kill him outright, because he is too strong. Next have Robin ambush the archers in the left part of the village from behind, and finally fight the man-at-arms inside the house at the far right. Robin can then free the captive; a very useful party member joins you: Little John. Before leaving the map with him, collect his savings, which are on the roof of the cottage.
 
-Mimořádně jen 19 Kč/měsíc  
-na prvních 5 měsíců
+#### The convoy
 
-  * [Přihlásit](https://www.idnes.cz/ucet/prihlasit?url=https%3a%2f%2fwww.idnes.cz%2fhry%2frobin-hood-2-cast-pruvodce-hrou.A021208_robinhoodlosnavod2_bw) [Můj účet](https://www.idnes.cz/ucet)
-  * Menu
+A strange convoy is travelling through the forest, apparently carrying the proceeds of another of the sheriff’s plundering expeditions. But the Nottingham pig will not get this money; we will take care of that. First stun the guard at the crossroads, then continue through the grove and attack the convoy’s escort from all sides with your outlaws. You should not even need to use traps; simply prioritize the archers and the strong, plate-armored men-at-arms. Steal 7,000 gold pieces from the wagon and return to Sherwood.
+#### The warning
 
-  * [Magazíny](https://www.idnes.cz/magaziny "Magazíny")
-  * [Bonusweb](https://www.idnes.cz/hry "Bonusweb")
+You must warn Lord Ranulph, but you must not kill any of his soldiers. First stun the two guards standing with their backs turned by the stream and on the pier, then the third by the trees and the large man in a cloak. Several more guards should run in; send Little John and his staff against them. Naturally, tie up and hide everyone. Continue toward the small town: first stun the guard by the first cottage, then run out at the marching cloaked man, the two guards in the middle, and the man-at-arms facing away at the very end of the road from the castle gate. Two guards right by the drawbridge should notice you; stun them with Little John in a fair fight. Stuff the bodies into the adjacent cottages and pay the beggar for information.
 
-  * [ Recenze](https://www.idnes.cz/hry/recenze "Recenze")
-  * [ Novinky](https://www.idnes.cz/hry/novinky "Novinky")
-  * [ Magazín](https://www.idnes.cz/hry/magazin "Magazín")
-  * [ Retro](https://www.idnes.cz/hry/retro "Retro")
-  * [ Preview](https://www.idnes.cz/hry/preview "Preview")
-  * [ Jízdní řád](https://bonusweb.idnes.cz/JizdniRad.aspx "Jízdní řád")
+Continue downward and stun the two pink-clad informers by the first cottage to the right of the road; tie them up and hide them in the house. Do the same with the lone knight who arrives along the road after a while. When the large patrol that walks to the second gate is heading away, have Little John stun the two men-at-arms at the crossroads just before the windmill, and also the crossbowman who arrives there shortly afterward. Carry the bodies upstairs quickly, before the patrol returns, tie them up, and put them in the house. Then wait until the patrol is again turning toward the gate, quickly stun two from behind and fight the rest (Little John rules!), tie them up, and move them into the windmill. Next stun the four guards at the cottage whose secret passage leads to the building beside the church inside the castle. Use it immediately. Do not worry about the man to the left of the courtyard exit; he is only a beggar. After a while a large cloaked man will come to the gate and turn his back to you beautifully—stun him and pull him inside. Then stun the archer at the corner and another nearby guard, and lure down the guard from the walkway just beside the drawbridge.
 
-# Robin Hood - 2. část průvodce hrou
+Next run into the tower where two guards are sleeping—put them even more soundly to sleep and take a nice 500 gold pieces. You can now create another escape route by cutting both ropes. Go onto the walkway and gradually stun both patrolling guards. Go down through the first building attached to the walkway and stun the archer from behind. Hide all the bodies and enter the building above the main gate. Do not lower the gate yet; when the marching man-at-arms below reaches it, stun him and hide him. Then deal with the guards at the building beyond the end of the walkway. You will attract the attention of two guards by the church; stun them in fair combat. Then stun the guard in front of the stairs leading to the dining hall. Hide all the bodies.
+
+The castle should now be completely clear, so go straight to the dining hall. Speak to the lord in the adjoining room; he promises his help. First, however, Lord Godwin must be freed—he is imprisoned in his own castle. That comes later. First stun the five sheriff’s men-at-arms in the tower and take the red book; without it, King John will have a hard time collecting taxes :o). Then do not bother with anyone else: run quickly to your starting point and end the mission.
+
+#### The king’s money
+
+One of King John’s loyal vassals is sending him his money, and we cannot simply let that happen. First ambush the mounted knight with Will and Harald or Little John and kill him without hesitation; he is too strong for fooling around and recovers quickly from being stunned. Then stun the guard above Robin (jump onto the stone when he is not looking) and continue to the crossroads. I admit that I handled the situation with one huge brawl, which leaves enemies unconscious because Robin, Harald, Little John, and Will all use blunt weapons that do not kill outright. The four men-at-arms beside the wagon are not paying much attention, so it is easy to stun them all at once. Take the handsome 7,000 and end the mission. More important tasks await you…
+
+#### The rescue of Lord Godwin
+
+First, using Little John and Robin, stun the three guards at the cottage, pay the beggar, and learn where Lord Godwin is imprisoned. Naturally he is in the deepest dungeon, so getting inside will not be easy. Take the four-leaf clover and continue by stunning the three men-at-arms beyond the bridge. When the large marching patrol farther along the road turns around, run out, stun the last two, and carry them away quickly—the others will not notice, and you can deal with them in the same way a little later. Then stun another guard at the very south of the map and climb over the wall where the vines are. Walk along the parapet with Robin and Stutley, stunning and tying every guard. Drop the large gate and clear the first courtyard with the other characters. Have someone distract the archers on the tower to the left while Robin runs up and stuns them from behind. Proceed upward, stun two knights in combat, and continue with Robin and John into the tower and dining hall.
+
+Make your way past the unconscious enemies to the room where a knight is sharpening his sword. Send him to sleep as well and take his purse containing 2,500 gold pieces. Continue to the tower and through the door into the building where Lord Godwin is imprisoned. Free him, but you still have to clear the castle of soldiers. Start with the first courtyard, then the walkway, and finally the hardest part—the second courtyard, where there are many cleverly positioned men-at-arms. I handled it aggressively: I jumped in with Little John, Will, and Harald and stunned everyone (on about the second attempt :o), but you can try the quiet approach. You can also use Lord Godwin’s imprisoned soldiers, but they kill, and you surely do not want to spoil your *Spared Lives* statistic, do you? :o)
+
+#### The tax collector
+
+Here we have another forest ambush. Once the first men-at-arms have been caught, you can simply follow the road and stun every man you meet with a strong punch or, if a fight breaks out, use your trusty staff. At the bridge I recommend shooting the archers from a distance first, then luring out the men-at-arms and using the hidden trio just beyond the bridge. Arrows are ineffective against the mounted knight, so do not waste them; knock him down with the staff. Then all that remains is to stun the collector with your fists and take his money.
+#### Brother Tuck in prison
+
+Brother Tuck agreed to act as a spy for Marian. Unfortunately he was discovered and is now in prison. It is up to Robin to help him. Begin by having Robin and John stun four guards before the castle gate. If you are quick, you can do it without a fight (approach the first two from the side, not from behind). Continue to the walkway and gradually clear it in both directions of archers and crossbowmen. There is a large force of soldiers in the courtyard below, but we can deal with it together. Run down the stairs on the left with John and Stutley, and as soon as the large patrol turns around, stun the two guards below the first cottage. Two more will run at you a little farther down; stun them with the staff. Hide the bodies. Then stun the two guards below at the gate, the pair by the well, and finally, with Robin and Will, the entire large patrol. Pay the beggar and learn about some reception hosted by the local lord. Who knows whom he invited, since the guards have almost tripled…
+
+Continue to the walkway via the stairs on the right, have Stutley pick the door, and try to clear the walkway again. If you lure a few guards from below at a time, so much the better; put them to sleep with the staff. The rest are easy: run along the walkway with someone to attract their attention while Robin or John runs down the stairs on the opposite side and stuns them. Enter the tower furthest to the right and free Brother Tuck. You learn that the lord is hosting King John and that they are plotting over dinner—it would be wise to listen and act accordingly. Start by collecting all the hams and bottles of liquor; this will heal Tuck. Then stun the knight above the dining room and take the 500 gold pieces and two arrows lying loose. Continue along the walkway, quickly run past the guards’ line of sight, and hide in the small room above the main gate. Some will notice you; stun them with Robin or John after entering the room. Dispose of the two guards above you in the same way and continue along the walkway. Be especially careful not to attract the attention of the four archers below; they are damned dangerous. If you fail, quickly run down with John and Will, who do not kill but stun, and try to solve the situation in a fight (believe me, it works—I tried it myself… :o).
+
+Continue upward, where John can nicely stun one soldier after another, except for one whom you simply have to beat down with the staff. Do not forget to stun the knight in the highest tower; he carries the spoon from which Richard the Lionheart was splashed with coronation oil. Since it is John’s favorite toy, it will be very useful. Then enter the dining room and listen to the plan.
+
+#### Lord Godwin in danger
+
+You need to obtain three shields to help Lord Godwin. You can buy them (first for 2, then 3, and 4 thousand—this is where all your successful ambushes will be useful), exchange them for your outlaws, or acquire them in the mission. There is no reason to be particularly frightened here: simply buy the shields; by now you should have enough money. The mission itself is unnecessarily long, and you will not use the money for any other purpose anyway…
+
+#### Ambush
+
+First ambush the mounted knight with Little John and then kill him without hesitation with Will; he is too strong and recovers quickly from being stunned. Then stun the guard above Robin (jump onto the stone when he is not looking) and continue to the crossroads. I admit that I handled the situation with one huge brawl, which leaves enemies unconscious because Robin, Little John, and Will all use blunt weapons that do not kill outright. You only need to concentrate on the troublesome archers. The four men-at-arms beside the wagon are not paying much attention, so it is easy to stun them all one after another. Take all the money (there should be about 7,500 in total) and return to Sherwood.
+
+#### The conquest of Derby
+
+You can buy some shields, but in this mission it is really worth going in hard. It is simple: with your group, walk through the already very familiar castle in Derby (we have visited it twice already) and, wherever possible, stun or kill the red soldiers. Lord Randolph’s soldiers will also help you. The first three shields are in the first courtyard; pay particular attention to the large number of archers on the walkways. Continue through the second courtyard: clear the walkway on the right, then quickly return to the central tower and wait for soldiers from below and the left walkway to chase you there. Lead them to the first courtyard, to Lord Randolph’s armies, and you have won. Do not forget to pacify the soldiers in the tower above the dining hall; I managed to hit them one by one when I attracted their attention below with Robin Hood while Little John climbed the stairs behind them. The third courtyard is a bigger challenge. I first stunned every guard as far as the small tower above the main gate, hid there, and waited for men-at-arms to run in from below and the left side of the walkway; I stunned them with John’s staff. You can also lead them back to Lord Randolph’s soldiers or shoot them with Robin’s bow. The route up to the roofs of the castle’s main buildings is a walk in the park; only about five, badly positioned archers are up there. Climb the tower and let Robin fight King John’s vassal with swords. Once you defeat him, you should have all the shields and have won the game’s nineteenth mission.
+
+#### Revenge
+
+To defend Derby Castle against King John’s retaliatory attack, you need only three shields, so I recommend buying them or exchanging them for outlaws. The mission itself would be nothing but a waste of time.
+#### Raising funds for the war
+
+This time we get an easy ambush against a man pretending to be a tax collector (not very wise in Sherwood!), who is actually a wealthy merchant. I handled the mission very quickly: Robin jumped onto the stone, ran along the road straight to the merchant guarded by four soldiers, quickly stunned two, hit the other two over the head with the staff at the same time as the merchant, robbed him, and ended the mission before the archers at the crossroads could turn me into a pincushion.
+
+#### Sherwood is lively
+
+This time I chose the sheriff’s convoy at the familiar forest crossroads for the ambush. The easiest way is not to bother fighting it: run past the stunned archers lurking in the groves to the wagon, stun three or four guards there, quickly collect all the purses, and end the mission before the Nottingham men-at-arms recover. This ambush took me no more than five minutes in total.
+
+#### Merchants do not have an easy life
+
+Another merchant has appeared at the same crossroads. This time I went around the first grove on the right from above and stunned the man-at-arms watching the crossroads. Then I ran all the way up and stunned the two at the very end of the northern road. I went through the grove by the hut, jumped into the middle of the clearing where the merchant stood, stunned the archers in combat, quickly punched the merchant, robbed him, and ended the mission—the mounted knight did not even have time to get properly moving… :o)
+
+#### The tax collector
+
+The sheriff, or rather the king, is pretty stupid to keep sending his tax collectors through the forest—but so be it; at least we have a steady source of income. I took Robin and John on this mission. First Robin stunned one of the two guards just below the net that springs at the start of the mission; I then led the rest onto the road north and stunned them from behind with John. I lured the archers in the same way and had John stun the remaining men-at-arms by the collector with his staff. The final step is to keep the mounted knight occupied with John and quickly have Robin stun and rob the tax collector himself.
+
+#### The little convoy
+
+You can also find the sheriff’s convoy with stolen money at the small forest crossroads. Begin traditionally by stunning the soldier above the stone Robin can jump onto at the start of the mission. Then take Robin and John and send each after one of the archers. Once you have disposed of them quickly, have John occupy all the guards who swarm you while Robin stuns the weak men-at-arms by the wagon. Take the money and end the mission before John dies.
+
+The author closes by promising the final and longest installment leading to the grand finale in Nottingham Cathedral.
+
+## Original text
+
+### Robin Hood - 2. část průvodce hrou
 
 Tomáš Krajča
 
@@ -126,390 +182,3 @@ Na stejném rozcestí se objevil další obchodník. Tentokrát jsem obešel hor
 Na malé lesní křižovatce můžete zastihnout také šerifův konvoj s naloupenými penězi. Začněte tradičně omráčením vojáka nad kamenem, na který může Robin hned na začátku mise vyskočit. Pak vezměte Robina a Johna a pošlete každého z nich na jednoho z lučištníků. Když se vám podaří se jich rychle zbavit, zabavte Johnem všechny stráže, které se na vás sesypou, a Robinem zatím omračte chabé zbrojnoše u vozu, seberte peníze a dřív než John umře ukončete misi.
 
 Tímto přepadením pro dnešek skončíme, příště se můžete těšit na poslední a úplně nejdelší díl průvodce hrou, kde se dočkáme popisu všech misí vedoucích k velkému finále v Nottinghamské katedrále.
-
-[Vstoupit do  diskuse (112 příspěvků)](https://www.idnes.cz/hry/robin-hood-2-cast-pruvodce-hrou.A021208_robinhoodlosnavod2_bw/diskuse)
-
-[Uloženo na přečtení](javascript:; "Odebrat z uložených")
-
-[Přečíst později](javascript:; "Uložit na později")
-
-[Sdílet článek](https://bonusweb.idnes.cz/robin-hood-2-cast-pruvodce-hrou-dz1-/Clanek.aspx?c=A021208_robinhoodlosnavod2_bw)
-
-**Témata:** [bitka](https://www.idnes.cz/zpravy/archiv/bitka.K481564), [hračky](https://www.idnes.cz/zpravy/archiv/hracky.K481344), [chalupa](https://www.idnes.cz/zpravy/archiv/chalupa.K481551)
-
-* * *
-
-[Komerční sdělení](http://sdeleni.idnes.cz/sdeleni-redir.aspx?idostrova=bonusweb)
-
-* * *
-
-## Nejčtenější
-
-### [ Čtěte celý iDNES.cz bez rušivých reklam. S iDNES Premium na 5 měsíců za 19 Kč  ](https://www.idnes.cz/zpravy/mediahub/idnes-premium-prekryvajici-reklamy-vyroci.A260819_142359_mediahub_bhar?zdroj=nejctenejsi)
-
-Odemkněte si exkluzivní obsah a čtěte ho nově bez reklam překrývajících text. 
-
-### [ KVÍZ: Otestujte se v ultimátním herním kvízu 1989–2027  ](https://www.idnes.cz/hry/otestujte-se-v-ultimatnim-hernim-kvizu-1989-2027.Q190311_112933_bonusweb_oz)
-
-Herní svět se během let dramaticky proměnil. Přijměte pozvání a užijte si pozoruhodný vývoj, který se udál v této oblasti lidské zábavy. Vaším úkolem je poznat známou hru jen podle obrázku. 
-
-### [ Bude to absolutně nabitý měsíc. Toto jsou očekávané herní hity v září  ](https://www.idnes.cz/hry/magazin/ocekavane-chystane-hry-novinky-zari-2026.A260831_172846_bw-magazin_oma/foto)
-
-Přichází měsíc, ve kterém se hráči opravdu nudit nebudou. Září je nabité peckami, a to ať už hrajete na PC, či konzolích. Radost budou mít fanoušci akčních, příběhových, sportovních her i RPG. 
-
-### [ Český stánek na Gamescomu lákal davy. Podívejte se, co tam bylo k vidění  ](https://www.idnes.cz/hry/magazin/ceske-nezavisle-hry-na-gamescomu.A260903_143326_bw-magazin_srp/foto)
-
-Herní veletrh Gamescom je už minulostí, nasbírali jsme ale materiálů na dlouho dopředu. Vedle těch největších hitů, které dominovaly hlavním pódiím, totiž bylo k vidění i nespočet menších nezávislých... 
-
-### [{NADPIS} {LABEL} ](https://www.example.com?rel=test)
-
-{POPISEK} 
-
-### [ Konečně to někoho napadlo. V Lego Skylines budeme stavět město z kostiček  ](https://www.idnes.cz/hry/novinky/lego-skylines-strategie.A260901_093633_bw-novinky_oz/foto)
-
-Lego her existuje spousta, tato je ovšem jiná. Pokud vynecháme pokusy z devadesátých let, Lego Skylines je první pořádná budovatelská strategie zaměřená na stavění města. 
-
-### [ Oblíbené české simulátory tahačů mění pravidla hry. A je to naprostá paráda  ](https://www.idnes.cz/hry/preview/euro-american-truck-simulator-road-trip-coaches-gamescom-dojmy.A260902_104659_bw-magazin_oma/foto)
-
-Kolín nad Rýnem (od zpravodaje Bonusweb.cz) Na letošním Gamescomu byly k vyzkoušení i oblíbené české simulátory od studia SCS Software. My jsme zde ale místo simulace tahačů hráli dva nové připravované režimy, které autoři chystají: osobní... 
-
-### [ Nintendo ukázalo svůj vánoční tahák, remake Zeldy předčil očekávání  ](https://www.idnes.cz/hry/novinky/the-legend-of-zelda-ocarina-of-time-switch-2.A260909_082708_bw-novinky_oz)
-
-Nintendo na závěr letošního roku nasadí do prodeje opravdu těžký kalibr, a to nádherně vypadající remake The Legend of Zelda: Ocarina of Time, který si hráči poprvé zahráli více než před čtvrt... 
-
-9\. září 2026 9:49 [0](https://www.idnes.cz/hry/novinky/the-legend-of-zelda-ocarina-of-time-switch-2.A260909_082708_bw-novinky_oz/diskuse)
-
-### [ The Legend of Zelda: Ocarina of Time (2026)  ](https://www.idnes.cz/hry/the-legend-of-zelda-ocarina-of-time-2026.G260909_093807_oz)
-
-vydáno 9. září 2026 9:38
-
-### [ Z těchto cosplayerek vám spadne brada. Kochejte se a hlasujte  ](https://www.idnes.cz/hry/z-techto-cosplayerek-vam-spadne-brada-kochejte-se-a-hlasujte.Sxk197/z-techto-cosplayerek-vam-spadne-brada-kochejte-se-a-hlasujte-2)
-
-Pokochejte se krásou cosplayerek, obdivujte jejich ladné křivky a kostýmy inspirované slavnými herními i seriálovými postavami. Svým hlasem rozhodnete o tom, která z nich se stane vítězkou miss... 
-
-9\. září 2026 [0]()
-
-### [ Harry Potter či Golden Axe. Připravované seriály, které musíte vidět  Premium ](https://www.idnes.cz/hry/magazin/tip-na-serialy-2026.A260904_141307_bw-magazin_oz)
-
-Do konce roku 2026 už nezbývá zase tolik času, ale i tak se chystá ještě slušná řádka zajímavých seriálů, které by se vám mohly líbit. Pojďme se na některé z nich podívat. 
-
-9\. září 2026 [0](https://www.idnes.cz/hry/magazin/tip-na-serialy-2026.A260904_141307_bw-magazin_oz/diskuse)
-
-### [{NADPIS} {LABEL} ](https://www.example.com?rel=test)
-
-{POPISEK} 
-
-### [ Konečně lepší gangsterka než Mafie? Stranger Than Heaven má našlápnuto  ](https://www.idnes.cz/hry/preview/stranger-than-heaven-preview-gamescom.A260903_094006_bw-preview_srp)
-
-Kolín nad Rýnem (od zpravodaje Bonusweb.cz) Už jen svým rozmachem se chystaná novinka Stranger Than Heaven od tvůrců série Yakuza vymyká všem pravidlům, její děj se odehrává na ploše 50 let. Budeme sledovat osud gangstera Makota od nesmělých... 
-
-9\. září 2026 [1](https://www.idnes.cz/hry/preview/stranger-than-heaven-preview-gamescom.A260903_094006_bw-preview_srp/diskuse)
-
-### [ Odpočívejte v pokoji. Lidé vzpomínají na ty, co se nového GTA 6 nedožili  ](https://www.idnes.cz/hry/magazin/grand-theft-auto-gta-vi-vzpominky-hraci-trailer.A260906_220453_bw-magazin_oma/foto)
-
-Pod poslední ukázkou z chystané hry Grand Theft Auto VI se komentářová sekce změnila i v pietní místo. Spousta lidí zde totiž vzpomíná na své známé a členy rodiny, kteří si chtěli dlouho očekávanou... 
-
-8\. září 2026 [4](https://www.idnes.cz/hry/magazin/grand-theft-auto-gta-vi-vzpominky-hraci-trailer.A260906_220453_bw-magazin_oma/diskuse)
-
-### [ RECENZE: V Hot Wheels: Infinite Rush se legendární autíčka vydávají do otevřeného světa  70 % ](https://www.idnes.cz/hry/recenze/recenze-v-hot-wheels-infinite-rush-se-legendarni-auticka-vydavaji-do-otevreneho-sveta.A260902_185420_bw-recenze_lys)
-
-Infinite Rush jsou povedené závody, tentokrát v otevřeném světě, který by ale mohl nabídnout o něco více rozmanitých aktivit. Určitým zklamáním je i to, že závodiště často nepůsobí „miniaturně“.... 
-
-#####  **PS5**
-
-8\. září 2026 [1](https://www.idnes.cz/hry/recenze/recenze-v-hot-wheels-infinite-rush-se-legendarni-auticka-vydavaji-do-otevreneho-sveta.A260902_185420_bw-recenze_lys/diskuse)
-
-### [ Milion kopií za tři dny. Upíří hra od tvůrců Zaklínače 3 odstartovala skvěle  ](https://www.idnes.cz/hry/novinky/blood-of-dawnwalker-prodeje.A260907_100338_bw-novinky_oz)
-
-Tvůrci upíří hry na hrdiny Blood of Dawnwalker slaví první prodejní zářez, a to krátce po vydání. A na PC si lidé upravují hlavní mechanismus hry. 
-
-7\. září 2026 11:30 [9](https://www.idnes.cz/hry/novinky/blood-of-dawnwalker-prodeje.A260907_100338_bw-novinky_oz/diskuse)
-
-### [ Hot Wheels: Infinite Rush  70 % ](https://www.idnes.cz/hry/hot-wheels-infinite-rush.G260907_094759_oz)
-
-#####  **PS5**
-
-vydáno 7. září 2026 9:47, aktualizováno 9:48 
-
-### [ Legendární první PlayStation vyjde v říjnu ve stylové Lego verzi  ](https://www.idnes.cz/hry/magazin/playstation-lego-verze.A260904_105255_bw-magazin_oz/foto)
-
-Od uvedení vůbec první konzole PlayStation už uběhlo více než třicet let. Připravovaný set Lega tak sází na nostalgii a zároveň ukrývá jedno milé překvapení. 
-
-7\. září 2026 [1](https://www.idnes.cz/hry/magazin/playstation-lego-verze.A260904_105255_bw-magazin_oz/diskuse)
-
-### [  
-7 zásad bezpečného poutání dětí v autosedačce, které musíte znát](https://www.emimino.cz/clanky/zasady-bezpecneho-poutani-deti-v-autosedackach-cybex/#utm_source=island.idnes&utm_medium=richtext&utm_content=self-box)
-
-Chcete mít jistotu, že je vaše děťátko v autě opravdu v bezpečí? I drobné chyby při poutání do autosedačky mohou mít vážné následky, často si je... 
-
-### [ Fanoušci se vztekají zbytečně, remake kultovních „Hýrousů“ mění hlavně grafiku  ](https://www.idnes.cz/hry/preview/heroes-of-might-magic.A260901_143738_bw-preview_srp)
-
-Kolín nad Rýnem (od zpravodaje Bonusweb.cz) Na legendární strategii Heroes of Might & Magic III vyrostla celá generace hráčů a i když už její grafika notně zestárla, stále na ni mnozí nedají dopustit. Přesto oznámení kompletního remaku, které... 
-
-7\. září 2026 [21](https://www.idnes.cz/hry/preview/heroes-of-might-magic.A260901_143738_bw-preview_srp/diskuse)
-
-### [ Možná nebyl nejlepší hrou Gamescomu, ale rozhodně měl Ontos nejlepší stánek  ](https://www.idnes.cz/hry/preview/ontos-gamescom-preview-dojmy-hry.A260903_132307_bw-preview_srp)
-
-Kolín nad Rýnem (od zpravodaje Bonusweb.cz) Chystaný psychologický horor Ontos jsme si na letošním Gamescomu vyzkoušet nemohli, přesto jeho prezentace patřila mezi nejlepší momenty celého veletrhu. Důvodem je totiž jeho velmi originální... 
-
-6\. září 2026 [3](https://www.idnes.cz/hry/preview/ontos-gamescom-preview-dojmy-hry.A260903_132307_bw-preview_srp/diskuse)
-
-#### Recenze her
-
-  * [Marvel Cosmic Invasion](https://www.idnes.cz/hry/recenze/marvel-cosmic-invasion-recenze.A251203_215911_bw-recenze_lys)
-  * [Assassin's Creed Shadows](https://www.idnes.cz/hry/recenze/assassins-creed-shadows-switch-2-test-vyzkouseli-jsme.A251211_134900_bw-recenze_oma)
-  * [Resident Evil: Survival Unit](https://www.idnes.cz/hry/recenze/resident-evil-survival-unit-recenze.A251205_093752_bw-recenze_oz)
-  * [Metroid Prime 4: Beyond](https://www.idnes.cz/hry/recenze/metroid-prime-4-beyond-recenze.A251202_112911_bw-recenze_oz)
-
-#### [Obloha 2026](https://www.idnes.cz/technet/vesmir/astronomicke-jevy-2026-zatmeni-slunce-mesice-a-opozice-planet-co-sledovat.A260114_175418_tec_vesmir_mahy)
-
-  * [Zatmění Slunce 2027](https://www.idnes.cz/technet/vesmir/zatmeni-slunce-2027-kdy-bude-kde-totalita-pas.A260813_192046_tec_vesmir_vanky)
-  * [Zatmění Měsíce 2026](https://www.idnes.cz/technet/vesmir/castecne-zatmeni-mesice-2026-kdy-a-jak-sledovat.A251230_104325_tec_vesmir_vanky)
-  * [Meteorické roje 2026](https://www.idnes.cz/technet/vesmir/kalendar-meterorickych-roju-2026-perseidy-geminidy.A260101_114332_tec_vesmir_vanky)
-  * [Slunovraty a rovnodennosti 2026](https://www.idnes.cz/technet/vesmir/kalendar-rovnodennnosti-a-slunovratu-2026.A251231_102629_tec_vesmir_vanky)
-  * [Úplňky a novoluní 2026](https://www.idnes.cz/technet/vesmir/uplnky-a-novoluni-v-roce-2026-vytvorili-jsme-kompletni-prehled-fazi-mesice.A251217_143832_tec_vesmir_hrat)
-
-#### [Hobby](https://www.idnes.cz/hobby)
-
-  * [Řez stromů](https://www.idnes.cz/hobby/zahrada/rez-stromu-zahrada-zasady-naradi-nuzky.A211007_140338_hobby-zahrada_bma)
-  * [Řez ořešáku](https://www.idnes.cz/hobby/zahrada/jarni-rez-oresaku-navod-terminy-a-nejvetsi-chyby.A250502_150625_hobby-zahrada_vanky)
-  * [Mravenci v zahradě](https://www.idnes.cz/hobby/zahrada/jak-se-zbavit-mravencu-na-zahrade-babske-rady-ucinne-pripravky.A260514_142015_hobby-zahrada_vanky)
-  * [Houby 2026](https://www.idnes.cz/hobby/domov/kde-rostou-houby-v-roce-2026-aktualni-mapa-rustu.A250605_124442_hobby-domov_vanky)
-  * [Pěstování bazalky](https://www.idnes.cz/hobby/zahrada/bazalka-pestovani-strih-sklizen.A200520_091523_hobby-zahrada_bma)
-  * [Jak na svilušky](https://www.idnes.cz/hobby/zahrada/svilusky-nici-rostliny-doma-i-na-zahrade-zbavte-se-jich-prirodni-cestou.A250626_145201_hobby-zahrada_hrat)
-
-#### [Volby 2026](https://www.idnes.cz/volby)
-
-  * [Senátní volby](https://www.idnes.cz/volby/senat/2026)
-  * [Volby v Praze](https://www.idnes.cz/volby/celkove-vysledky/praha-hl-m.id554782)
-  * [Volební komise](https://www.idnes.cz/volby/volebni-komise-jak-se-prihlasit-kolik-je-odmena-termin.A250219_145853_domaci_mul)
-  * [Voličský průkaz](https://www.idnes.cz/volby/volicsky-prukaz-pro-volby-2026.A250207_141648_domaci_mul)
-  * [Jak volit zastupitele](https://www.idnes.cz/volby/komunalni-volby-2026-kdy-budou-a-jak-se-v-nich-davaji-preferencni-hlasy.A251105_145218_volby_wall)
-  * [Jak volit do Senátu](https://www.idnes.cz/volby/volby-do-senatu-2026-termin-volebni-obvody-a-pravidla.A251105_141537_volby_wall)
-
-#### [Sport 2026](https://www.idnes.cz/sport)
-
-  * [Chance Liga - kompletní los](https://www.idnes.cz/fotbal/databanka/chance-liga-20262027-los.Umli104865#actround)
-  * [Vuelta 2026](https://www.idnes.cz/sport/cyklistika/vuelta-2026-trasa-profily-favorite-vysledky.A260817_171502_cyklistika_ipet)
-  * [Program Formule 1](https://www.idnes.cz/sport/formule/formule-1-v-roce-2026-kalendar-zavodu.A260303_101034_formule_ald)
-  * [Program MotoGP](https://www.idnes.cz/sport/motorsport/motogp-2026-program-a-vysledky.A260226_111847_motorsport_ald)
-  * [US Open 2026](https://sazeni.idnes.cz/tenis/us-open-2026-program-vysledky-pavouk-a-kdy-hraji-cesi-a-cesky.A260829_134253_sazeni-tenis_jure)
-
-#### [Sázení](https://sazeni.idnes.cz/)
-
-  * [Jak na LIVE sázení](https://sazeni.idnes.cz/skola-sazeni/jak-na-live-sazeni-jake-jsou-strategie-tipy-a-system.A260613_131507_sazeni-skola-sazeni_jure)
-  * [Typy sázek](https://sazeni.idnes.cz/skola-sazeni/typy-sazek.A260613_114156_sazeni-skola-sazeni_pola)
-  * [Bonus až 10 000 Kč](https://sazeni.idnes.cz/bonusy/synot-tip-bonus-registrace.A260619_105744_sazeni-bonusy_jure)
-  * [Chance Liga 2026/27](https://sazeni.idnes.cz/fotbal/chance-liga-v-tv.A260722_105501_sazeni-fotbal_pola)
-  * [ME volejbal muži](https://sazeni.idnes.cz/ostatni/me-volejbal-muzi-2026.A260907_104134_sazeni_pola)
-  * [Kalendář turnajů ATP](https://sazeni.idnes.cz/tenis/tenisove-turnaje-2026-muzi-atp-tour-kalendar-program-vysledky.A260803_213904_sazeni-tenis_jure)
-
-#### Nepřehlédněte
-
-  * [Studená fronta postupuje Českem, nese bouřky a nárazy větru. Léto se ještě vrátí](https://www.idnes.cz/zpravy/domaci/studena-fronta-postupuje-ceskem-nese-bourky-a-narazy-vetru-leto-se-jeste-vrati.A260909_131338_domaci_skr)
-  * [Norsko se loučí s králem Haraldem V. Pohřbu se účastní i Pavel](https://www.idnes.cz/zpravy/zahranicni/oslo-statni-pohreb-harald-v-petr-pavel-norsko-katedrala-kral-kralovska-rodina.A260909_082652_zahranicni_mikp)
-  * [Nebezpečí na odkrytém dně Lipna. Sinice zabily dva psy, potvrdila policie](https://www.idnes.cz/ceske-budejovice/zpravy/uhyn-psu-benticke-sinice-dno-lipno-nadrz-voda-znachor-policie.A260909_135341_budejovice-zpravy_khr)
-  * [Trump dal vysoké dary asistentkám, i „lidské tiskárně“. Zřejmě porušil zákon](https://www.idnes.cz/zpravy/zahranicni/usa-prezident-trump-odmena-asistentka.A260909_133150_zahranicni_dtt)
-  * [Šestnáctiletá dívka se po útoku bojí vyjít z domu. Násilník v masce dostal pět let](https://www.idnes.cz/plzen/zpravy/klatovy-utocnik-divka-prepadl-soud-vezeni-svlekl-osahaval.A260909_115550_plzen-zpravy_vb)
-  * [Prezident přijme Babiše. Proberou Pavlovu účast na Valném shromáždění OSN](https://www.idnes.cz/zpravy/domaci/prezident-petr-pavel-premier-andrej-babis-zahranicni-politika-vlada-jednani-hrad.A260909_141551_domaci_linh)
-  * [Svěrák domluví Bruknerovi. Ať nedělá proroka, odmítá slova o poslední sezoně](https://www.idnes.cz/kultura/divadlo/sverak-domluvi-bruknerovi-at-nedela-proroka-odmita-slova-o-posledni-sezone.A260909_114904_divadlo_skr)
-  * [Nenatočili jste ji? Policie kvůli zmizelé matce dvou dětí poptává kamerové záznamy](https://www.idnes.cz/ostrava/zpravy/pohresovana-zena-urednice-patrani-kamerove-zaznamy-vyzva-policie.A260909_111400_ostrava-zpravy_zah)
-
-[iDNES.cz](https://www.idnes.cz/)
-
-  * [Napište nám](//vice.idnes.cz/popup/kontakt.aspx)
-  * [Kontakty](//www.idnes.cz/kontakty-redakce)
-  * [Reklama](//sluzby.mafra.cz/)
-  * [VOP](//www.idnes.cz/ucet/podminky-pouzivani)
-  * [Osobní údaje](//www.mafra.cz/osobni-udaje)
-  * Nastavení soukromí
-  * [Cookies](//www.mafra.cz/cookies)
-  * [AV + DSA](//vice.idnes.cz/av-sluzby.aspx)
-  * [Kariéra](//www.mafra.cz/volnamista/)
-  * [Předplatné MF DNES](//www.mfdnes.cz/)
-
-  * [mobil](https://www.idnes.cz/hry/robin-hood-2-cast-pruvodce-hrou.A021208_robinhoodlosnavod2_bw?setver=touch)
-  * [e-mail](https://www.idnes.cz/ucet/zpravy-do-emailu)
-  * [RSS](https://www.idnes.cz/rss)
-  * [Facebook](//www.facebook.com/BonusWeb)
-  * [Síť X](//x.com/BonusWebCZ)
-  * [Instagram](//instagram.com/idnescz/)
-  * [Tiktok](https://www.tiktok.com/@idnescz)
-  * [Telegram](https://t.me/idnescz)
-
-© 1998–2026 [MAFRA, a. s.](https://www.mafra.cz/) a dodavatelé [Profimedia](//www.profimedia.cz/), Reuters, ČTK, AP. Rozmnožování obsahu pro účely automatizované analýzy textů nebo dat dle ustanovení § 39c autorského zákona je bez souhlasu MAFRA, a. s. zakázáno. Jakékoliv užití obsahu včetně převzetí, šíření či dalšího zpřístupňování článků a fotografií je bez souhlasu MAFRA, a. s. zakázáno. Provozovatelem serveru iDNES.cz je MAFRA, a. s. IČ: 45313351.
-
-[mobilní verze](https://www.idnes.cz/hry/robin-hood-2-cast-pruvodce-hrou.A021208_robinhoodlosnavod2_bw?setver=touch)
-
-  * Rubriky
-  * Prozkoumat
-  * Barvy 
-  * Písmo
-
-  * [Gamescom](https://www.idnes.cz/hry/novinky/gamescom-2026-opening-night-live.A260825_103313_bw-novinky_oz)
-  * [Dolly Parton](https://www.idnes.cz/wiki/soubyznys/dolly-partonova.K450404)
-  * [Kauza Bitcoin](https://www.idnes.cz/zpravy/domaci/kauza-bitcoin-jirikovsky-policie-obzaloba-stat-blazek-danhel-titz.A260824_201948_domaci_jans)
-  * [Rozpočet](https://www.idnes.cz/zpravy/domaci/snemovna-rozvolneni-rozpoctove-odpovednosti-pres-veto-prezidena-pavla.A260826_040837_domaci_kop)
-  * [Staří bílí muži](https://www.lidovky.cz/archiv/stari-bili-muzi.K1045022)
-
-  * [Zpravodajství](https://www.idnes.cz/zpravy)
-  * [Domácí](https://www.idnes.cz/zpravy/domaci)
-  * [Spotřebitel](https://www.idnes.cz/spotrebitel)
-  * [Zahraniční](https://www.idnes.cz/zpravy/zahranicni)
-  * [Revue](https://www.idnes.cz/zpravy/revue)
-  * [Názory](https://www.idnes.cz/zpravy/domaci/komentare-glosy-nazory.K307000)
-  * [Volby](https://www.idnes.cz/volby)
-  * [Krimi](https://www.idnes.cz/zpravy/cerna-kronika)
-  * [Blogy](https://blog.idnes.cz/)
-  * [Ekonomika](https://www.idnes.cz/ekonomika)
-  * [Podcasty](https://www.idnes.cz/podcasty)
-  * [Finance](https://www.idnes.cz/finance)
-  * [Rozstřel](https://tv.idnes.cz/rozstrel)
-  * [Kultura](https://www.idnes.cz/kultura)
-  * [Mediahub](https://www.idnes.cz/zpravy/mediahub)
-
-  * [Kraje](https://www.idnes.cz/kraje)
-  * [Praha](https://www.idnes.cz/praha)
-  * [Liberec](https://www.idnes.cz/liberec)
-  * [Střední Čechy](https://www.idnes.cz/praha)
-  * [Olomouc](https://www.idnes.cz/olomouc)
-  * [Brno](https://www.idnes.cz/brno)
-  * [Ostrava](https://www.idnes.cz/ostrava)
-  * [České Budějovice](https://www.idnes.cz/ceske-budejovice)
-  * [Pardubice](https://www.idnes.cz/pardubice)
-  * [Plzeň](https://www.idnes.cz/plzen)
-  * [Hradec Králové](https://www.idnes.cz/hradec-kralove)
-  * [Ústí nad Labem](https://www.idnes.cz/usti)
-  * [Jihlava](https://www.idnes.cz/jihlava)
-  * [Zlín](https://www.idnes.cz/zlin)
-  * [Karlovy Vary](https://www.idnes.cz/karlovy-vary)
-
-  * [Sport](https://www.idnes.cz/sport)
-  * [Fotbal](https://www.idnes.cz/fotbal)
-  * [Hokej](https://www.idnes.cz/hokej)
-  * [Tenis](https://www.idnes.cz/sport/tenis)
-  * [Cyklistika](https://www.idnes.cz/sport/cyklistika)
-  * [Formule](https://www.idnes.cz/sport/formule)
-  * [MMA](https://www.idnes.cz/sport/mma)
-  * [Basket](https://www.idnes.cz/sport/basket)
-  * [Ostatní sporty](https://www.idnes.cz/sport/ostatni)
-  * [Trendy](https://www.idnes.cz/sport/trendy)
-  * [Výsledky](https://www.idnes.cz/sport/sportovni-vysledky)
-
-  * [Magazíny](https://www.idnes.cz/magaziny)
-  * [OnaDNES](https://www.idnes.cz/onadnes)
-  * [Xman](https://www.idnes.cz/xman)
-  * [Auto](https://www.idnes.cz/auto)
-  * [Bonusweb](https://www.idnes.cz/hry)
-  * [Bydlení](https://www.idnes.cz/bydleni)
-  * [Zdraví](https://www.idnes.cz/onadnes/zdravi)
-  * [Technet](https://www.idnes.cz/technet)
-  * [Zábava](https://www.idnes.cz/zabava)
-  * [Mobil](https://www.idnes.cz/mobil)
-  * [Recepty](https://recepty.idnes.cz/)
-  * [Cestování](https://www.idnes.cz/cestovani)
-  * [Hobby](https://www.idnes.cz/hobby)
-
-  * [Video](https://tv.idnes.cz/)
-  * [Zpravodajství](https://tv.idnes.cz/archiv)
-  * [Živě](https://tv.idnes.cz/zive)
-  * [Slow](https://tv.idnes.cz/slow)
-  * [Pořady](https://tv.idnes.cz/porady)
-  * [Rozstřel](https://tv.idnes.cz/rozstrel)
-  * [iDNES Kino](https://kino.idnes.cz/)
-
-  * [Premium](https://www.idnes.cz/premium)
-  * [Články](https://www.idnes.cz/premium/clanky)
-  * [Benefity](https://www.idnes.cz/premium/sluzby)
-  * [Uplatnit kód](https://www.idnes.cz/premium/voucher)
-  * [Ceník](https://www.idnes.cz/premium/cenik)
-  * [Nastavit Premium](https://www.idnes.cz/ucet/nastavit-premium)
-
-  * [Expres](https://www.expres.cz/)
-  * [Celebrity](https://www.expres.cz/celebrity)
-  * [Video](https://www.expres.cz/video)
-  * [Zprávy](https://www.expres.cz/zpravy)
-  * [Jen Pro Muže](https://www.expres.cz/jenpromuze)
-  * [Sport](https://www.expres.cz/sport)
-  * [Podcasty](https://www.expres.cz/podcasty)
-
-  * [Služby](https://www.idnes.cz/vice)
-  * [TV program](https://tvprogram.idnes.cz/)
-  * [Počasí](https://pocasi.idnes.cz)
-  * [Horoskopy](https://www.idnes.cz/onadnes/horoskopy)
-  * [Finanční kalkulačky](https://kalkulacky.idnes.cz/)
-  * [Kurzovní lístek](https://www.idnes.cz/finance/kurzy)
-  * [Firemní články](https://sdeleni.idnes.cz/)
-
-  * [Nastavení cookies](javascript:;)
-  * [Cookies](https://www.mafra.cz/o-spolecnosti.aspx?y=mafra_all/pouceni.htm&cat=pouceni#cookies)
-  * [Přístupnost stránek](https://www.mafra.cz/o-spolecnosti.aspx?y=mafra_all/pristupnost.htm&cat=accessibility-info)
-
-### [Metro.cz](https://www.metro.cz/)
-
-  * [Lanovka na Petřín](https://www.metro.cz/praha/poprve-naha-z-lanovky-ma-radost-i-jeji-designerka.A260525_103648_metro-praha_hyr)
-  * [Kvíz: pohádkové hlášky](https://www.metro.cz/znate-slavne-hlasky-z-oblibenych-pohadek-otestujte-se.Q251011_163146_metroh_vanky)
-  * [Ztráty a nálezy MHD](https://www.metro.cz/praha/zapomneli-jste-telefon-v-tramvaji-nebo-metru-poradime-jak-ziskat-vec-zpet.A250529_114047_metro-praha_wall)
-
-  * [Kobylisy? Rudé armády! Podívejte se, jaké bizarnosti „hrozily“ stanicím metra](https://www.metro.cz/praha/kobylisy-rude-armady-podivejte-se-jake-bizarnosti-hrozily-stanicim-metra.A260819_105759_metro-praha_hala)
-  * [Tajná stanice metra na Klárově? Za železnými vraty se skrývá záhadný objekt K-111](https://www.metro.cz/praha/obrazem-tajna-stanice-metra-na-klarove-za-zeleznymi-vraty-se-skryva-zahadny-objekt-k-111.A260819_130434_metro-praha_hala)
-  * [Pražské metro mohlo jezdit už před 100 lety. První návrhy vás překvapí ](https://www.metro.cz/praha/prazske-metro-mohlo-jezdit-uz-pred-100-lety-prvni-navrhy-vas-prekvapi.A260819_103143_metro-praha_hala)
-
-### [Emimino.cz](https://www.emimino.cz/)
-
-  * [Výpočet mateřské 2026](https://www.emimino.cz/kalkulacky/vypocet-penezite-pomoci-v-materstvi/)
-  * [Týdny těhotenství](https://www.emimino.cz/kalkulacky/vypocet-tydne-tehotenstvi/)
-  * [Podcast NEtabuj](https://www.emimino.cz/clanky/rubriky/podcasty/)
-
-  * [Sedmá nemoc: Jaké jsou příznaky a jak ji léčit](https://www.emimino.cz/encyklopedie/sedma-nemoc-u-ditete/)
-  * [Nástup do školky: Jak podpořit imunitu často nemocných dětí](https://www.emimino.cz/encyklopedie/jak-poporit-imunitu-deti/)
-  * [Školní rok 2026/2027: Kdy začíná, jak dlouho potrvá a kdy budou mít děti prázdniny?](https://www.emimino.cz/clanky/skolni-rok-2026-2027-co-nas-ceka/)
-
-### [idnes.cz/spotrebitel](https://www.idnes.cz/spotrebitel)
-
-  * [Plenky v akci](https://www.idnes.cz/spotrebitel/srovnavac/plenky-a-detska-kosmetika)
-  * [Maso v akci](https://www.idnes.cz/spotrebitel/srovnavac/maso)
-  * [Pivo v akci](https://www.idnes.cz/spotrebitel/srovnavac/pivo)
-  * [Spotřebitelské články](https://www.idnes.cz/spotrebitel/test)
-
-  * [Z této brigády si můžete odnést 90 tisíc měsíčně. Má to ale háček, říká Pohlreich](https://www.idnes.cz/spotrebitel/test/z-teto-brigady-si-muzete-odnest-90-tisic-mesicne-ma-to-ale-hacek-rika-pohlreich.A260624_095427_test_matt)
-  * [Nejlepší tepovače 2026: Kärcher je klasika, mile překvapil i Parkside z Lidlu](https://www.idnes.cz/spotrebitel/test/nejlepsi-tepovace-2026-karcher-je-klasika-mile-prekvapil-i-parkside-z-lidlu.A260711_160406_test_matt)
-  * [Konec placení, jak ho znáte: Lidl spouští na kasách obří revoluci, dotkne se tisíců Čechů](https://www.idnes.cz/spotrebitel/test/konec-placeni-jak-ho-znate-lidl-spousti-na-kasach-obri-revoluci-dotkne-se-tisicu-cechu.A260818_163011_test_ireve)
-
-### Mohlo by Vás zajímat
-
-  * [Koktejl](https://www.idnes.cz/magaziny/koktejl)
-  * [Byty k pronájmu](https://reality.idnes.cz/s/pronajem/byty/)
-  * [Byty v Praze](https://reality.idnes.cz/s/prodej/byty/praha/)
-  * [Esprit magazín](https://www.espritmagazin.cz/)
-  * [Obchody o svátcích](https://www.idnes.cz/wiki/ekonomika/oteviraci-doba-v-obchodech-v-dobe-svatku.K456717)
-  * [Vysoké školy](https://www.idnes.cz/vysoke-skoly)
-  * [Radar - bouřky](https://pocasi.idnes.cz/srazky)
-  * [Akční letáky](https://www.akcniceny.cz/letaky/)
-  * [Digitální věrnostní karty](https://passmachine.eu/cz/vernostni-karty)
-
-### Další weby
-
-  * [Lidovky.cz  ](https://www.lidovky.cz)
-  * [Expres.cz  ](https://www.expres.cz)
-  * [Antiyoutuber.cz  ](https://www.antiyoutuber.cz)
-  * [Metro.cz  ](https://www.metro.cz)
-  * [Rajče.net  ](https://rajce.idnes.cz)
-  * [Emimino.cz  ](https://www.emimino.cz)
-  * [Jen pro ženy  ](https://www.idnes.cz/jenprozeny)
-  * [Akční ceny  ](https://www.akcniceny.cz/)
-  * [Reality.iDNES.cz  ](https://reality.idnes.cz)
-
-  * Světlé
-  * Tmavé
-  * Auto
-
-  * Aa
-  * Aa
-  * Aa
-  * Aa
-  * Aa
-
-Nastavte si velikost písma, podle vašich preferencí.
-
-[ × ](https://www.idnes.cz/zpravy/mediahub/idnes-premium-prekryvajici-reklamy-vyroci.A260819_142359_mediahub_bhar?zdroj=pripominacek)

@@ -1,32 +1,38 @@
-# Macworld — Men in Tights
+# Robin Hood: The Legend of Sherwood
 
-- Original source: [Robin Hood: The Legend of Sherwood](https://www.macworld.com/article/175293/robinhood-4.html)
-- Author / publication: no byline displayed on the page; Macworld.
-- Language / date: English; 2005-04-14.
-- Access: Full article retrieved directly; inline rating graphic missing
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete factual notes (commercial review, not transcribed)
+- Source: [Macworld](https://www.macworld.com/article/175293/robinhood-4.html)
+- Section: News
+- Date: April 14, 2005
+- Author: No byline displayed on the source page
+- Language: English
+- Archived copy: [Wayback Machine, April 2, 2023](https://web.archive.org/web/20230402100901/https://www.macworld.com/article/175293/robinhood-4.html)
 
-The review recommends the game particularly for owners of older Macs, praising accessible controls, varied missions, and the combination of stealth, distraction, and coordinated attacks. Its low hardware requirements make it approachable, but zoom exposes the limitations of the two-dimensional artwork.
+## Men in Tights
 
-Repetitive dialogue and limited replay options are key criticisms: there is no multiplayer or separate skirmish mode. This is reception of the Freeverse-distributed Mac edition, not a compatibility test on modern macOS. The article body is now available beyond the short opening recovered during earlier research; its missing inline rating graphic is not reconstructed here.
+Almost anyone with even a passing knowledge of British folklore is bound to be familiar with the legend of Robin Hood — the noble turned rogue who took from the rich and gave to the poor as he and his band of Merry Men hid out in Sherwood Forest. Now it’s your turn to don the tights and the cap made famous over the years by everyone in Hollywood from Douglas Fairbanks Jr. to Cary Elwes in **Robin Hood: The Legend of Sherwood**, ([inline rating graphic unavailable](https://www.macworld.com/article/175293/robinhood-4.html)) brought to North American gamers by Freeverse.
 
-## Detailed notes
+You start out this game playing as none other than Robin Hood himself, as you gather together your band of Merry Men. If you’ve read the legend or seen the films, you’ll be familiar with the basic plot: Robin and his cohorts must find a way to defeat the Sheriff of Nottingham and the corrupt Prince John Lackland, who conspire to keep King Richard the Lionheart away from the throne.
 
-Page facts: title "Robin Hood: The Legend of Sherwood"; section label "News"; dated Apr 14, 2005; subheading "Men in Tights"; no byline is displayed on the retrieved page (the earlier "Macworld Staff" attribution is not confirmed by the page itself); the inline rating graphic after the game name is missing (an empty parenthesis remains); retrieved directly from macworld.com (page carries a 2026 FoundryCo copyright). Commercial review, not transcribed.
+![Robin Hood](https://images.macworld.com/images/legacy/images/content/robinhood.jpg)
 
-Content, in order:
+Over the course of the first couple of missions you learn the game’s basic play mechanics, and once you’ve assembled your band, you can actually play as different characters. All game controls are handled through on-screen interfaces like menus and buttons, and are pretty easy to learn.
 
-- Intro: the Robin Hood legend, the noble turned rogue hiding with the Merry Men in Sherwood Forest; Hollywood portrayals from Douglas Fairbanks Jr. to Cary Elwes; the game is "brought to North American gamers by Freeverse".
-- The player starts as Robin himself, gathering the band; plot: defeat the Sheriff of Nottingham and Prince John Lackland, who conspire to keep King Richard the Lionheart from the throne.
-- The first couple of missions teach the basic mechanics; once the band is assembled, other characters can be played. All controls are through on-screen menus and buttons, "pretty easy to learn".
-- Genre and tech: squad-based real-time strategy, isometric 2D. A simpler engine than 3D games keeps requirements "remarkably low": a G3/300MHz, 128MB RAM and 8MB VRAM. Despite "relatively primitive graphics" it is fun for genre fans.
-- Downside: graphics do not look great when zoomed in, being 2D with a faux-3D look. Multiple screen resolutions are supported. Gameplay holds up well; interstitial sequences "look quite pretty". Voice acting and music are acceptable, but "the rapid recycling of the dialogue makes you run for the options menu immediately".
-- Structure: each new sequence of missions unfolds non-linearly; decisions affect the outcome. Missions may combine stealth with brute force, using environment and resources.
-- Tactics examples: clubbing guards whose backs are turned; having the Merry Men create a distraction to draw a large group of guards away; coordinating a raid; ambushing soldiers; freeing a prisoner; adjusting on the fly.
-- Content and replay: "dozens of missions"; no multiplayer mode and no skirmish mode against the computer, so once played through, the only replay is starting over and playing differently.
-- A demo is available from Freeverse Software's website; recommended for strategy fans.
-- Bottom line: not a visual match for sophisticated fare and lacking replay, but it "will appeal to users of older Macs looking for some fun strategy gaming".
-- Closing pointer to Macworld's Games subject page.
+The Legend of Sherwood is a squad-based real time strategy game, rendered from an isometric perspective in 2D. Robin Hood: The Legend of Sherwood uses a more simple graphics engine than many of the sophisticated 3D games out there, which helps keep its system requirements remarkably low (a G3/300MHz system, 128MB and 8MB VRAM are all you need to play). Despite the relatively primitive graphics, this game is quite fun to play if you’re fond of the genre.
+
+![Robin Hood zoom](https://images.macworld.com/images/legacy/images/content/robinhood2.jpg)
+
+That playability across a wide variety of Macs does have a downside, though: the graphics don’t look all that great when you “zoom” in — after all, these are 2D graphics, even if they’re given a faux 3D look. Multiple screen resolutions are supported. Still, for a 2D game, Robin Hood: The Legend of Sherwood has gameplay that holds up quite well, and its interstitial sequences look quite pretty. Voice acting and music are of acceptable quality, but the rapid recycling of the dialogue makes you run for the options menu immediately.
+
+Each new sequence of missions rolls out before you non-linearly. The decisions you make affect how the game turns out, in other words. Over the courses of single missions you may have to combine stealth with brute force, and figure out how best to use your environment and your resources.
+
+It’s simple enough to beat some guards over their head that have their backs turned to you, for example, but it might be wise to make your merry men create a distraction that will bring a large group of guards away from an area you’re targeting. Or you may have to coordinate a raid. You may need to ambush some soldiers, or set a prisoner free. You’ll need to stay fast on your feet and adjust your gameplay with what’s happening.
+
+There are dozens of missions to keep you busy. That’s good as Robin Hood: The Legend of Sherwood has no multiplayer mode, nor does it have any sort of support for one-on-one skirmish action against the computer as some other strategy games do, so once you’ve played through, you’ve probably played as much as you’ll want to, unless you want to start over at the beginning and play through a different way.
+
+You’ll find a demo available for download from Freeverse Software’s Web site; I’d definitely recommend checking this game out if you’re a strategy game fan.
+
+**Bottom line:** Though it might not hold a visual candle to more sophisticated fare and is lacking in the replay department, Robin Hood: The Legend of Sherwood will appeal to users of older Macs looking for some fun strategy gaming.
+
+_For more games news and info, visit Macworld’s Games Subject Page._
+
+_Editorial note: The source’s inline rating graphic was not retrievable; no rating value is supplied here._

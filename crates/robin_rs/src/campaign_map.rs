@@ -213,7 +213,8 @@ pub(crate) struct CampaignMapModalState {
     selected_progress: usize,
     show_achievement_badges: bool,
     achievement_overview: bool,
-    details_page: Option<usize>,
+    details_scroll: Option<usize>,
+    history_scroll: usize,
     selected_play: usize,
     replay_status: String,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
@@ -290,7 +291,8 @@ impl CampaignMapModalState {
             selected_progress,
             show_achievement_badges,
             achievement_overview: false,
-            details_page: None,
+            details_scroll: None,
+            history_scroll: 0,
             selected_play: 0,
             replay_status: String::new(),
             lifetime_totals: lifetime_history.totals(),
@@ -359,7 +361,8 @@ impl CampaignMapModalState {
             selected_progress,
             show_achievement_badges: profile.gameplay_config.show_achievement_badges,
             achievement_overview: false,
-            details_page: None,
+            details_scroll: None,
+            history_scroll: 0,
             selected_play: 0,
             replay_status: String::new(),
             lifetime_totals: profile.campaign_history.totals(),
@@ -393,7 +396,8 @@ impl CampaignMapModalState {
             self.lifetime_totals,
             true,
             self.achievement_overview,
-            self.details_page,
+            self.details_scroll,
+            self.history_scroll,
             self.selected_play,
             &self.replay_status,
         );
@@ -479,7 +483,8 @@ impl CampaignMapModalState {
                     self.lifetime_totals,
                     false,
                     self.achievement_overview,
-                    self.details_page,
+                    self.details_scroll,
+                    self.history_scroll,
                     self.selected_play,
                     &self.replay_status,
                 )
@@ -523,19 +528,25 @@ impl CampaignMapModalState {
             ExhibitGridNavigator::new(self.graph.nodes.len(), self.selected_progress);
     }
 
-    fn move_detail_page(&mut self, direction: i32) {
-        let Some(page) = self.details_page else {
+    fn scroll_details(&mut self, direction: i32, history: bool) {
+        let Some(offset) = self.details_scroll else {
             return;
         };
-        let count = self
-            .graph
-            .nodes
-            .get(self.selected_progress)
-            .map_or(0, |node| detail_lines(node, &self.assets).len());
-        self.details_page = Some(
-            page.saturating_add_signed(direction as isize)
-                .min(count.saturating_sub(1) / DETAIL_LINES_PER_PAGE),
-        );
+        let node = &self.graph.nodes[self.selected_progress];
+        if history {
+            self.history_scroll = self
+                .history_scroll
+                .saturating_add_signed(direction as isize)
+                .min(node.plays.len().saturating_sub(5));
+        } else {
+            self.details_scroll = Some(
+                offset.saturating_add_signed(direction as isize).min(
+                    detail_lines(node, &self.assets)
+                        .len()
+                        .saturating_sub(DETAIL_VISIBLE_LINES),
+                ),
+            );
+        }
     }
 
     fn watch_selected_play(&mut self) {
@@ -586,25 +597,47 @@ impl CampaignMapModalState {
                 self.input.update_from_event(&event, transform);
                 continue;
             }
-            if self.details_page.is_some() {
+            if self.details_scroll.is_some() {
+                let history = (560.0..992.0).contains(&self.input.virt_x);
                 let step = match event {
                     GameEvent::KeyDown {
                         keycode: Keycode::PageDown,
                         ..
-                    } => Some(1),
+                    } => Some(if history {
+                        5
+                    } else {
+                        DETAIL_VISIBLE_LINES as i32
+                    }),
                     GameEvent::KeyDown {
                         keycode: Keycode::PageUp,
                         ..
-                    } => Some(-1),
-                    GameEvent::MouseWheel(delta) => Some(-delta.signum()),
+                    } => Some(if history {
+                        -5
+                    } else {
+                        -(DETAIL_VISIBLE_LINES as i32)
+                    }),
+                    GameEvent::MouseWheel(delta) => {
+                        let over_text = (32.0..544.0).contains(&self.input.virt_x)
+                            && (254.0..662.0).contains(&self.input.virt_y);
+                        let over_history = history && (260.0..620.0).contains(&self.input.virt_y);
+                        if over_text || over_history {
+                            self.scroll_details(
+                                delta
+                                    .saturating_mul(if history { 1 } else { 3 })
+                                    .saturating_neg(),
+                                history,
+                            );
+                        }
+                        continue;
+                    }
                     _ => None,
                 };
                 if let Some(step) = step {
-                    self.move_detail_page(step);
+                    self.scroll_details(step, history);
                     continue;
                 }
             }
-            if self.details_page.is_some() && !self.graph.nodes.is_empty() {
+            if self.details_scroll.is_some() && !self.graph.nodes.is_empty() {
                 match event {
                     GameEvent::KeyDown {
                         keycode: Keycode::Left | Keycode::Right,
@@ -630,7 +663,8 @@ impl CampaignMapModalState {
                             self.selected_progress,
                         );
                         self.selected_play = 0;
-                        self.details_page = Some(0);
+                        self.history_scroll = 0;
+                        self.details_scroll = Some(0);
                         self.replay_status.clear();
                         continue;
                     }
@@ -638,7 +672,7 @@ impl CampaignMapModalState {
                         keycode: Keycode::Escape,
                         ..
                     } => {
-                        self.details_page = None;
+                        self.details_scroll = None;
                         continue;
                     }
                     GameEvent::KeyDown {
@@ -665,6 +699,11 @@ impl CampaignMapModalState {
                             .selected_play
                             .saturating_add_signed(step)
                             .min(count.saturating_sub(1));
+                        if self.selected_play < self.history_scroll {
+                            self.history_scroll = self.selected_play;
+                        } else if self.selected_play >= self.history_scroll + 5 {
+                            self.history_scroll = self.selected_play - 4;
+                        }
                         self.replay_status.clear();
                         continue;
                     }
@@ -677,8 +716,10 @@ impl CampaignMapModalState {
                     }
                     GameEvent::MouseDown(x, y, 1, clicks) => {
                         let (x, y) = transform.from_screen(x, y);
+                        self.input.virt_x = x as f32;
+                        self.input.virt_y = y as f32;
                         if (560..992).contains(&x) && (260..620).contains(&y) {
-                            let index = self.selected_play / 5 * 5 + ((y - 260) / 72) as usize;
+                            let index = self.history_scroll + ((y - 260) / 72) as usize;
                             if index < self.graph.nodes[self.selected_progress].plays.len() {
                                 self.selected_play = index;
                                 self.replay_status.clear();
@@ -692,16 +733,6 @@ impl CampaignMapModalState {
                             self.watch_selected_play();
                             continue;
                         }
-                        if (560..992).contains(&x) && (668..708).contains(&y) {
-                            let count = self.graph.nodes[self.selected_progress].plays.len();
-                            let step = if x < 776 { -5 } else { 5 };
-                            self.selected_play = self
-                                .selected_play
-                                .saturating_add_signed(step)
-                                .min(count.saturating_sub(1));
-                            self.replay_status.clear();
-                            continue;
-                        }
                     }
                     _ => {}
                 }
@@ -711,12 +742,13 @@ impl CampaignMapModalState {
                     keycode: Keycode::Char(b'r' | b'd' | b'b'),
                     ..
                 } if self.presentation != CampaignPresentationMode::ClassicMap => {
-                    self.details_page = if self.details_page.is_some() {
+                    self.details_scroll = if self.details_scroll.is_some() {
                         None
                     } else {
                         Some(0)
                     };
                     self.selected_play = 0;
+                    self.history_scroll = 0;
                     self.replay_status.clear();
                     self.achievement_overview = false;
                 }
@@ -733,8 +765,9 @@ impl CampaignMapModalState {
                     ..
                 } => {
                     self.achievement_overview = false;
-                    self.details_page = None;
+                    self.details_scroll = None;
                     self.selected_play = 0;
+                    self.history_scroll = 0;
                     self.replay_status.clear();
                     self.presentation = match self.presentation {
                         CampaignPresentationMode::ClassicMap => {
@@ -759,8 +792,9 @@ impl CampaignMapModalState {
                     && self.show_achievement_badges =>
                 {
                     self.achievement_overview = !self.achievement_overview;
-                    self.details_page = None;
+                    self.details_scroll = None;
                     self.selected_play = 0;
+                    self.history_scroll = 0;
                     self.replay_status.clear();
                 }
                 GameEvent::KeyDown {
@@ -886,7 +920,7 @@ impl CampaignMapModalState {
                 } if self.presentation != CampaignPresentationMode::ClassicMap
                     && !browsing
                     && !self.achievement_overview
-                    && self.details_page.is_none()
+                    && self.details_scroll.is_none()
                     && !self.graph.nodes.is_empty()
                     && self.graph.nodes[self.selected_progress].selectable =>
                 {
@@ -904,52 +938,47 @@ impl CampaignMapModalState {
                     let (vx, vy) = transform.from_screen(x, y);
                     self.input.virt_x = vx as f32;
                     self.input.virt_y = vy as f32;
-                    if self.details_page.is_some() && (668..708).contains(&vy) {
-                        if (32..208).contains(&vx) {
-                            self.move_detail_page(-1);
-                        }
-                        if (376..544).contains(&vx) {
-                            self.move_detail_page(1);
-                        }
-                        continue;
-                    }
                     if self.presentation != CampaignPresentationMode::ClassicMap {
                         if (76..116).contains(&vy) {
                             match vx {
                                 32..=207 => {
                                     self.presentation = CampaignPresentationMode::ProgressTree;
                                     self.achievement_overview = false;
-                                    self.details_page = None;
+                                    self.details_scroll = None;
                                     self.selected_play = 0;
+                                    self.history_scroll = 0;
                                     self.replay_status.clear();
                                 }
                                 220..=427 => {
                                     self.presentation = CampaignPresentationMode::SherwoodMuseum;
                                     self.achievement_overview = false;
-                                    self.details_page = None;
+                                    self.details_scroll = None;
                                     self.selected_play = 0;
+                                    self.history_scroll = 0;
                                     self.replay_status.clear();
                                 }
                                 440..=647 if self.show_achievement_badges => {
                                     self.achievement_overview = !self.achievement_overview;
-                                    self.details_page = None;
+                                    self.details_scroll = None;
                                     self.selected_play = 0;
+                                    self.history_scroll = 0;
                                     self.replay_status.clear();
                                 }
                                 884..=991 => {
-                                    if self.details_page.take().is_some() {
+                                    if self.details_scroll.take().is_some() {
                                         continue;
                                     }
                                     final_choice = Some(CampaignMapChoice::Quit);
                                     break;
                                 }
                                 660..=867 => {
-                                    self.details_page = if self.details_page.is_some() {
+                                    self.details_scroll = if self.details_scroll.is_some() {
                                         None
                                     } else {
                                         Some(0)
                                     };
                                     self.selected_play = 0;
+                                    self.history_scroll = 0;
                                     self.replay_status.clear();
                                     self.achievement_overview = false;
                                 }
@@ -963,10 +992,13 @@ impl CampaignMapModalState {
                         }
                         if (482..518).contains(&vy)
                             && !self.achievement_overview
-                            && self.details_page.is_none()
+                            && self.details_scroll.is_none()
                         {
                             if (588..804).contains(&vx) {
-                                self.details_page = Some(0);
+                                self.details_scroll = Some(0);
+                                self.history_scroll = 0;
+                                self.selected_play = 0;
+                                self.replay_status.clear();
                             }
                             if (32..208).contains(&vx) {
                                 self.move_progress_page(-1);
@@ -980,7 +1012,7 @@ impl CampaignMapModalState {
                             && (840..992).contains(&vx)
                             && !browsing
                             && !self.achievement_overview
-                            && self.details_page.is_none()
+                            && self.details_scroll.is_none()
                             && self
                                 .graph
                                 .nodes
@@ -995,7 +1027,7 @@ impl CampaignMapModalState {
                     }
                     if self.presentation != CampaignPresentationMode::ClassicMap
                         && !self.achievement_overview
-                        && self.details_page.is_none()
+                        && self.details_scroll.is_none()
                         && let Some(index) = progress_hit_test(
                             &self.graph,
                             self.presentation,
@@ -1007,18 +1039,20 @@ impl CampaignMapModalState {
                         self.selected_progress = index;
                         self.exhibit_grid =
                             ExhibitGridNavigator::new(self.graph.nodes.len(), index);
-                        if !browsing && clicks >= 2 && self.graph.nodes[index].selectable {
-                            final_choice = Some(CampaignMapChoice::SelectMission(
-                                self.graph.nodes[index].mission_idx,
-                            ));
+                        if clicks >= 2 {
+                            self.details_scroll = Some(0);
+                            self.history_scroll = 0;
+                            self.selected_play = 0;
+                            self.replay_status.clear();
                         }
                     }
                 }
                 _ => {}
             }
-            if previous_selection != self.selected_progress && self.details_page.is_some() {
-                self.details_page = Some(0);
+            if previous_selection != self.selected_progress && self.details_scroll.is_some() {
+                self.details_scroll = Some(0);
                 self.selected_play = 0;
+                self.history_scroll = 0;
                 self.replay_status.clear();
             }
 
@@ -1288,7 +1322,8 @@ fn render_campaign_progress(
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
     browsing: bool,
     achievement_overview: bool,
-    details_page: Option<usize>,
+    details_scroll: Option<usize>,
+    history_scroll: usize,
     selected_play: usize,
     replay_status: &str,
 ) {
@@ -1350,7 +1385,7 @@ fn render_campaign_progress(
         (32, 76, 176, 40),
         presentation == CampaignPresentationMode::ProgressTree
             && !achievement_overview
-            && details_page.is_none(),
+            && details_scroll.is_none(),
     );
     progress_button(
         renderer,
@@ -1360,7 +1395,7 @@ fn render_campaign_progress(
         (220, 76, 208, 40),
         presentation == CampaignPresentationMode::SherwoodMuseum
             && !achievement_overview
-            && details_page.is_none(),
+            && details_scroll.is_none(),
     );
     if show_achievement_badges {
         progress_button(
@@ -1378,14 +1413,14 @@ fn render_campaign_progress(
         transform,
         "Mission Details",
         (660, 76, 208, 40),
-        details_page.is_some(),
+        details_scroll.is_some(),
     );
     progress_button(renderer, font, transform, "Back", (884, 76, 108, 40), false);
     progress_text(
         renderer,
         font,
         transform,
-        if details_page.is_some() {
+        if details_scroll.is_some() {
             "Briefing, requirements and recorded plays / Left and Right: select mission"
         } else if achievement_overview {
             "Permanent achievements for this player"
@@ -1515,13 +1550,14 @@ fn render_campaign_progress(
         return;
     }
     let node = &graph.nodes[selected];
-    if let Some(page) = details_page {
+    if let Some(offset) = details_scroll {
         render_mission_details(
             renderer,
             transform,
             node,
             assets,
-            page,
+            offset,
+            history_scroll,
             selected_play,
             replay_status,
         );
@@ -1558,6 +1594,7 @@ fn render_campaign_progress(
         let (status, mut color) = match entry.state {
             MissionProgressState::Completed => ("Completed", (102, 157, 101)),
             MissionProgressState::Available => ("Available", (193, 163, 78)),
+            MissionProgressState::InProgress => ("In progress", (193, 163, 78)),
             MissionProgressState::Lost => ("Lost", (174, 102, 81)),
             MissionProgressState::Expired => ("Expired", (139, 121, 103)),
             MissionProgressState::Locked => ("Locked", (99, 112, 101)),
@@ -1684,8 +1721,10 @@ fn render_campaign_progress(
         record
     } else {
         format!(
-            "Current campaign: {:?} / Attempts: {} / Wins: {}",
-            node.state, node.attempt_count, node.win_count
+            "Current campaign: {} / Attempts: {} / Wins: {}",
+            node.state.label(),
+            node.attempt_count,
+            node.win_count
         )
     };
     progress_text(renderer, font, transform, &stats, 32, 590, 960);
@@ -1711,6 +1750,7 @@ fn render_campaign_progress(
             |_| None,
         )
         .iter()
+        .filter(|badge| node.available_badges.contains(badge.id))
         .enumerate()
         {
             let x = 32 + index as i32 % 4 * 242;
@@ -1742,7 +1782,7 @@ fn render_campaign_progress(
     } else if node.history_replay {
         "Practice replay / campaign rewards unchanged"
     } else if node.selectable {
-        "Enter or double-click to inspect mission"
+        "Double-click to inspect mission"
     } else {
         "D: view mission details"
     };
@@ -1895,7 +1935,7 @@ fn load_campaign_descriptions(
     }
 }
 
-const DETAIL_LINES_PER_PAGE: usize = 16;
+const DETAIL_VISIBLE_LINES: usize = 16;
 
 fn detail_lines(
     node: &crate::campaign_progress::CampaignProgressNode,
@@ -1930,12 +1970,33 @@ fn detail_lines(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn render_detail_scrollbar(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    x: i32,
+    y: i32,
+    height: i32,
+    offset: usize,
+    visible: usize,
+    total: usize,
+) {
+    if total <= visible {
+        return;
+    }
+    let thumb = (height * visible as i32 / total as i32).max(16);
+    let top = (height - thumb) * offset as i32 / (total - visible) as i32;
+    progress_rect(renderer, transform, (x, y, 4, height), (43, 55, 31));
+    progress_rect(renderer, transform, (x, y + top, 4, thumb), (193, 163, 78));
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_mission_details(
     renderer: &mut Renderer,
     transform: MenuTransform,
     node: &crate::campaign_progress::CampaignProgressNode,
     assets: &CampaignMapAssets,
-    page: usize,
+    text_scroll: usize,
+    history_scroll: usize,
     selected_play: usize,
     status: &str,
 ) {
@@ -1945,19 +2006,18 @@ fn render_mission_details(
         renderer,
         font,
         transform,
-        &format!("{} / {:?}", node.kind.label(), node.state),
+        &format!("{} / {}", node.kind.label(), node.state.label()),
         32,
         218,
         512,
     );
     progress_rect(renderer, transform, (32, 254, 512, 408), (12, 20, 13));
     let lines = detail_lines(node, assets);
-    let pages = lines.len().div_ceil(DETAIL_LINES_PER_PAGE).max(1);
-    let page = page.min(pages - 1);
+    let text_scroll = text_scroll.min(lines.len().saturating_sub(DETAIL_VISIBLE_LINES));
     for (row, text) in lines
         .iter()
-        .skip(page * DETAIL_LINES_PER_PAGE)
-        .take(DETAIL_LINES_PER_PAGE)
+        .skip(text_scroll)
+        .take(DETAIL_VISIBLE_LINES)
         .enumerate()
     {
         progress_text(
@@ -1970,30 +2030,15 @@ fn render_mission_details(
             480,
         );
     }
-    progress_button(
+    render_detail_scrollbar(
         renderer,
-        font,
         transform,
-        "Previous",
-        (32, 668, 168, 40),
-        false,
-    );
-    progress_button(
-        renderer,
-        font,
-        transform,
-        "Next",
-        (376, 668, 168, 40),
-        false,
-    );
-    progress_text(
-        renderer,
-        font,
-        transform,
-        &format!("{} / {pages}", page + 1),
-        242,
-        680,
-        128,
+        536,
+        254,
+        408,
+        text_scroll,
+        DETAIL_VISIBLE_LINES,
+        lines.len(),
     );
     progress_text(
         renderer,
@@ -2015,9 +2060,9 @@ fn render_mission_details(
             408,
         );
     }
-    let history_page = selected_play / 5;
-    for (index, play) in node.plays.iter().enumerate().skip(history_page * 5).take(5) {
-        let y = 260 + (index % 5) as i32 * 72;
+    let history_scroll = history_scroll.min(node.plays.len().saturating_sub(5));
+    for (index, play) in node.plays.iter().enumerate().skip(history_scroll).take(5) {
+        let y = 260 + (index - history_scroll) as i32 * 72;
         progress_rect(
             renderer,
             transform,
@@ -2070,28 +2115,22 @@ fn render_mission_details(
         (560, 630, 432, 36),
         can_watch,
     );
-    progress_button(
+    render_detail_scrollbar(
         renderer,
-        font,
         transform,
-        "Newer plays",
-        (560, 668, 208, 40),
-        false,
-    );
-    progress_button(
-        renderer,
-        font,
-        transform,
-        "Older plays",
-        (784, 668, 208, 40),
-        false,
+        984,
+        260,
+        360,
+        history_scroll,
+        5,
+        node.plays.len(),
     );
     progress_text(
         renderer,
         font,
         transform,
         if status.is_empty() {
-            "PgUp/PgDn: details / Up/Down: plays / Enter: watch replay"
+            "Scroll over either column / PgUp/PgDn: scroll / Up/Down: plays / Enter: watch"
         } else {
             status
         },
@@ -2155,7 +2194,13 @@ fn campaign_map_items(
                         lifetime,
                     ),
                     |_| None,
-                ),
+                )
+                .into_iter()
+                .filter(|badge| {
+                    robin_engine::achievement::available_mission_badges(profile, profiles)
+                        .contains(badge.id)
+                })
+                .collect(),
             })
         })
         .collect()
@@ -2770,19 +2815,99 @@ mod browser_tests {
             None
         );
         assert!(state.replay_status.contains("No recording"));
-        state.handle_events(vec![GameEvent::MouseDown(580, 680, 1, 1)], transform, true);
-        assert_eq!(state.selected_play, 7);
+        assert_eq!(state.history_scroll, 8);
+        state.input.virt_x = 580.0;
+        state.input.virt_y = 300.0;
+        state.handle_events(vec![GameEvent::MouseWheel(3)], transform, true);
+        assert_eq!(state.history_scroll, 5);
+        assert_eq!(state.selected_play, 12);
         state.handle_events(vec![GameEvent::MouseDown(580, 265, 1, 1)], transform, true);
         assert_eq!(state.selected_play, 5);
         state.handle_events(vec![key(Keycode::Right)], transform, true);
         assert_eq!(state.selected_play, 0);
         assert_eq!(state.exhibit_grid.selected, state.selected_progress);
-        assert_eq!(state.details_page, Some(0));
+        assert_eq!(state.details_scroll, Some(0));
         assert!(state.replay_status.is_empty());
     }
 
     #[test]
-    fn details_pages_cannot_launch_a_mission_and_tabs_restore_navigation() {
+    fn detail_columns_scroll_independently_and_clamp_to_content() {
+        let mut state = browser();
+        let font_bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../assets/core-datadir/Data/Interface/Fonts/arial.ttf"),
+        )
+        .expect("read checked-in Arial fixture");
+        state.assets.progress_font = Some(Font::TrueType(crate::font::TrueTypeFont::from_parts(
+            &[0; 32],
+            15,
+            0,
+            0,
+            &[0; 32],
+            0x00FFFFFF,
+            &font_bytes,
+        )));
+        state.graph.nodes[0].availability_notes = vec!["A requirement".into(); 50];
+        state.graph.nodes[0].plays = fixture_plays(13);
+        let transform = progress_transform(1024, 768);
+        state.handle_events(vec![key(Keycode::Char(b'd'))], transform, true);
+        state.input.virt_x = 100.0;
+        state.input.virt_y = 300.0;
+        state.handle_events(vec![GameEvent::MouseWheel(-1)], transform, true);
+        assert_eq!(state.details_scroll, Some(3));
+        assert_eq!(state.history_scroll, 0);
+        state.input.virt_x = 600.0;
+        state.handle_events(vec![GameEvent::MouseWheel(-2)], transform, true);
+        assert_eq!(state.history_scroll, 2);
+        assert_eq!(state.details_scroll, Some(3));
+        state.handle_events(vec![GameEvent::MouseDown(580, 265, 1, 1)], transform, true);
+        assert_eq!(state.selected_play, 2);
+        state.handle_events(vec![GameEvent::MouseWheel(-100)], transform, true);
+        assert_eq!(state.history_scroll, 8);
+        state.handle_events(vec![GameEvent::MouseWheel(100)], transform, true);
+        assert_eq!(state.history_scroll, 0);
+        state.input.virt_x = 100.0;
+        state.handle_events(vec![GameEvent::MouseWheel(-100)], transform, true);
+        assert_eq!(
+            state.details_scroll,
+            Some(detail_lines(&state.graph.nodes[0], &state.assets).len() - DETAIL_VISIBLE_LINES)
+        );
+        state.handle_events(vec![GameEvent::MouseWheel(100)], transform, true);
+        assert_eq!(state.details_scroll, Some(0));
+        state.input.virt_y = 100.0;
+        state.handle_events(vec![GameEvent::MouseWheel(-1)], transform, true);
+        assert_eq!(state.details_scroll, Some(0));
+    }
+
+    #[test]
+    fn double_click_opens_details_even_for_locked_missions() {
+        for presentation in [
+            CampaignPresentationMode::ProgressTree,
+            CampaignPresentationMode::SherwoodMuseum,
+        ] {
+            for browsing in [false, true] {
+                for selectable in [false, true] {
+                    let mut state = browser();
+                    state.presentation = presentation;
+                    state.graph.nodes[0].selectable = selectable;
+                    let (x, y, _, _) = progress_node_rect(&state.graph, presentation, 0, 0);
+                    assert_eq!(
+                        state.handle_events(
+                            vec![GameEvent::MouseDown(x + 5, y + 5, 1, 2)],
+                            progress_transform(1024, 768),
+                            browsing
+                        ),
+                        None
+                    );
+                    assert_eq!(state.details_scroll, Some(0));
+                    assert_eq!(state.history_scroll, 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mission_details_cannot_launch_a_mission_and_tabs_restore_navigation() {
         let mut state = browser();
         state.graph.nodes[0].availability_notes = vec!["A requirement".into(); 5];
         state.graph.nodes[0].selectable = true;
@@ -2791,19 +2916,19 @@ mod browser_tests {
             state.handle_events(vec![key(Keycode::Char(b'r'))], transform, false),
             None
         );
-        assert_eq!(state.details_page, Some(0));
+        assert_eq!(state.details_scroll, Some(0));
         assert_eq!(
             state.handle_events(vec![key(Keycode::Return)], transform, false),
             None
         );
         state.handle_events(vec![key(Keycode::Down)], transform, false);
         assert_eq!(state.selected_play, 0);
-        assert_eq!(state.details_page, Some(0));
+        assert_eq!(state.details_scroll, Some(0));
         state.handle_events(vec![key(Keycode::Tab)], transform, false);
         state.handle_events(vec![key(Keycode::Char(b'd'))], transform, false);
-        assert_eq!(state.details_page, Some(0));
+        assert_eq!(state.details_scroll, Some(0));
         state.handle_events(vec![key(Keycode::Char(b'r'))], transform, false);
-        assert_eq!(state.details_page, None);
+        assert_eq!(state.details_scroll, None);
         assert_eq!(state.presentation, CampaignPresentationMode::SherwoodMuseum);
     }
 
@@ -2892,7 +3017,8 @@ mod browser_tests {
             selected_progress: 0,
             show_achievement_badges: true,
             achievement_overview: false,
-            details_page: None,
+            details_scroll: None,
+            history_scroll: 0,
             selected_play: 0,
             replay_status: String::new(),
             lifetime_totals: history.totals(),
@@ -3263,6 +3389,7 @@ mod capture_tests {
                         name == "achievements",
                         name.starts_with("details")
                             .then_some(usize::from(name == "details-more")),
+                        if name == "details-more" { 8 } else { 0 },
                         if name == "details-more" { 10 } else { 0 },
                         "",
                     );

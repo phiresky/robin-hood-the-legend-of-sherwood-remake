@@ -7,152 +7,193 @@
 - Checked: 2026-09-09
 - Retrieved: 2026-09-09, revision 1006227
 - Archived copy: [Wayback Machine, 2025-11-27](http://web.archive.org/web/20251127015320/https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/)
-- Format: header notes, then the page text converted from the original HTML plus the full licensed text
+- Format: English translation followed by the complete original article text
 
-## Full text
+The source is reproduced from the ubuntuusers.de wiki, revision 1006227 (2022-10-29 10:37), created by user DJKUhpisse. ubuntuusers wiki articles are licensed [CC BY-NC-SA 3.0 DE](https://creativecommons.org/licenses/by-nc-sa/3.0/de/).
 
-Reproduced from the ubuntuusers.de wiki, revision 1006227 of 2022-10-29 10:37 by user DJKUhpisse, retrieved 2026-09-09. ubuntuusers wiki articles are licensed [CC BY-NC-SA 3.0 DE](https://creativecommons.org/licenses/by-nc-sa/3.0/de/). The rendered page follows; the original Inyoka wiki markup (from the wiki's raw export) is appended after it.
+## English translation
 
-#  Robin Hood - Die Legende von Sherwood 
+### Robin Hood — The Legend of Sherwood
 
-### Archivierte Anleitung
+#### Archived guide
 
-Dieser Artikel wurde archiviert. Das bedeutet, dass er nicht mehr auf Richtigkeit überprüft oder anderweitig gepflegt wird. Der Inhalt wurde für keine aktuell unterstützte Ubuntu-Version getestet. Wenn du Gründe für eine Wiederherstellung siehst, melde dich bitte in der Diskussion zum Artikel. Bis dahin bleibt die Seite für weitere Änderungen gesperrt. 
+This article has been archived. This means that it is no longer checked for correctness or otherwise maintained. The content has not been tested for any currently supported Ubuntu version. If you see reasons for restoring it, please report them in the article’s discussion. Until then, the page remains locked against further changes.
 
-### Zum Verständnis dieses Artikels sind folgende Seiten hilfreich:
+#### The following pages are helpful for understanding this article
 
-  1. ⚓︎ [Rechte für Dateien und Ordner ändern](https://wiki.ubuntuusers.de/Rechte/)
+1. [Change permissions for files and folders](https://wiki.ubuntuusers.de/Rechte/)
+2. [Open a terminal](https://wiki.ubuntuusers.de/Terminal/)
 
-  2. ⚓︎ [Ein Terminal öffnen](https://wiki.ubuntuusers.de/Terminal/)
+#### Contents
 
-Inhaltsverzeichnis
+1. Installation
+2. Troubleshooting
+3. Uninstallation
+4. Manual
+5. Demo
+6. Keyboard shortcuts
+7. Infobox
+8. Links
 
-  1. Installation 
-  2. Problembehebung 
-  3. Deinstallation 
-  4. Handbuch 
-  5. Demo 
-  6. Tastenkürzel 
-  7. Infobox 
-  8. Links 
+![Robin Hood](https://media-cdn.ubuntu-de.org/wiki/attachments/48/44/robin.png)
 
-[](https://media-cdn.ubuntu-de.org/wiki/attachments/48/44/robin.png) Bei dem Spiel schlüpft man in die Rolle des Helden Robin Hood - dem Helden aus einer mittelalterlichen englischen Legende - und erweckt ihn so zum Leben. Robin Hood war ein Geächteter, der die Reichen bestahl und das Diebesgut den armen Menschen gab. Mit seinen Gesellen bekämpft Robin in diversen Missionen Prinz John, den Sheriff von Nottingham und andere Charaktere im Sherwood Forest und der Umgebung von Nottingham. Taktik und Charaktere mit unterschiedlichen Eigenschaften verleihen dem Spiel eine ungeahnte Tiefe.
+In the game, you take on the role of the hero Robin Hood—the hero from a medieval English legend—and bring him to life. Robin Hood was an outlaw who robbed the rich and gave the stolen goods to poor people. Together with his companions, Robin fights Prince John, the Sheriff of Nottingham, and other characters in various missions in Sherwood Forest and the area around Nottingham. Tactics and characters with different abilities give the game an unexpected depth.
 
-[](https://media-cdn.ubuntu-de.org/wiki/attachments/29/44/Spielszene2.jpg) | [](https://media-cdn.ubuntu-de.org/wiki/attachments/55/44/Spielszene.jpg)  
----|---  
-Spielszene | Spielszene   
-  
-## Converted text from the original HTML
+| ![Game scene](https://media-cdn.ubuntu-de.org/wiki/attachments/29/44/Spielszene2.jpg) | ![Game scene](https://media-cdn.ubuntu-de.org/wiki/attachments/55/44/Spielszene.jpg) |
+| --- | --- |
+| Game scene | Game scene |
 
+### Installation
 
+#### CD version
 
-### technical__ubuntuusers-native-linux.html
+Download the updated installer from [bitbucket.org](https://bitbucket.org/runesoftdev/robinhood_public/wiki/Home) 🇬🇧 ⮷ and make it executable [1](https://wiki.ubuntuusers.de/Rechte/).
 
-_Source: `originals/technical__ubuntuusers-native-linux.html`._
+After inserting the CD, start the game installation using the installation script [2](https://wiki.ubuntuusers.de/Terminal/):
 
-Zum Hauptinhalt springen Zur Seitenleiste springen [ hosted by  ](https://www.centron.de/) [ ](https://verein.ubuntu-de.org/)
+```bash
+./robin.hood_1.2-multilingual.cdrom_x86-20121119.mojo.run
+```
 
-  * **Bitte aktiviere JavaScript!**
-  * [ Anmelden ](https://ubuntuusers.de/login/?next=https%3A%2F%2Fwiki.ubuntuusers.de%2FArchiv%2FSpiele%2FRobin_Hood_-_Die_Legende_von_Sherwood%2F)
-  * [ Registrieren ](https://ubuntuusers.de/register/)
+After the game data have been copied to the system, the launcher can be found under “Applications → Games”.
 
+### Troubleshooting
 
+### Uninstallation
 
-# [ubuntuusers.de](/)
+To uninstall the game, it is sufficient to delete the launcher and the game directory.
 
-  * [Portal](https://ubuntuusers.de/)
-  * [Forum](https://forum.ubuntuusers.de/)
-  * [Wiki](https://wiki.ubuntuusers.de/)
-  * [Ikhaya](https://ikhaya.ubuntuusers.de/)
-  * [Planet](https://planet.ubuntuusers.de/)
-  * [Mitmachen](https://wiki.ubuntuusers.de/Mitmachen/)
+### Manual
 
+A manual for the game can be found in the installation directory as a [PDF](https://wiki.ubuntuusers.de/PDF/).
 
+### Demo
 
-[via DuckDuckGo](https://wiki.ubuntuusers.de/Suchfunktion/)
+A demo of this game can be downloaded from [softpedia.com](http://linux.softpedia.com/progDownload/Robin-Hood-The-Legend-of-Sherwood-Download-9620.html) 🇬🇧 or [holarse-linuxgaming.de](http://files.holarse-linuxgaming.de/native/Spiele/Robin%20Hood%3A%20Die%20Legende%20von%20Sherwood/Demo/) ⮷. It is installed following the procedure above.
 
-  1. [Wiki](https://wiki.ubuntuusers.de/)
-  2. [Archiv](https://wiki.ubuntuusers.de/Archiv/)
-  3. [Spiele](https://wiki.ubuntuusers.de/Archiv/Spiele/)
-  4. [Robin Hood - Die Legende von Sherwood](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin%20Hood%20-%20Die%20Legende%20von%20Sherwood/)
+### Keyboard shortcuts
 
+| Key(s) | Function |
+| --- | --- |
+| Alt + Enter / F12 | Full-screen / windowed mode |
+| Alt + G | Hold/release the mouse pointer. |
 
+![Games](https://media-cdn.ubuntu-de.org/wiki/attachments/12/28/games.png)
 
-### Wiki
+### Infobox
 
-  * [Index](https://wiki.ubuntuusers.de/Wiki/Index/)
-  * [Letzte Änderungen](https://wiki.ubuntuusers.de/wiki/recentchanges/)
-  * [Liste neuer Artikel](https://wiki.ubuntuusers.de/Wiki/Neue_Artikel/)
-  * [Übersicht](https://wiki.ubuntuusers.de/Wiki/)
-  * [FAQ](https://wiki.ubuntuusers.de/Wiki/FAQ_-_h%C3%A4ufig_gestellte_Fragen/)
-  * [Benutzung](https://wiki.ubuntuusers.de/Wiki/Benutzung/)
-  * [Kategorie](https://wiki.ubuntuusers.de/Kategorien/)
-  * [Wortwolke](https://wiki.ubuntuusers.de/wiki/tagcloud/)
+| Field | Value |
+| --- | --- |
+| Title | Robin Hood — The Legend of Sherwood |
+| **Original title** | Robin Hood — The Legend of Sherwood |
+| **Genre** | Real-time tactics |
+| **Language** | 🇩🇪 |
+| **Release** | 2002 |
+| **Publisher** | Runesoft GmbH |
+| **System requirements** | Processor at least 500 MHz; at least 128 MB RAM; at least 1 GB hard-disk space; graphics card (8+ MB RAM) |
+| **Media** | CD (1) |
+| **Barcode / EAN / GTIN** | — |
+| **Runs** | natively |
 
+### Links
 
+- [Runesoft](http://www.rune-soft.com) 🇩🇪 🇬🇧
+  - [Robin Hood: The Legend of Sherwood](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood)
+  - [Bitbucket](https://bitbucket.org/runesoftdev/helpdesk/wiki/Home) 🇬🇧
 
-### Mitmachen
+## Original text
 
-  * [Wikiartikel anlegen](https://wiki.ubuntuusers.de/Wikiartikel_anlegen/)
-  * [Howto anlegen](https://wiki.ubuntuusers.de/HowTo/)
-  * [Wiki-Referenz](https://wiki.ubuntuusers.de/Wiki/Referenz/)
-  * [Wiki-Syntax](https://wiki.ubuntuusers.de/Wiki/Syntax/)
-  * [Baustellen](https://wiki.ubuntuusers.de/Baustelle/)
-  * [Artikelideen](https://wiki.ubuntuusers.de/Wiki/Artikelideen/)
-  * [Ungetestete Artikel](https://wiki.ubuntuusers.de/Wiki/ungetestet/)
-  * [Fehlerhafte Artikel](https://wiki.ubuntuusers.de/Wiki/fehlerhaft/)
-  * [Rund ums Wiki](https://forum.ubuntuusers.de/forum/wiki/)
+### Robin Hood - Die Legende von Sherwood
 
+#### Archivierte Anleitung
 
+Dieser Artikel wurde archiviert. Das bedeutet, dass er nicht mehr auf Richtigkeit überprüft oder anderweitig gepflegt wird. Der Inhalt wurde für keine aktuell unterstützte Ubuntu-Version getestet. Wenn du Gründe für eine Wiederherstellung siehst, melde dich bitte in der Diskussion zum Artikel. Bis dahin bleibt die Seite für weitere Änderungen gesperrt.
 
-### Konfiguration
+#### Zum Verständnis dieses Artikels sind folgende Seiten hilfreich:
 
-  * [Backlinks anzeigen](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/backlinks/)
-  * Exportieren 
-    * [Metadaten](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/export/meta/)
-    * [Rohformat](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/export/raw/)
-    * [HTML](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/export/html/)
+1. [Rechte für Dateien und Ordner ändern](https://wiki.ubuntuusers.de/Rechte/)
+2. [Ein Terminal öffnen](https://wiki.ubuntuusers.de/Terminal/)
 
+#### Inhaltsverzeichnis
 
+1. Installation
+2. Problembehebung
+3. Deinstallation
+4. Handbuch
+5. Demo
+6. Tastenkürzel
+7. Infobox
+8. Links
 
-  * [Artikel](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/)
-  * [Bearbeiten](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/edit/)
-  * [Verlauf](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/log/)
-  * [Diskussion](https://forum.ubuntuusers.de/topic/neuer-artikel-robin-hood%3A-die-legende-von-she/last_post/)
-  * [Abonnieren](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/subscribe/)
+![Robin](https://media-cdn.ubuntu-de.org/wiki/attachments/48/44/robin.png)
 
+Bei dem Spiel schlüpft man in die Rolle des Helden Robin Hood - dem Helden aus einer mittelalterlichen englischen Legende - und erweckt ihn so zum Leben. Robin Hood war ein Geächteter, der die Reichen bestahl und das Diebesgut den armen Menschen gab. Mit seinen Gesellen bekämpft Robin in diversen Missionen Prinz John, den Sheriff von Nottingham und andere Charaktere im Sherwood Forest und der Umgebung von Nottingham. Taktik und Charaktere mit unterschiedlichen Eigenschaften verleihen dem Spiel eine ungeahnte Tiefe.
 
+| ![Spielszene 1](https://media-cdn.ubuntu-de.org/wiki/attachments/29/44/Spielszene2.jpg) | ![Spielszene 2](https://media-cdn.ubuntu-de.org/wiki/attachments/55/44/Spielszene.jpg) |
+| --- | --- |
+| Spielszene | Spielszene |
 
-#  Robin Hood - Die Legende von Sherwood 
+### Installation
 
-### Archivierte Anleitung
+#### CD-Version
 
-Dieser Artikel wurde archiviert. Das bedeutet, dass er nicht mehr auf Richtigkeit überprüft oder anderweitig gepflegt wird. Der Inhalt wurde für keine aktuell unterstützte Ubuntu-Version getestet. Wenn du Gründe für eine Wiederherstellung siehst, melde dich bitte in der Diskussion zum Artikel. Bis dahin bleibt die Seite für weitere Änderungen gesperrt. 
+Der aktuallisierten Installer von [bitbucket.org](https://bitbucket.org/runesoftdev/robinhood_public/wiki/Home) 🇬🇧 ⮷ herunterladen und ausführbar [1](https://wiki.ubuntuusers.de/Rechte/) machen.
 
-### Zum Verständnis dieses Artikels sind folgende Seiten hilfreich:
+Die Installation des Spiels wird nach dem einbinden der CD über das Installationsskript gestartet [2](https://wiki.ubuntuusers.de/Terminal/):
 
-  1. ⚓︎ [Rechte für Dateien und Ordner ändern](https://wiki.ubuntuusers.de/Rechte/)
+```bash
+./robin.hood_1.2-multilingual.cdrom_x86-20121119.mojo.run
+```
 
-  2. ⚓︎ [Ein Terminal öffnen](https://wiki.ubuntuusers.de/Terminal/)
+Nachdem die Spieledaten auf das System kopiert wurden findet man den Starter unter _"Anwendungen → Spiele"_.
 
+### Problembehebung
 
+### Deinstallation
 
+Um das Spiel zu deinstallieren genügt es den Starter sowie den Spieleordner zu löschen.
 
-Inhaltsverzeichnis
+### Handbuch
 
-  1. Installation 
-  2. Problembehebung 
-  3. Deinstallation 
-  4. Handbuch 
-  5. Demo 
-  6. Tastenkürzel 
-  7. Infobox 
-  8. Links 
+Ein Handbuch zum Spiel ist im Installationsverzeichnis, als [PDF](https://wiki.ubuntuusers.de/PDF/), zu finden.
 
+### Demo
 
+Ein Demo zu diesem Spiel kann man von [softpedia.com](http://linux.softpedia.com/progDownload/Robin-Hood-The-Legend-of-Sherwood-Download-9620.html) 🇬🇧 oder [holarse-linuxgaming.de](http://files.holarse-linuxgaming.de/native/Spiele/Robin%20Hood%3A%20Die%20Legende%20von%20Sherwood/Demo/) ⮷ herunterladen. Dies wird nach dem obigen Muster installiert.
 
-[](https://media-cdn.ubuntu-de.org/wiki/attachments/48/44/robin.png) Bei dem Spiel schlüpft man in die Rolle des Helden Robin Hood - dem Helden aus einer mittelalterlichen englischen Legende - und erweckt ihn so zum Leben. Robin Hood war ein Geächteter, der die Reichen bestahl und das Diebesgut den armen Menschen gab. Mit seinen Gesellen bekämpft Robin in diversen Missionen Prinz John, den Sheriff von Nottingham und andere Charaktere im Sherwood Forest und der Umgebung von Nottingham. Taktik und Charaktere mit unterschiedlichen Eigenschaften verleihen dem Spiel eine ungeahnte Tiefe.
+### Tastenkürzel
 
-[](https://media-cdn.ubuntu-de.org/wiki/attachments/29/44/Spielszene2.jpg) | [](https://media-cdn.ubuntu-de.org/wiki/attachments/55/44/Spielszene.jpg)  
----|---  
-Spielszene | Spielszene
+Tastenkürzel
+
+| Taste(n) | Funktion |
+| --- | --- |
+| Alt + ⏎ / F12 | Vollbild- / Fenstermodus |
+| Alt + G | Mauszeiger festhalten/freigeben. |
+
+![Spiele](https://media-cdn.ubuntu-de.org/wiki/attachments/12/28/games.png)
+
+### Infobox
+
+Robin Hood – Die Legende von Sherwood
+
+| Feld | Wert |
+| --- | --- |
+| Originaltitel: | Robin Hood – The Legend of Sherwood |
+| Genre: | Echtzeittaktik |
+| Sprache: | 🇩🇪 |
+| Veröffentlichung: | 2002 |
+| Publisher: | Runesoft GmbH |
+| Systemvoraussetzungen: | Prozessor mind. 500 MHz - mind. 128 MB RAM - mind. 1 GB Festplattenspeicher - Graphikkarte (8+ MB RAM) |
+| Medien: | CD (1) |
+| Strichcode / EAN / GTIN: | - |
+| Läuft mit: | nativ |
+
+### Links
+
+- [Runesoft](http://www.rune-soft.com) 🇩🇪 🇬🇧
+  - [Robin Hood: The Legend of Sherwood](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood)
+  - [Bitbucket](https://bitbucket.org/runesoftdev/helpdesk/wiki/Home) 🇬🇧
+
+Diese Revision: [Revision 1006227](https://wiki.ubuntuusers.de/Archiv/Spiele/Robin_Hood_-_Die_Legende_von_Sherwood/a/revision/1006227/) wurde am 29. Oktober 2022 10:37 von [DJKUhpisse](https://ubuntuusers.de/user/DJKUhpisse/) erstellt.
+
+Die folgenden Schlagworte wurden dem Artikel zugewiesen: [unfreie Software](https://wiki.ubuntuusers.de/wiki/tags/unfreie%20Software/), [Spiele](https://wiki.ubuntuusers.de/wiki/tags/Spiele/), [USK12](https://wiki.ubuntuusers.de/wiki/tags/USK12/), [Linux-Spiel](https://wiki.ubuntuusers.de/wiki/tags/Linux-Spiel/), [Strategie](https://wiki.ubuntuusers.de/wiki/tags/Strategie/), [RuneSoft](https://wiki.ubuntuusers.de/wiki/tags/RuneSoft/).

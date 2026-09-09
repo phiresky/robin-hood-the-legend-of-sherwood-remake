@@ -1,57 +1,60 @@
-# RH Mods — Spellforge Editor
+# Spellforge Editor
 
-- Original source: [Spellforge Editor](https://rhmods.com/tools/spellforge-editor/)
-- Author / publication: YetiWizard; RH Mods.
-- Language / date: English; publication date not displayed.
-- Access: Full page retrieved directly; linked software not downloaded
-- Checked: 2026-09-09
+- Original source: [Spellforge Editor — RH Mods](https://rhmods.com/tools/spellforge-editor/)
+- Author: YetiWizard
+- Publication date: Not displayed
+- Language: English
 - Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete factual notes (tool page, not transcribed)
+- Archived copy: [Wayback Machine, 2026-06-07](https://web.archive.org/web/20260607071836/https://rhmods.com/tools/spellforge-editor/)
 
-The documentation describes a mission editor paired with a game extension, with compatibility stated for version 1.1 and Ready2Play. A same-named Lua file overrides the original mission script; otherwise the game uses its SCB script. LuaJIT 2.1 is specified, with API documentation and shared helpers included in the package.
+## Original text
 
-Edited missions must be started afresh rather than resumed from an in-mission save. Some fields and script arguments remain unidentified. The included Blender add-on imports map geometry but does not export it back to the original format. These are documented capabilities, not independently tested behavior.
+**Author:**
 
-## Detailed notes
+YetiWizard
 
-Page facts: rhmods.com tool page "Spellforge Editor"; author field: YetiWizard; no publication date, version, view count or comments displayed; footer "Copyright © 2026". Retrieved directly on 2026-09-09. No licence permitting reproduction is stated, so the description is summarised in the page's order.
+**Description:**
 
-Overview:
+The Spellforge Editor is a combination of a mod for Robin Hood: Legend of Sherwood that enables extended modding capabilities, and an accompanying editor program to edit missions.
 
-- Two parts: a mod for Robin Hood: Legend of Sherwood that adds extended modding capabilities, plus an accompanying editor program for editing missions.
+**File contents**
 
-File contents and installation:
+The `dinput.dll` file extends the game and allows it to load missions saved by the Spellforge editor. It also allows scripting the missions using [Lua](https://www.lua.org/docs.html) (LuaJIT 2.1). The `.dll` file should be placed in the game folder (where the `game.exe` is).
 
-- `dinput.dll` extends the game so it can load missions saved by the Spellforge editor, and enables scripting missions in Lua (LuaJIT 2.1). Place it in the game folder next to game.exe.
-- `Spellforge.exe` also goes in the game folder. On first start it creates `spellforge.ini` in the same folder, used to modify game paths and some editor settings.
-- Missions and maps live under `Data/Levels`. Recommended backups: all mission files (`.rhm`), map files (`.rhp`), and the config file `profile.cpf` under `Data/Configuration`.
+The `Spellforge.exe` should also be placed in the game folder. Upon starting the editor a config file is created in the same folder (`spellforge.ini`). It can be used to modify the game paths and change some editor settings.
 
-Scripting:
+The missions and maps are located under “Data/Levels”. It is recommended that you back up all mission files (`.rhm`), map files (`.rhp`), as well as the config file (`profile.cpf`) under “Data/Configuration”.
 
-- A mission is scripted by placing a `.lua` file with the same name as the `.rhm`. If no such Lua file exists, the game uses the original `.scb` script.
-- The editor can generate a default Lua script for the open level via "Script" in the menu bar.
-- Included Lua files go in the levels folder: `api.lua` documents the available Lua functions; `common.lua` and `enums.lua` hold helper functions and enum tables shareable across all scripts.
-- Recommended editor: Visual Studio Code. Placing the included `.vscode` folder under `Data/Levels` yields a Lua-plugin recommendation and settings that improve the visibility of Lua files in the explorer view.
+Missions are scripted by including a `.lua` file with the same name as the `.rhm`. If such a Lua file is not present, the game will use the original script file (`.scb`). You can create a default Lua script for the open level by clicking on “Script” in the menu bar in the editor.
 
-Save-game caveat:
+The included `.lua` files are to be placed in the levels folder. `api.lua` documents the available Lua functions while `common.lua` and `enums.lua` have some helpful functions and enum tables that can be shared across all scripts.
 
-- When starting a modded mission, do not load any save made inside that mission; it must be loaded from the start.
-- For the first mission: delete the Restart and Continue saves of the selected profile.
-- For other missions: make a save in Sherwood before starting the mission and always begin the modded level from that save.
+For editing the Lua scripts, the “Visual Studio Code” editor is recommended. By placing the “.vscode” folder under “Data/Levels” you will get a recommendation which Lua plugin to use as well as some settings to increase the visibility of Lua files in the explorer view.
 
-Known gaps:
+When starting a modded mission, it is imperative that you **DO NOT** load any save files that take place in that mission. The mission has to be loaded from the start. For the first mission you can delete the Restart and Continue saves for the selected profile. For the other missions make a save in Sherwood before starting it and always begin the modded level from that save.
 
-- Some editor input fields are labelled "Unknown", and many script functions and arguments are likewise unidentified; the author asks for help figuring them out.
+You may notice that there are some input fields labelled “Unknown”. The same applies for many script functions. Help us by figuring out what these inputs and script functions/arguments do.
 
-Blender:
+Finally, there is a Blender add-on included that allows importing the geometry of the map files (`.rhp`). Exporting the geometry in the original format is currently not supported.
 
-- A Blender add-on is included that imports the geometry of map files (`.rhp`). Exporting geometry back to the original format is not supported.
+The mod is compatible with the game version 1.1 and supports using the excellent [Ready2Play Launcher](https://rhmods.com/tools/ready2play-launcher/).
 
-Compatibility and credits:
+Many thanks to the Robin Hood community for their commitment and support!
 
-- Compatible with game version 1.1; supports the Ready2Play Launcher (linked).
-- Thanks to the Robin Hood community; special thanks to Nescafe (promotion) and testers JimboKern, Molsga and Red Officer.
-- Distribution: "Get it on ModDB" link to `moddb.com/mods/spellforge-editor-robin-hood-legend-of-sherwood`.
+Special thanks to **Nescafe** for the promotion and to the hard-working testers **JimboKern**, **Molsga** and **Red Officer**!
 
-Site context: same navigation as the other rhmods tool pages (Tools: Asset Editor, Developer Console, Profile Tool, Ready2Play Launcher, Rhuce, Spellforge Editor; Media: Gallery, Videos, Music, Save game, Demos; links to Steam app 46560, GOG, ModDB, YouTube @RobinHoodCommunity, Discord; contact mail@rhmods.com).
+Have fun using the editor!
+
+### Screenshots
+
+![Spellforge Editor screenshot 1](https://rhmods.com/content/uploads/Screenshot_1.1.png)
+
+![Spellforge Editor screenshot 2](https://rhmods.com/content/uploads/Screenshot_2.1.png)
+
+![Spellforge Editor screenshot 3](https://rhmods.com/content/uploads/Screenshot_3.1.png)
+
+![Spellforge Editor screenshot 4](https://rhmods.com/content/uploads/Screenshot_4.1.png)
+
+![Spellforge Editor screenshot 5](https://rhmods.com/content/uploads/Screenshot_5.1.png)
+
+[Get it on ModDB](https://www.moddb.com/mods/spellforge-editor-robin-hood-legend-of-sherwood)

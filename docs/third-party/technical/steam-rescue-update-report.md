@@ -1,30 +1,68 @@
-# Steam — rescue mission still missing after an update
+# Steam — “mission to save Robin”
 
-- Original source: [mision salvar a robin](https://steamcommunity.com/app/46560/discussions/0/598524451529758841/)
-- Author / publication: jesuszapatalinares5 and respondents; Steam Community.
-- Language / date: Spanish; opened 2025-04-20, last reply 2026-01-23.
-- Access: Full thread (opening and all 6 comments) retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete post-by-post notes (Steam discussion, not transcribed)
+- Original source: [“mision salvar a robin”](https://steamcommunity.com/app/46560/discussions/0/598524451529758841/) in Steam Community, *Robin Hood* General Discussions.
+- Author / publication: jesuszapatalinares5; replies by Fernnix, Nobutora, Manuel, and CPR.
+- Language / dates: Spanish; opened 20 April 2025 at 4:56 a.m.; last reply 23 January 2026 at 10:20 a.m. (Steam displays the last reply without a year; retrieval context establishes 2026).
+- Access: Complete thread: opening post and all six comments on one page.
+- Retrieved / checked: 2026-09-09.
+- Content status: Full original thread available. Steam site navigation, reporting controls, footer, and unrelated-discussion recommendations have been removed. Repeated quoted copies of earlier comments are omitted; the original comments are preserved once below.
 
-The author says Robin’s rescue mission remains unavailable after an update. Nobutora proposes temporarily using English to trigger the mission, then saving inside it before switching back to Spanish.
+## English translation
 
-Manuel describes a different state: Robin has already returned, the game is in English, and three side missions keep repeating. Nobutora suggests money requirements or money cheats as possible explanations; the thread does not establish either cause. This distinction matters when comparing progression reports: repeated ambushes alone do not identify a single localization defect. The original update is not identified by build number.
+### “Mission to save Robin” — jesuszapatalinares5 (20 April 2025, 4:56 a.m.)
 
-## Detailed notes
+With the new update, the mission to save Robin still does not appear. At least not for me. Any solution?
 
-Page facts: Steam Community discussion "mision salvar a robin" in Robin Hood (app 46560) > General Discussions; opened by jesuszapatalinares5 on 2025-04-20 at 04:56; 6 comments on one page. Retrieved directly from steamcommunity.com on 2026-09-09. Posts without a year are shown by Steam as the current year, i.e. 2026. Steam discussions are not licensed for reproduction, so the posts are summarised post by post (all Spanish).
+### Fernnix (27 April 2025, 8:48 p.m.)
 
-| # | Poster | Date | Content |
-|---|---|---|---|
-| OP | jesuszapatalinares5 | 2025-04-20 | With the new update the mission to save Robin still does not appear, at least for them. Asks for a solution. The update is not identified. |
-| 1 | Fernnix | 2025-04-27 | Same problem; asks whether a solution was found. |
-| 2 | Nobutora | 2025-07-23 | The developers never fixed a bug in the Spanish version. Change the language to English and the notice to save Robin will appear. To play the mission in Spanish: start it in English, save, then switch the language back. |
-| 3 | Manuel | 2025-11-25 | Similar but different bug: the same 3 missions repeat endlessly, but Robin has already been returned (the sheriff captured him and gave him back), and the game is played in English. Has done the missions many times and has run out of cures ("curas"). |
-| 4 | Nobutora | 2025-11-26 | Asks whether Manuel used cheats: this usually results from the money cheat, or the next mission is not unlocked because money is still missing. |
-| 5 | CPR | 2025-11-29 | Asks how to change the language; their game comes in English, and the menu graphics are glitchy. |
-| 6 | Nobutora | 2026-01-23 | Replies to CPR with a link to the Steam help FAQ 4984-C127-121D-B3F2 (Spanish help site). |
+I have the same problem. Did you find a solution?
 
-Facts usable for parity work: the "start in English, save inside the mission, switch back" procedure is the proposed workaround; a separate post-rescue loop of three repeating missions in English is attributed by a respondent to the money cheat or an unmet money requirement, without confirmation; healing items ("curas") are consumed by repeated missions.
+### Nobutora (23 July 2025, 2:14 a.m.)
+
+The problem is that there is a bug that the developers never fixed in the Spanish version. You have to change the language to English; then the notice to save Robin will appear. If you want to play the mission in Spanish, I recommend starting it, saving, and changing the language back again.
+
+### Manuel (25 November 2025, 3:29 p.m.)
+
+I have a similar bug: the same three missions keep repeating nonstop, but Robin has already been returned to me. I do not know what to do because I have done them many times and have run out of cures. I repeat that the sheriff already captured Robin and returned him to me; besides, I play it in English.
+
+### Nobutora (26 November 2025, 2:14 a.m.)
+
+Have you used cheats? That normally happens because of using the money cheat, or, if the next mission has not yet been unlocked, it is because you are still missing the money.
+
+### CPR (29 November 2025, 2:09 p.m.)
+
+How can I change the language? My game comes in English, and I also get glitches in the menu graphics.
+
+### Nobutora (23 January 2026, 10:20 a.m.)
+
+@CPR: [Steam help FAQ 4984-C127-121D-B3F2](https://help.steampowered.com/es/faqs/view/4984-C127-121D-B3F2)
+
+## Original text
+
+### “mision salvar a robin” — jesuszapatalinares5 (20 Apr, 2025 @ 4:56am)
+
+con la nueva actualización sigue sin salir la mision de salvar a robin. Al menos a mí. ¿Alguna solución?
+
+### Fernnix (27 Apr, 2025 @ 8:48pm)
+
+Estoy con el mismo problema. Encontraste solución?
+
+### Nobutora (23 Jul, 2025 @ 2:14am)
+
+el problema es que hay un bug que nunca arreglaron los desarolladores con la versión en español, tenéis que cambiar el idioma a inglés, entonces ya os aparecerá el aviso para salvar a robin, si queréis jugar la misión en español os recomiendo al empezarla, guardar y cambiar el idioma de nuevo
+
+### Manuel (25 Nov, 2025 @ 3:29pm)
+
+yo tengo un bug parecido, se me repiten las mismas 3 misiones sin parar, pero a mi ya me devolvieron a robin, ns que hacer porque las he hecho muchas veces y me quede sin curas, repito que el sherif ya capturó a robin y me lo devolvio, ademas lo juego en ingles
+
+### Nobutora (26 Nov, 2025 @ 2:14am)
+
+has usado trucos? eso normalmente por usar el truco del dinero o si aun no se ha desbloqueado la siguiente mision es porque te falta el dinero
+
+### CPR (29 Nov, 2025 @ 2:09pm)
+
+como puedo cambiar el idioma? el juego me viene en ingles, además me va con fallas en los gráficos del menú
+
+### Nobutora (23 Jan @ 10:20am)
+
+@CPR <https://help.steampowered.com/es/faqs/view/4984-C127-121D-B3F2>

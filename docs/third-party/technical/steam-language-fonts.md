@@ -1,609 +1,290 @@
-# Psojed — languages and fonts
+# Robin Hood Language & Texts
 
 - Original source: [Psojed — languages and fonts](https://steamcommunity.com/sharedfiles/filedetails/?id=1349014146)
-- Author / publication: Psojed / Steam Community
-- Language / date: English; 2018-04-01
-- Access: Full guide page retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: none found in the Wayback Machine (checked 2026-09-09)
-- Format: header notes, then the page text converted from the original HTML
+- Author: Psojed
+- Published: 1 April 2018, 3:58 a.m.
+- Source language: English and Czech
+- Retrieval: Full guide body and all comments retrieved from `originals/recovery/steam-fonts-p1.browser.html` and `originals/recovery/steam-fonts-p2.browser.html` on 9 September 2026
+- Comments: 16 unique comments captured across the two paginated sources (16 comments reported).
 
-## Converted text from the original HTML
+## English translation
 
+### Robin Hood Language & Texts
 
+By Psojed
 
-### technical__steam-language-fonts.html
+A short guide about changing the game language and fonts.
 
-_Source: `originals/technical__steam-language-fonts.html`._
+### Selecting language
 
-[ Sign in ](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D1349014146) [ Store ](https://store.steampowered.com/)
+Welcome to my guide!
 
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
+Robin Hood: Legend of Sherwood is an old game, and as with many old games, it needs some configuration before you can play properly. As the Store page promises, Robin Hood comes in four different languages: English, German, French and Spanish.
 
-[ Community ](https://steamcommunity.com/)
+To select your preferred language, simply **Right-click** with your mouse on the game in your Steam Library and select **Properties**.
 
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
+![Steam game Properties menu](https://images.steamusercontent.com/ugc/925927998461118339/6EED6E60B092DC5637904D400F083FC537984A13/)
 
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
+Then, switch to the **Languages** tab and there, select your preferred language from the drop-down menu:
 
-Change language 
+![Steam Languages tab](https://images.steamusercontent.com/ugc/925927998461121465/72D785D0D907E55A4A45C738CCC1F4381068E981/)
 
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
+That's it. When you launch the game now, it will have the language you selected.
 
-View desktop website 
+### Other languages
 
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
+Robin Hood: Legend of Sherwood was also translated into other languages, but sadly neither Steam nor GOG offer these languages, therefore you need modding. Changing Robin Hood's language is simple: basically, you need the language files you want, then you have to place them into the game directory. Finally, you need to delete or rename the English folder, named `2047`, to anything else, for example `2047-1`. Then the game will load any other language files present in the game's directory.
 
-[ ](https://store.steampowered.com/)
+There are some guides dealing with the Polish language, so you can check those in the guides. As for my fellow Czech players, I have created a simple installer which will do all the work for them. The next section will be in Czech.
 
-[ ](https://store.steampowered.com/)
+### Czech
 
-[ STORE ](https://store.steampowered.com/)
+For other Czech players, I created a simple installer that will do all the work for you. First, make sure that you have the game in English; see the illustrated instructions at the beginning. Then simply run the installer, which:
 
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
+- switches all text and dubbing to Czech;
+- changes the appearance of the text to the original, better version;
+- can easily be uninstalled at any time.
 
-[ COMMUNITY ](https://steamcommunity.com/)
+Download link (about 150 MB):
 
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
+[Google Drive download](https://drive.google.com/open?id=1DTzmUqLyzhmNAwfnk22BBcQD21xTrqys)
 
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
+### Proper Text Font
 
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D1349014146)  |  language
+There is also a different text font in the Steam version of the game. No idea why the Steam version uses this one, but the original font is much better.
 
-[ 简体中文 (Simplified Chinese) ](?l=schinese&id=1349014146) [ 繁體中文 (Traditional Chinese) ](?l=tchinese&id=1349014146) [ 日本語 (Japanese) ](?l=japanese&id=1349014146) [ 한국어 (Korean) ](?l=koreana&id=1349014146) [ ไทย (Thai) ](?l=thai&id=1349014146) [ Bahasa Indonesia (Indonesian) ](?l=indonesian&id=1349014146) [ Bahasa Melayu (Malay) BETA ](?l=malay&id=1349014146) [ Български (Bulgarian) ](?l=bulgarian&id=1349014146) [ Čeština (Czech) ](?l=czech&id=1349014146) [ Dansk (Danish) ](?l=danish&id=1349014146) [ Deutsch (German) ](?l=german&id=1349014146) [ Español - España (Spanish - Spain) ](?l=spanish&id=1349014146) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam&id=1349014146) [ Ελληνικά (Greek) ](?l=greek&id=1349014146) [ Français (French) ](?l=french&id=1349014146) [ Italiano (Italian) ](?l=italian&id=1349014146) [ Magyar (Hungarian) ](?l=hungarian&id=1349014146) [ Nederlands (Dutch) ](?l=dutch&id=1349014146) [ Norsk (Norwegian) ](?l=norwegian&id=1349014146) [ Polski (Polish) ](?l=polish&id=1349014146) [ Português (Portuguese - Portugal) ](?l=portuguese&id=1349014146) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian&id=1349014146) [ Română (Romanian) ](?l=romanian&id=1349014146) [ Русский (Russian) ](?l=russian&id=1349014146) [ Suomi (Finnish) ](?l=finnish&id=1349014146) [ Svenska (Swedish) ](?l=swedish&id=1349014146) [ Türkçe (Turkish) ](?l=turkish&id=1349014146) [ Tiếng Việt (Vietnamese) ](?l=vietnamese&id=1349014146) [ Українська (Ukrainian) ](?l=ukrainian&id=1349014146) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
+There is already a guide dealing with changing the font, and you can also check the screenshots posted in this guide (you don't need Russian; the images are in English):
 
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_100100_100101_100106_apphubheader)
+<http://steamcommunity.com/sharedfiles/filedetails/?id=432645606>
 
-Robin Hood
+The process is very simple: you download the fonts from the provided link in that guide, then copy the `Fonts` folder into the game folder.
 
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
+Alternatively, you can also download my Czech language installer (see the section above), which installs the fonts too, but then you have to navigate into the game folder and rename the folder `2047_EN` to `2047`; otherwise your game would load in Czech. Renaming the folder will cause the game to load in English.
 
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
+### Tips
 
-### Robin Hood
+The game's native resolution is 1024x768. The game might look weird on today's 1080p (or higher) displays. If your display offers the option to change resolution from 16:9 to 4:3, use it while you play; it will make your game look better.
 
-[ Store Page ](https://store.steampowered.com/app/46560)
+You can also play the game in a window, or try using emulating software, but your results may vary.
 
-[Robin Hood](https://steamcommunity.com/app/46560) > [Guides](https://steamcommunity.com/app/46560/guides/) > [Psojed's Guides](https://steamcommunity.com/id/Psojed/myworkshopfiles/?section=guides&appid=46560)
+However, when the game is installed, it defaults to only 800x600 resolution, so the first thing you should do is go into the in-game **Settings → Graphics** and change the resolution to 1024x768.
 
-This item has been removed from the community because it violates Steam Community & Content Guidelines. It is only visible to you. If you believe your item has been removed by mistake, please contact [Steam Support](https://help.steampowered.com/en/wizard/HelpWithSteamIssue/?issueid=415). 
+![Robin Hood graphics settings](https://images.steamusercontent.com/ugc/925927998461232846/707F7B37395C963479B6AF93D62EFF5E2C4BA208/)
 
-This item is incompatible with Robin Hood. Please see the [instructions page](https://steamcommunity.com) for reasons why this item might not work within Robin Hood. 
+That's all, enjoy!
 
-Not enough ratings 
+### Comments (16 captured of 16 reported)
 
-Robin Hood Language & Texts
+#### I am Cornholio !!! — 29 January 2026, 11:00 p.m.
+
+“Thank you, it works.”
+
+#### sewca7 — 7 December 2025, 7:57 p.m.
+
+“Hi, is it possible that the intro does not work because of the Czech installation?”
+
+#### General_Targus — 1 September 2025, 4:30 p.m.
+
+“It works great for the GOG version too! You are a legend, sir!”
+
+#### Kafkyns — 19 August 2025, 11:23 p.m.
+
+“Does Czech still exist for the game?”
+
+#### Wala — 26 November 2024, 11:19 p.m.
+
+“Hi, hopefully you will read this someday, but I have a problem with your Czech installer.
+
+Even after installing it, my game runs in English... could you take a look at it?”
+
+#### TahniDoPekla — 22 June 2024, 11:30 p.m.
+
+“Hi, everything was done according to the instructions and Czech has no diacritics... the two folders Fonts and Fonts_EN are there ... I somehow don't know where to look for the hidden problem..”
+
+#### Macchester92 — 25 May 2023, 3:31 p.m.
+
+“I'm trying to run the game on MacOS Mojave (10.14), and all seems good but the language is stuck to Deutsch. Steam settings show the language is set to English. I tried to find some config in the files to change it manually, however was unable to find anything. Does anybody know any trick to make it run in English?”
+
+#### Emotikon — 29 May 2020, 8:13 p.m.
+
+“In the end I found a solution for implementing both Czech and the performance fix.
+
+1. Install Czech according to the instructions.
+2. Google, download, and extract dgVoodoo 2 into the `steamapps/common/Robin Hood` directory.
+3. Copy the files from the `MS` folder and paste them into the main Robin Hood directory.
+4. Run `dgVoodooCpl.exe` and, in the DirectX tab, check ‘Fast video memory access’.
+5. Confirm and close the program.
+6. Start the game normally from then on — everything is in Czech, including diacritics, and there are no FPS drops.”
+
+#### Emotikon — 29 May 2020, 6:44 p.m.
+
+“Thanks a lot for the guide! However, diacritics do not work for me either. Is it possible that the performance fix is causing trouble? Without it the game is unplayable for me.”
+
+#### Psojed — 13 April 2020, 1:41 p.m. (author)
+
+“King slayer. Diacritics require you to use a font that supports Czech characters. My installer includes them. I just tried installing the game on Steam and then installing the contents of my installer, and I have the game in Czech with diacritics and the correct font, so the error must be somewhere on your end.
+
+Look in `Steam\\steamapps\\common\\Robin Hood\\DATA\\Interface`; the fonts are stored there. After applying my installer, there should be two folders there, `Fonts` and `Fonts_EN`.”
+
+#### Psojed — 13 April 2020, 1:25 p.m. (author)
+
+“Fabry911 and sid.sethi91. So you install the game on Steam, start the game, and it is in German? Because I installed the game now, but my game installed in English by default.”
+
+#### královrah — 13 April 2020, 10:44 a.m.
+
+“I installed Czech according to the instructions, but all text is missing diacritical characters, which is quite confusing when reading the scrolls. Can anything be done about it?”
+
+#### thenytfox — 2 April 2020, 10:59 p.m.
+
+“I have the same issue as Fabry911. Any help?”
+
+#### Fabry911 — 24 May 2019, 10:36 p.m.
+
+“Hi, I followed your guide; on Steam, English appears selected as the language, but when I play the game, it is still German... how is that possible?”
+
+#### Psojed — 7 February 2019, 10:32 p.m. (author)
+
+#### dzafi — 6 February 2019, 1:54 a.m.
+
+“Thanks for the Czech translation! I was just looking for whether it existed; otherwise I would have created it.”
+
+## Original text
+
+### Robin Hood Language & Texts
 
 By Psojed
 
 A short guide about changing the game language and fonts
 
-1
+### Selecting language
 
-1
+Welcome to my guide!
 
-3
+Robin Hood: Legend of Sherwood is an old game, and as with many old games, it needs some configuration before you can play properly. As the Store page promises, Robin Hood comes in four different languages: English, German, French and Spanish.
 
-1
+To select your preferred language, simply **Right-click** with your mouse on the game in your Steam Library and select **Properties**.
 
-1
+![Steam game Properties menu](https://images.steamusercontent.com/ugc/925927998461118339/6EED6E60B092DC5637904D400F083FC537984A13/)
 
-1
+Then, switch to **Languages** tab and there, select your preferred language from the drop-down menu:
 
-1
+![Steam Languages tab](https://images.steamusercontent.com/ugc/925927998461121465/72D785D0D907E55A4A45C738CCC1F4381068E981/)
 
-7
+That's it. When you launch the game now, it will have the language you selected.
 
-   
+### Other languages
 
-Award
+Robin Hood: Legend of Sherwood was also translated into other languages, but sadly neither Steam nor GOG offer these languages, therefore you need modding. Changing Robin Hood's language is simple, basically you need the language files you want, then you have to place them into the game directory. Finally, you need to delete or rename the english folder, named "2047" to anything else, for example "2047-1". Then the game will load any other language files present in the game's directory.
 
-Favorite
+There are some guides dealing with the Polish language, so you can check those in the guides. As for my fellow Czech players, I have created a simple installer which will do all the work for them. The next section will be in Czech.
 
-Favorited
+### Čeština
 
-Unfavorite
+Pro ostatní České hráče jsem vytvořil jednoduchý instalátor, který udělá veškerou práci za Vás. Nejdřív se ujistěte, že máte hru v angličtině, viz. obrázkový návod na začátku. Poté stačí spustit instalátor, který:
 
-Share
+- Veškeré texty a dabing přepne do češtiny
+- Změní vzhled textu na původní, lepší
+- Lze kdykoliv snadno odinstalovat
 
-This item has been added to your [Favorites](https://steamcommunity.com/my/myworkshopfiles/?section=guides&browsefilter=myfavorites).
+DL link (~150MB)
 
-Created by
-
-[](https://steamcommunity.com/id/Psojed)
-
-Psojed  
-Online 
-
-Category: [Gameplay Basics](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Gameplay+Basics), [Modding or Configuration](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Modding+or+Configuration)
-
-Languages: [English](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=English)
-
-Posted 
-
-1 Apr, 2018 @ 3:58am
-
-2,158 | Unique Visitors  
----|---  
-20 | Current Favorites  
-  
-Guide Index
-
-Overview
-
-Selecting language 
-
-Other languages 
-
-Čeština 
-
-Proper Text Font 
-
-Tips 
-
-Comments
-
-Selecting language 
-
-Welcome to my guide!  
-  
-Robin Hood: Legend of Sherwood is an old game, and as with many old games, it needs some configuration before you can play properly. As the Store page promises, Robin Hood comes in four different languages: English, German, French and Spanish.  
-  
-To select your preferred language, simply **Right-click** with your mouse on the game in your Steam Library and select **Properties**.  
-  
-[](https://images.steamusercontent.com/ugc/925927998461118339/6EED6E60B092DC5637904D400F083FC537984A13/)  
-  
-Then, switch to **Languages** tab and there, select your preferred language from the drop-down menu:  
-  
-[](https://images.steamusercontent.com/ugc/925927998461121465/72D785D0D907E55A4A45C738CCC1F4381068E981/)  
-  
-That's it. When you launch the game now, it will have the language you selected. 
-
-Other languages 
-
-Robin Hood: Legend of Sherwood was also translated into other languages, but sadly neither Steam nor GOG offer these languages, therefore you need modding. Changing Robin Hood's language is simple, basically you need the language files you want, then you have to place them into the game directory. Finally, you need to delete or rename the english folder, named "2047" to anything else, for example "2047-1". Then the game will load any other language files present in the game's directory.  
-  
-There are some guides dealing with the Polish language, so you can check those in the guides. As for my fellow Czech players, I have created a simple installer which will do all the work for them. The next section will be in Czech. 
-
-Čeština 
-
-Pro ostatní České hráče jsem vytvořil jednoduchý instalátor, který udělá veškerou práci za Vás. Nejdřív se ujistěte, že máte hru v angličtině, viz. obrázkový návod na začátku. Poté stačí spustit instalátor, který:  
-\- Veškeré texty a dabing přepne do češtiny  
-\- Změní vzhled textu na původní, lepší  
-\- Lze kdykoliv snadno odinstalovat  
-  
-DL link (~150MB)  
 [https://drive.google.com/open?id=1DTzmUqLyzhmNAwfnk22BBcQD21xTrqys](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Fopen%3Fid%3D1DTzmUqLyzhmNAwfnk22BBcQD21xTrqys)
 
-Proper Text Font 
+### Proper Text Font
 
-There is also a different text font in the Steam version of the game. No idea why the Steam version uses this one, but the original Font is much better.   
-  
-There is already a guide dealing with changing the Font, and you can also check the screenshots posted in this guide (you don't need russian, the images are in english):  
-<http://steamcommunity.com/sharedfiles/filedetails/?id=432645606>  
-  
-The process is very simple, you download the Fonts from the provided link in that guide, then you copy the Fonts folder into the game folder.  
-  
-Alternatively, you can also download my Czech language installer (see section above), which installs the fonts too, but then you have to navigate into the game folder and rename the folder "2047_EN" into "2047", otherwise your game would load in Czech. Renaming the folder will cause the game to load in English. 
+There is also a different text font in the Steam version of the game. No idea why the Steam version uses this one, but the original Font is much better.
 
-Tips 
+There is already a guide dealing with changing the Font, and you can also check the screenshots posted in this guide (you don't need russian, the images are in english):
 
-The game's native resolution is 1024x768. The game might look weird on today's 1080p (or higher) displays. If your display offers to change resolution from 16:9 to 4:3, use it while you play, it will make your game look better.  
-You can also play the game in a window, or try using emulating software, but your results may vary.  
-  
-However, when the game is installed, it defaults to only 800x600 resolution, so the first thing you should do is to go into the ingame Settings -> Graphics, and change the resolution to 1024x768.  
-  
-[](https://images.steamusercontent.com/ugc/925927998461232846/707F7B37395C963479B6AF93D62EFF5E2C4BA208/)  
-  
-That's all, enjoy! 
+<http://steamcommunity.com/sharedfiles/filedetails/?id=432645606>
 
-16 Comments 
+The process is very simple, you download the Fonts from the provided link in that guide, then you copy the Fonts folder into the game folder.
 
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
+Alternatively, you can also download my Czech language installer (see section above), which installs the fonts too, but then you have to navigate into the game folder and rename the folder "2047_EN" into "2047", otherwise your game would load in Czech. Renaming the folder will cause the game to load in English.
 
-[ ](https://steamcommunity.com/profiles/76561198044618188)
+### Tips
 
-[ I am Cornholio !!!](https://steamcommunity.com/profiles/76561198044618188)
+The game's native resolution is 1024x768. The game might look weird on today's 1080p (or higher) displays. If your display offers to change resolution from 16:9 to 4:3, use it while you play, it will make your game look better.
 
-29 Jan @ 2:00pm 
+You can also play the game in a window, or try using emulating software, but your results may vary.
 
-Děkuji, funguje 
+However, when the game is installed, it defaults to only 800x600 resolution, so the first thing you should do is to go into the ingame Settings -> Graphics, and change the resolution to 1024x768.
 
-[ ](https://steamcommunity.com/profiles/76561199862259627)
+![Robin Hood graphics settings](https://images.steamusercontent.com/ugc/925927998461232846/707F7B37395C963479B6AF93D62EFF5E2C4BA208/)
 
-[ sewca7](https://steamcommunity.com/profiles/76561199862259627)
+That's all, enjoy!
 
-7 Dec, 2025 @ 10:57am 
+### Comments
 
-ahoj je možný že kvůli instalaci češtiny nejede intro ? 
+#### I am Cornholio !!! — 29 Jan @ 11:00pm
 
-[ ](https://steamcommunity.com/profiles/76561198263094357)
+Děkuji, funguje
 
-[ General_Targus](https://steamcommunity.com/profiles/76561198263094357)
+#### sewca7 — 7 Dec, 2025 @ 7:57pm
 
-1 Sep, 2025 @ 7:30am 
+ahoj je možný že kvůli instalaci češtiny nejede intro ?
 
-Funguje to skvěle i pro GOG verzi! Jsi legenda, pane! 
+#### General_Targus — 1 Sep, 2025 @ 4:30pm
 
-[ ](https://steamcommunity.com/profiles/76561198022155634)
+Funguje to skvěle i pro GOG verzi! Jsi legenda, pane!
 
-[ Kafkyns](https://steamcommunity.com/profiles/76561198022155634)
+#### Kafkyns — 19 Aug, 2025 @ 11:23pm
 
-19 Aug, 2025 @ 2:23pm 
+Existuje ještě čeština do hry ?
 
-Existuje ještě čeština do hry ? 
+#### Wala — 26 Nov, 2024 @ 11:19pm
 
-[ ](https://steamcommunity.com/id/czwala)
+Ahoj, snad si to ještě někdy přečteš, ale mám problém s tvým instalátorem češtiny.
 
-[ Wala](https://steamcommunity.com/id/czwala)
+I po jeho instalaci mi hra běží v angličtině...mohl by jsi se na něj podívat?
 
-26 Nov, 2024 @ 2:19pm 
+#### TahniDoPekla — 22 Jun, 2024 @ 11:30pm
 
-Ahoj, snad si to ještě někdy přečteš, ale mám problém s tvým instalátorem češtiny.  
-I po jeho instalaci mi hra běží v angličtině...mohl by jsi se na něj podívat? 
+Ahoj, vše uděláno dle návodu a čeština je bez diakritiky... tyto dvě složky tam jsou Fonts a Fonts_EN ... nějak nevím kde hledat zakopaného psa..
 
-[ ](https://steamcommunity.com/profiles/76561198093509213)
+#### Macchester92 — 25 May, 2023 @ 3:31pm
 
-[ TahniDoPekla](https://steamcommunity.com/profiles/76561198093509213)
+I'm trying to run the game on MacOS Mojave (10.14), and all seems good but the language is stuck to Deutsch. Steam settings show the language is set to English. I tried to find some config in the files to change it manually, however was unable to find anything. Does anybody know any trick to make it run in English?
 
-22 Jun, 2024 @ 2:30pm 
+#### Emotikon — 29 May, 2020 @ 8:13pm
 
-Ahoj, vše uděláno dle návodu a čeština je bez diakritiky... tyto dvě složky tam jsou Fonts a Fonts_EN ... nějak nevím kde hledat zakopaného psa.. 
+Tak nakonec jsem nalezl řešení, jak implementovat češtinu i performance fix.
 
-[ ](https://steamcommunity.com/profiles/76561198125503255)
+1) nainstalovat češtinu podle návodu
+2) vygooglit, stáhnout a rozbalit program dgVoodoo 2 do adresáře steamapps/common/Robin Hood
+3) ze složky "MS" zkopírovat soubory a vložit do hlavního adresáře Robin Hood
+4) spustit dgVoodooCpl.exe a v záložce DirextX zaškrtnout 'Fast video memory access'
+5) potvrdit a zavřít program
+6) spouštět hru už normálním způsobem - vše v češtině včetně diakritiky a bez FPS dropů
 
-[ Macchester92](https://steamcommunity.com/profiles/76561198125503255)
+#### Emotikon — 29 May, 2020 @ 6:44pm
 
-25 May, 2023 @ 6:31am 
+Díky moc za návod! Nicméně mi taktéž nefunguje diakritika. Je možné, že dělá neplechu performance fix? bez něj je pro mne hra nespustitelná.
 
-I'm trying to run the game on MacOS Mojave (10.14), and all seems good but the language is stuck to Deutsch. Steam settings show the language is set to English. I tried to find some config in the files to change it manually, however was unable to find anything. Does anybody know any trick to make it run in English? 
+#### Psojed — 13 Apr, 2020 @ 1:41pm (author)
 
-[ ](https://steamcommunity.com/id/EmotikonCZ)
+královrah. Diakritika potřebuje abys používal font který umí české znaky. Můj instalátor je obsahuje. Zkusil jsem teď instalovat hru na Steamu a pak instalovat obsah mého instalátoru, a mám hru česky i s diakritikou a správným fontem, takže chyba bude někde u tebe.
 
-[ Emotikon](https://steamcommunity.com/id/EmotikonCZ)
+Mrkni se do Steam\\steamapps\\common\\Robin Hood\\DATA\\Interface, tam jsou uložené fonty. Po aplkaci mého instalátoru by tam měly být dvě složky, Fonts a Fonts_EN.
 
-29 May, 2020 @ 11:13am 
+#### Psojed — 13 Apr, 2020 @ 1:25pm (author)
 
-Tak nakonec jsem nalezl řešení, jak implementovat češtinu i performance fix.  
-  
-1) nainstalovat češtinu podle návodu  
-2) vygooglit, stáhnout a rozbalit program dgVoodoo 2 do adresáře steamapps/common/Robin Hood  
-3) ze složky "MS" zkopírovat soubory a vložit do hlavního adresáře Robin Hood  
-4) spustit dgVoodooCpl.exe a v záložce DirextX zaškrtnout 'Fast video memory access'  
-5) potvrdit a zavřít program  
-6) spouštět hru už normálním způsobem - vše v češtině včetně diakritiky a bez FPS dropů 
+Fabry911 and sid.sethi91. So you install the game on Steam, start the game, it is in German? Beucase I installed the game now, but my game installed in English by default.
 
-[ ](https://steamcommunity.com/id/EmotikonCZ)
+#### královrah — 13 Apr, 2020 @ 10:44am
 
-[ Emotikon](https://steamcommunity.com/id/EmotikonCZ)
+Češtinu jsem si dle návodu nainstaloval, ale veškeré texty postrádají znaky s diakritikou, což je při čtení pergamenů docela matoucí. Dá se s tím něco dělat?
 
-29 May, 2020 @ 9:44am 
+#### thenytfox — 2 Apr, 2020 @ 10:59pm
 
-Díky moc za návod! Nicméně mi taktéž nefunguje diakritika. Je možné, že dělá neplechu performance fix? bez něj je pro mne hra nespustitelná. 
+I have the same issue as Fabry911. Any help?
 
-[ ](https://steamcommunity.com/id/Psojed)
+#### Fabry911 — 24 May, 2019 @ 10:36pm
 
-[ Psojed](https://steamcommunity.com/id/Psojed)  [author]
+hii, i followed your guide, on steam english result like the language selected, but when i play the game, it's still german...how it is possible?
 
-13 Apr, 2020 @ 4:41am 
+#### Psojed — 7 Feb, 2019 @ 10:32pm (author)
 
-královrah. Diakritika potřebuje abys používal font který umí české znaky. Můj instalátor je obsahuje. Zkusil jsem teď instalovat hru na Steamu a pak instalovat obsah mého instalátoru, a mám hru česky i s diakritikou a správným fontem, takže chyba bude někde u tebe.  
-  
-Mrkni se do Steam\steamapps\common\Robin Hood\DATA\Interface, tam jsou uložené fonty. Po aplkaci mého instalátoru by tam měly být dvě složky, Fonts a Fonts_EN. 
+#### dzafi — 6 Feb, 2019 @ 1:54am
 
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-Share to your Steam activity feed
-
-[]( "Share on Facebook")
-
-[]( "Share on Twitter")
-
-[]( "Share on Reddit")
-
-Link: 
-
-You need to sign in or create an account to do that.
-
-[Sign In](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D1349014146%26insideModal%3D0%26requirelogin%3D1) [Create an Account](https://store.steampowered.com/join) Cancel
-
-[Update](javascript:UpdateKVTagsSingle\(\);)
-
-
-### technical__steam-language-fonts.txt
-
-_Source: `originals/technical__steam-language-fonts.txt`._
-
-[ Sign in ](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D1349014146) [ Store ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ Community ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
-
-Change language 
-
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
-
-View desktop website 
-
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
-
-[ ](https://store.steampowered.com/)
-
-[ ](https://store.steampowered.com/)
-
-[ STORE ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ COMMUNITY ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
-
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D1349014146)  |  language
-
-[ 简体中文 (Simplified Chinese) ](?l=schinese&id=1349014146) [ 繁體中文 (Traditional Chinese) ](?l=tchinese&id=1349014146) [ 日本語 (Japanese) ](?l=japanese&id=1349014146) [ 한국어 (Korean) ](?l=koreana&id=1349014146) [ ไทย (Thai) ](?l=thai&id=1349014146) [ Bahasa Indonesia (Indonesian) ](?l=indonesian&id=1349014146) [ Bahasa Melayu (Malay) BETA ](?l=malay&id=1349014146) [ Български (Bulgarian) ](?l=bulgarian&id=1349014146) [ Čeština (Czech) ](?l=czech&id=1349014146) [ Dansk (Danish) ](?l=danish&id=1349014146) [ Deutsch (German) ](?l=german&id=1349014146) [ Español - España (Spanish - Spain) ](?l=spanish&id=1349014146) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam&id=1349014146) [ Ελληνικά (Greek) ](?l=greek&id=1349014146) [ Français (French) ](?l=french&id=1349014146) [ Italiano (Italian) ](?l=italian&id=1349014146) [ Magyar (Hungarian) ](?l=hungarian&id=1349014146) [ Nederlands (Dutch) ](?l=dutch&id=1349014146) [ Norsk (Norwegian) ](?l=norwegian&id=1349014146) [ Polski (Polish) ](?l=polish&id=1349014146) [ Português (Portuguese - Portugal) ](?l=portuguese&id=1349014146) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian&id=1349014146) [ Română (Romanian) ](?l=romanian&id=1349014146) [ Русский (Russian) ](?l=russian&id=1349014146) [ Suomi (Finnish) ](?l=finnish&id=1349014146) [ Svenska (Swedish) ](?l=swedish&id=1349014146) [ Türkçe (Turkish) ](?l=turkish&id=1349014146) [ Tiếng Việt (Vietnamese) ](?l=vietnamese&id=1349014146) [ Українська (Ukrainian) ](?l=ukrainian&id=1349014146) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
-
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_100100_100101_100106_apphubheader)
-
-Robin Hood
-
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
-
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
-
-### Robin Hood
-
-[ Store Page ](https://store.steampowered.com/app/46560)
-
-[Robin Hood](https://steamcommunity.com/app/46560) > [Guides](https://steamcommunity.com/app/46560/guides/) > [Psojed's Guides](https://steamcommunity.com/id/Psojed/myworkshopfiles/?section=guides&appid=46560)
-
-This item has been removed from the community because it violates Steam Community & Content Guidelines. It is only visible to you. If you believe your item has been removed by mistake, please contact [Steam Support](https://help.steampowered.com/en/wizard/HelpWithSteamIssue/?issueid=415). 
-
-This item is incompatible with Robin Hood. Please see the [instructions page](https://steamcommunity.com) for reasons why this item might not work within Robin Hood. 
-
-Not enough ratings 
-
-Robin Hood Language & Texts
-
-By Psojed
-
-A short guide about changing the game language and fonts
-
-1
-
-1
-
-3
-
-1
-
-1
-
-1
-
-1
-
-7
-
-   
-
-Award
-
-Favorite
-
-Favorited
-
-Unfavorite
-
-Share
-
-This item has been added to your [Favorites](https://steamcommunity.com/my/myworkshopfiles/?section=guides&browsefilter=myfavorites).
-
-Created by
-
-[](https://steamcommunity.com/id/Psojed)
-
-Psojed  
-Online 
-
-Category: [Gameplay Basics](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Gameplay+Basics), [Modding or Configuration](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Modding+or+Configuration)
-
-Languages: [English](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=English)
-
-Posted 
-
-1 Apr, 2018 @ 3:58am
-
-2,158 | Unique Visitors  
----|---  
-20 | Current Favorites  
-  
-Guide Index
-
-Overview
-
-Selecting language 
-
-Other languages 
-
-Čeština 
-
-Proper Text Font 
-
-Tips 
-
-Comments
-
-Selecting language 
-
-Welcome to my guide!  
-  
-Robin Hood: Legend of Sherwood is an old game, and as with many old games, it needs some configuration before you can play properly. As the Store page promises, Robin Hood comes in four different languages: English, German, French and Spanish.  
-  
-To select your preferred language, simply **Right-click** with your mouse on the game in your Steam Library and select **Properties**.  
-  
-[](https://images.steamusercontent.com/ugc/925927998461118339/6EED6E60B092DC5637904D400F083FC537984A13/)  
-  
-Then, switch to **Languages** tab and there, select your preferred language from the drop-down menu:  
-  
-[](https://images.steamusercontent.com/ugc/925927998461121465/72D785D0D907E55A4A45C738CCC1F4381068E981/)  
-  
-That's it. When you launch the game now, it will have the language you selected. 
-
-Other languages 
-
-Robin Hood: Legend of Sherwood was also translated into other languages, but sadly neither Steam nor GOG offer these languages, therefore you need modding. Changing Robin Hood's language is simple, basically you need the language files you want, then you have to place them into the game directory. Finally, you need to delete or rename the english folder, named "2047" to anything else, for example "2047-1". Then the game will load any other language files present in the game's directory.  
-  
-There are some guides dealing with the Polish language, so you can check those in the guides. As for my fellow Czech players, I have created a simple installer which will do all the work for them. The next section will be in Czech. 
-
-Čeština 
-
-Pro ostatní České hráče jsem vytvořil jednoduchý instalátor, který udělá veškerou práci za Vás. Nejdřív se ujistěte, že máte hru v angličtině, viz. obrázkový návod na začátku. Poté stačí spustit instalátor, který:  
-\- Veškeré texty a dabing přepne do češtiny  
-\- Změní vzhled textu na původní, lepší  
-\- Lze kdykoliv snadno odinstalovat  
-  
-DL link (~150MB)  
-[https://drive.google.com/open?id=1DTzmUqLyzhmNAwfnk22BBcQD21xTrqys](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Fopen%3Fid%3D1DTzmUqLyzhmNAwfnk22BBcQD21xTrqys)
-
-Proper Text Font 
-
-There is also a different text font in the Steam version of the game. No idea why the Steam version uses this one, but the original Font is much better.   
-  
-There is already a guide dealing with changing the Font, and you can also check the screenshots posted in this guide (you don't need russian, the images are in english):  
-<http://steamcommunity.com/sharedfiles/filedetails/?id=432645606>  
-  
-The process is very simple, you download the Fonts from the provided link in that guide, then you copy the Fonts folder into the game folder.  
-  
-Alternatively, you can also download my Czech language installer (see section above), which installs the fonts too, but then you have to navigate into the game folder and rename the folder "2047_EN" into "2047", otherwise your game would load in Czech. Renaming the folder will cause the game to load in English. 
-
-Tips 
-
-The game's native resolution is 1024x768. The game might look weird on today's 1080p (or higher) displays. If your display offers to change resolution from 16:9 to 4:3, use it while you play, it will make your game look better.  
-You can also play the game in a window, or try using emulating software, but your results may vary.  
-  
-However, when the game is installed, it defaults to only 800x600 resolution, so the first thing you should do is to go into the ingame Settings -> Graphics, and change the resolution to 1024x768.  
-  
-[](https://images.steamusercontent.com/ugc/925927998461232846/707F7B37395C963479B6AF93D62EFF5E2C4BA208/)  
-  
-That's all, enjoy! 
-
-16 Comments 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-[ ](https://steamcommunity.com/profiles/76561198044618188)
-
-[ I am Cornholio !!!](https://steamcommunity.com/profiles/76561198044618188)
-
-29 Jan @ 2:00pm 
-
-Děkuji, funguje 
-
-[ ](https://steamcommunity.com/profiles/76561199862259627)
-
-[ sewca7](https://steamcommunity.com/profiles/76561199862259627)
-
-7 Dec, 2025 @ 10:57am 
-
-ahoj je možný že kvůli instalaci češtiny nejede intro ? 
-
-[ ](https://steamcommunity.com/profiles/76561198263094357)
-
-[ General_Targus](https://steamcommunity.com/profiles/76561198263094357)
-
-1 Sep, 2025 @ 7:30am 
-
-Funguje to skvěle i pro GOG verzi! Jsi legenda, pane! 
-
-[ ](https://steamcommunity.com/profiles/76561198022155634)
-
-[ Kafkyns](https://steamcommunity.com/profiles/76561198022155634)
-
-19 Aug, 2025 @ 2:23pm 
-
-Existuje ještě čeština do hry ? 
-
-[ ](https://steamcommunity.com/id/czwala)
-
-[ Wala](https://steamcommunity.com/id/czwala)
-
-26 Nov, 2024 @ 2:19pm 
-
-Ahoj, snad si to ještě někdy přečteš, ale mám problém s tvým instalátorem češtiny.  
-I po jeho instalaci mi hra běží v angličtině...mohl by jsi se na něj podívat? 
-
-[ ](https://steamcommunity.com/profiles/76561198093509213)
-
-[ TahniDoPekla](https://steamcommunity.com/profiles/76561198093509213)
-
-22 Jun, 2024 @ 2:30pm 
-
-Ahoj, vše uděláno dle návodu a čeština je bez diakritiky... tyto dvě složky tam jsou Fonts a Fonts_EN ... nějak nevím kde hledat zakopaného psa.. 
-
-[ ](https://steamcommunity.com/profiles/76561198125503255)
-
-[ Macchester92](https://steamcommunity.com/profiles/76561198125503255)
-
-25 May, 2023 @ 6:31am 
-
-I'm trying to run the game on MacOS Mojave (10.14), and all seems good but the language is stuck to Deutsch. Steam settings show the language is set to English. I tried to find some config in the files to change it manually, however was unable to find anything. Does anybody know any trick to make it run in English? 
-
-[ ](https://steamcommunity.com/id/EmotikonCZ)
-
-[ Emotikon](https://steamcommunity.com/id/EmotikonCZ)
-
-29 May, 2020 @ 11:13am 
-
-Tak nakonec jsem nalezl řešení, jak implementovat češtinu i performance fix.  
-  
-1) nainstalovat češtinu podle návodu  
-2) vygooglit, stáhnout a rozbalit program dgVoodoo 2 do adresáře steamapps/common/Robin Hood  
-3) ze složky "MS" zkopírovat soubory a vložit do hlavního adresáře Robin Hood  
-4) spustit dgVoodooCpl.exe a v záložce DirextX zaškrtnout 'Fast video memory access'  
-5) potvrdit a zavřít program  
-6) spouštět hru už normálním způsobem - vše v češtině včetně diakritiky a bez FPS dropů 
-
-[ ](https://steamcommunity.com/id/EmotikonCZ)
-
-[ Emotikon](https://steamcommunity.com/id/EmotikonCZ)
-
-29 May, 2020 @ 9:44am 
-
-Díky moc za návod! Nicméně mi taktéž nefunguje diakritika. Je možné, že dělá neplechu performance fix? bez něj je pro mne hra nespustitelná. 
-
-[ ](https://steamcommunity.com/id/Psojed)
-
-[ Psojed](https://steamcommunity.com/id/Psojed)  [author]
-
-13 Apr, 2020 @ 4:41am 
-
-královrah. Diakritika potřebuje abys používal font který umí české znaky. Můj instalátor je obsahuje. Zkusil jsem teď instalovat hru na Steamu a pak instalovat obsah mého instalátoru, a mám hru česky i s diakritikou a správným fontem, takže chyba bude někde u tebe.  
-  
-Mrkni se do Steam\steamapps\common\Robin Hood\DATA\Interface, tam jsou uložené fonty. Po aplkaci mého instalátoru by tam měly být dvě složky, Fonts a Fonts_EN. 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-Share to your Steam activity feed
-
-[]( "Share on Facebook")
-
-[]( "Share on Twitter")
-
-[]( "Share on Reddit")
-
-Link: 
-
-You need to sign in or create an account to do that.
-
-[Sign In](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D1349014146%26insideModal%3D0%26requirelogin%3D1) [Create an Account](https://store.steampowered.com/join) Cancel
-
-[Update](javascript:UpdateKVTagsSingle\(\);)
+Díky za tu češtinu! Zrovna jsem hledal jestli to existuje jinak bych ji vytvořil.

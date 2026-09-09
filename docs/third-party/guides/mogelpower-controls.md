@@ -1,211 +1,239 @@
-# MogelPower — controls, awareness, and manual links
+# MogelPower — Robin Hood: The Legend of Sherwood cheats and tips
 
-- Original source: [MogelPower — controls, awareness, and manual links](https://www.mogelpower.de/cheats/Robin-Hood-Die_PC_23560.html)
-- Author / publication: MogelPower; manual credited to developer, printable keycard to Bani
-- Language / date: German; publication date not shown
-- Access: Page text and attachment descriptions inspected
-- Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
+- Source: [MogelPower](https://www.mogelpower.de/cheats/Robin-Hood-Die_PC_23560.html)
+- Publisher: MogelPower
+- Original language: German
+- Game release shown on the page: November 2002
+- Accessed: 2026-09-09
 
-The page explains inspecting a character's vision cone, interpreting overhead emotional symbols, item-carrying limits, and initially hidden characters. Its account of concealed units says they avoid enemy attention until given orders.
+## English translation
 
-The attachment section identifies a developer manual and a separately credited printable keycard. Those attachments were not inspected in this pass. The page's own testing badge does not mean these instructions were reproduced here.
+### Robin Hood — The Legend of Sherwood (PC)
 
-Unlike the earlier user-supplied MogelPower walkthrough for Conquests of the Longbow, this page concerns Spellbound's game. Its controls and awareness descriptions offer another source to compare with the English and Czech guides.
+Also known as:
 
-## Converted text from the original HTML
+- **Robin Hood — The Legend of Sherwood**
 
+Genre: Tactics
 
-### guides__mogelpower-controls.html
+Released: November 2002
 
-_Source: `originals/guides__mogelpower-controls.html`._
+Developer: [Spellbound Entertainment](https://de.wikipedia.org/wiki/Spellbound_Entertainment)
 
-[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.
+Publisher: [Wanadoo](https://de.wikipedia.org/wiki/Wanadoo)
 
+![Cover of Robin Hood — The Legend of Sherwood](https://www.mogelpower.de/images/games/1/21043/cov/lightbox/001.jpg)
 
-### guides__mogelpower-controls.txt
+#### Cheats
 
-_Source: `originals/guides__mogelpower-controls.txt`._
+Highlight a standing character. Move the mouse pointer onto the crouch symbol. Press **[F11]** to open the console. Enter the following cheats and confirm with **[Enter]**. To close the console, press **[Enter]** without entering a command.
 
-[ ](/)
+| Cheat | Effect |
+| --- | --- |
+| `IMMUNITY` | Your own characters are invulnerable |
+| `CASH` | Money |
+| `BINGO` | 999 units of ammunition for every character |
+| `PAM` | Stupid opponents in melee combat |
+| `MERRYMAN` | Obtain an additional Merry Man |
+| `UNBLIP` | All characters on the map become visible |
+| `TIMELESS` | Stop time |
+| `GOODLUCK` | More clovers for the campaign |
+| `WINNER` | Win the mission |
 
-  * [Aktuell](magazin/)
-  * [Cheats](cheats/)
-  * [Forum](forum/)
-  * [Praxis](praxis/)
-  * [Bücher](buecher/)
-  * [Über](ueber/)
+![Robin Hood: The Legend of Sherwood cheat image](https://www.mogelpower.de/images/cheats/spiele/robin_hood_legende.jpg)
 
-# PC: Cheats für Robin Hood - Die Legende von Sherwood
+#### False cheats
 
-[ ](/)
+The cheats circulated by numerous websites, which require pressing the **[Alt]** key and entering number combinations, do not apply to this game. They are for *The Adventures of Robin Hood* (1991).
 
-# PC: Cheats für Robin Hood - Die Legende von Sherwood
+#### Tips
 
-[1](cheats/pc-0.html) [A](cheats/pc-a.html) [B](cheats/pc-b.html) [C](cheats/pc-c.html) [D](cheats/pc-d.html) [E](cheats/pc-e.html) [F](cheats/pc-f.html) [G](cheats/pc-g.html) [H](cheats/pc-h.html) [I](cheats/pc-i.html) [J](cheats/pc-j.html) [K](cheats/pc-k.html) [L](cheats/pc-l.html) [N](cheats/pc-n.html) [M](cheats/pc-m.html) [O](cheats/pc-o.html) [P](cheats/pc-p.html) [Q](cheats/pc-q.html) [R](cheats/pc-r.html) [S](cheats/pc-s.html) [T](cheats/pc-t.html) [U](cheats/pc-u.html) [V](cheats/pc-v.html) [W](cheats/pc-w.html) [X](cheats/pc-x.html) [Y](cheats/pc-y.html) [Z](cheats/pc-z.html)
+**Outlines**
 
-## Cheat-Suche:
+At the start of a mission, Robin and his companions know nothing about their enemies’ defenses. Characters are therefore initially shown in the game window as indistinguishable gray or black outlines.
 
-Suche in allen SystemenPCPlayStationNintendoXboxHandheldsRetroXploder / GameBusterLösungen\------------------------3DO3DSAmigaAndroidApple2ArcadeArchimedesAtari5200Atari7800AtariSTAtariXLBBCBrowserBWSC16C64CD-iCD32ColecoVisionCPCDCDragon32FlipperGameGearGBGBAGCIntellivisionipodJAGLinuxLynxMacMDMSMSXN-GageN64NDSNeoNESNGPCPCPCEnginePS2PS3PS4PSPPSVitaPSXSaturnSNESSwitchTI-99TRS-80VC20VCSVectrexVirtualBoyWiiWiiUWPX360XboxXboxOneZXSpectrum  OK
+To determine whether a gray outline conceals a friend, enemy, or civilian, one of our heroes must approach it, obtain the information in another way (for example, from a beggar), or use their special abilities.
 
-[PC](cheats/pc.html) [Mac](cheats/mac.html)
+**Items**
 
-[PS4](cheats/ps4.html) [PS3](cheats/ps3.html) [PS2](cheats/ps2.html) [PS1](cheats/psx.html)
+Items are always visible (unless they only become available after certain conditions have been met; in that case, they appear in the game window as soon as the requirements are fulfilled). They are easy to recognize because they rotate around their own axis.
 
-[XOne](cheats/xboxone.html) [X360](cheats/x360.html) [Xbox](cheats/xbox.html)
+Only a character who can perform the action associated with an item can pick it up. Caution: each character can carry only a limited quantity of each type of item. Once that limit has been reached, the character cannot pick up any more items of that type.
 
-[Wii U](cheats/wiiu.html) [Wii](cheats/wii.html) [GC](cheats/gc.html) [N64](cheats/n64.html)
+**Displaying enemy fields of vision**
 
-[PS Vita](cheats/psvita.html) [PSP](cheats/psp.html)
+Soldiers and civilians do not see everything happening around them. They can see only people and items within their **FIELD OF VISION**.
 
-[3DS](cheats/3ds.html) [NDS](cheats/nds.html) [GBA](cheats/gba.html) [GB](cheats/gb.html)
+To display a game character’s field of vision, click the **EYE** (at the top right of the screen) or use the corresponding keyboard shortcut (default: hold the **ALT** key). The mouse pointer then becomes a question mark. Point at a character to display that character’s field of vision.
 
-[SNES](cheats/snes.html) [NES](cheats/nes.html)
+**Caution:** you must first know which character it is; this does not work when you can see only a gray outline.
 
-[DC](cheats/dc.html) [Sat](cheats/saturn.html) [MD](cheats/md.html) [MS](cheats/ms.html) [GG](cheats/gamegear.html)
+Click the **RIGHT** mouse button to hide the question-mark pointer.
 
-[Neo](cheats/neo.html) [NGP](cheats/ngpc.html) [BWS](cheats/bws.html) [CD-i](cheats/cd-i.html) [Amiga](cheats/amiga.html) [C64](cheats/c64.html) [C16/+4](cheats/c16.html)
+To stop displaying a character’s field of vision, right-click the eye symbol (at the top of the screen), or hold **ALT** and right-click in the game window.
 
-[2600](cheats/vcs.html) [Jag](cheats/jag.html) [Lynx](cheats/lynx.html)
+If a hero, a knocked-out enemy, or anything else is inside a character’s field of vision, it will very probably be discovered. If it is a hero, the enemy will probably raise the alarm, which you should avoid at all costs!
 
-[Lösungen](cheats/loesung.html)
+Only one character’s field of vision can be displayed at a time.
 
-## Robin Hood - Die Legende von Sherwood  
-(PC)
+**Emotion symbols**
 
-Auch bekannt als: 
+Emotion symbols appear above civilians’ or soldiers’ heads and indicate their mood. This lets you observe the reactions of several characters at once.
 
-  * **Robin Hood - The Legend of Sherwood**
+_Question mark:_ The soldier has discovered something and is wondering what it might be.
+
+_Exclamation mark:_ The soldier has noticed something and is now alert!
+
+_Sun:_ The character has discovered something interesting and will surely approach it (for example, a purse).
+
+_Storm cloud:_ The character has experienced or seen something that makes them angry (for example, they were stung by a wasp).
+
+_Rain cloud:_ The character has seen something that does not interest them.
+
+_Z:_ The character is asleep. They cannot see anything now, but a noise could wake them!
+
+_Spiral:_ The character is drunk. They are less alert and slower than usual.
+
+**Hidden characters**
+
+In some missions, your characters are initially hidden in foliage or conceal their faces beneath a hood. In these cases, a small character portrait appears beneath the disguise or hiding place. Hidden characters do not attract the enemies’ attention as long as you have not yet given them any orders.
+
+#### Manual
+
+- **Description:** Manual  
+  **Author:** Developer — **Size:** 32,123 KB  
+  [Download the manual](https://www.mogelpower.de/manuals/Robin_Hood_Die_Legende_von_Sherwood_Handbuch.pdf)
+
+#### Key bindings
+
+- **Description:** Key bindings/keycard for printing  
+  **Author:** Bani — **Size:** 12 KB  
+  [Download the keycard](https://www.mogelpower.de/keycards/Robin_Hood_Die_Legende_von_Sherwood_Keycard.pdf)
+
+#### Questions and answers
+
+Ask questions about the game in our [forum](https://www.mogelpower.de/forum/) and discuss it with thousands of other visitors to our website. Registration is not required.
+
+Direct link: **https://www.mogelpower.de/?pccheat=23560**
+
+Verification note: These cheats were successfully tested.
+
+Views: **168,375**
+
+These cheats come from MogelPower, [www.mogelpower.de](https://www.mogelpower.de/). MogelPower is protected by copyright and competition law and may not be used as the basis for one’s own collections.
+
+## Original text
+
+### Robin Hood - Die Legende von Sherwood (PC)
+
+Auch bekannt als:
+
+- **Robin Hood - The Legend of Sherwood**
 
 Genre: Taktik
 
 Erschienen: November 2002
 
-Entwickler: [ ](cheats/publisher.php?id=87) [ Spellbound Entertainment ](https://de.wikipedia.org/wiki/Spellbound_Entertainment)
+Entwickler: [Spellbound Entertainment](https://de.wikipedia.org/wiki/Spellbound_Entertainment)
 
-Verleger: [ ](cheats/publisher.php?id=348) [ Wanadoo ](https://de.wikipedia.org/wiki/Wanadoo)
+Verleger: [Wanadoo](https://de.wikipedia.org/wiki/Wanadoo)
 
-[ ](https://www.mogelpower.de/images/games/1/21043/cov/lightbox/001.jpg "Cover von Robin Hood - Die Legende von Sherwood")
+![Cover von Robin Hood - Die Legende von Sherwood](https://www.mogelpower.de/images/games/1/21043/cov/lightbox/001.jpg)
 
-###  Cheats: 
+#### Cheats
 
-Heben Sie einen stehenden Charakter hervor. Setzen Sie den Mauspfeil auf das Ducken-Symbol. Drücken Sie **[F11]** , um die Konsole zu öffnen. Geben Sie hier folgende Cheats ein. Bestätigen Sie mit [Enter]. Um die Konsole zu schließen, drücken Sie [Enter], ohne einen Befehl eingegeben zu haben. 
+Heben Sie einen stehenden Charakter hervor. Setzen Sie den Mauspfeil auf das Ducken-Symbol. Drücken Sie **[F11]**, um die Konsole zu öffnen. Geben Sie hier folgende Cheats ein. Bestätigen Sie mit **[Enter]**. Um die Konsole zu schließen, drücken Sie **[Enter]**, ohne einen Befehl eingegeben zu haben.
 
-IMMUNITY | eigene Charaktere sind unverwundbar  
----|---  
-CASH | Geld  
-BINGO | 999 Einheiten Munition für jeden Charakter  
-PAM | dumme Gegner im Nahkampf  
-MERRYMAN | einen zusätzlichen Spaßvogel erhalten  
-UNBLIP | alle Charaktere auf der Karte sichtbar  
-TIMELESS | Zeit anhalten  
-GOODLUCK | mehr Kleeblätter für die Kampagne  
-WINNER | Mission gewinnen  
-  
-* * *
+| Cheat | Wirkung |
+| --- | --- |
+| `IMMUNITY` | eigene Charaktere sind unverwundbar |
+| `CASH` | Geld |
+| `BINGO` | 999 Einheiten Munition für jeden Charakter |
+| `PAM` | dumme Gegner im Nahkampf |
+| `MERRYMAN` | einen zusätzlichen Spaßvogel erhalten |
+| `UNBLIP` | alle Charaktere auf der Karte sichtbar |
+| `TIMELESS` | Zeit anhalten |
+| `GOODLUCK` | mehr Kleeblätter für die Kampagne |
+| `WINNER` | Mission gewinnen |
 
-### Falsche Cheats:
+![Robin Hood: Die Legende von Sherwood — Cheatbild](https://www.mogelpower.de/images/cheats/spiele/robin_hood_legende.jpg)
 
-Die durch zahlreiche Websites verbreiteten Cheats, nach denen die [Alt]-Taste gedrückt und Zahlenkombinationen eingegeben werden müssen, gelten nicht für dieses Spiel, sondern für _"The Adventures of Robin Hood"_ (1991). 
+#### Falsche Cheats
 
-* * *
+Die durch zahlreiche Websites verbreiteten Cheats, nach denen die **[Alt]**-Taste gedrückt und Zahlenkombinationen eingegeben werden müssen, gelten nicht für dieses Spiel, sondern für *"The Adventures of Robin Hood"* (1991).
 
-###  Tipps: 
+#### Tipps
 
 **Umrisse**
 
-Zu Beginn einer Mission wissen Robin und seine Kameraden noch nichts über die Verteidigung ihrer Feinde. Daher werden die Charaktere im Spielfenster zunächst als ununterscheidbare graue oder schwarze Umrisse dargestellt. 
+Zu Beginn einer Mission wissen Robin und seine Kameraden noch nichts über die Verteidigung ihrer Feinde. Daher werden die Charaktere im Spielfenster zunächst als ununterscheidbare graue oder schwarze Umrisse dargestellt.
 
-Um festzustellen, ob sich hinter einem grauen Umriss ein Freund, Feind oder Zivilist verbirgt, muss sich einer unserer Helden ihm nähern, sich die Information auf andere Weise verschaffen (beispielsweise von einem Bettler) oder seine besonderen Fähigkeiten einsetzen. 
+Um festzustellen, ob sich hinter einem grauen Umriss ein Freund, Feind oder Zivilist verbirgt, muss sich einer unserer Helden ihm nähern, sich die Information auf andere Weise verschaffen (beispielsweise von einem Bettler) oder seine besonderen Fähigkeiten einsetzen.
 
 **Gegenstände**
 
-Gegenstände sind immer sichtbar (es sei denn, sie werden erst nach Erfüllen bestimmter Bedingungen verfügbar; in diesem Fall erscheinen sie im Spielfenster, sobald die Voraussetzungen erfüllt sind). Sie sind leicht erkennbar, da sie sich um ihre eigene Achse drehen. 
+Gegenstände sind immer sichtbar (es sei denn, sie werden erst nach Erfüllen bestimmter Bedingungen verfügbar; in diesem Fall erscheinen sie im Spielfenster, sobald die Voraussetzungen erfüllt sind). Sie sind leicht erkennbar, da sie sich um ihre eigene Achse drehen.
 
-Nur ein Charakter, der die mit dem Gegenstand in Verbindung stehende Aktion durchführen kann, kann diesen aufsammeln. Achtung: Jeder Charakter kann nur eine begrenzte Menge Gegenstände jeder Art tragen. Wenn er diese Anzahl bereits erreicht hat, kann er keine neuen Gegenstände mehr aufnehmen! 
+Nur ein Charakter, der die mit dem Gegenstand in Verbindung stehende Aktion durchführen kann, kann diesen aufsammeln. Achtung: Jeder Charakter kann nur eine begrenzte Menge Gegenstände jeder Art tragen. Wenn er diese Anzahl bereits erreicht hat, kann er keine neuen Gegenstände mehr aufnehmen!
 
 **Feindliche Sichtkegel einblenden**
 
-Soldaten und Zivilisten sehen nicht alles, was um sie herum geschieht. Sie können nur diejenigen Personen und Gegenstände sehen, die sich innerhalb ihres SICHTKEGELS befinden. 
+Soldaten und Zivilisten sehen nicht alles, was um sie herum geschieht. Sie können nur diejenigen Personen und Gegenstände sehen, die sich innerhalb ihres **SICHTKEGELS** befinden.
 
-Um den Sichtkegel eines Spielcharakters einblenden zu lassen, müssen Sie nur auf das AUGE (oben rechts im Bildschirm) klicken oder das entsprechende Tastenkürzel benutzen (Standard: ALT-Taste halten). Der Mauszeiger wird nun zum Fragezeichen. Zeigen Sie dann einfach mit der Maus auf einen Charakter, damit sein SICHTKEGEL eingeblendet wird. 
+Um den Sichtkegel eines Spielcharakters einblenden zu lassen, müssen Sie nur auf das **AUGE** (oben rechts im Bildschirm) klicken oder das entsprechende Tastenkürzel benutzen (Standard: **ALT**-Taste halten). Der Mauszeiger wird nun zum Fragezeichen. Zeigen Sie dann einfach mit der Maus auf einen Charakter, damit sein **SICHTKEGEL** eingeblendet wird.
 
-Achtung: Erst müssen Sie wissen, um wen es sich handelt; es funktioniert nicht, wenn Sie nur einen grauen Umriss sehen. 
+Achtung: Erst müssen Sie wissen, um wen es sich handelt; es funktioniert nicht, wenn Sie nur einen grauen Umriss sehen.
 
-Klicken Sie mit der RECHTEN Maustaste, damit der Fragezeichen-Mauszeiger ausgeblendet wird. 
+Klicken Sie mit der **RECHTEN** Maustaste, damit der Fragezeichen-Mauszeiger ausgeblendet wird.
 
-Wenn Sie möchten, dass der Sichtkegel eines Charakters nicht mehr eingeblendet wird, klicken Sie mit der rechten Maustaste auf das Auge-Symbol (oben im Bildschirm) oder halten Sie die ALT-Taste gedrückt und klicken mit der rechten Maustaste in das Spielfenster. 
+Wenn Sie möchten, dass der Sichtkegel eines Charakters nicht mehr eingeblendet wird, klicken Sie mit der rechten Maustaste auf das Auge-Symbol (oben im Bildschirm) oder halten Sie die **ALT**-Taste gedrückt und klicken mit der rechten Maustaste in das Spielfenster.
 
-Befindet sich ein Held, ein KO-geschlagener Gegner oder etwas anderes im Sichtkegel eines Spielcharakters, so wird er sehr wahrscheinlich entdeckt. Handelt es sich um einen Helden, dann wird der Feind vermutlich Alarm schlagen, was Sie auf jeden Fall vermeiden sollten! 
+Befindet sich ein Held, ein KO-geschlagener Gegner oder etwas anderes im Sichtkegel eines Spielcharakters, so wird er sehr wahrscheinlich entdeckt. Handelt es sich um einen Helden, dann wird der Feind vermutlich Alarm schlagen, was Sie auf jeden Fall vermeiden sollten!
 
-Es kann immer nur der Sichtkegel eines einzigen Charakters eingeblendet werden. 
+Es kann immer nur der Sichtkegel eines einzigen Charakters eingeblendet werden.
 
 **Emotionssymbole**
 
-Emotionssymbole erscheinen über den Köpfen von Zivilisten oder Soldaten und geben deren Gemütszustand an. So können Sie die Reaktionen mehrerer Charaktere gleichzeitig beobachten. 
+Emotionssymbole erscheinen über den Köpfen von Zivilisten oder Soldaten und geben deren Gemütszustand an. So können Sie die Reaktionen mehrerer Charaktere gleichzeitig beobachten.
 
-_Fragezeichen:_
+_Fragezeichen:_ Der Soldat hat etwas entdeckt und fragt sich, was das wohl sein könnte.
 
-Der Soldat hat etwas entdeckt und fragt sich, was das wohl sein könnte. 
+_Ausrufezeichen:_ Der Soldat ist auf etwas aufmerksam geworden und ist jetzt wachsam!
 
-_Ausrufezeichen:_
+_Sonne:_ Der Charakter hat etwas entdeckt, das ihn interessiert. Er wird sich bestimmt dem Gegenstand (z.B. einem Geldbeutel) nähern.
 
-Der Soldat ist auf etwas aufmerksam geworden und ist jetzt wachsam! 
+_Sturmwolke:_ Der Charakter hat etwas erlebt oder gesehen, was ihn wütend macht (wurde beispielsweise von einer Wespe gestochen).
 
-_Sonne:_
+_Regenwolke:_ Der Charakter hat etwas gesehen, was ihn nicht interessiert.
 
-Der Charakter hat etwas entdeckt, das ihn interessiert. Er wird sich bestimmt dem Gegenstand (z.B. einem Geldbeutel) nähern. 
+_Z:_ Der Charakter schläft. Er sieht jetzt nichts, aber durch ein Geräusch könnte er geweckt werden!
 
-_Sturmwolke:_
-
-Der Charakter hat etwas erlebt oder gesehen, was ihn wütend macht (wurde beispielsweise von einer Wespe gestochen). 
-
-_Regenwolke:_
-
-Der Charakter hat etwas gesehen, was ihn nicht interessiert. 
-
-_Z:_
-
-Der Charakter schläft . Er sieht jetzt nichts, aber durch ein Geräusch könnte er geweckt werden! 
-
-_Spirale:_
-
-Der Charakter ist betrunken. Er ist weniger wachsam und langsamer als sonst. 
+_Spirale:_ Der Charakter ist betrunken. Er ist weniger wachsam und langsamer als sonst.
 
 **Versteckte Charaktere**
 
-In einigen Missionen sind Ihre Charaktere zu Beginn im Laub versteckt oder verbergen ihr Gesicht unter einer Kapuze. In diesen Fällen erscheint ein kleines Charakterporträt unter der Verkleidung oder dem Versteck. Versteckte Charaktere lenken die Aufmerksamkeit der Feinde nicht auf sich, so lange Sie ihnen noch keine Befehle erteilt haben. 
+In einigen Missionen sind Ihre Charaktere zu Beginn im Laub versteckt oder verbergen ihr Gesicht unter einer Kapuze. In diesen Fällen erscheint ein kleines Charakterporträt unter der Verkleidung oder dem Versteck. Versteckte Charaktere lenken die Aufmerksamkeit der Feinde nicht auf sich, so lange Sie ihnen noch keine Befehle erteilt haben.
 
-* * *
+#### Anleitung
 
-### Anleitung:
+- **Beschreibung:** Handbuch  
+  **Autor:** Entwickler — **Größe:** 32123 KB  
+  [Download](https://www.mogelpower.de/manuals/Robin_Hood_Die_Legende_von_Sherwood_Handbuch.pdf)
 
-  * **Beschreibung** : Handbuch  
-**Autor** : Entwickler – **Größe** : 32123 KB  
-[Download]
+#### Tastenbelegung
 
-* * *
+- **Beschreibung:** Tastenbelegung/Keycard zum Ausdrucken  
+  **Autor:** Bani — **Größe:** 12 KB  
+  [Download](https://www.mogelpower.de/keycards/Robin_Hood_Die_Legende_von_Sherwood_Keycard.pdf)
 
-### Tastenbelegung:
+#### Fragen und Antworten
 
-  * **Beschreibung** : Tastenbelegung/Keycard zum Ausdrucken  
-**Autor** : Bani – **Größe** : 12 KB  
-[Download]
-
-* * *
-
-### Fragen und Antworten:
-
-Stellen Sie Fragen zum Spiel in unserem [Forum](forum/) und diskutieren Sie mit Tausenden anderen Besuchern unserer Website. Eine Registrierung ist nicht erforderlich.
+Stellen Sie Fragen zum Spiel in unserem [Forum](https://www.mogelpower.de/forum/) und diskutieren Sie mit Tausenden anderen Besuchern unserer Website. Eine Registrierung ist nicht erforderlich.
 
 Direktlink: **https://www.mogelpower.de/?pccheat=23560**
 
-Prüfvermerk: Diese Cheats wurden erfolgreich getestet. 
+Prüfvermerk: Diese Cheats wurden erfolgreich getestet.
 
 Abfragen: **168.375**
-
-[[Hilfe]](praxis/faq/) [[Partner-Programm]](praxis/partner/) [[Forum]](forum/) [[Chat]](praxis/chat)
-
-* * *
 
 Diese Cheats stammen von MogelPower, [www.mogelpower.de](https://www.mogelpower.de/). MogelPower ist urheberrechtlich wie wettbewerbsrechtlich geschützt und darf nicht als Grundlage fuer eigene Sammlungen verwendet werden.

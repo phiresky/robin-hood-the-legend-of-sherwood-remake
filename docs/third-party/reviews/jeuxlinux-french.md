@@ -1,610 +1,189 @@
-# Jeuxlinux — French Linux overview
+# Robin Hood : La légende de Sherwood — Jeuxlinux
 
-- Original source: [Jeuxlinux — French Linux overview](https://www.jeuxlinux.fr/a184-Robin_Hood_La_legende_de_Sherwood.html)
-- Author / publication: jerhum / Jeuxlinux
-- Language / date: French; 2007-12-25
-- Access: Full page retrieved directly
+- Original source: [Jeuxlinux — Robin Hood : La légende de Sherwood](https://www.jeuxlinux.fr/a184-Robin_Hood_La_legende_de_Sherwood.html)
+- Author: jerhum
+- Publication date: 25 December 2007
+- Language: French
+- Access: Full article page retrieved directly
 - Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML plus the full licensed text
 
-## Converted text from the original HTML
+## English translation
 
+### Robin Hood: The Legend of Sherwood
 
-### reviews__jeuxlinux-french.html
+Article author: jerhum — Publication date: 25 December 2007
 
-_Source: `originals/reviews__jeuxlinux-french.html`._
+### Presentation
 
-[Contribuer](/contribuer.html "Vous voulez contribuer")
+![Sheriff illustration](https://www.jeuxlinux.fr/IMG/gif/PICT_Sherif.gif)
 
-[Accueil](/actualite-jeu-video-pour-linux.html "Acceuil")
+On his return from the Crusades, Robin of Locksley discovers an England that has changed.
 
-[Jeux](/liste_des_jeux.html "Liste des jeux")
+King Richard the Lionheart has not returned from the Holy Land, and Prince John has taken the throne in his absence. Taking advantage of the situation, the Sheriff of Nottingham imposes enormous taxes on the peasants. He has also declared Robin dead in order to seize his lands.
 
-[Archives](/archives_des_breves.html "Archives")
+Faced with this situation, Robin Hood, defender of the poor and oppressed, withdraws into Sherwood Forest accompanied by a few rebels.
 
-[Articles](/liste_des_articles.html "Articles")
+They fight the impostors by plundering the richest people so that the proceeds can be redistributed to the poorest, while waiting for their sovereign to return.
 
-[Télécharger](/telecharger.html "Télécharger")
+![Leicester illustration](https://www.jeuxlinux.fr/IMG/gif/PICT_Leicester.gif)
 
-[Liens](/liens.html "Forum")
+Created by the same developers as *Desperado*, *Robin Hood: The Legend of Sherwood* offers gameplay similar to *Commandos*.
 
-[Forum](https://forum.jeuxlinux.fr "Forum")
+Movement and combat are controlled with the mouse. You will either invade the imposing fortifications of the cities of Nottingham, York, Leicester, Derby, and Lincoln, or attack well-guarded convoys in Sherwood Forest.
 
-[Jeux récents](//www.jeuxlinux.fr/backend.php)
+Victory will depend on your tactical choices. You can choose to infiltrate castles while carefully avoiding the guards' patrols, or bravely confront the enemy armed with your sword and bow. For example, you can take advantage of the guards' reduced vision at night, or use your men's various abilities and many tools to distract the Prince's soldiers, advance toward your objective by loosing a few well-placed arrows, and rely on the force of arms ...
 
-[Brèves récentes](//www.jeuxlinux.fr/backend-breves.php)
+### Characters
 
-[Meilleurs jeux](//www.jeuxlinux.fr/classement_des_jeux.html)
+#### Robin Hood
 
-[Osmos](a329-Osmos.html)
+Charismatic leader of the rebels of Sherwood Forest. He stands up for the poor, whether Norman or Saxon, and is a loyal vassal of the rightful king, Richard the Lionheart.
 
-[Unknown Horizons](a330-Unknown_Horizons.html)
+**Favorite weapons:**
 
-[GemRB](a327-GemRB.html)
+- Staff (in the forest)
+- Sword (in the city)
+- Bow
 
-[Maxi Shoot 2](a328-Maxi_Shoot_2.html)
+**Special abilities:**
 
-[Newton adventure](a325-Newton_adventure.html)
+- Punch
+- Throw a purse
+- Climb and jump
 
-[Microminer](a319-Microminer.html)
+#### Lady Marian
 
-[Corsix TH](a315-Corsix_TH.html)
+This young woman of noble birth helps Robin on several occasions, whether by spying on his behalf or by taking part in the battle … Robin is madly in love with her.
 
-[DropTeam](a317-DropTeam.html)
+**Favorite weapons:**
 
-[Wakfu](a291-Wakfu.html)
+- Sword
+- Bow
 
-[Numpty Physics](a323-Numpty_Physics.html)
+**Special abilities:**
 
-[Revue de presse : Jouer sous Linux par Linux Pratique Essentiel](b1343-Revue_de_presse_Jouer_sous_Linux_par_Linux_Pratique_Essentiel.html)
+- Healer who knows medicinal plants
+- Observation and espionage
 
-[Le renouveau de LinuxConsole](b1342-Le_renouveau_de_LinuxConsole.html)
+#### Little John
 
-[Landes Eternelles 1.8.0 et 1.8.1](b1341-Landes_Eternelles_1.8.0_et_1.8.1.html)
+A kindly woodsman with an impressive physique. His calm strength is a major asset in Robin's fight.
 
-[Metro : Last Light](b1340-Metro_Last_Light.html)
+**Favorite weapon:**
 
-[No More Room in Hell](b1339-No_More_Room_in_Hell.html)
+- Staff
 
-[AssaultCube passe en version 1.2 après 1060 jours !](b1338-AssaultCube_passe_en_version_1.2_apres_1060_jours_!.html)
+**Special abilities:**
 
-[Exit Doom3, Amen TheDarkMod v2.0](b1337-Exit_Doom3_Amen_TheDarkMod_v2.0.html)
+- Punch
+- Short ladder
 
-[Les jeux libres sur Radio Laser](b1336-Les_jeux_libres_sur_Radio_Laser.html)
+#### Friar Tuck
 
-[Steam OS et Steam machine](b1335-Steam_OS_et_Steam_machine.html)
+Lady Marian's confessor. An exceptional brewer, though most of his production is intended to quench his own thirst.
 
-[OpenRA - Release 20130915](b1334-OpenRA_-_Release_20130915.html)
+**Favorite weapon:**
 
-[Gcompris ](a313-Gcompris.html)
+- Club
 
-[0 A.D. ](a307-0_A.D..html)
+**Special abilities:**
 
-[Teeworlds ](a196-Teeworlds.html)
+- Get his opponents drunk
+- Always carries food
+- Tie up unconscious opponents
+- Throw wasp nests
 
-[Spring ](a57-Spring.html)
+#### Will Scarlet
 
-[World of Goo ](a258-World_of_Goo.html)
+Will is Robin's nephew. His fondness for the color red earned him the nickname “Scarlet.” An aggressive and brutal individual, he chose to fight alongside his uncle to avenge his family's dishonored name.
 
-  * [Entretien avec le créateur du Bottin des jeux linux](a336-Entretien_avec_le_createur_du_Bottin_des_jeux_linux.html)
+**Favorite weapon:**
 
-Le site « Le Bottin des jeux linux » recense les jeux vidéo sous Linux. Il a été créé en 2007 par Serge Le Tyrant. Celui-ci, en voulant mettre un peu d'ordre dans sa base de données de jeux, a fini par en effectuer la refonte complète. Après un travail important de mise en forme et de mise... ([Lire l'article](a336-Entretien_avec_le_createur_du_Bottin_des_jeux_linux.html))
+- Flail
 
-  * [Conférences audio et vidéo](a322-Conferences_audio_et_video.html)
+**Special abilities:**
 
-Retrouvez les conférences données lors des Ubuntu party ou d'autres événements, ainsi que les interviews par OxyRadio. ([Lire l'article](a322-Conferences_audio_et_video.html))
+- Slingshot
+- Strangle the opponent
+- Shield himself from arrows
 
-  * [Entretien avec Aviv de l'équipe de Wildfire Games](a304-Entretien_avec_Aviv_de_lequipe_de_Wildfire_Games.html)
+#### Stuteley
 
-Pour ceux qui ne le savent pas encore, 0 A.D. est un jeu de stratégie en temps réel de guerre antique, développé par l'équipe de Wildfire Games, et qui a été complètement libéré en 2009. ([Lire l'article](a304-Entretien_avec_Aviv_de_lequipe_de_Wildfire_Games.html))
+He was the leader of the group of peasants whom Robin saved from the gallows. A talented tinkerer, he helps Robin establish his band's headquarters in Sherwood Forest.
 
-  * [Entretien avec Quentin Bolsée, le développeur de ColorCube](a296-Entretien_avec_Quentin_Bolsee_le_developpeur_de_ColorCube.html)
+**Favorite weapon:**
 
-Très récemment, Quentin a annoncé la disponibilité de son jeu : ColorCube, un jeu basé sur le Blender Game Engine. Entretien d'un jeune et talentueux développeur. ([Lire l'article](a296-Entretien_avec_Quentin_Bolsee_le_developpeur_de_ColorCube.html))
+- Axe
 
-  * [Pourquoi devriez-vous utiliser OpenGL et non DirectX ?](a285-Pourquoi_devriez-vous_utiliser_OpenGL_et_non_DirectX_.html)
+**Special abilities:**
 
-Il y a quelques jours, sur le blog de Wolfire Games, est apparu un intéressant point de vue sur les raisons d'utiliser OpenGL. L'article étant fort intéressant, nous vous l'avons traduit, pour qu'il profite au plus grand nombre. ([Lire l'article](a285-Pourquoi_devriez-vous_utiliser_OpenGL_et_non_DirectX_.html))
+- Throw a net
+- Throw apples
+- Disguise himself as a beggar
+- Tie up unconscious opponents
 
-  * [Entretien avec l'équipe des Landes Eternelles](a272-Entretien_avec_lequipe_des_Landes_Eternelles.html)
+### Installation
 
-Suite à la sortie, il y a un peu plus d'un mois, de la nouvelle version du client de Landes Eternelles, un mmorpg multi plateforme, nous avons voulu interroger Ackak & Nati, deux des administrateurs du serveur. ([Lire l'article](a272-Entretien_avec_lequipe_des_Landes_Eternelles.html))
+Having trouble installing or using this software? [Consult our FAQ](http://www.jeuxlinux.fr/a58-FAQ_:_probleme_a_linstallation_ou_au_lancement_dun_jeu.html)!
 
-  * [Entretien avec l'équipe de Smokin'Guns](a269-Entretien_avec_lequipe_de_SmokinGuns.html)
+A setup program is available on the CD-ROM (RuneSoft version only). Open a terminal and go to the CD-ROM drive's directory. It contains a `setup.sh` file, which must be run with:
 
-Si vous nous lisez régulièrement, vous savez que toute l'équipe de jeuxlinux.fr est fan de Smokin'Guns. Plusieurs questions nous trotté dans la tête concernant la suite de ce jeu, et ce n'est autre que ReD NeCKersoN et Téquila, les deux piliers de l'équipe, qui vont nous donner les réponses. ([Lire l'article](a269-Entretien_avec_lequipe_de_SmokinGuns.html))
+```sh
+sh setup.sh
+```
 
-  * [Créer une course pour Tux Racer](a260-Creer_une_course_pour_Tux_Racer.html)
+### In brief
 
-La création de nouvelles pistes dans les Tux Racer libres est une chose qui a été vraiment bien pensé. Même si elle ne permet pas de creuser des sous-terrains ou de régler l'orientation des objets par exemple, elle vous permettra de modéliser assez facilement et plutôt rapidement des courses... ([Lire l'article](a260-Creer_une_course_pour_Tux_Racer.html))
+- Developer: Spellbound Software
+- Genre: real-time strategy
+- Language: English
+- Game mode: Single-player
+- License: Commercial
+- Configuration:
 
-  * [Entretien avec Frictional Games](a254-Entretien_avec_Frictional_Games.html)
+| Component | Requirement |
+| --- | --- |
+| Processor | Pentium III 600 MHz |
+| Memory | 128 MB RAM |
+| Graphics card | 3D graphics card |
+| Graphics acceleration | Required |
 
-Ce mois-ci, les développeurs de Frictional Games, à l'origine de la série des Penumbra, nous parlent de leurs jeux, de leur modèle de développement ainsi que de leur projets futurs. La série des Penumbra contient des jeux d'horreur d'une excellente qualité vous plongeant dans un univers noir... ([Lire l'article](a254-Entretien_avec_Frictional_Games.html))
+### Links
 
-  * [Open Transport Tycoon](t257-Open_Transport_Tycoon.html)
-
-Les jeux de gestion sont rares sous linux, trop rares au point qu'il n'existe même pas de catégorie gestion sur jeuxlinux. Ce genre de jeu demande de la profondeur et un sens du détail hors du commun. ([Lire l'article](t257-Open_Transport_Tycoon.html))
-
-
-
-
-IRC: [#jeuxlinux sur Freenode](irc://irc.freenode.net/%23jeuxlinux)
-
-Mumble: [mumble.jeuxlinux.fr](/mumble.html)
-
-Serveurs: [91.121.74.167](/serveurs_de_jeux.html)
-
-[](/mail.html "Nous Contacter")
-
-[Jeuxlibres](http://www.jeuxlibres.net/) | [Djl](http://www.djl-linux.org/) | [Playonlinux](https://www.playonlinux.com/) | [Topjeux](http://topjeux.imaginux.com/) | [Le bottin des jeux Linux](http://www.lebottindesjeuxlinux.tuxfamily.org/) | [Linux games](http://www.linuxgames.com/) | [Happy Penguin](http://www.happypenguin.org/)
-
-[Descriptif](a184-Robin_Hood_La_legende_de_Sherwood.html)
-
-[Brèves](ba184-Robin_Hood_La_legende_de_Sherwood.html)
-
-Test
-
-Mods
-
-[ ](javascript:affichage_popup\('vote.php?id_article=184'\); "Votez pour ce jeu") ( 3 votes ) 
-
-# Robin Hood : La légende de Sherwood
-
-  
-Auteur(s) de l'article : jerhum \- Date de parution : 25 decembre 2007 
-
-[ ](article_print-184.html "Imprimer ce document") [ ](article-184.pdf "Récupérer ce document en pdf")
-
-  
-  
-
-
-  * Présentation
-  * Personnages
-  * Installation
-  * En bref
-  * Liens
-  * Portfolio
-
-
-
-###  Présentation
-
-A son retour des croisades, Robin de Locksley découvre une Angleterre changée.   
-Le roi Richard CÅ"ur de Lion n'est pas rentré de la Terre Sainte et le prince Jean s'est installé sur le trône en son absence. Le shérif de Nottingham profitant de la situation, impose d'énormes taxes sur les paysans. Il a de plus fait passer Robin pour mort afin de s'approprier ses terres.   
-Face à cette situation, Robin des bois, défenseur des pauvres et des opprimés, se retranche dans la forêt de Sherwood accompagné de quelques rebelles.   
-Ils luttent contre les imposteurs, en pillant les plus riches afin de redistribuer au plus pauvres, tout en attendant le retour de leur souverain.   
-  
-  
-  
-  
-  
-  
-  
-Créé par les mêmes développeurs que Desperado, Robin Hood : La légende de Sherwood nous offre un gameplay proche de commando.   
-  
-Les déplacements et les combats se contrôlent à la souris. On se retrouve soit à envahir les imposantes fortifications des villes de Nottingham, York, Leicester, Derby et Lincoln ou bien à attaquer des convois bien gardés dans la forêt de Sherwood.   
-  
-La victoire dépendra de vos choix tactiques. Choisir de vous infiltrer dans les châteaux en évitant soigneusement les rondes des gardes ou d'affronter avec courage l'ennemi, armé de votre épée et de votre arc. Vous pourrez par exemple profiter de la vision réduite des gardes durant la nuit ou employer les diverses capacités et les nombreux ustensiles de vos hommes pour détourner l'attention des soldats à la solde du Prince ou avancer vers votre but en décochant quelques flèches bien placées et employant la force des armes ...   
-  
-  
-  
-
-
-### Personnages
-
-| **Robin des bois**   
-Leader charismatique des rebelles de la forêt de Sherwood. Il s'engage pour les pauvres, qu'ils soient normands ou saxons, et est un fidèle vassal du Roi légitime, Richard CÅ"ur de Lion.   
-**Arme favorite  :**   
- Bâton (en forêt)   
- Epée (en ville)   
- Arc   
-**Aptitudes particulières  :**   
- Coup de poing   
- Lancer de bourse   
- Grimper, sauter  
----|---  
-| **Lady Marianne**   
-Cette jeune femme issue de la noblesse aidera Robin à plusieurs reprises, que ce soit en espionnant pour son compte ou en participant à la batailleâ€¦ Robin en est éperdument amoureux.   
-**Arme favorite  :**   
- Epée   
- Arc   
-**Aptitudes particulières  :**   
- Guérisseuse connaissant les plantes médicinales   
- Observation et espionnage  
-|  **Petit Jean**   
-Un bûcheron bienveillant au physique impressionnant. Sa Force sereine est un atout de poids dans le combat de Robin.   
-**Arme favorite  :**   
- Bâton   
-**Aptitudes particulières  :**   
- Coup de poing   
- Courte-échelle  
-| **Frère Tuck**   
-Le confesseur de Lady Marianne. Brasseur de bière exceptionnel, d'ailleurs sa production est principalement destinée à étancher sa propre soif.   
-**Arme favorite  :**   
- Massue   
-**Aptitudes particulières  :**   
- Saouler ses adversaires   
- Transporte toujours de la nourriture   
- Ficeler des adversaires inconscients   
- Lancer de nids de guêpes  
-| **Will Scarlet**   
-Will est le neveu de Robin. Sa prédilection pour la couleur rouge lui a valu son surnom « Ecarlate ». Individu agressif et brutal, il a choisi de se battre au coté de son Oncle pour venger l'honneur bafoué de sa famille.   
-**Arme favorite  :**   
- Fléau   
-**Aptitudes particulières  :**   
- Lance-pierre   
- Etrangler l'adversaire   
- Bouclier pour se protéger des flèches  
-| **Stuteley**   
-Il était le chef du groupe de paysans que Robin a sauvé de la potence. C'est un bricoleur de talent qui aide Robin à établir le quartier général de sa bande dans la forêt de Sherwood.   
-**Arme favorite  :**   
- Hâche   
-**Aptitudes particulières  :**   
- Lancer de filet   
- Lancer de pommes   
- Se déguiser en mendiant   
- Ficeler des adversaires inconscients  
-  
-###  Installation
-
-Un problème à l'installation ou à l'utilisation de ce logiciel ?  
-[Consultez notre Faq !](http://www.jeuxlinux.fr/a58-FAQ_:_probleme_a_linstallation_ou_au_lancement_dun_jeu.html)  
-  
-  
-
-
-Un setup est disponible sur le CD rom (Uniquement la version de runesoft). Ouvrir un terminal et aller dans l'arborescence du lecteur cd-rom. Il y contient un fichier setup.sh qu'il faut exécuter `sh setup.sh`
-
-###  En bref
-
- Développeur : Spellbound Software   
- Genre : stratégie temps-réel   
- Langue : Anglais   
- Mode de jeu : Solo   
- Licence : Commercial   
- Configuration :   
-  
-
-
-Processeur | Pentium III 600 Mhz  
----|---  
-Mémoire |  128 Mo de RAM   
-Carte graphique |  Carte graphique : carte 3D   
-Accélération graphique |  requise   
-  
-### Liens
-
- [Site officiel](http://www.robinhood-game.com/)   
- [Version de démonstration](http://www.3ddownloads.com/Strategy/Robin Hood/Demos/rh-linux-demo-x86.run)   
- [Acheter la version francaise sur novatux](http://novatux.com/shop/detail.php?article=158)
+- [Official website](http://www.robinhood-game.com/)
+- [Demo version](http://www.3ddownloads.com/Strategy/Robin%20Hood/Demos/rh-linux-demo-x86.run)
+- [Buy the French version on Novatux](http://novatux.com/shop/detail.php?article=158)
 
 ### Portfolio
 
-[](popup_img.php3?id_article=184&id_document=1999)
+- [Portfolio image 1](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244065_2-be90d-1f8f2.jpg)
+- [Portfolio image 2](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244067_2-08b99-39b02.jpg)
+- [Portfolio image 3](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244069_2-9a17f-48b0d.jpg)
+- [Portfolio image 4](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244071_2-fb2bf-cb5a1.jpg)
+- [Portfolio image 5](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244074_2-06368-0f72f.jpg)
+- [Portfolio image 6](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244078_2-5fadf-9d8fe.jpg)
 
-[](popup_img.php3?id_article=184&id_document=2000)
+## Original text
 
-[](popup_img.php3?id_article=184&id_document=2001)
+### Robin Hood : La légende de Sherwood
 
-[](popup_img.php3?id_article=184&id_document=2002)
-
-[](popup_img.php3?id_article=184&id_document=2003)
-
-[](popup_img.php3?id_article=184&id_document=2004)
-
-Les articles consultables sur ce site sont soumis à la double licence : [GNU Free Documentation License](https://www.gnu.org/licenses/fdl.html) et [Creative Commons By-Sa](https://creativecommons.org/licenses/by-sa/3.0/deed.fr).   
-
-
-[](https://validator.w3.org/check?uri=referer) [ ](https://jigsaw.w3.org/css-validator/check/referer?profile=css3) [](https://www.spip.net)
-
-
-### reviews__jeuxlinux-french.txt
-
-_Source: `originals/reviews__jeuxlinux-french.txt`._
-
-[Contribuer](/contribuer.html "Vous voulez contribuer")
-
-[Accueil](/actualite-jeu-video-pour-linux.html "Acceuil")
-
-[Jeux](/liste_des_jeux.html "Liste des jeux")
-
-[Archives](/archives_des_breves.html "Archives")
-
-[Articles](/liste_des_articles.html "Articles")
-
-[Télécharger](/telecharger.html "Télécharger")
-
-[Liens](/liens.html "Forum")
-
-[Forum](https://forum.jeuxlinux.fr "Forum")
-
-[Jeux récents](//www.jeuxlinux.fr/backend.php)
-
-[Brèves récentes](//www.jeuxlinux.fr/backend-breves.php)
-
-[Meilleurs jeux](//www.jeuxlinux.fr/classement_des_jeux.html)
-
-[Osmos](a329-Osmos.html)
-
-[Unknown Horizons](a330-Unknown_Horizons.html)
-
-[GemRB](a327-GemRB.html)
-
-[Maxi Shoot 2](a328-Maxi_Shoot_2.html)
-
-[Newton adventure](a325-Newton_adventure.html)
-
-[Microminer](a319-Microminer.html)
-
-[Corsix TH](a315-Corsix_TH.html)
-
-[DropTeam](a317-DropTeam.html)
-
-[Wakfu](a291-Wakfu.html)
-
-[Numpty Physics](a323-Numpty_Physics.html)
-
-[Revue de presse : Jouer sous Linux par Linux Pratique Essentiel](b1343-Revue_de_presse_Jouer_sous_Linux_par_Linux_Pratique_Essentiel.html)
-
-[Le renouveau de LinuxConsole](b1342-Le_renouveau_de_LinuxConsole.html)
-
-[Landes Eternelles 1.8.0 et 1.8.1](b1341-Landes_Eternelles_1.8.0_et_1.8.1.html)
-
-[Metro : Last Light](b1340-Metro_Last_Light.html)
-
-[No More Room in Hell](b1339-No_More_Room_in_Hell.html)
-
-[AssaultCube passe en version 1.2 après 1060 jours !](b1338-AssaultCube_passe_en_version_1.2_apres_1060_jours_!.html)
-
-[Exit Doom3, Amen TheDarkMod v2.0](b1337-Exit_Doom3_Amen_TheDarkMod_v2.0.html)
-
-[Les jeux libres sur Radio Laser](b1336-Les_jeux_libres_sur_Radio_Laser.html)
-
-[Steam OS et Steam machine](b1335-Steam_OS_et_Steam_machine.html)
-
-[OpenRA - Release 20130915](b1334-OpenRA_-_Release_20130915.html)
-
-[Gcompris ](a313-Gcompris.html)
-
-[0 A.D. ](a307-0_A.D..html)
-
-[Teeworlds ](a196-Teeworlds.html)
-
-[Spring ](a57-Spring.html)
-
-[World of Goo ](a258-World_of_Goo.html)
-
-  * [Entretien avec le créateur du Bottin des jeux linux](a336-Entretien_avec_le_createur_du_Bottin_des_jeux_linux.html)
-
-Le site « Le Bottin des jeux linux » recense les jeux vidéo sous Linux. Il a été créé en 2007 par Serge Le Tyrant. Celui-ci, en voulant mettre un peu d'ordre dans sa base de données de jeux, a fini par en effectuer la refonte complète. Après un travail important de mise en forme et de mise... ([Lire l'article](a336-Entretien_avec_le_createur_du_Bottin_des_jeux_linux.html))
-
-  * [Conférences audio et vidéo](a322-Conferences_audio_et_video.html)
-
-Retrouvez les conférences données lors des Ubuntu party ou d'autres événements, ainsi que les interviews par OxyRadio. ([Lire l'article](a322-Conferences_audio_et_video.html))
-
-  * [Entretien avec Aviv de l'équipe de Wildfire Games](a304-Entretien_avec_Aviv_de_lequipe_de_Wildfire_Games.html)
-
-Pour ceux qui ne le savent pas encore, 0 A.D. est un jeu de stratégie en temps réel de guerre antique, développé par l'équipe de Wildfire Games, et qui a été complètement libéré en 2009. ([Lire l'article](a304-Entretien_avec_Aviv_de_lequipe_de_Wildfire_Games.html))
-
-  * [Entretien avec Quentin Bolsée, le développeur de ColorCube](a296-Entretien_avec_Quentin_Bolsee_le_developpeur_de_ColorCube.html)
-
-Très récemment, Quentin a annoncé la disponibilité de son jeu : ColorCube, un jeu basé sur le Blender Game Engine. Entretien d'un jeune et talentueux développeur. ([Lire l'article](a296-Entretien_avec_Quentin_Bolsee_le_developpeur_de_ColorCube.html))
-
-  * [Pourquoi devriez-vous utiliser OpenGL et non DirectX ?](a285-Pourquoi_devriez-vous_utiliser_OpenGL_et_non_DirectX_.html)
-
-Il y a quelques jours, sur le blog de Wolfire Games, est apparu un intéressant point de vue sur les raisons d'utiliser OpenGL. L'article étant fort intéressant, nous vous l'avons traduit, pour qu'il profite au plus grand nombre. ([Lire l'article](a285-Pourquoi_devriez-vous_utiliser_OpenGL_et_non_DirectX_.html))
-
-  * [Entretien avec l'équipe des Landes Eternelles](a272-Entretien_avec_lequipe_des_Landes_Eternelles.html)
-
-Suite à la sortie, il y a un peu plus d'un mois, de la nouvelle version du client de Landes Eternelles, un mmorpg multi plateforme, nous avons voulu interroger Ackak & Nati, deux des administrateurs du serveur. ([Lire l'article](a272-Entretien_avec_lequipe_des_Landes_Eternelles.html))
-
-  * [Entretien avec l'équipe de Smokin'Guns](a269-Entretien_avec_lequipe_de_SmokinGuns.html)
-
-Si vous nous lisez régulièrement, vous savez que toute l'équipe de jeuxlinux.fr est fan de Smokin'Guns. Plusieurs questions nous trotté dans la tête concernant la suite de ce jeu, et ce n'est autre que ReD NeCKersoN et Téquila, les deux piliers de l'équipe, qui vont nous donner les réponses. ([Lire l'article](a269-Entretien_avec_lequipe_de_SmokinGuns.html))
-
-  * [Créer une course pour Tux Racer](a260-Creer_une_course_pour_Tux_Racer.html)
-
-La création de nouvelles pistes dans les Tux Racer libres est une chose qui a été vraiment bien pensé. Même si elle ne permet pas de creuser des sous-terrains ou de régler l'orientation des objets par exemple, elle vous permettra de modéliser assez facilement et plutôt rapidement des courses... ([Lire l'article](a260-Creer_une_course_pour_Tux_Racer.html))
-
-  * [Entretien avec Frictional Games](a254-Entretien_avec_Frictional_Games.html)
-
-Ce mois-ci, les développeurs de Frictional Games, à l'origine de la série des Penumbra, nous parlent de leurs jeux, de leur modèle de développement ainsi que de leur projets futurs. La série des Penumbra contient des jeux d'horreur d'une excellente qualité vous plongeant dans un univers noir... ([Lire l'article](a254-Entretien_avec_Frictional_Games.html))
-
-  * [Open Transport Tycoon](t257-Open_Transport_Tycoon.html)
-
-Les jeux de gestion sont rares sous linux, trop rares au point qu'il n'existe même pas de catégorie gestion sur jeuxlinux. Ce genre de jeu demande de la profondeur et un sens du détail hors du commun. ([Lire l'article](t257-Open_Transport_Tycoon.html))
-
-
-
-
-IRC: [#jeuxlinux sur Freenode](irc://irc.freenode.net/%23jeuxlinux)
-
-Mumble: [mumble.jeuxlinux.fr](/mumble.html)
-
-Serveurs: [91.121.74.167](/serveurs_de_jeux.html)
-
-[](/mail.html "Nous Contacter")
-
-[Jeuxlibres](http://www.jeuxlibres.net/) | [Djl](http://www.djl-linux.org/) | [Playonlinux](https://www.playonlinux.com/) | [Topjeux](http://topjeux.imaginux.com/) | [Le bottin des jeux Linux](http://www.lebottindesjeuxlinux.tuxfamily.org/) | [Linux games](http://www.linuxgames.com/) | [Happy Penguin](http://www.happypenguin.org/)
-
-[Descriptif](a184-Robin_Hood_La_legende_de_Sherwood.html)
-
-[Brèves](ba184-Robin_Hood_La_legende_de_Sherwood.html)
-
-Test
-
-Mods
-
-[ ](javascript:affichage_popup\('vote.php?id_article=184'\); "Votez pour ce jeu") ( 3 votes ) 
-
-# Robin Hood : La légende de Sherwood
-
-  
-Auteur(s) de l'article : jerhum \- Date de parution : 25 decembre 2007 
-
-[ ](article_print-184.html "Imprimer ce document") [ ](article-184.pdf "Récupérer ce document en pdf")
-
-  
-  
-
-
-  * Présentation
-  * Personnages
-  * Installation
-  * En bref
-  * Liens
-  * Portfolio
-
-
-
-###  Présentation
-
-A son retour des croisades, Robin de Locksley découvre une Angleterre changée.   
-Le roi Richard CÅ"ur de Lion n'est pas rentré de la Terre Sainte et le prince Jean s'est installé sur le trône en son absence. Le shérif de Nottingham profitant de la situation, impose d'énormes taxes sur les paysans. Il a de plus fait passer Robin pour mort afin de s'approprier ses terres.   
-Face à cette situation, Robin des bois, défenseur des pauvres et des opprimés, se retranche dans la forêt de Sherwood accompagné de quelques rebelles.   
-Ils luttent contre les imposteurs, en pillant les plus riches afin de redistribuer au plus pauvres, tout en attendant le retour de leur souverain.   
-  
-  
-  
-  
-  
-  
-  
-Créé par les mêmes développeurs que Desperado, Robin Hood : La légende de Sherwood nous offre un gameplay proche de commando.   
-  
-Les déplacements et les combats se contrôlent à la souris. On se retrouve soit à envahir les imposantes fortifications des villes de Nottingham, York, Leicester, Derby et Lincoln ou bien à attaquer des convois bien gardés dans la forêt de Sherwood.   
-  
-La victoire dépendra de vos choix tactiques. Choisir de vous infiltrer dans les châteaux en évitant soigneusement les rondes des gardes ou d'affronter avec courage l'ennemi, armé de votre épée et de votre arc. Vous pourrez par exemple profiter de la vision réduite des gardes durant la nuit ou employer les diverses capacités et les nombreux ustensiles de vos hommes pour détourner l'attention des soldats à la solde du Prince ou avancer vers votre but en décochant quelques flèches bien placées et employant la force des armes ...   
-  
-  
-  
-
-
-### Personnages
-
-| **Robin des bois**   
-Leader charismatique des rebelles de la forêt de Sherwood. Il s'engage pour les pauvres, qu'ils soient normands ou saxons, et est un fidèle vassal du Roi légitime, Richard CÅ"ur de Lion.   
-**Arme favorite  :**   
- Bâton (en forêt)   
- Epée (en ville)   
- Arc   
-**Aptitudes particulières  :**   
- Coup de poing   
- Lancer de bourse   
- Grimper, sauter  
----|---  
-| **Lady Marianne**   
-Cette jeune femme issue de la noblesse aidera Robin à plusieurs reprises, que ce soit en espionnant pour son compte ou en participant à la batailleâ€¦ Robin en est éperdument amoureux.   
-**Arme favorite  :**   
- Epée   
- Arc   
-**Aptitudes particulières  :**   
- Guérisseuse connaissant les plantes médicinales   
- Observation et espionnage  
-|  **Petit Jean**   
-Un bûcheron bienveillant au physique impressionnant. Sa Force sereine est un atout de poids dans le combat de Robin.   
-**Arme favorite  :**   
- Bâton   
-**Aptitudes particulières  :**   
- Coup de poing   
- Courte-échelle  
-| **Frère Tuck**   
-Le confesseur de Lady Marianne. Brasseur de bière exceptionnel, d'ailleurs sa production est principalement destinée à étancher sa propre soif.   
-**Arme favorite  :**   
- Massue   
-**Aptitudes particulières  :**   
- Saouler ses adversaires   
- Transporte toujours de la nourriture   
- Ficeler des adversaires inconscients   
- Lancer de nids de guêpes  
-| **Will Scarlet**   
-Will est le neveu de Robin. Sa prédilection pour la couleur rouge lui a valu son surnom « Ecarlate ». Individu agressif et brutal, il a choisi de se battre au coté de son Oncle pour venger l'honneur bafoué de sa famille.   
-**Arme favorite  :**   
- Fléau   
-**Aptitudes particulières  :**   
- Lance-pierre   
- Etrangler l'adversaire   
- Bouclier pour se protéger des flèches  
-| **Stuteley**   
-Il était le chef du groupe de paysans que Robin a sauvé de la potence. C'est un bricoleur de talent qui aide Robin à établir le quartier général de sa bande dans la forêt de Sherwood.   
-**Arme favorite  :**   
- Hâche   
-**Aptitudes particulières  :**   
- Lancer de filet   
- Lancer de pommes   
- Se déguiser en mendiant   
- Ficeler des adversaires inconscients  
-  
-###  Installation
-
-Un problème à l'installation ou à l'utilisation de ce logiciel ?  
-[Consultez notre Faq !](http://www.jeuxlinux.fr/a58-FAQ_:_probleme_a_linstallation_ou_au_lancement_dun_jeu.html)  
-  
-  
-
-
-Un setup est disponible sur le CD rom (Uniquement la version de runesoft). Ouvrir un terminal et aller dans l'arborescence du lecteur cd-rom. Il y contient un fichier setup.sh qu'il faut exécuter `sh setup.sh`
-
-###  En bref
-
- Développeur : Spellbound Software   
- Genre : stratégie temps-réel   
- Langue : Anglais   
- Mode de jeu : Solo   
- Licence : Commercial   
- Configuration :   
-  
-
-
-Processeur | Pentium III 600 Mhz  
----|---  
-Mémoire |  128 Mo de RAM   
-Carte graphique |  Carte graphique : carte 3D   
-Accélération graphique |  requise   
-  
-### Liens
-
- [Site officiel](http://www.robinhood-game.com/)   
- [Version de démonstration](http://www.3ddownloads.com/Strategy/Robin Hood/Demos/rh-linux-demo-x86.run)   
- [Acheter la version francaise sur novatux](http://novatux.com/shop/detail.php?article=158)
-
-### Portfolio
-
-[](popup_img.php3?id_article=184&id_document=1999)
-
-[](popup_img.php3?id_article=184&id_document=2000)
-
-[](popup_img.php3?id_article=184&id_document=2001)
-
-[](popup_img.php3?id_article=184&id_document=2002)
-
-[](popup_img.php3?id_article=184&id_document=2003)
-
-[](popup_img.php3?id_article=184&id_document=2004)
-
-Les articles consultables sur ce site sont soumis à la double licence : [GNU Free Documentation License](https://www.gnu.org/licenses/fdl.html) et [Creative Commons By-Sa](https://creativecommons.org/licenses/by-sa/3.0/deed.fr).   
-
-
-[](https://validator.w3.org/check?uri=referer) [ ](https://jigsaw.w3.org/css-validator/check/referer?profile=css3) [](https://www.spip.net)
-
-## Full text
-
-Licence: the page footer states that articles on jeuxlinux.fr are published under a dual licence, the GNU Free Documentation License and Creative Commons Attribution-ShareAlike 3.0 (CC BY-SA 3.0). Conditions: attribution to the author (jerhum, jeuxlinux.fr) and the same licence for any redistribution or derivative. The article text is reproduced below unchanged; site navigation, unrelated article teasers and image placeholders are omitted. A few characters in the original are mojibake (for example "CÅ"ur" for "Cœur") and are kept as retrieved.
-
-Page facts: title "Robin Hood : La légende de Sherwood", article number a184, author jerhum, publication date 25 décembre 2007, 3 reader votes (score value not shown in the text rendering), sections Présentation, Personnages, Installation, En bref, Liens, Portfolio (six screenshots). Retrieved directly on 2026-09-09.
+Auteurs de l'article : jerhum — Date de parution : 25 décembre 2007
 
 ### Présentation
 
-A son retour des croisades, Robin de Locksley découvre une Angleterre changée.
-Le roi Richard CÅ"ur de Lion n'est pas rentré de la Terre Sainte et le prince Jean s'est installé sur le trône en son absence. Le shérif de Nottingham profitant de la situation, impose d'énormes taxes sur les paysans. Il a de plus fait passer Robin pour mort afin de s'approprier ses terres.
-Face à cette situation, Robin des bois, défenseur des pauvres et des opprimés, se retranche dans la forêt de Sherwood accompagné de quelques rebelles.
-Ils luttent contre les imposteurs, en pillant les plus riches afin de redistribuer au plus pauvres, tout en attendant le retour de leur souverain.
+![Illustration du shérif](https://www.jeuxlinux.fr/IMG/gif/PICT_Sherif.gif)
 
-Créé par les mêmes développeurs que Desperado, Robin Hood : La légende de Sherwood nous offre un gameplay proche de commando.
+À son retour des croisades, Robin de Locksley découvre une Angleterre changée.
+
+Le roi Richard Cœur de Lion n'est pas rentré de la Terre Sainte et le prince Jean s'est installé sur le trône en son absence. Le shérif de Nottingham, profitant de la situation, impose d'énormes taxes sur les paysans. Il a de plus fait passer Robin pour mort afin de s'approprier ses terres.
+
+Face à cette situation, Robin des bois, défenseur des pauvres et des opprimés, se retranche dans la forêt de Sherwood accompagné de quelques rebelles.
+
+Ils luttent contre les imposteurs, en pillant les plus riches afin de redistribuer aux plus pauvres, tout en attendant le retour de leur souverain.
+
+![Illustration de Leicester](https://www.jeuxlinux.fr/IMG/gif/PICT_Leicester.gif)
+
+Créé par les mêmes développeurs que *Desperado*, *Robin Hood : La légende de Sherwood* nous offre un gameplay proche de *Commando*.
 
 Les déplacements et les combats se contrôlent à la souris. On se retrouve soit à envahir les imposantes fortifications des villes de Nottingham, York, Leicester, Derby et Lincoln ou bien à attaquer des convois bien gardés dans la forêt de Sherwood.
 
@@ -612,72 +191,130 @@ La victoire dépendra de vos choix tactiques. Choisir de vous infiltrer dans les
 
 ### Personnages
 
-**Robin des bois**
-Leader charismatique des rebelles de la forêt de Sherwood. Il s'engage pour les pauvres, qu'ils soient normands ou saxons, et est un fidèle vassal du Roi légitime, Richard CÅ"ur de Lion.
-**Arme favorite :** Bâton (en forêt) ; Epée (en ville) ; Arc
-**Aptitudes particulières :** Coup de poing ; Lancer de bourse ; Grimper, sauter
+#### Robin des bois
 
-**Lady Marianne**
+Leader charismatique des rebelles de la forêt de Sherwood. Il s'engage pour les pauvres, qu'ils soient normands ou saxons, et est un fidèle vassal du Roi légitime, Richard Cœur de Lion.
+
+**Arme favorite :**
+
+- Bâton (en forêt)
+- Épée (en ville)
+- Arc
+
+**Aptitudes particulières :**
+
+- Coup de poing
+- Lancer de bourse
+- Grimper, sauter
+
+#### Lady Marianne
+
 Cette jeune femme issue de la noblesse aidera Robin à plusieurs reprises, que ce soit en espionnant pour son compte ou en participant à la bataille… Robin en est éperdument amoureux.
-**Arme favorite :** Epée ; Arc
-**Aptitudes particulières :** Guérisseuse connaissant les plantes médicinales ; Observation et espionnage
 
-**Petit Jean**
-Un bûcheron bienveillant au physique impressionnant. Sa Force sereine est un atout de poids dans le combat de Robin.
-**Arme favorite :** Bâton
-**Aptitudes particulières :** Coup de poing ; Courte-échelle
+**Arme favorite :**
 
-**Frère Tuck**
+- Épée
+- Arc
+
+**Aptitudes particulières :**
+
+- Guérisseuse connaissant les plantes médicinales
+- Observation et espionnage
+
+#### Petit Jean
+
+Un bûcheron bienveillant au physique impressionnant. Sa force sereine est un atout de poids dans le combat de Robin.
+
+**Arme favorite :**
+
+- Bâton
+
+**Aptitudes particulières :**
+
+- Coup de poing
+- Courte-échelle
+
+#### Frère Tuck
+
 Le confesseur de Lady Marianne. Brasseur de bière exceptionnel, d'ailleurs sa production est principalement destinée à étancher sa propre soif.
-**Arme favorite :** Massue
-**Aptitudes particulières :** Saouler ses adversaires ; Transporte toujours de la nourriture ; Ficeler des adversaires inconscients ; Lancer de nids de guêpes
 
-**Will Scarlet**
-Will est le neveu de Robin. Sa prédilection pour la couleur rouge lui a valu son surnom « Ecarlate ». Individu agressif et brutal, il a choisi de se battre au coté de son Oncle pour venger l'honneur bafoué de sa famille.
-**Arme favorite :** Fléau
-**Aptitudes particulières :** Lance-pierre ; Etrangler l'adversaire ; Bouclier pour se protéger des flèches
+**Arme favorite :**
 
-**Stuteley**
+- Massue
+
+**Aptitudes particulières :**
+
+- Saouler ses adversaires
+- Transporte toujours de la nourriture
+- Ficeler des adversaires inconscients
+- Lancer de nids de guêpes
+
+#### Will Scarlet
+
+Will est le neveu de Robin. Sa prédilection pour la couleur rouge lui a valu son surnom « Écarlate ». Individu agressif et brutal, il a choisi de se battre aux côtés de son oncle pour venger l'honneur bafoué de sa famille.
+
+**Arme favorite :**
+
+- Fléau
+
+**Aptitudes particulières :**
+
+- Lance-pierre
+- Étrangler l'adversaire
+- Bouclier pour se protéger des flèches
+
+#### Stuteley
+
 Il était le chef du groupe de paysans que Robin a sauvé de la potence. C'est un bricoleur de talent qui aide Robin à établir le quartier général de sa bande dans la forêt de Sherwood.
-**Arme favorite :** Hâche
-**Aptitudes particulières :** Lancer de filet ; Lancer de pommes ; Se déguiser en mendiant ; Ficeler des adversaires inconscients
+
+**Arme favorite :**
+
+- Hache
+
+**Aptitudes particulières :**
+
+- Lancer de filet
+- Lancer de pommes
+- Se déguiser en mendiant
+- Ficeler des adversaires inconscients
 
 ### Installation
 
-Un problème à l'installation ou à l'utilisation de ce logiciel ?
-Consultez notre Faq ! (lien : http://www.jeuxlinux.fr/a58-FAQ_:_probleme_a_linstallation_ou_au_lancement_dun_jeu.html)
+Un problème à l'installation ou à l'utilisation de ce logiciel ? [Consultez notre FAQ](http://www.jeuxlinux.fr/a58-FAQ_:_probleme_a_linstallation_ou_au_lancement_dun_jeu.html) !
 
-Un setup est disponible sur le CD rom (Uniquement la version de runesoft). Ouvrir un terminal et aller dans l'arborescence du lecteur cd-rom. Il y contient un fichier setup.sh qu'il faut exécuter `sh setup.sh`
+Un setup est disponible sur le CD-ROM (uniquement la version de RuneSoft). Ouvrir un terminal et aller dans l'arborescence du lecteur CD-ROM. Il y contient un fichier `setup.sh` qu'il faut exécuter :
+
+```sh
+sh setup.sh
+```
 
 ### En bref
 
-Développeur : Spellbound Software
-Genre : stratégie temps-réel
-Langue : Anglais
-Mode de jeu : Solo
-Licence : Commercial
-Configuration :
+- Développeur : Spellbound Software
+- Genre : stratégie temps réel
+- Langue : anglais
+- Mode de jeu : solo
+- Licence : commercial
+- Configuration :
 
-| | |
-|---|---|
-| Processeur | Pentium III 600 Mhz |
+| Composant | Exigence |
+| --- | --- |
+| Processeur | Pentium III 600 MHz |
 | Mémoire | 128 Mo de RAM |
 | Carte graphique | Carte graphique : carte 3D |
-| Accélération graphique | requise |
+| Accélération graphique | Requise |
 
 ### Liens
 
-- Site officiel : http://www.robinhood-game.com/
-- Version de démonstration : http://www.3ddownloads.com/Strategy/Robin Hood/Demos/rh-linux-demo-x86.run
-- Acheter la version francaise sur novatux : http://novatux.com/shop/detail.php?article=158
+- [Site officiel](http://www.robinhood-game.com/)
+- [Version de démonstration](http://www.3ddownloads.com/Strategy/Robin%20Hood/Demos/rh-linux-demo-x86.run)
+- [Acheter la version française sur Novatux](http://novatux.com/shop/detail.php?article=158)
 
 ### Portfolio
 
-Six screenshots (document IDs 1999 to 2004), not reproduced.
-
-### Notes on the content (English)
-
-- The installation section corrects the earlier summary: the page does give an installation command. The Runesoft CD version ships a `setup.sh` in the CD root, run with `sh setup.sh` from a terminal. No performance measurements are given.
-- Cities named: Nottingham, York, Leicester, Derby, Lincoln. Developer credited as Spellbound Software, "same developers as Desperado" (sic), gameplay compared to Commandos.
-- Character sheet gives favourite weapons and special abilities per character, including Robin's purse throw and climbing, Marianne's healing and spying, Little John's leg-up (courte-échelle), Tuck's beer, food, tying-up and wasp-nest throw, Will's slingshot, strangling and arrow shield, and Stuteley's net, apples, beggar disguise and tying-up.
-- System requirements given: Pentium III 600 MHz, 128 MB RAM, 3D card required. Language listed as English only, single-player only.
+- [Image du portfolio 1](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244065_2-be90d-1f8f2.jpg)
+- [Image du portfolio 2](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244067_2-08b99-39b02.jpg)
+- [Image du portfolio 3](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244069_2-9a17f-48b0d.jpg)
+- [Image du portfolio 4](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244071_2-fb2bf-cb5a1.jpg)
+- [Image du portfolio 5](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244074_2-06368-0f72f.jpg)
+- [Image du portfolio 6](https://www.jeuxlinux.fr/local/cache-vignettes/L80xH60/jpg_ME0000244078_2-5fadf-9d8fe.jpg)

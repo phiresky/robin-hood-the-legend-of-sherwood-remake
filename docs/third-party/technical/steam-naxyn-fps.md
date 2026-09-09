@@ -2,557 +2,464 @@
 
 - Original source: [Steam — Naxyň's FPS/font fix and retirement note](https://steamcommunity.com/sharedfiles/filedetails/?id=2227664168)
 - Author / publication: Naxyň / Steam Community
-- Language / date: English body; posted 2020-09-13, updated 2025-04-18
-- Access: Full guide retrieved directly; only the newest 10 of 71 comments included
+- Language / date: English guide with Italian, Spanish, Polish, Russian, and Portuguese comments; posted 2020-09-13, updated 2025-04-18
+- Access: Full guide and all 71 comments retrieved directly; the page reports 71 comments and all are preserved below, deduplicated by comment ID
+- Captures: `originals/recovery/steam-naxyn-p1.browser.html` through `steam-naxyn-p8.browser.html` (10 + 10 + 10 + 10 + 10 + 10 + 10 + 1 comments)
 - Checked: 2026-09-09
 - Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML
+- Archived copy: lookup returned HTTP 000; not confirmed
 
-## Converted text from the original HTML
+## English translation
 
+The guide itself and most comments are in English. The following are complete English translations of every non-English passage retained in the original-text section.
 
-### technical__steam-naxyn-fps.html
+### rabber.buca — 30 Jul, 2024 @ 3:09pm
 
-_Source: `originals/technical__steam-naxyn-fps.html`._
+“It really works, it’s fantastic; I still can’t believe it!!!! If I change the resolution inside the game, does it improve further? I mean, if I lower it or raise it in the game? Or does it make little or no difference? In any case, the game runs very, very well like this :)”
 
-[ Sign in ](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2227664168) [ Store ](https://store.steampowered.com/)
+### Benjaalife — 6 Jul, 2023 @ 4:50am
 
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
+“I tried it on Windows 11 and it worked well for me. The game runs better by default than on Windows 10, but sometimes there were FPS drops. Now I don’t have them. Thank you so much.” (The same comment also includes the English translation preserved below.)
 
-[ Community ](https://steamcommunity.com/)
+### Малганус — 9 May, 2023 @ 5:49am
 
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
+“The lag disappears … and all the words and letters disappear too.”
 
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
+### isavns13 — 11 Dec, 2022 @ 12:49am
 
-Change language 
+“The problem was solved, thank you very much.”
 
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
+### WiLlys — 6 Jul, 2021 @ 7:50pm
 
-View desktop website 
+“Thank you very much! It worked perfectly c:”
 
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
+### acca99 — 3 Jan, 2021 @ 2:39am
 
-[ ](https://store.steampowered.com/)
+“Thank you!”
 
-[ ](https://store.steampowered.com/)
+### Joaszy — 15 Jun, 2023 @ 10:49pm
 
-[ STORE ](https://store.steampowered.com/)
+“Thank you.”
 
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
+### s1nrostro — 30 Dec, 2023 @ 4:20am
 
-[ COMMUNITY ](https://steamcommunity.com/)
+“It works.”
 
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
+## Original text
 
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
+### Guide
 
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2227664168)  |  language
-
-[ 简体中文 (Simplified Chinese) ](?l=schinese&id=2227664168) [ 繁體中文 (Traditional Chinese) ](?l=tchinese&id=2227664168) [ 日本語 (Japanese) ](?l=japanese&id=2227664168) [ 한국어 (Korean) ](?l=koreana&id=2227664168) [ ไทย (Thai) ](?l=thai&id=2227664168) [ Bahasa Indonesia (Indonesian) ](?l=indonesian&id=2227664168) [ Bahasa Melayu (Malay) BETA ](?l=malay&id=2227664168) [ Български (Bulgarian) ](?l=bulgarian&id=2227664168) [ Čeština (Czech) ](?l=czech&id=2227664168) [ Dansk (Danish) ](?l=danish&id=2227664168) [ Deutsch (German) ](?l=german&id=2227664168) [ Español - España (Spanish - Spain) ](?l=spanish&id=2227664168) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam&id=2227664168) [ Ελληνικά (Greek) ](?l=greek&id=2227664168) [ Français (French) ](?l=french&id=2227664168) [ Italiano (Italian) ](?l=italian&id=2227664168) [ Magyar (Hungarian) ](?l=hungarian&id=2227664168) [ Nederlands (Dutch) ](?l=dutch&id=2227664168) [ Norsk (Norwegian) ](?l=norwegian&id=2227664168) [ Polski (Polish) ](?l=polish&id=2227664168) [ Português (Portuguese - Portugal) ](?l=portuguese&id=2227664168) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian&id=2227664168) [ Română (Romanian) ](?l=romanian&id=2227664168) [ Русский (Russian) ](?l=russian&id=2227664168) [ Suomi (Finnish) ](?l=finnish&id=2227664168) [ Svenska (Swedish) ](?l=swedish&id=2227664168) [ Türkçe (Turkish) ](?l=turkish&id=2227664168) [ Tiếng Việt (Vietnamese) ](?l=vietnamese&id=2227664168) [ Українська (Ukrainian) ](?l=ukrainian&id=2227664168) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
-
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_100100_100101_100106_apphubheader)
-
-Robin Hood
-
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
-
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
-
-### Robin Hood
-
-[ Store Page ](https://store.steampowered.com/app/46560)
-
-[Robin Hood](https://steamcommunity.com/app/46560) > [Guides](https://steamcommunity.com/app/46560/guides/) > [Naxyň's Guides](https://steamcommunity.com/id/naxynpl/myworkshopfiles/?section=guides&appid=46560)
-
-This item has been removed from the community because it violates Steam Community & Content Guidelines. It is only visible to you. If you believe your item has been removed by mistake, please contact [Steam Support](https://help.steampowered.com/en/wizard/HelpWithSteamIssue/?issueid=415). 
-
-This item is incompatible with Robin Hood. Please see the [instructions page](https://steamcommunity.com) for reasons why this item might not work within Robin Hood. 
-
-208 ratings
-
-Robin Hood Legend of Sherwood - Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED - Game Fixed by Devs)
+**Robin Hood Legend of Sherwood - Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED - Game Fixed by Devs)**
 
 By Naxyň
 
 Now the problem has been patched by the publisher, you don't need to download anything, the game runs at 22 fps on windows 10 and 11. If you still have problems with the game, you can still try my method :)
 
-  
-  
-Hi!  
-Do you have FPS performance issues on windows 10? Then this fix is ​​for you. The newest and best way.   
+Hi!
 
+Do you have FPS performance issues on windows 10? Then this fix is ​​for you. The newest and best way.
 
-13
-
-4
-
-4
-
-4
-
-3
-
-3
-
-3
-
-2
-
-2
-
-2
-
-1
-
-41
-
-   
-
-Award
-
-Favorite
-
-Favorited
-
-Unfavorite
-
-Share
-
-This item has been added to your [Favorites](https://steamcommunity.com/my/myworkshopfiles/?section=guides&browsefilter=myfavorites).
-
-Created by
-
-[](https://steamcommunity.com/id/naxynpl)
-
-Naxyň  
-Offline 
+Created by [Naxyň](https://steamcommunity.com/id/naxynpl) (offline)
 
 Category: [Achievements](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Achievements), [Characters](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Characters), [Classes](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Classes), [Game Modes](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Game+Modes), [Maps or Levels](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Maps+or+Levels), [Modding or Configuration](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Modding+or+Configuration), [Story or Lore](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Story+or+Lore), [Walkthroughs](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Walkthroughs)
 
-Languages: [Polish](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Polish)
+Languages: Polish
 
-Posted 
+Posted: 13 Sep, 2020 @ 12:50am; Updated: 18 Apr, 2025 @ 8:45am
 
-Updated 
+Unique visitors: 10,223; Current favorites: 137
 
-13 Sep, 2020 @ 12:50am
+### Windows 10 & 11 - FPS FIX and Font
 
-18 Apr, 2025 @ 8:45am
+I used the files from the original version of the game released on CD's and they aren't mine, by downloading this patch you will fix:
 
-10,223 | Unique Visitors  
----|---  
-137 | Current Favorites  
-  
-Guide Index
+- Low FPS on Windows 10 & 11
+- Current font to original font from game on CD's
 
-Overview
+You can download here:
 
-Windows 10 & 11 - FPS FIX and Font 
+Link: [Click here, to download FPS FIX](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1if_X4ick7ugvr2zEaIK9sDRotNFmkAJH) ([drive.google.com](https://drive.google.com/file/d/1if_X4ick7ugvr2zEaIK9sDRotNFmkAJH))
 
-Comments
+After downloading, follow the instruction contained in the archive.
 
-Windows 10 & 11 - FPS FIX and Font 
+Have a nice game!
 
-I used the files from the original version of the game released on CD's and they aren't mine, by downloading this patch you will fix:  
+**If I helped, don't forget to rate the guide or write a comment :)**
 
+PS. If you don't know where to paste the files, this screenshot will help you:
 
-  * Low FPS on Windows 10 & 11  
+![Screenshot showing where to paste the files](https://images.steamusercontent.com/ugc/1616185846859384444/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)
 
-  * Current font to original font from game on CD's
+### Comments
 
-  
-You can download here:  
-Link: [ Click here, to download FPS FIX ](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1if_X4ick7ugvr2zEaIK9sDRotNFmkAJH)[drive.google.com]  
-  
-After downloading, follow the instruction contained in the archive.  
-Have a nice game!  
-  
-**If I helped, don't forget to rate the guide or write a comment :)**  
-  
-PS.If you don't know where to paste the files, this screenshot will help you  
-[](https://images.steamusercontent.com/ugc/1616185846859384444/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)  
-  
-  
+The page reports 71 comments; all 71 captured comments are preserved below in descending display order. Each HTML comment marker records the source ID and is not part of the source text.
 
+<!-- Steam comment ID: 601919346587121078 -->
+#### Nufi-Chan — 27 Oct, 2025 @ 8:25pm
 
-71 Comments 
+@theOryol
+Issue for me with FPS it's not slugishness of the game, it's uplayable at 2 fps. I played it long time ago, and that's not what it was
 
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
+<!-- Steam comment ID: 572641938359077287 -->
+#### theOryol — 13 Sep, 2025 @ 4:59pm
 
-[ ](https://steamcommunity.com/id/Nufi-Chan)
+Just wanted to comment on the FPS "issue". I played this game a lot back in the day when it came out and this is normal for this game engine. It always had a kind of sluggish feel, but was fun to play and had a great story. Thanks to the OP and now the publisher fix, the game is back to its original glory. Which... may not be everyone's cup of tea.
+It's just not going to have the fast response of contemporaries like Commandos 2.
 
-[ Nufi-Chan](https://steamcommunity.com/id/Nufi-Chan)
+<!-- Steam comment ID: 597396012525424264 -->
+#### hailmyself — 22 Mar, 2025 @ 11:23am
 
-27 Oct, 2025 @ 12:25pm 
+It worked! It worked!
+You sir is a damn hero to all of Legend of Sherwood loyal fans.
 
-@theOryol  
-Issue for me with FPS it's not slugishness of the game, it's uplayable at 2 fps. I played it long time ago, and that's not what it was 
+<!-- Steam comment ID: 4759829899294142203 -->
+#### Brezbook — 5 Sep, 2024 @ 6:19am
 
-[ ](https://steamcommunity.com/profiles/76561198024510792)
+Worked for me too, thank you!
 
-[ theOryol](https://steamcommunity.com/profiles/76561198024510792)
+<!-- Steam comment ID: 4425435723659526637 -->
+#### 𝙄𝙍☯𝙉 λɲ❡૯ꪶꌗ — 14 Aug, 2024 @ 5:34am
 
-13 Sep, 2025 @ 7:59am 
+❤️ 𝘛𝘩𝘢𝘯𝘬𝘴 👍 𝘎𝘦𝘯𝘪𝘶𝘴
 
-Just wanted to comment on the FPS "issue". I played this game a lot back in the day when it came out and this is normal for this game engine. It always had a kind of sluggish feel, but was fun to play and had a great story. Thanks to the OP and now the publisher fix, the game is back to its original glory. Which... may not be everyone's cup of tea.  
-It's just not going to have the fast response of contemporaries like Commandos 2. 
+<!-- Steam comment ID: 4513254562065294713 -->
+#### rabber.buca — 30 Jul, 2024 @ 3:09pm
 
-[ ](https://steamcommunity.com/profiles/76561198088840893)
+Funziona davvero , è fantastico, ancora non ci posso credere!!!! se cambio la risoluzione all'interno del gioco migliora ulteriormente ? nel senso se la diminuisco o la aumento all'interno del gioco ? o cambia poco e niente ? in ogni caso il gioco va moooolto bene cosi :)
 
-[ hailmyself](https://steamcommunity.com/profiles/76561198088840893)
+<!-- Steam comment ID: 6895657216184043450 -->
+#### gamerpete47 — 12 Jul, 2024 @ 11:59pm
 
-22 Mar, 2025 @ 3:23am 
+thank you
 
-It worked! It worked!  
-  
-You sir is a damn hero to all of Legend of Sherwood loyal fans. 
+<!-- Steam comment ID: 4415298705124374052 -->
+#### Naxyň — 3 Jul, 2024 @ 5:09pm
 
-[ ](https://steamcommunity.com/profiles/76561198011154568)
+@Razen
+this is the maximum fps you can get on newer systems, at least the game is playable :)
 
-[ Brezbook](https://steamcommunity.com/profiles/76561198011154568)
+<!-- Steam comment ID: 4415298705123927567 -->
+#### Razen — 3 Jul, 2024 @ 2:14pm
 
-4 Sep, 2024 @ 9:19pm 
+Doesn't work for me. Did all as instructed but it keeps hovering around 21-22 FPS even with a fairly good PC
 
-Worked for me too, thank you! 
+<!-- Steam comment ID: 4415298540306627451 -->
+#### Kreb — 30 Jun, 2024 @ 9:44pm
 
-[ ](https://steamcommunity.com/profiles/76561199115843298)
+Worked like a charm, thanks.
 
-[ 𝙄𝙍☯𝙉 λɲ❡૯ꪶꌗ](https://steamcommunity.com/profiles/76561199115843298)
+<!-- Steam comment ID: 4415298540305514730 -->
+#### fey — 30 Jun, 2024 @ 2:29pm
 
-13 Aug, 2024 @ 8:34pm 
+I can't believe it worked, thank you so much!!!
 
-❤️ 𝘛𝘩𝘢𝘯𝘬𝘴 👍 𝘎𝘦𝘯𝘪𝘶𝘴 
+<!-- Steam comment ID: 6579276631058724771 -->
+#### Szatan — 13 Jun, 2024 @ 6:19pm
 
-[ ](https://steamcommunity.com/profiles/76561198399930046)
+wanted refound but after this its playable
 
-[ rabber.buca](https://steamcommunity.com/profiles/76561198399930046)
+<!-- Steam comment ID: 4357873056149278007 -->
+#### Nayla♥Bambi — 11 May, 2024 @ 12:36pm
 
-30 Jul, 2024 @ 6:09am 
+update - its back to running slow again?
 
-Funziona davvero , è fantastico, ancora non ci posso credere!!!! se cambio la risoluzione all'interno del gioco migliora ulteriormente ? nel senso se la diminuisco o la aumento all'interno del gioco ? o cambia poco e niente ? in ogni caso il gioco va moooolto bene cosi :) 
+<!-- Steam comment ID: 4357872852122781500 -->
+#### Nayla♥Bambi — 9 May, 2024 @ 9:31pm
 
-[ ](https://steamcommunity.com/profiles/76561198008550072)
+thank You, the key bindings menu is still fuky, but at least the game works properly now, i just dont like how slow the screen moves though, but thats not Your job.
+Anyway thanks again for the fix, shame on the steam version for selling such an unfixed game.
+♥♥♥
 
-[ gamerpete47](https://steamcommunity.com/profiles/76561198008550072)
+<!-- Steam comment ID: 4357872852117099694 -->
+#### Hacaios — 8 May, 2024 @ 8:13am
 
-12 Jul, 2024 @ 2:59pm 
+Thanks a lot. I loved this game as a child. Now i can relive it.
 
-thank you 
+<!-- Steam comment ID: 4298195945332483791 -->
+#### juapo520 — 22 Mar, 2024 @ 7:03pm
 
-[ ](https://steamcommunity.com/id/naxynpl)
+i'm been waiting to plat this game again for years, after this patch was possible. thankssss!!!
 
-[ Naxyň](https://steamcommunity.com/id/naxynpl)  [author]
+<!-- Steam comment ID: 4295943021558500276 -->
+#### jdiazaram — 10 Mar, 2024 @ 10:36pm
 
-3 Jul, 2024 @ 8:09am 
+Still working, amazingly easy fix
 
-@Razen   
-this is the maximum fps you can get on newer systems, at least the game is playable :) 
+<!-- Steam comment ID: 4300446114900897673 -->
+#### Lankan — 4 Mar, 2024 @ 6:53pm
 
-[ ](https://steamcommunity.com/id/Razen94)
+Works perfectly, thanks!!!
 
-[ Razen](https://steamcommunity.com/id/Razen94)
+<!-- Steam comment ID: 6689600878689496430 -->
+#### llordbock91 — 13 Jan, 2024 @ 9:55pm
 
-3 Jul, 2024 @ 5:14am 
+Worked at once, thank you very much :)
 
-Doesn't work for me. Did all as instructed but it keeps hovering around 21-22 FPS even with a fairly good PC 
+<!-- Steam comment ID: 4040357717331743777 -->
+#### alvydaskiusa — 6 Jan, 2024 @ 5:58pm
 
-[ ](https://steamcommunity.com/profiles/76561198088040922)
+Thanks!
 
-[ Kreb](https://steamcommunity.com/profiles/76561198088040922)
+<!-- Steam comment ID: 4040357120666386210 -->
+#### s1nrostro — 30 Dec, 2023 @ 4:20am
 
-30 Jun, 2024 @ 12:44pm 
+Funciona
 
-Worked like a charm, thanks. 
+<!-- Steam comment ID: 4040356398513153673 -->
+#### sweet_guy — 22 Dec, 2023 @ 5:08am
 
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
+Legend
 
-Share to your Steam activity feed
+<!-- Steam comment ID: 4038101970212202915 -->
+#### Lom_Terazani*19* — 23 Nov, 2023 @ 8:00pm
 
-[]( "Share on Facebook")
+It worked as well. Nice frame compared to original and no lag !
+Thanks Op !
 
-[]( "Share on Twitter")
+<!-- Steam comment ID: 3877092663686630438 -->
+#### Chipsbok — 20 Sep, 2023 @ 9:14pm
 
-[]( "Share on Reddit")
+It works, that's all I need :) cheers
 
-Link: 
+<!-- Steam comment ID: 3806153791392097989 -->
+#### Benjaalife — 6 Jul, 2023 @ 4:50am
 
-You need to sign in or create an account to do that.
+Lo he probado en Windows 11 y me funcionó bien.  El juego por defecto corre mejor que en Windows 10 pero abecés habían bajones de FPS. Ahora no los tengo. Muchas gracias.
+//
+I've tested it on Windows 11 and it limits me fine. The default game runs better than Windows 10 but sometimes there were FPS drops. Now I don't have them. Thank you so much.
 
-[Sign In](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2227664168%26insideModal%3D0%26requirelogin%3D1) [Create an Account](https://store.steampowered.com/join) Cancel
+<!-- Steam comment ID: 5570437336431572095 -->
+#### Joaszy — 15 Jun, 2023 @ 10:49pm
 
-[Update](javascript:UpdateKVTagsSingle\(\);)
+Dziękuję
 
+<!-- Steam comment ID: 3839927185123768148 -->
+#### Milt — 26 May, 2023 @ 11:55am
 
-### technical__steam-naxyn-fps.txt
+I'm getting low FPS in game its hovering around 25 at the highest. I can play it but i was hoping for a 60FPS game play 30FPS cut scenes videos etc.
 
-_Source: `originals/technical__steam-naxyn-fps.txt`._
+<!-- Steam comment ID: 3824163235269461629 -->
+#### Малганус — 9 May, 2023 @ 5:49am
 
-[ Sign in ](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2227664168) [ Store ](https://store.steampowered.com/)
+Лаги пропадают ... а еще пропадают все слова и буквы))
 
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
+<!-- Steam comment ID: 3824162683819944082 -->
+#### Mrs. Brinks — 7 May, 2023 @ 9:15am
 
-[ Community ](https://steamcommunity.com/)
+So its a random chance  for me now.
+If it does actually boot it now thankfully runs fine.
+However theres only like a 1in 10 chance that  it actually properly boots.
+It starts up, I see the Legend of Sherwood title display and then when the dev team screens should show it flips through my display ports, seems to switch main monitors and resolutions and then just remains non responsive.
+Any idea how to fix that?
 
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
+<!-- Steam comment ID: 3824162683817975290 -->
+#### MóònMonkey — 6 May, 2023 @ 8:20pm
 
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
+Works fine for me
+Thank you for reviving one of my favourite childhood games :D
 
-Change language 
+<!-- Steam comment ID: 6063574513312999100 -->
+#### ViolaTROLXS — 2 Apr, 2023 @ 11:57pm
 
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
+It works in windows 11 as well
 
-View desktop website 
+<!-- Steam comment ID: 3829788562462488810 -->
+#### hikari shikari — 28 Mar, 2023 @ 7:13am
 
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
+Hard to believe that a single community member can rescue a game from complete unplayability. Hats off, and any other article of clothing that you deem necessary.
 
-[ ](https://store.steampowered.com/)
+<!-- Steam comment ID: 3823032780415746591 -->
+#### artradz — 21 Mar, 2023 @ 4:30pm
 
-[ ](https://store.steampowered.com/)
+Thank you, worked for me on Win 11
 
-[ STORE ](https://store.steampowered.com/)
+<!-- Steam comment ID: 3791505882414923106 -->
+#### BrownTown — 5 Mar, 2023 @ 4:17pm
 
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
+Great job, sorted instantly. Thanks very much
 
-[ COMMUNITY ](https://steamcommunity.com/)
+<!-- Steam comment ID: 3773490640561857091 -->
+#### OLDGREG — 20 Feb, 2023 @ 9:32pm
 
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
+You are a good lad. Thank you
 
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
+<!-- Steam comment ID: 3716062978746650345 -->
+#### nevanhale — 12 Dec, 2022 @ 2:26am
 
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2227664168)  |  language
+you can make new update 11 windon
 
-[ 简体中文 (Simplified Chinese) ](?l=schinese&id=2227664168) [ 繁體中文 (Traditional Chinese) ](?l=tchinese&id=2227664168) [ 日本語 (Japanese) ](?l=japanese&id=2227664168) [ 한국어 (Korean) ](?l=koreana&id=2227664168) [ ไทย (Thai) ](?l=thai&id=2227664168) [ Bahasa Indonesia (Indonesian) ](?l=indonesian&id=2227664168) [ Bahasa Melayu (Malay) BETA ](?l=malay&id=2227664168) [ Български (Bulgarian) ](?l=bulgarian&id=2227664168) [ Čeština (Czech) ](?l=czech&id=2227664168) [ Dansk (Danish) ](?l=danish&id=2227664168) [ Deutsch (German) ](?l=german&id=2227664168) [ Español - España (Spanish - Spain) ](?l=spanish&id=2227664168) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam&id=2227664168) [ Ελληνικά (Greek) ](?l=greek&id=2227664168) [ Français (French) ](?l=french&id=2227664168) [ Italiano (Italian) ](?l=italian&id=2227664168) [ Magyar (Hungarian) ](?l=hungarian&id=2227664168) [ Nederlands (Dutch) ](?l=dutch&id=2227664168) [ Norsk (Norwegian) ](?l=norwegian&id=2227664168) [ Polski (Polish) ](?l=polish&id=2227664168) [ Português (Portuguese - Portugal) ](?l=portuguese&id=2227664168) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian&id=2227664168) [ Română (Romanian) ](?l=romanian&id=2227664168) [ Русский (Russian) ](?l=russian&id=2227664168) [ Suomi (Finnish) ](?l=finnish&id=2227664168) [ Svenska (Swedish) ](?l=swedish&id=2227664168) [ Türkçe (Turkish) ](?l=turkish&id=2227664168) [ Tiếng Việt (Vietnamese) ](?l=vietnamese&id=2227664168) [ Українська (Ukrainian) ](?l=ukrainian&id=2227664168) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
+<!-- Steam comment ID: 3716062978742743396 -->
+#### isavns13 — 11 Dec, 2022 @ 12:49am
 
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_100100_100101_100106_apphubheader)
+Resolveu o problema, muito obrigada
 
-Robin Hood
+<!-- Steam comment ID: 3709306945118024204 -->
+#### Radwan — 3 Dec, 2022 @ 8:13pm
 
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
+Thank you, it works
 
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
+<!-- Steam comment ID: 3428948355376083143 -->
+#### agnogh_orion — 22 Aug, 2022 @ 2:07am
 
-### Robin Hood
+Yep, you earned the reward
 
-[ Store Page ](https://store.steampowered.com/app/46560)
+<!-- Steam comment ID: 3454842150482375825 -->
+#### Anthropoid — 28 Jul, 2022 @ 4:52pm
 
-[Robin Hood](https://steamcommunity.com/app/46560) > [Guides](https://steamcommunity.com/app/46560/guides/) > [Naxyň's Guides](https://steamcommunity.com/id/naxynpl/myworkshopfiles/?section=guides&appid=46560)
+I dont know what happened but I still cant play it. It doesnt work. HELP pls :(
 
-This item has been removed from the community because it violates Steam Community & Content Guidelines. It is only visible to you. If you believe your item has been removed by mistake, please contact [Steam Support](https://help.steampowered.com/en/wizard/HelpWithSteamIssue/?issueid=415). 
+<!-- Steam comment ID: 3461596283592684526 -->
+#### gliga86 — 13 Jul, 2022 @ 1:05pm
 
-This item is incompatible with Robin Hood. Please see the [instructions page](https://steamcommunity.com) for reasons why this item might not work within Robin Hood. 
+Works great! Thank you
 
-208 ratings
+<!-- Steam comment ID: 3269061071545669257 -->
+#### Mr.UnclePedro — 9 May, 2022 @ 6:30am
 
-Robin Hood Legend of Sherwood - Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED - Game Fixed by Devs)
+This worked great. Thank you!
 
-By Naxyň
+<!-- Steam comment ID: 4950020834823238608 -->
+#### Psycho💀Waffle — 29 Jan, 2022 @ 8:37pm
 
-Now the problem has been patched by the publisher, you don't need to download anything, the game runs at 22 fps on windows 10 and 11. If you still have problems with the game, you can still try my method :)
+Works beautifully on Windows 10 and a decent system if you use this method. 10/10
 
-  
-  
-Hi!  
-Do you have FPS performance issues on windows 10? Then this fix is ​​for you. The newest and best way.   
+<!-- Steam comment ID: 3193614254336736164 -->
+#### Ahmed Zakaria — 30 Dec, 2021 @ 7:13pm
 
+thanks brother ! it worked for me .. but the shortcut settings page still on the same problem with low fps .. but it's okay
 
-13
+<!-- Steam comment ID: 3193613712494187590 -->
+#### Berhaim — 26 Dec, 2021 @ 10:31am
 
-4
+thank you it works
 
-4
+<!-- Steam comment ID: 3193613712492821967 -->
+#### StraX — 26 Dec, 2021 @ 1:31am
 
-4
+Is the file legal to download in Germany ?
 
-3
+<!-- Steam comment ID: 3193611175980752720 -->
+#### Galadrick — 28 Nov, 2021 @ 7:44pm
 
-3
+Thanks a lot.
 
-3
+<!-- Steam comment ID: 2951536988404210161 -->
+#### Nya^^ — 28 Sep, 2021 @ 9:35am
 
-2
+Thanks, it works
 
-2
+<!-- Steam comment ID: 3051735285578620301 -->
+#### [GER] Robin — 11 Jul, 2021 @ 3:08pm
 
-2
+Thank you so much. My girlfriend is HAPPY! <3
 
-1
+<!-- Steam comment ID: 3047231300186535459 -->
+#### WiLlys — 6 Jul, 2021 @ 7:50pm
 
-41
+Muchas gracias! funciono a la perfección c:
 
-   
+<!-- Steam comment ID: 3070873683593618722 -->
+#### Ozymandias — 22 Jun, 2021 @ 11:07pm
 
-Award
+Great work, thanks heaps!
 
-Favorite
+<!-- Steam comment ID: 5446521858556995044 -->
+#### Kalindra — 14 Jun, 2021 @ 12:14am
 
-Favorited
+Dude thank you so much
 
-Unfavorite
+<!-- Steam comment ID: 3084382396876505366 -->
+#### Bucintoro — 29 May, 2021 @ 11:05pm
 
-Share
+Should i move the entire downloaded folder in the common/Robin Hood file path?
 
-This item has been added to your [Favorites](https://steamcommunity.com/my/myworkshopfiles/?section=guides&browsefilter=myfavorites).
+<!-- Steam comment ID: 3106899761083506074 -->
+#### Mythii — 21 May, 2021 @ 3:29pm
 
-Created by
+Works wonderfully! Thank you!
 
-[](https://steamcommunity.com/id/naxynpl)
+<!-- Steam comment ID: 5836080604438689283 -->
+#### El Gringoso — 15 May, 2021 @ 5:22pm
 
-Naxyň  
-Offline 
+Dude, i love you, this is exactly what i was looking for! Thank you!
 
-Category: [Achievements](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Achievements), [Characters](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Characters), [Classes](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Classes), [Game Modes](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Game+Modes), [Maps or Levels](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Maps+or+Levels), [Modding or Configuration](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Modding+or+Configuration), [Story or Lore](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Story+or+Lore), [Walkthroughs](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Walkthroughs)
+<!-- Steam comment ID: 3124911622547118162 -->
+#### Outlaw Leo — 22 Apr, 2021 @ 10:17pm
 
-Languages: [Polish](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Polish)
+I did all what you said, didn't work, game is still lagging...!
 
-Posted 
+<!-- Steam comment ID: 3102392990146954321 -->
+#### Sythrex — 14 Apr, 2021 @ 7:37am
 
-Updated 
+I love u <3
 
-13 Sep, 2020 @ 12:50am
+<!-- Steam comment ID: 3070866588616322198 -->
+#### Stsoup — 5 Apr, 2021 @ 11:09am
 
-18 Apr, 2025 @ 8:45am
+Thank you so much!!!
 
-10,223 | Unique Visitors  
----|---  
-137 | Current Favorites  
-  
-Guide Index
+<!-- Steam comment ID: 3074243590176688478 -->
+#### Cauterize — 29 Mar, 2021 @ 6:54pm
 
-Overview
+hey. can you reupload file? it gives error when i open
 
-Windows 10 & 11 - FPS FIX and Font 
+<!-- Steam comment ID: 3095635055537585362 -->
+#### SKYBRF — 23 Mar, 2021 @ 2:33pm
 
-Comments
+worked in my case
+though performance issues still occur in the key rebind menu
 
-Windows 10 & 11 - FPS FIX and Font 
+<!-- Steam comment ID: 3103515084624308465 -->
+#### Jarl Ballin — 5 Mar, 2021 @ 10:57am
 
-I used the files from the original version of the game released on CD's and they aren't mine, by downloading this patch you will fix:  
+This fixed only the font, not the fps problem. Game still unplayable.
 
+<!-- Steam comment ID: 3106892150608053186 -->
+#### GERRY ODDY 2 — 25 Feb, 2021 @ 5:55pm
 
-  * Low FPS on Windows 10 & 11  
+I am very happy to be able to play clasic game
 
-  * Current font to original font from game on CD's
+<!-- Steam comment ID: 3106892150608047331 -->
+#### GERRY ODDY 2 — 25 Feb, 2021 @ 5:53pm
 
-  
-You can download here:  
-Link: [ Click here, to download FPS FIX ](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1if_X4ick7ugvr2zEaIK9sDRotNFmkAJH)[drive.google.com]  
-  
-After downloading, follow the instruction contained in the archive.  
-Have a nice game!  
-  
-**If I helped, don't forget to rate the guide or write a comment :)**  
-  
-PS.If you don't know where to paste the files, this screenshot will help you  
-[](https://images.steamusercontent.com/ugc/1616185846859384444/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)  
-  
-  
+happy to be able to play Robin Hood
 
+<!-- Steam comment ID: 3109140779877318979 -->
+#### FailthyCasual — 24 Jan, 2021 @ 11:01pm
 
-71 Comments 
+I`ve been struggling with getting this game to work for over a year, but this fixed it. 11/10. Thanks dude!
 
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
+<!-- Steam comment ID: 3109140779866878598 -->
+#### thegreycat — 22 Jan, 2021 @ 2:42am
 
-[ ](https://steamcommunity.com/id/Nufi-Chan)
+I tried other methods including dgvoodoo and dxwnd. This is the one that worked for me. Thank you!
 
-[ Nufi-Chan](https://steamcommunity.com/id/Nufi-Chan)
+<!-- Steam comment ID: 2994296961839113204 -->
+#### acca99 — 3 Jan, 2021 @ 2:39am
 
-27 Oct, 2025 @ 12:25pm 
+dziękuję!
 
-@theOryol  
-Issue for me with FPS it's not slugishness of the game, it's uplayable at 2 fps. I played it long time ago, and that's not what it was 
+<!-- Steam comment ID: 2994296961838087088 -->
+#### Beonardo — 2 Jan, 2021 @ 7:59pm
 
-[ ](https://steamcommunity.com/profiles/76561198024510792)
+Worked for me dude! thank you
 
-[ theOryol](https://steamcommunity.com/profiles/76561198024510792)
+<!-- Steam comment ID: 2994296376465887354 -->
+#### Murlac — 25 Dec, 2020 @ 6:02am
 
-13 Sep, 2025 @ 7:59am 
+Thanks Porblem Solved
 
-Just wanted to comment on the FPS "issue". I played this game a lot back in the day when it came out and this is normal for this game engine. It always had a kind of sluggish feel, but was fun to play and had a great story. Thanks to the OP and now the publisher fix, the game is back to its original glory. Which... may not be everyone's cup of tea.  
-It's just not going to have the fast response of contemporaries like Commandos 2. 
+<!-- Steam comment ID: 2963893984922334020 -->
+#### Jimm — 22 Nov, 2020 @ 10:30am
 
-[ ](https://steamcommunity.com/profiles/76561198088840893)
+Very useful fix. Than you!
 
-[ hailmyself](https://steamcommunity.com/profiles/76561198088840893)
+<!-- Steam comment ID: 2996543814085568340 -->
+#### Vissarionovich — 5 Nov, 2020 @ 8:48pm
 
-22 Mar, 2025 @ 3:23am 
+Workd for me, i have tryed the other methods but this is the only one that worked. :)
 
-It worked! It worked!  
-  
-You sir is a damn hero to all of Legend of Sherwood loyal fans. 
+<!-- Steam comment ID: 2994291378907898355 -->
+#### Aitrus — 29 Oct, 2020 @ 6:20pm
 
-[ ](https://steamcommunity.com/profiles/76561198011154568)
-
-[ Brezbook](https://steamcommunity.com/profiles/76561198011154568)
-
-4 Sep, 2024 @ 9:19pm 
-
-Worked for me too, thank you! 
-
-[ ](https://steamcommunity.com/profiles/76561199115843298)
-
-[ 𝙄𝙍☯𝙉 λɲ❡૯ꪶꌗ](https://steamcommunity.com/profiles/76561199115843298)
-
-13 Aug, 2024 @ 8:34pm 
-
-❤️ 𝘛𝘩𝘢𝘯𝘬𝘴 👍 𝘎𝘦𝘯𝘪𝘶𝘴 
-
-[ ](https://steamcommunity.com/profiles/76561198399930046)
-
-[ rabber.buca](https://steamcommunity.com/profiles/76561198399930046)
-
-30 Jul, 2024 @ 6:09am 
-
-Funziona davvero , è fantastico, ancora non ci posso credere!!!! se cambio la risoluzione all'interno del gioco migliora ulteriormente ? nel senso se la diminuisco o la aumento all'interno del gioco ? o cambia poco e niente ? in ogni caso il gioco va moooolto bene cosi :) 
-
-[ ](https://steamcommunity.com/profiles/76561198008550072)
-
-[ gamerpete47](https://steamcommunity.com/profiles/76561198008550072)
-
-12 Jul, 2024 @ 2:59pm 
-
-thank you 
-
-[ ](https://steamcommunity.com/id/naxynpl)
-
-[ Naxyň](https://steamcommunity.com/id/naxynpl)  [author]
-
-3 Jul, 2024 @ 8:09am 
-
-@Razen   
-this is the maximum fps you can get on newer systems, at least the game is playable :) 
-
-[ ](https://steamcommunity.com/id/Razen94)
-
-[ Razen](https://steamcommunity.com/id/Razen94)
-
-3 Jul, 2024 @ 5:14am 
-
-Doesn't work for me. Did all as instructed but it keeps hovering around 21-22 FPS even with a fairly good PC 
-
-[ ](https://steamcommunity.com/profiles/76561198088040922)
-
-[ Kreb](https://steamcommunity.com/profiles/76561198088040922)
-
-30 Jun, 2024 @ 12:44pm 
-
-Worked like a charm, thanks. 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-Share to your Steam activity feed
-
-[]( "Share on Facebook")
-
-[]( "Share on Twitter")
-
-[]( "Share on Reddit")
-
-Link: 
-
-You need to sign in or create an account to do that.
-
-[Sign In](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2227664168%26insideModal%3D0%26requirelogin%3D1) [Create an Account](https://store.steampowered.com/join) Cancel
-
-[Update](javascript:UpdateKVTagsSingle\(\);)
+Perfect solution and doesn't change the game idiom, so you can keep playing in your language. Thanks!

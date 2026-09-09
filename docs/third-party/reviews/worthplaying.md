@@ -1,20 +1,64 @@
-# WorthPlaying — contemporary review
+# WorthPlaying — PC Review: “Robin Hood”
 
-- Original source: [WorthPlaying — contemporary review](https://www.worthplaying.com/article/2002/12/16/reviews/7395-pc-review-robin-hood/)
+- Original source: [WorthPlaying — PC Review: “Robin Hood”](https://www.worthplaying.com/article/2002/12/16/reviews/7395-pc-review-robin-hood/)
 - Author / publication: Tony “OUberLord” Mitera / WorthPlaying
-- Language / date: English; 2002-12-16
-- Access: Full review page retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: none found in the Wayback Machine (checked 2026-09-09)
-- Format: header notes, then the page text converted from the original HTML
+- Published: December 16, 2002, 9:03 a.m. PST
+- Genre: Real Time Strategy
+- Publisher: Strategy First, Inc. and Wanadoo
+- Developer: Spellbound Studios
+- Release date: November 15, 2002
+- Source status: Full English review text available in the supplied HTML capture.
 
-## Converted text from the original HTML
+## Review
 
+Robin Hood offers dynamic gameplay which combines stealth and action. It will immerse players in a spectacular and realistic medieval environment, from the depths of Sherwood Forest to the ramparts of Nottingham castle. The story includes all the most famous characters from the Robin Hood legend: Maid Marian, Little John, Friar Tuck, Guy of Gisborne, etc. Did the game hit the bull's eye or did we shoot ourselves in the foot? Read more and find out!
 
+![Robin Hood logo](https://www.worthplaying.com/review/robinhood/rh_logo.jpg)
 
-### reviews__worthplaying.html
+![Robin Hood box art](https://www.worthplaying.com/review/robinhood/robinhood_box.jpg)
 
-_Source: `originals/reviews__worthplaying.html`._
+There's much to be said about the legend of Robin Hood. While the legend itself is a story of epic proportions in itself, it also manages to teach and uphold such things as justice, honor, charity, and forgiveness. The legend has been retold many times over the ages, and even made an appearance on a handful of games. While previous games based on Robin Hood weren't that bad, Robin Hood: The Legend of Sherwood outshines most, if not all of them.
 
-[**News**](/news/) [Reviews](/news/reviews/) [Previews](/news/previews/) [Interviews](/news/interviews/) [Events](/event/) [Downloads](http://www.worthdownloading.com) [Search](/search/) [](http://rss.worthplaying.com/worthplaying/)
+RH: LoS is a top-down, tactical style game in the same vein of the Commandos series. However, rather than taking a squad of military men behind enemy lines, you take up your bows and swords to thwart the Sheriff of Nottingham's heavy taxation of the poor. Also, RH: LoS is a much lighter game than the Commandos series, while Commandoes always had an serious feel to it, RH: LoS always feels lighthearted. That's not to say it's easy by any means, but it always has a lighthearted feel to it.
+
+For those of you who are not knowledgeable of the legend of Robin Hood, let me enlighten you. As the legend goes, way back in time King Richard the Lion-Heart recruited and trained the best knights of the land and had them join him in battle in the Holy Land against the infidels. While he was away fighting, he left his brother Prince John in charge of his kingdom. During the war, King Richard fought alongside and befriended Robin Hood. Later, as King Richard was returning victorious from the war he was captured and held for an enormous ransom by Duke Leopold. Robin Hood, upon learning that the King has been captured, returned to England to try and find ways to raise enough money to pay the ransom and free the King. However, once home Robin Hood found that not only his father died his land was taken from him by the Sheriff of Nottingham while he was away at war. Not only that, the Sheriff was increasing his already vast riches by imposing heavy taxes upon the poor, starving people that made up the local population.
+
+Screenshots from this section: [Image 1](https://www.worthplaying.com/review/robinhood/Image1.jpg), [Image 2](https://www.worthplaying.com/review/robinhood/Image2.jpg), [Image 24](https://www.worthplaying.com/review/robinhood/Image24.jpg), and [Image 3](https://www.worthplaying.com/review/robinhood/Image3.jpg).
+
+At this point the game has its beginnings. Starting off you are virtually unknown, penniless, and without a companion. However, as you progress through the game you will find your old friend's and family, join up with Merry Men who are willing to take up arms against the evil Sheriff of Nottingham, and ultimately raise enough money to free the King so he can rid the land of the Sheriff and his heavy taxation once and for all.
+
+The game is played from a top down perspective. Players initially only have Robin Hood to worry about and control, which is done by a combination of the keyboard and mouse. Left clicking selects members of your group, and right clicking carries out actions. There are many icons on the screen that represent different actions you can do by clicking on them or by using keyboard hotkeys. Later on in the game people who want to fight alongside you, all with varying skills, traits, and abilities, will join you. Robin Hood can fight with a sword, use his bow to fire arrows, throw purses of gold to distract the dumber of guards, and can even use a knockout punch if you manage to sneak up behind a unsuspecting enemy. The Merry Men that fight alongside you all have their own sets of skills. While all of them can fight in melee combat, the Strong Merry can whistle to attract enemies attention, transport bodies or objects, eat to regain health, or set off a trap from a safe distance. The Aggressive Merry can throw an apple to distract guards, pick locks of doors, revive fallen comrades, and finish off enemies. The Mustachioed Merry can use a bow and arrow, use his shield to defend places or people from enemy attacks, and can even hog-tie unconscious guards. Other actions various characters can do includes giving money to beggars in exchange for useful information, climb vines on walls, give someone a leg up to climb over walls, and search fallen enemies for any money or items they may be carrying. Also, all characters can run, walk, and crawl, which not only dictates how far away enemies can see you but also determines how much noise you make. Don't expect to be able to sprint up to a bad guy from behind without him showing you the business end of a spear.
+
+Screenshots from this section: [Image 5](https://www.worthplaying.com/review/robinhood/Image5.jpg), [Image 6](https://www.worthplaying.com/review/robinhood/Image6.jpg), [Image 7](https://www.worthplaying.com/review/robinhood/Image7.jpg), and [Image 8](https://www.worthplaying.com/review/robinhood/Image8.jpg).
+
+In RH: LoS, everything you do has repercussions. Your items, health, and money all carry over from one mission to the next so if you find yourself out of arrows, you are going to be out until you find or get some more. Also, RH: LoS emphasizes and rewards stealth and compassion over conflict and killing. While some players will just want to run around killing anyone and everyone, the game keeps track of how many people you kill. The more people you kill, the less Merry Men will want to join you and your bloodthirsty ways. However, players who use stealth and tactics to their advantage will find themselves with more Merry Men than they know what to do with, which isn't a bad thing in the least.
+
+A unique thing in RH: LoS is the forest of Sherwood. Once in the game a bit you set up camp with a few friends and Merry Men deep in Sherwood Forest. Here you can rest up for the next missions, walk around and talk to your comrades, or check your map for any of the Sheriff of Nottingham's convoys that happen to be taking a route through Sherwood. When you pick a mission or a convoy you must first select your team from your pool of men. Some missions can be done with a single man, while others are better suited to a group and some even require men with certain abilities that will be utilized in the mission. While the missions in RH: LoS tend to be on the difficult side, the attacks on convoys are flat out fun. They always start the same, your team waits under leaves and other small AI led groups of 3 wait in the trees and brush. When the convoy is near a giant log on a rope swings down from the branches and hits the convoy wagon. At this point the guards get alarmed and fan out a bit, and that is when the fun begins. You have many tactical options ranging from leading guards into traps to outright attacking them. When/If you want, you can shoot an arrow at targets near any of the groups of 3, causing them to leave their hiding place and attack. A skillful player can hit the guards so hard and quickly that it almost seems too easy, but never fails to be a blast. Missions tend to be a much harder affair; mainly due to the fact the next objective is hardly ever clear. More often than not it all boils down to careful exploration and trial and error, and although it can get frustratingly difficult at times it never gets difficult to the point that it kills the gameplay.
+
+Screenshots from this section: [Image 9](https://www.worthplaying.com/review/robinhood/Image9.jpg), [Image 16](https://www.worthplaying.com/review/robinhood/Image16.jpg), [Image 10](https://www.worthplaying.com/review/robinhood/Image10.jpg), [Image 11](https://www.worthplaying.com/review/robinhood/Image11.jpg), [Image 12](https://www.worthplaying.com/review/robinhood/Image12.jpg), [Image 13](https://www.worthplaying.com/review/robinhood/Image13.jpg), [Image 25](https://www.worthplaying.com/review/robinhood/Image25.jpg), and [Image 15](https://www.worthplaying.com/review/robinhood/Image15.jpg).
+
+Of course, your Merry Men back in Sherwood aren't exactly sitting on their thumbs while you are away as you'd expect. Before you leave on a mission or convoy attack you can set your Merry Men to do a variety of tasks, ranging from making arrows, collecting apples, making nets, training in melee and archery combat, and resting to regain health. In this way even more tactical elements are exposed, you can train your men exactly how you want.
+
+Melee combat in the game is innovative. When engage in combat, your selected character(s) will only sit and try to block enemy attacks until you tell them otherwise. To attack back, you click and hold the left mouse button and draw various shapes with the cursor. A line towards the enemy is a slow but strong jab forward, but dragging away is a quicker stab. Semi-circles and full circles will attack in a 180 and 260 degree arc respectively, and as a last resort you can draw an infinity sign to do an extremely powerful attack. However, every attack you try to do drains your characters stamina a bit, some more than others. If a character runs out of stamina he/she will sit in a daze until they regain themselves, leaving themselves wide upon to attack. A bad side to combat is that although sometimes you will knock enemies out, most of the time you will end up killing them. Thus, if a player wants to gain more Merry Men combat should be avoided as much as possible.
+
+Graphically the game is on-par with other titles on the genre. The resolution and special effects are nothing to speak highly of, but the characters and maps are all very well done. While there's nothing flashy, it doesn't detract from the game in the least. You will always recognize party members, enemy types, and items even at a glance, and the world itself is vibrant and authentic. The menus in game and the talk boxes are also well done, and even come complete with wax seals rather than buttons, a nice touch.
+
+Screenshots from this section: [Image 17](https://www.worthplaying.com/review/robinhood/Image17.jpg), [Image 18](https://www.worthplaying.com/review/robinhood/Image18.jpg), [Image 19](https://www.worthplaying.com/review/robinhood/Image19.jpg), [Image 23](https://www.worthplaying.com/review/robinhood/Image23.jpg), and [Image 20](https://www.worthplaying.com/review/robinhood/Image20.jpg).
+
+Sound in the game is also average. The sound effects are nothing too spectacular but also don't sound hollow or tinny. In other words, you shouldn't expect to get much use out of a surround sound system but there's nothing that sounds cheap or detracts from the experience. RH: LoS does have a fairly memorable musical score to set the mood, which many games seem to overlook as of late.
+
+Control in the game is simple to pick up and yet complex enough to always make the player feel in complete control. There is nothing too extravagant to memorize or pull off, which lets the player focus on playing the game and controlling his party rather than inputting silly combinations of buttons in the heat of battle or the suspense of the sneak.
+
+Overall, Robin Hood: The Legend of Sherwood is a pretty good game. Not everyone is going to like it, especially impatient people due to the fact tactics aren't usually planned and performed at the drop of a hat, or people who expect an easy game, but anyone who likes tactical games or is interested in the legend of Robin Hood will more than likely enjoy the game. The difficulty level is configurable, so those who do have a tough time will be able to tone it down a bit, but there will still be some who will have a hard time.
+
+![WorthPlaying award graphic](https://www.worthplaying.com/review/robinhood/wp-award1.jpg)
+
+Ranking as one of the best, if not the best, Robin Hood game released yet Spellbound seems to have a winner. Meshing a fairly decent game engine with the legend of Robin Hood and intuitive controls, Robin Hood: The Legend of Sherwood is a good buy for those who are looking for a good, lighthearted game that will keep them entertained for a good while.
+
+**Score: 8.6/10**
+
+Final screenshots: [Image 14](https://www.worthplaying.com/review/robinhood/Image14.jpg), [Image 21](https://www.worthplaying.com/review/robinhood/Image21.jpg), [Image 4](https://www.worthplaying.com/review/robinhood/Image4.jpg), [Image 22](https://www.worthplaying.com/review/robinhood/Image22.jpg), and [Image 19](https://www.worthplaying.com/review/robinhood/Image19.jpg).
+
+## Comments
+
+The supplied HTML contains only the site's Disqus JavaScript placeholder (“Please enable JavaScript to view the comments powered by Disqus”); no author-attributed comments or replies are available to preserve.

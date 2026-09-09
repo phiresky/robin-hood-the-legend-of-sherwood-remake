@@ -312,6 +312,50 @@ impl AchievementId {
     }
 }
 
+/// Static mission eligibility shared by simulation and campaign presentation.
+/// Population-dependent conditions are evaluated from the live mission.
+pub fn available_mission_badges(
+    mission: &crate::profiles::MissionProfile,
+    profiles: &crate::profiles::ProfileManager,
+) -> AchievementSet {
+    use crate::character_kind::CharacterKind as K;
+    use crate::profiles::MissionType as M;
+    let mut badges = AchievementSet::empty();
+    if !mission.mission_type.supports_mission_achievements() {
+        return badges;
+    }
+    for id in AchievementId::ALL {
+        let available = match id {
+            AchievementId::NoBannersPurchased | AchievementId::AllBannersPurchased => {
+                mission.mission_type == M::Attack
+                    && mission.number_of_blazons_to_win > mission.number_of_blazons_to_be_collected
+            }
+            AchievementId::PeopleBehindTheLegend => {
+                matches!(mission.mission_type, M::Ambush | M::Tactical)
+                    && mission.required_character_indices.iter().all(|&index| {
+                        let character = profiles
+                            .characters
+                            .get(index as usize)
+                            .expect("mission requires a missing character profile");
+                        matches!(
+                            K::from_profile(&character.filename, &character.profile_name),
+                            Some(K::MerryManA | K::MerryManB | K::MerryManC)
+                        )
+                    })
+            }
+            // H04's victory predicate fails if any of Ranulph's soldiers dies.
+            // TODO: finish proof routes for the other maps with reported
+            // inaccessible enemies; do not pretend this is a full map audit.
+            AchievementId::Ruthless => !mission.mission_filename.eq_ignore_ascii_case("H04_Lei_VL"),
+            _ => !id.campaign_only(),
+        };
+        if available {
+            badges.insert(id);
+        }
+    }
+    badges
+}
+
 /// Typed rule for lifting per-mission evidence into a campaign/lifetime badge.
 #[repr(u8)]
 #[derive(

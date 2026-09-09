@@ -1,49 +1,104 @@
-# Steam — Spanish selection still launches English
+# Steam — “Idioma del juego”
 
 - Original source: [Steam discussion](https://steamcommunity.com/app/46560/discussions/0/592897173815871834/)
-- Participants: Ziziporo, Makakhiña, and respondents
-- Language / date: Spanish; opened 2025-05-14; replies include 2026
-- Access: Full thread retrieved directly (opening post and 6 replies)
-- Checked: 2026-09-09
+- Game: *Robin Hood* (app 46560), General Discussions
+- Original author: [Ziziporo](https://steamcommunity.com/profiles/76561198158165535)
+- Original date: 14 May 2025, 1:46pm
+- Source status: complete thread; opening post and all six replies are available
 - Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
 
-Ziziporo reports English text despite selecting Spanish and seeing Spanish listed on the store. Makakhiña proposes swapping the directory names `2047` and `3082` so the Spanish files occupy the English directory name.
+## English translation
 
-Several replies report success, including one explicitly dated February 11, 2026. A later question about Spanish cinematics remains a separate issue rather than proof that all localized content is present.
+### Game language
 
-## Discussion
+**Ziziporo — 14 May 2025 @ 1:46pm**
 
-**Ziziporo — 14 May 2025:** “I have it installed in Spanish from Spain, and even the Steam store says the interface is Spanish, but it appears in English.”
+Hello, good day. I wanted to know if anyone knows about the game's language. I have it installed in Spanish from Spain, and even the Steam game store says that the interface is in Spanish, but it appears in English.
 
-**Makakhiña — 5 June 2025:** Go to `steamapps/common/Robin Hood`, find the `2047` and `3082` folders, and swap their names. The game loads whichever language is placed under `2047`. They report that this worked without problems.
+### Reply 1
 
-**Олаэчэя — 18 September 2025:** Says the workaround worked and thanks the author.
+**Makakhiña — 5 June 2025 @ 10:57pm**
 
-**C4RLITOS — 14 November 2025:** Also confirms that exchanging the folder names works.
+If you want to change the language, just go to the game folder (`steamapps/common/Robin Hood`). There you will see two folders with numbers: `2047` is English and `3082` is Spanish. Just switch their names with each other and that's it. The game will start in whichever language you put under `2047`. I tried it and it works without problems.
 
-**Lawliet — 11 February 2026:** Repeats the quoted instructions and calls them completely useful as of that date.
+### Reply 2
 
-**Kyo Jamett — 11 February 2026:** Asks whether the workaround means that only two cinematics are available in Spanish, expecting more.
+**Олаэчэя — 18 September 2025 @ 12:08pm**
 
-**jorge.delgado.tkd — 14 August, year not shown:** Briefly praises the helper.
+This great trick worked for me. Thank you.
 
-The workaround is community-tested but was not executed here. The exact executable version is unspecified; compare with the language-directory behavior documented for the native Linux edition.
+### Reply 3
 
-## Source
+**C4RLITOS — 14 November 2025 @ 4:58pm**
 
-Hand-cleaned from `originals/technical__steam-spanish-language-report.html`; Steam navigation, pagination, related-discussion links, and report-post controls have been omitted while the complete substantive exchange is retained.
+It works to exchange the folder names; thank you very much.
 
-## Detailed notes
+### Reply 4
 
-Page facts: Steam Community thread "Idioma del juego" (game language) in Robin Hood (app 46560) > General Discussions; opened by Ziziporo on 14 May, 2025 @ 1:46pm; "Posts: 6", showing 1-6 of 6 comments. Retrieved directly on 2026-09-09. Not licensed for reproduction; Spanish posts summarised in English.
+**Lawliet — 11 February 2026 @ 6:47am**
 
-### Posts
+> Originally posted by **Makakhiña**:
+>
+> If you want to change the language, just go to the game folder (`steamapps/common/Robin Hood`). There you will see two folders with numbers: `2047` is English and `3082` is Spanish. Just switch their names with each other and that's it. The game will start in whichever language you put under `2047`. I tried it and it works without problems.
 
-1. Ziziporo (14 May, 2025 @ 1:46pm), opening post: has the game installed in Spanish (Spain) and the Steam store page says the interface is in Spanish, yet the game appears in English; asks whether anyone knows about the language.
-2. Makakhiña (5 Jun, 2025 @ 10:57pm), #1 (1 award shown): to change the language go to the game folder (`steamapps/common/Robin Hood`); there are two numbered folders, 2047 is English and 3082 is Spanish; rename them one for the other; the game starts in whichever language is named 2047. Tested and works without problems.
-3. Олаэчэя (18 Sep, 2025 @ 12:08pm), #2: the trick worked; thanks.
-4. C4RLITOS (14 Nov, 2025 @ 4:58pm), #3: swapping the folder names works; thanks.
-5. Lawliet (11 Feb @ 6:47am, 2026), #4: quotes Makakhiña's post and confirms "TOTALMENTE UTIL AL DIA DEL 11/02/2026" (totally useful as of 11 Feb 2026).
-6. Kyo Jamett (11 Feb @ 10:09am), #5: asks whether that means there are only two cinematics in Spanish, since they believed there were many more. (No answer in the thread.)
-7. jorge.delgado.tkd (14 Aug @ 3:35pm), #6: praise ("un crack").
+TOTALLY USEFUL AS OF 11/02/2026. 👍
+
+### Reply 5
+
+**Kyo Jamett — 11 February 2026 @ 10:09am**
+
+Does that mean that there are only two cinematics in Spanish?? Because I thought there were many more.
+
+### Reply 6
+
+**jorge.delgado.tkd — 14 August 2026 @ 3:35pm**
+
+No wayyy. What a legend. 👍
+
+## Original text
+
+### Idioma del juego
+
+**Ziziporo — 14 May, 2025 @ 1:46pm**
+
+Hola buenas queria saber si alguien sabe del idioma del juego que resulta que lo tengo instalado en español de españa y hasta en la tienda del juego de steam sale que la interfas esta en español pero me aparece en ingles
+
+### Reply 1
+
+**Makakhiña — 5 Jun, 2025 @ 10:57pm**
+
+Si quieres cambiar el idioma, solo ve a la carpeta del juego (`steamapps/common/Robin Hood`). Ahí verás dos carpetas con números: la `2047` es inglés y la `3082` es español. Solo cámbiales el nombre una por otra y listo. El juego se iniciará en el idioma que le pongas como `2047`. Lo probé y funciona sin problemas.
+
+### Reply 2
+
+**Олаэчэя — 18 Sep, 2025 @ 12:08pm**
+
+Me sirvió este trucazo. Gracias.
+
+### Reply 3
+
+**C4RLITOS — 14 Nov, 2025 @ 4:58pm**
+
+Si funciona intercambiar los nombres de las carpetas, muchas gracias.
+
+### Reply 4
+
+**Lawliet — 11 Feb, 2026 @ 6:47am**
+
+> Originally posted by **Makakhiña**:
+>
+> Si quieres cambiar el idioma, solo ve a la carpeta del juego (steamapps/common/Robin Hood). Ahí verás dos carpetas con números: la 2047 es inglés y la 3082 es español. Solo cámbiales el nombre una por otra y listo. El juego se iniciará en el idioma que le pongas como 2047. Lo probé y funciona sin problemas.
+
+TOTALMENTE UTIL AL DIA DEL 11/02/2026 👍
+
+### Reply 5
+
+**Kyo Jamett — 11 Feb, 2026 @ 10:09am**
+
+Significa eso que sólo hay dos cinemáticas en español?? porque creería que habían muchas más
+
+### Reply 6
+
+**jorge.delgado.tkd — 14 Aug, 2026 @ 3:35pm**
+
+Naaaaaa. un crack 👍

@@ -1,12 +1,19 @@
-# Amiga News — MorphOS test executable
+# MorphOS: New test version of Robin Hood
 
-- Original title: MorphOS: New test version of Robin Hood
-- Source: [Original publication](https://www.amiga-news.de/en/standard/?frm_pageType=news&frm_perPage=21&frm_start=18375)
-- Author / publisher: snx; translation dr; source Pegasosforum
-- Language / date: English; 2007-02-09
-- Access: Complete short news text inspected through the search index; individual article URL not recovered.
-- Checked: 2026-09-09
+- **Source:** [Amiga News](https://www.amiga-news.de/en/news/AN-2007-02-00038-EN.html)
+- **Date:** 9 February 2007, 17:23
+- **Source credited as:** [Pegasosforum (Forum)](http://www.pegasosforum.de/viewtopic.php?p=25887)
+- **Editor:** snx
+- **Translation:** dr
+- **Comments:** 0
 
-The report says Gunnar von Boehn released a test executable after players reported intermittent freezing. It describes a newer compiler and improved speed, and asks affected users to check whether the freeze remains.
+After some users of the MorphOS version reported that sometimes the game ["Robin Hood - The Legend of Sherwood"](http://www.rune-soft.com/deutsch/Projektseiten/robin/robin.html) freezed Gunnar von Boehn has published a new test version and asks these users to check if the problem still occurs.
 
-Crucially, it warns that the changed save format may prevent continuation from old saves. The executable was distributed as a 2.9 MB bzip2 archive replacing the installed program. This records an experimental port update rather than a confirmed universal fix; the binary was not downloaded or tested. The linked archive is paginated and may shift as news is added.
+The new version was created with a new compiler and is faster than the previous version. But please note that the memory format has changed. Therefore it cannot be guaranteed that old game stands can be used!
+
+To install the game please extract the file `RobinHood.bz2` and copy the it to your Robin Hood directory.
+
+Download: [RobinHood.bz2](http://www.greyhound-data.com/gunnar/robinhood/RobinHood.bz2) (2.9 MB)
+
+— snx  
+*(Translation: dr)*

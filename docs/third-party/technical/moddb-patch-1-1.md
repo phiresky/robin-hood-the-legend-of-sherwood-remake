@@ -1,86 +1,39 @@
-# ModDB — historical Windows 1.1 patch record
-
-- Original source: [ModDB — historical Windows 1.1 patch record](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood/downloads/robin-hood-patch-1-1)
-- Author / publication: GameWatcher uploader / ModDB
-- Language / date: English; added 2003-08-13
-- Access: Live page not retrieved; text read from a Wayback Machine capture
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09, from the Wayback Machine capture
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML
-
-## Converted text from the original HTML
-
-
-### technical__moddb-patch-1-1.html
-
-_Source: `originals/technical__moddb-patch-1-1.html`._
-
-Enable JavaScript and cookies to continue
-
-
-### technical__moddb-patch-1-1.txt
-
-_Source: `originals/technical__moddb-patch-1-1.txt`._
-
-Hello guest [register](/members/register) or [sign in](/members/login) or with: [](/members/loginext/steam "Click to connect via Steam")[](/members/loginext/google "Click to connect via Google")[](/members/loginext/twitter "Click to connect via Twitter")[](/members/loginext/facebook "Click to connect via Facebook")
-
 # Robin Hood Patch 1.1 file
 
-[](/ "ModDB Home")
+- Original source: [ModDB — Robin Hood Patch 1.1 file](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood/downloads/robin-hood-patch-1-1)
+- Uploader / publication: [GameWatcher](https://www.moddb.com/members/gamewatcher) on ModDB
+- Added: Aug 13th, 2003
+- Language: English
+- Checked: 2026-09-09
+- Source files: `originals/technical__moddb-patch-1-1.html` (authoritative HTML) and `originals/technical__moddb-patch-1-1.txt`
 
-  * [HOME](/)
-  * [Today](/today "New today")
-  * [Week](/week "New this week")
-  * [Month](/month "New this month")
-  * [Year](/year "New this year")
+## Robin Hood Patch 1.1
 
-  * [games](/games)
-    * [popular](/games/top)
-    * [latest](/games/latest)
-    * [indies](https://www.indiedb.com)
-    * [publishing](https://modularity.games)
-    * [add game](/games/add)
-  * [mods](/mods)
-    * [popular](/mods/top)
-    * [latest](/mods/latest)
-    * [add mod](/mods/add)
-  * [addons](/addons)
-    * [popular](/addons/top)
-    * [latest](/addons/latest)
-    * [upload](/addons/add)
-  * [files](/downloads)
-    * [popular](/downloads/top)
-    * [latest](/downloads/latest)
-    * [upload](/downloads/add)
-  * [RTX Remix](/rtx)
-    * [Games Compatibility](/rtx)
-    * [Mods](/rtx/mods)
-    * [Files](/rtx/downloads)
-    * [PBR Assets](/rtx/downloads?filter=t&category=34)
-    * [News](/rtx/articles)
-    * [Tutorials](/rtx/tutorials)
-    * [Statistics](/rtx/stats)
-  * [videos](/videos)
-    * [images](/images)
-    * [audio](/audio)
-  * [articles](/articles)
-    * [reviews](/reviews)
-    * [headlines](/headlines)
-    * [blogs](/blogs)
-    * [post article](/articles/add)
-  * [engines](/engines)
-    * [popular](/engines/top)
-    * [latest](/engines/latest)
-    * [add engine](/engines/add)
-  * [developers](/company)
-    * [popular](/company/top)
-    * [latest](/company/latest)
-    * [add dev](/company/add)
-  * [groups](/groups)
-    * [popular](/groups/top)
-    * [latest](/groups/latest)
-    * [add group](/groups/add)
-  * [forums](/forum)
-  * [jobs](/jobs)
-    * [post job](/jobs/add)
+This patch has been archived by the uploader because it is out of date and no longer supported. We recommend you [browse the file list](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood/downloads) for the latest patch.
+
+### File metadata
+
+- **Location:** [Games](https://www.moddb.com/games) : [Robin Hood: The Legend of Sherwood](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood) : [Files](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood/downloads)
+- **Filename:** `rh_update_1.1.exe`
+- **Category:** [Patch](https://www.moddb.com/games/robin-hood-the-legend-of-sherwood/downloads?filter=t&category=4)
+- **Uploader:** [GameWatcher](https://www.moddb.com/members/gamewatcher)
+- **Added:** Aug 13th, 2003
+- **Size:** 2.93mb (3,072,190 bytes)
+- **Downloads:** 361 (1 today)
+- **MD5 Hash:** `94cd8ebeafdc6b324d938e291430bdef`
+
+### Description
+
+The Robin Hood patch fixes a lag problem which occurs during play on some Windows 98 or Windows ME systems. This patch will only work on those systems.
+
+### Preview
+
+[Robin Hood Patch 1.1 preview image](https://media.moddb.com/images/downloads/1/170/169281/PreviewImage7_RH.jpg)
+
+### Comments
+
+#### [ntblood](https://www.moddb.com/members/ntblood) — Feb 2 2022
+
+This patch sucks ; )   I mean it makes it so that the game no longer recognizes my game CD disk so I can't play, genius. I wonder what went wrong but don't bother with this patch I'd say.
+
+The comment displayed `+1 vote`.

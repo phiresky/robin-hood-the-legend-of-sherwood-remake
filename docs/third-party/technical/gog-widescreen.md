@@ -1,114 +1,529 @@
-# GOG — historical profile-based widescreen experiments
+# GOG forum: widescreen
 
-- Original source: [widescreen](https://www.gog.com/forum/robin_hood_legend_of_sherwood/widescreen/page1)
-- Author / publication: gmx, ZellSF, and respondents; GOG forum.
-- Language / date: English; opened 2012-06-08; key experiment 2018-07-08; last post 2022-09-05.
-- Access: Both pages retrieved directly (posts 1-15 and 17-30; no post 16 exists on either page)
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete post-by-post notes (forum thread, not transcribed)
+- Source: [GOG forum — widescreen, page 1](https://www.gog.com/forum/robin_hood_legend_of_sherwood/widescreen/page1) and [page 2](https://www.gog.com/forum/robin_hood_legend_of_sherwood/widescreen/page2)
+- Forum: Robin Hood Legend of Sherwood
+- Language: English (with one brief non-English aside)
+- Thread opened June 8, 2012; last post September 5, 2022
+- Retrieved September 9, 2026
 
-ZellSF reports obtaining unsupported resolutions by editing the Profiles file under DATA/Savegame. Their experiments distinguish 1024×576, which reportedly fits the existing interface well, from larger resolutions that shrink or disrupt interface elements. They explicitly limit their testing to basic functionality; a subsequent player reports success at 1920×1080.
+The original pages contain 29 posts numbered 1–15 and 17–30; no post 16 is present. This is the complete substantive post text, with repeated quoted copies omitted where the quoted post is transcribed separately. Technical values, links, and attribution are retained. Site navigation, account controls, ads, and other GOG chrome are removed.
 
-The thread is historical evidence of profile-controlled rendering dimensions, not proof of complete widescreen support. Later replies discuss additional dimensions and increased visible map area. The posted byte sequences were not tested or reproduced here. These observations predate the GOG preservation update.
+## English translation
 
-## Detailed notes
+### Post 1 — gmx (June 8, 2012)
 
-Page facts: GOG forum thread "widescreen" in the Robin Hood Legend of Sherwood subforum; 29 posts over 2 pages; opened by gmx on 2012-06-08. Page 1 holds posts 1 to 15 (2012-06-08 to 2018-12-20); page 2 (posts 17 to 30) is covered in a second table below. Post 8 carries a "high rated" badge. Retrieved directly from gog.com on 2026-09-09. Forum threads are not licensed for reproduction, so the posts are summarised post by post; the byte sequences are reproduced exactly because they are the technical payload.
+Widescreen support in game / max resolution - is gog version better then others? it's on sale now, nostalgic buy or not to buy problem
 
-| # | Poster (profile details shown) | Date | Content |
-|---|---|---|---|
-| 1 | gmx ("Evil geck0"; registered Sep 2008; Poland) | 2012-06-08 | Asks about widescreen support and max resolution, and whether the GOG version is better than others; it is on sale. |
-| 2 | wtan1 (New User; registered Apr 2012; United States) | 2012-06-09 | Maximum in-game resolution is 1024x768. Asks for a way to run windowed or at 1920x1080. |
-| 3 | Benne (New User; registered Nov 2009; Serbia) | 2012-06-11 | Could not run windowed out of the box. Workaround: run the game inside a VMware Player virtual machine to simulate a windowed setup. |
-| 4 | JavyC89 (New User; registered Jul 2012; Costa Rica) | 2012-07-18 (edited) | Asks for an easy way to play windowed; on a 1080 monitor the game looks awful. |
-| 5 | MrDOS (New User; registered Dec 2008; Canada) | 2012-09-08 (edited) | Had some success with D3DWindower (links a Neowin forum topic), though it needed a lot of fiddling. |
-| 6 | Theruler (New User; registered Sep 2009; Italy) | 2017-01-09 | Asks whether the same widescreen patch could be made for Desperados. |
-| 7 | Blinkin89 (Master Survivor, GOG Patron; registered Sep 2012; Netherlands) | 2017-01-09 | D3DWindower is a general application, so it can be tried with any Direct3D game. |
-| 8 | ZellSF (New User; registered Apr 2010; Norway) | 2018-07-08 (edited) | The GOG version does not support widescreen, but the game accepts widescreen if specified in the profile. Open `Robin Hood\DATA\Savegame\Profiles` in a hex editor and search for one of the three sequences below (multiple entries may exist with multiple profiles; replace all). Does not know what the numbers mean but found working values by experiment. 1024x576: the game apparently uses width to pick which UI to load, so the UI is perfect at this resolution, and it is neither wider nor taller than any supported resolution; needs a custom resolution in the GPU driver with GPU (not monitor) scaling. 1280x720: preferred for pixel-scaled titles, optimal for 1440p monitors, but the UI looks bad. 1920x1080: everything way too tiny, though the game has a blocky zoom function. Only very basic functionality tested; links a YouTube video (PTXB807T7JA). Attaches 576.jpg, 720.jpg, 1080.jpg. |
-| 9 | mbhtst (New User; registered Feb 2014; Russian Federation) | 2018-07-14 (edit note says "by snowdark") | Thanks; the 1920x1080 value really helped. |
-| 10 | robip85 (New User; registered Mar 2013; Slovenia) | 2018-07-14 | Corrects the 1280x720 value to `A0 44 00 00 34 44`; agrees it suits 1440p monitors. 1024x576 does not work for them: even the main menu shows just tiles and no text. Asks for 1600x900 because 1920x1080 is borderline playable. Higher resolutions show more map but the HUD shrinks; usable up to 900 height. Advises aiming for at least 768 height, i.e. at least 1366x768, since 768 was already available in the original game. |
-| 11 | chrix (New User; registered Dec 2010; Italy) | 2018-07-23 (edited 2018-07-24) | Praises the finding; also cannot find the logic in the numbers, but they work. Confirms the edit works on the Steam version too. |
-| 12 | ZellSF | 2018-07-24 | 1024x576 works fine for them; could not fix it otherwise. The trick simply sets an unsupported resolution and hopes the game accepts it; Robin Hood tolerates it, whereas Chicago 1930 and Desperados crash when the same is done. Adds 1600x900 and 1360x768 values (below). Attaches two game_2018-07-24_.jpg screenshots. |
-| 13 | Gamesiarz (New User; registered May 2011; Poland) | 2018-11-10 | After switching to 720p on a WQHD monitor, cannot scroll the camera to the bottom edge of the screen; top, left and right work. |
-| 14 | Gamesiarz | 2018-12-19 (edited) | Notes the 1280x720 line in post 8 is two characters shorter than every other pair; asks for a check. |
-| 15 | ZellSF | 2018-12-20 | Bottom-edge camera scrolling works fine for them. Confirms the typo: `A0 44 00 34 44` should be `A0 44 00 00 34 44`. |
+### Post 2 — wtan1 (June 9, 2012)
 
-### Every byte sequence posted
+Maximum in game: 1024 x 768. If anyone knows how to get it to display in windowed mode or even better 1920 x 1080, please let me know...
 
-Search targets in the Profiles file (the three stock resolutions, as given in post 8):
+### Post 3 — Benne (June 11, 2012)
 
-| Sequence | Resolution |
-|---|---|
-| `20 44 00 00 F0 43` | 640x480 |
-| `48 44 00 00 16 44` | 800x600 |
-| `80 44 00 00 40 44` | 1024x768 |
+Have not been able to run it windowed out of the box. However, FYI - by downloading free VMware Player and running it in a VM, I am able to simulate a windowed set-up. Just a thought.
 
-Replacement values:
+### Post 4 — JavyC89 (July 18, 2012)
 
-| Sequence | Resolution | Posted by | Notes |
-|---|---|---|---|
-| `80 44 00 00 10 44` | 1024x576 | ZellSF, post 8 | UI fits perfectly; robip85 reports broken menu at this size. |
-| `A0 44 00 34 44` | 1280x720 | ZellSF, post 8 | Typo, one byte missing; corrected in posts 10 and 15. |
-| `A0 44 00 00 34 44` | 1280x720 | robip85 post 10, confirmed ZellSF post 15 | Correct value. |
-| `F0 44 00 00 87 44` | 1920x1080 | ZellSF, post 8 | Everything very small; confirmed working by mbhtst. |
-| `C8 44 00 00 61 44` | 1600x900 | ZellSF, post 12 | Requested by robip85. |
-| `AA 44 00 00 40 44` | 1360x768 | ZellSF, post 12 | |
+Hey.. Is there an easy way to play the game windowed?
 
-The posters did not identify the encoding. The sequences are consistent with two little-endian 32-bit floats separated as width then height (for example `00 00 80 44` = 1024.0 and `00 00 40 44` = 768.0), with the search strings spanning the last two bytes of the width float and the whole height float; that reading is an observation made here, not a claim from the thread.
+I have a 1080 monitor and ir looks awful :(
 
-Other tools mentioned: VMware Player (windowing workaround), D3DWindower (windowing), GPU-driver custom resolutions with GPU scaling.
+### Post 5 — MrDOS (September 8, 2012)
 
-### Page 2 (posts 17 to 30)
+I had some amount of success with [D3DWindower](http://www.neowin.net/forum/topic/603613-d3dwindower/), although I had to play with it a lot to make it work properly.
 
-Page facts: page 2 retrieved directly from gog.com on 2026-09-09. The page numbers its posts 17 to 30; there is no post 16 anchor on either page (the thread counter still says 29 posts, so one post was presumably deleted). Post 19 carries a "high rated" badge.
+### Post 6 — Theruler (January 9, 2017)
 
-| # | Poster (profile details shown) | Date | Content |
-|---|---|---|---|
-| 17 | tonik2000 (New User; registered Jul 2017; Russian Federation) | 2019-11-11 (edited 2019-12-22) | Asks for a 16:10 code (1280x800 or 1440x900). Update: found 1280x800 themselves: `A0 44 00 00 48 44`. |
-| 18 | ShiroOukami (New User; registered May 2017; Poland) | 2020-01-25 | At 1600x900 or 1920x1080 the ambush missions have a black background; asks why. |
-| 19 | MrDOS | 2020-03-05 (edited 2020-06-16) | Wanted 960x600 for 2x integer scaling on a 1920x1200 monitor. The first three bytes control width, the second three height, but no consistent pattern found. For some heights the middle byte encodes 4-pixel steps: 0x34 - 0x16 = 30, and (720 - 600) / 30 = 4; 900 then gives 0x16 + 75 = 0x61, matching `00 61 44`; but 1080 would give 0x8E while the known value is `00 87 44`. Found `00 88 44` for 1200 by trial and error (later corrected, see post 21 and 26). Posts an omnibus list of known values (table below, as edited on 2020-06-16). |
-| 20 | Irshansk (New User; registered Dec 2017; United States) | 2020-04-21 | Asks whether the game can run on a 4K screen with xBRZ upscaling or similar. |
-| 21 | Lir1066 (New User; registered Apr 2020; Russian Federation) | 2020-04-26 | Corrects MrDOS: 1200 is `00 96 44`, not `00 88 44`. For resolutions above 1920 the third byte moves from block 44 to block 45. Gives `F0 44 00 00 B4 44` = 1920x1440 and `20 45 00 00 B4 44` = 2560x1440. Observes a cyclic relation "like a subnet mask": 2560/640 = 4 and both use code 20 (20 44 vs 20 45); 1920/480 = 4 and both use F0 (F0 43 vs F0 44). |
-| 22 | Irshansk | 2020-04-27 (edited) | Asks for the 3840x2160 values. |
-| 23 | Lir1066 | 2020-04-28 (edited 2020-04-29) | Plays at 2560x1440. Not all maps are wider than 2560 pixels: maps larger than the chosen resolution display fine, but once the resolution exceeds the map size graphic artifacts appear that make the game unplayable, because the engine cannot draw a "map edge" the way Age of Empires does. Switches to 1920x1440 for narrow maps. Recommends 1920x1080 on a 4K monitor because it is an exact 2x multiple. With the in-game zoom the map fits the screen and works normally, but you cannot zoom back out until the level is reloaded. Offers, untested because they have no 4K screen, `70 45 00 00 07 45` = 3840x2160, and `10 45 00 00 07 45` = 2304x2160 (run in DxWnd with "Run in Window" and "Hide desktop background", size 2304x2160). States the second level, Nottingham, is 2304 pixels wide and will look good at that setting; promises to record each level's width while replaying. |
-| 24 | Irshansk | 2020-05-15 | Thanks (in Russian). 3840x2160 worked perfectly, even better than 2560x1440 or 2304x2160; the map-size limitation still applies, but at 4K with zoom-in the map fits well. |
-| 25 | rtwonmac (New User; registered Nov 2013; Netherlands) | 2020-06-15 (edited) | The hex fixes did not work for them. Alternative with no editing: 1) compatibility settings as in the attached screenshot (Windows XP SP3, no widescreen optimisation); 2) set the monitor's own aspect ratio to 4:3; 3) use the highest in-game video setting. Not perfect but close to the original. Attaches compatibility_se.png. |
-| 26 | MrDOS | 2020-06-16 | `00 96 44` works for them, but so does `00 88 44`; wonders whether a driver interaction explains it, since 1920x1200 is their monitor's maximum. Edited the omnibus post to use 96 and added Lir1066's higher resolutions. Says there is nearly enough information to build a resolution-patcher utility. |
-| 27 | chimaco3 (New User; registered Jun 2018; Spain) | 2021-10-25 | Cannot find any of the codes with a hex search. |
-| 28 | DranSetrius (New User; registered Nov 2014; Poland) | 2022-02-06 | Also cannot find the numbers; thinks theirs differ; attaches a HxD screenshot (robin_hxd_ss.jpg). |
-| 29 | MrDOS | 2022-02-21 | The screenshot shows too little of the profile to help. In MrDOS's profile the resolution bytes start at offset 0x106. Search for a hex string, not a text string. Attaches sherwood-resolut.png. |
-| 30 | smuggly (New User; registered Jun 2017; United States) | 2022-09-05 | Single word: "DXwnd". |
+Any chance to have the same widescreen patch made for desperados?
 
-### Byte values posted on page 2
+### Post 7 — Blinkin89 (January 9, 2017)
 
-MrDOS's omnibus list (post 19, as edited 2020-06-16; widths are the first three bytes, heights the last three):
+As far as I know D3DWindower is a general application, so you could try it with any (Direct3D) game you want.
 
-| Width | Bytes | | Height | Bytes |
-|---|---|---|---|---|
-| 640 | `20 44 00` | | 480 | `00 F0 43` |
-| 800 | `48 44 00` | | 576 | `00 10 44` |
-| 960 | `70 44 00` | | 600 | `00 16 44` |
-| 1024 | `80 44 00` | | 720 | `00 34 44` |
-| 1280 | `A0 44 00` | | 768 | `00 40 44` |
-| 1360 | `AA 44 00` | | 800 | `00 48 44` |
-| 1600 | `C8 44 00` | | 900 | `00 61 44` |
-| 1920 | `F0 44 00` | | 1080 | `00 87 44` |
-| 2304 | `10 45 00` | | 1200 | `00 96 44` |
-| 2560 | `20 45 00` | | 1440 | `00 B4 44` |
-| 3840 | `70 45 00` | | 2160 | `00 07 45` |
+### Post 8 — ZellSF (July 8, 2018; edited)
 
-Full six-byte values posted on page 2:
+So I was very bored today and tried to figure this out. No the GoG version does not support widescreen. But the game does seem to accept widescreen if you specify it in the profile. This is a bit tricky though, you need to open `Robin Hood\DATA\Savegame\Profiles` with a hex editor and search for one of these:
 
-| Sequence | Resolution | Posted by | Notes |
-|---|---|---|---|
-| `A0 44 00 00 48 44` | 1280x800 | tonik2000, post 17 | |
-| `00 88 44` (height only) | 1200 | MrDOS, post 19 | Disputed; MrDOS says both 88 and 96 work on their setup. |
-| `00 96 44` (height only) | 1200 | Lir1066, post 21 | Adopted in the omnibus list. |
-| `F0 44 00 00 B4 44` | 1920x1440 | Lir1066, post 21 | |
-| `20 45 00 00 B4 44` | 2560x1440 | Lir1066, post 21 | |
-| `70 45 00 00 07 45` | 3840x2160 | Lir1066, post 23 | Confirmed working by Irshansk, post 24. |
-| `10 45 00 00 07 45` | 2304x2160 | Lir1066, post 23 | Intended for DxWnd windowed mode. |
+```
+20 44 00 00 F0 43
+48 44 00 00 16 44
+80 44 00 00 40 44
+```
 
-Other page-2 facts: resolutions larger than a map's pixel size produce artifacts because the engine does not render beyond the map edge; the Nottingham level is stated to be 2304 pixels wide; ambush missions show a black background at 1600x900 and 1920x1080 for one poster; the profile's resolution bytes sit at offset 0x106 in one poster's file; the observed `00 88 44` versus `00 96 44` discrepancy is consistent with the float reading (0x4496 = 1200.0 exactly, 0x4488 = 1088.0), which supports the float interpretation noted above.
+There might be multiple entries if you have multiple profiles, replace all of them. They are the three resolutions you can choose ingame (top is 640x480, middle is 800x600, bottom is 1024x768). I'm too stupid to figure out what the numbers mean but I've experimented and found some resolutions to try.
+
+If you replace with `80 44 00 00 10 44` you get 1024x576. This is nice because the game apparently uses width to determine which UI to load and so you get a perfect UI in this resolution. Plus it's a resolution the game was "designed for", it isn't smaller or larger in width or height than any of the supported game resolutions. Obviously you need to add this as a custom resolution in your GPU driver and set scaling to GPU and not monitor as few monitors will accept this resolution.
+
+If you replace with `A0 44 00 34 44` you get 1280x720 which I prefer for pixel-based scaling titles. Nothing is too tiny and it's just a nice resolution to play titles like this. Also it's optimal for scaling to 1440p monitors. This and other resolutions however makes the UI look bad.
+
+If you replace it with `F0 44 00 00 87 44` you get 1920x1080. I think everything is way too tiny here, though the game does offer a blocky looking zoom function.
+
+I don't know if widescreen breaks anything, I've only tested very basic functionality. This was the extent of my testing: [YouTube test video](https://www.youtube.com/watch?v=PTXB807T7JA)
+
+### Post 9 — mbhtst (July 14, 2018; edit note “by snowdark”)
+
+Thanks, it really helped!
+
+### Post 10 — robip85 (July 14, 2018)
+
+1280x720 is `A0 44 00 00 34 44`. As you said, it's best for 1440p monitor.
+
+1024x576 doesn't work for me, even main menu is not shown correctly, just tiles and no text.
+
+Can you please test if you can get 1600x900? I think 1600x900 would be nice to try, as 1920x1080 is borderline playable.
+
+With higher resolutions you see more of map, but the HUD gets smaller, it is usable up to 900 height.
+
+If you want widescreen, first thing is to aim to at least 768 height, as you could get that in original game 15 years ago, so no point in getting smaller. That means you need at least 1366x768.
+
+### Post 11 — chrix (July 23, 2018; edited July 24, 2018)
+
+You're not stupid at all.. you did a great finding.
+
+I can't figure out myself what those numbers are.. can't find a logic in them (and in how they change at the different resolutions)... but.. hey: they work as you said!
+
+Thank you very much for sharing this amazing finding with everyone..
+
+(I have the game on Steam and it works there too! ).!!!
+
+### Post 12 — ZellSF (July 24, 2018)
+
+1024x576 works fine here. Even if it didn't I wouldn't have a clue how to fix it. This is really just altering the resolution to an entirely unsupported one and just hoping the game accepts it. For some reason Robin Hood doesn't mind too much. Chicago 1930 and Desperados just crash when doing the same.
+
+At any rate:
+
+```
+C8 44 00 00 61 44 = 1600x900
+AA 44 00 00 40 44 = 1360x768
+```
+
+### Post 13 — Gamesiarz (November 10, 2018)
+
+Hello I have a little problem when I switch to 720p on my wqhd I can't move camera to the bottom of the screen, other sides top, left, right work fine. Any ideas?
+
+### Post 14 — Gamesiarz (December 19, 2018; edited)
+
+I think that line for 1280x720 is incomplete here because every other pair of strings have 2 more characters. Could you check this?
+
+### Post 15 — ZellSF (December 20, 2018)
+
+Camera moving to bottom works just fine for me, and yeah a typo:
+
+```
+A0 44 00 34 44
+```
+
+should be
+
+```
+A0 44 00 00 34 44
+```
+
+### Post 17 — tonik2000 (November 11, 2019; edited December 22, 2019)
+
+Please 16:10 resolution code. Just one Please. 1280:800 maby or 1440:900. ThankU
+
+Update: found myself - 1280 * 800 `A0 44 00 00 48 44`
+
+### Post 18 — ShiroOukami (January 25, 2020)
+
+When i change it to 1600x900 or 1920x1080 ambush missions have black background.
+
+Do you know why is that maybe?
+
+### Post 19 — MrDOS (March 5, 2020; edited June 16, 2020)
+
+I tried to take another look at the values. My goal was to enable 960x600, so that I could use 2x integer scaling on a 1920x1200 monitor. The first half/three bytes clearly control width, and the second half the height. However, I still can't figure out a consistent pattern. For some vertical resolutions, the value of the middle byte appears to encode the difference between resolutions in 4-pixel steps. E.g., the difference between a vertical resolution of 720 and 600 is `0x34 - 0x16 = 0x1E = 30`. Dividing the difference in heights by that number shows that each change by 1 is worth 4 pixels: `(720 - 600) / 30 = 120 / 30 = 4`.
+
+Based on that, we can re-derive some other heights; e.g., for 900 pixels: `900 - 600 = 300`; `300 / 4 = 75`; `0x16 + 75 = 0x16 + 0x4b = 0x61`, which matches the known-good pattern `00 61 44`. But this doesn't hold for higher resolutions: `1080 - 600 = 480`; `480 / 4 = 120`; `0x16 + 120 = 0x16 + 0x78 + 8e`, but the expected pattern is `00 87 44`. In fact, through trial and error, I found `00 88 44` to be a 1200-pixel height. Horizontal resolutions don't make any more sense to me, either.
+
+Anyway, I did figure out 960x600, and for the benefit of anyone else who wants to dig into this, here's a summary of known values to date:
+
+**Horizontal:**
+
+```
+640: 20 44 00
+800: 48 44 00
+960: 70 44 00
+1024: 80 44 00
+1280: a0 44 00
+1360: aa 44 00
+1600: c8 44 00
+1920: f0 44 00
+2304: 10 45 00
+2560: 20 45 00
+3840: 70 45 00
+```
+
+**Vertical:**
+
+```
+480: 00 f0 43
+576: 00 10 44
+600: 00 16 44
+720: 00 34 44
+768: 00 40 44
+800: 00 48 44
+900: 00 61 44
+1080: 00 87 44
+1200: 00 96 44
+1440: 00 b4 44
+2160: 00 07 45
+```
+
+### Post 20 — Irshansk (April 21, 2020)
+
+Is there any way to run it on 4k screen with xbrz upscaling or something similar?
+
+### Post 21 — Lir1066 (April 26, 2020; edited)
+
+Hello Friend! You made a mistake with `00 88 44` = 1200. I checked, 1200 = `00 96 44`
+
+I found a connection between blocks 43 and 44 - for resolutions above 1920, you must take block 45
+
+```
+F0 44 00 00 B4 44 = 1920x1440
+20 45 00 00 B4 44 = 2560x1440
+```
+
+there is a cyclic connection between them, it resembles a subnet mask
+
+2560/640=4, and both use code "20" (20-44 20-45)
+
+1920/480=4, and both use code "F0" (F0-43 F0-44)
+
+sry for my eng
+
+### Post 22 — Irshansk (April 27, 2020; edited)
+
+Could you please tell me the values for 3840x2160?
+
+Thanks!
+
+### Post 23 — Lir1066 (April 28, 2020; edited April 29, 2020)
+
+Hello! I play in 2560x1440 resolution and not all maps in the game have a full size in width greater than 2560 pixels. Maps that are "wider" and "higher" than the resolution you use are displayed without problems. But as soon as you exceed this size, graphic artifacts will appear that make the game unplayable, because the engine does not provide for displaying the "edge of the map", as in strategies like the Age of Empires.
+
+So I have to switch to a resolution of 1920x1440 for "narrow" maps, and then everything works fine.
+
+You can play in the resolution of 1920x1080, because it is a multiple of the resolution of your monitor (one graphic pixel fits exactly into the square of the four pixels of your monitor, everything is clear and without blurring), or you will have to play around a bit with the resolutions, as you can read below.
+
+If you use the game zoom, then the map will "fit" within your screen and everything will become normal (you cannot zoom out again until you reload the level). Therefore, if it’s convenient for you to play with zoom, here are the values for 4k (please answer if I calculated correctly, because I have nothing to check for this) -
+
+```
+70 45 00 00 07 45 = 3840x2160
+```
+
+You can also try to run the game in 2304x2160 (do not forget to select "Run in Window" in DXWnd, "Hide desktop background" and enter 2304x2160 size)
+
+```
+10 45 00 00 07 45 = 2304x2160
+```
+
+The second level (Nottingham) will definitely look good with these settings. (It has a width of 2304p). I myself just started to replay, as I progress, I will add the width of each level.
+
+### Post 24 — Irshansk (May 15, 2020)
+
+Thank you! :)
+
+The 3840x2160 worked perfectly fine, in fact even better than 2560x1440 or 2304x2160. The map size limitation still limits the resolution, but at 4k when I zoom-in the map fits perfectly fine while still being better than under the same conditions at 2560x1440.
+
+### Post 25 — rtwonmac (June 15, 2020; edited)
+
+I tried the fixes above, but it doesn't work for me.
+
+Easy solution (no work required) I found to fix the aspect ratio and the game not starting:
+
+1. Use the compatibility settings in the attached image (win xp S3, no widescreen optimisation)
+2. Manually change the aspect ratio on your monitor UI to 4:3
+3. Use the highest video setting in game
+
+Not perfect, but very close to the original experience.
+
+### Post 26 — MrDOS (June 16, 2020)
+
+Interesting.
+
+`00 96 44` works for me, but so does `00 88 44`. I wonder if some interaction between my graphics driver and the game interprets something differently, because 1920x1200 is the highest resolution my monitor supports. Regardless, I've edited my post to reflect the more-correct value. Thank you for checking it!
+
+That's fascinating. I've updated my omnibus listing to include the other common resolutions you've identified. Because of the limitations of my monitor, I hadn't hypothesized any higher, so thank you for expanding.
+
+I think we nearly have enough information here to make a resolution patcher utility...
+
+### Post 27 — chimaco3 (October 25, 2021)
+
+I can't find with HEX searcher any of the codes, they are not inside. Some help?
+
+### Post 28 — DranSetrius (February 6, 2022)
+
+Hi, I tried to find to find those numbers, but I think that I have different ones. Can someone check if I f up?
+
+### Post 29 — MrDOS (February 21, 2022)
+
+Your screenshot doesn't include enough of your profile data for us to be able to help you find it, sorry.
+
+In my profile, the resolution bytes start at `0x106`. Whatever hex editor you use, when you search for the current value, be sure to search for a hex string, not a text string.
+
+### Post 30 — smuggly (September 5, 2022)
+
+DXwnd
+
+## Original text
+
+### Post 1 — gmx (June 8, 2012)
+
+Widescreen support in game / max resolution - is gog version better then others? it's on sale now, nostalgic buy or not to buy problem
+
+### Post 2 — wtan1 (June 9, 2012)
+
+Maximum in game: 1024 x 768. If anyone knows how to get it to display in windowed mode or even better 1920 x 1080, please let me know...
+
+### Post 3 — Benne (June 11, 2012)
+
+Have not been able to run it windowed out of the box. However, FYI - by downloading free VMware Player and running it in a VM, I am able to simulate a windowed set-up. Just a thought.
+
+### Post 4 — JavyC89 (July 18, 2012)
+
+Hey.. Is there an easy way to play the game windowed?
+
+I have a 1080 monitor and ir looks awful :(
+
+### Post 5 — MrDOS (September 8, 2012)
+
+I had some amount of success with [D3DWindower](http://www.neowin.net/forum/topic/603613-d3dwindower/), although I had to play with it a lot to make it work properly.
+
+### Post 6 — Theruler (January 9, 2017)
+
+Any chance to have the same widescreen patch made for desperados?
+
+### Post 7 — Blinkin89 (January 9, 2017)
+
+As far as I know D3DWindower is a general application, so you could try it with any (Direct3D) game you want.
+
+### Post 8 — ZellSF (July 8, 2018; edited)
+
+So I was very bored today and tried to figure this out. No the GoG version does not support widescreen. But the game does seem to accept widescreen if you specify it in the profile. This is a bit tricky though, you need to open `Robin Hood\DATA\Savegame\Profiles` with a hex editor and search for one of these:
+
+```
+20 44 00 00 F0 43
+48 44 00 00 16 44
+80 44 00 00 40 44
+```
+
+There might be multiple entries if you have multiple profiles, replace all of them. They are the three resolutions you can choose ingame (top is 640x480, middle is 800x600, bottom is 1024x768). I'm too stupid to figure out what the numbers mean but I've experimented and found some resolutions to try.
+
+If you replace with `80 44 00 00 10 44` you get 1024x576. This is nice because the game apparently uses width to determine which UI to load and so you get a perfect UI in this resolution. Plus it's a resolution the game was "designed for", it isn't smaller or larger in width or height than any of the supported game resolutions. Obviously you need to add this as a custom resolution in your GPU driver and set scaling to GPU and not monitor as few monitors will accept this resolution.
+
+If you replace with `A0 44 00 34 44` you get 1280x720 which I prefer for pixel-based scaling titles. Nothing is too tiny and it's just a nice resolution to play titles like this. Also it's optimal for scaling to 1440p monitors. This and other resolutions however makes the UI look bad.
+
+If you replace it with `F0 44 00 00 87 44` you get 1920x1080. I think everything is way too tiny here, though the game does offer a blocky looking zoom function.
+
+I don't know if widescreen breaks anything, I've only tested very basic functionality. This was the extent of my testing: [YouTube test video](https://www.youtube.com/watch?v=PTXB807T7JA)
+
+### Post 9 — mbhtst (July 14, 2018; edit note “by snowdark”)
+
+Thanks, it really helped!
+
+### Post 10 — robip85 (July 14, 2018)
+
+1280x720 is `A0 44 00 00 34 44`. As you said, it's best for 1440p monitor.
+
+1024x576 doesn't work for me, even main menu is not shown correctly, just tiles and no text.
+
+Can you please test if you can get 1600x900? I think 1600x900 would be nice to try, as 1920x1080 is borderline playable.
+
+With higher resolutions you see more of map, but the HUD gets smaller, it is usable up to 900 height.
+
+If you want widescreen, first thing is to aim to at least 768 height, as you could get that in original game 15 years ago, so no point in getting smaller. That means you need at least 1366x768.
+
+### Post 11 — chrix (July 23, 2018; edited July 24, 2018)
+
+You're not stupid at all.. you did a great finding.
+
+I can't figure out myself what those numbers are.. can't find a logic in them (and in how they change at the different resolutions)... but.. hey: they work as you said!
+
+Thank you very much for sharing this amazing finding with everyone..
+
+(I have the game on Steam and it works there too! ).!!!
+
+### Post 12 — ZellSF (July 24, 2018)
+
+1024x576 works fine here. Even if it didn't I wouldn't have a clue how to fix it. This is really just altering the resolution to an entirely unsupported one and just hoping the game accepts it. For some reason Robin Hood doesn't mind too much. Chicago 1930 and Desperados just crash when doing the same.
+
+At any rate:
+
+```
+C8 44 00 00 61 44 = 1600x900
+AA 44 00 00 40 44 = 1360x768
+```
+
+### Post 13 — Gamesiarz (November 10, 2018)
+
+Hello I have a little problem when I switch to 720p on my wqhd I can't move camera to the bottom of the screen, other sides top, left, right work fine. Any ideas?
+
+### Post 14 — Gamesiarz (December 19, 2018; edited)
+
+I think that line for 1280x720 is incomplete here because every other pair of strings have 2 more characters. Could you check this?
+
+### Post 15 — ZellSF (December 20, 2018)
+
+Camera moving to bottom works just fine for me, and yeah a typo:
+
+```
+A0 44 00 34 44
+```
+
+should be
+
+```
+A0 44 00 00 34 44
+```
+
+### Post 17 — tonik2000 (November 11, 2019; edited December 22, 2019)
+
+Please 16:10 resolution code. Just one Please. 1280:800 maby or 1440:900. ThankU
+
+Update: found myself - 1280 * 800 `A0 44 00 00 48 44`
+
+### Post 18 — ShiroOukami (January 25, 2020)
+
+When i change it to 1600x900 or 1920x1080 ambush missions have black background.
+
+Do you know why is that maybe?
+
+### Post 19 — MrDOS (March 5, 2020; edited June 16, 2020)
+
+I tried to take another look at the values. My goal was to enable 960x600, so that I could use 2x integer scaling on a 1920x1200 monitor. The first half/three bytes clearly control width, and the second half the height. However, I still can't figure out a consistent pattern. For some vertical resolutions, the value of the middle byte appears to encode the difference between resolutions in 4-pixel steps. E.g., the difference between a vertical resolution of 720 and 600 is `0x34 - 0x16 = 0x1E = 30`. Dividing the difference in heights by that number shows that each change by 1 is worth 4 pixels: `(720 - 600) / 30 = 120 / 30 = 4`.
+
+Based on that, we can re-derive some other heights; e.g., for 900 pixels: `900 - 600 = 300`; `300 / 4 = 75`; `0x16 + 75 = 0x16 + 0x4b = 0x61`, which matches the known-good pattern `00 61 44`. But this doesn't hold for higher resolutions: `1080 - 600 = 480`; `480 / 4 = 120`; `0x16 + 120 = 0x16 + 0x78 + 8e`, but the expected pattern is `00 87 44`. In fact, through trial and error, I found `00 88 44` to be a 1200-pixel height. Horizontal resolutions don't make any more sense to me, either.
+
+Anyway, I did figure out 960x600, and for the benefit of anyone else who wants to dig into this, here's a summary of known values to date:
+
+**Horizontal:**
+
+```
+640: 20 44 00
+800: 48 44 00
+960: 70 44 00
+1024: 80 44 00
+1280: a0 44 00
+1360: aa 44 00
+1600: c8 44 00
+1920: f0 44 00
+2304: 10 45 00
+2560: 20 45 00
+3840: 70 45 00
+```
+
+**Vertical:**
+
+```
+480: 00 f0 43
+576: 00 10 44
+600: 00 16 44
+720: 00 34 44
+768: 00 40 44
+800: 00 48 44
+900: 00 61 44
+1080: 00 87 44
+1200: 00 96 44
+1440: 00 b4 44
+2160: 00 07 45
+```
+
+### Post 20 — Irshansk (April 21, 2020)
+
+Is there any way to run it on 4k screen with xbrz upscaling or something similar?
+
+### Post 21 — Lir1066 (April 26, 2020; edited)
+
+Hello Friend! You made a mistake with `00 88 44` = 1200. I checked, 1200 = `00 96 44`
+
+I found a connection between blocks 43 and 44 - for resolutions above 1920, you must take block 45
+
+```
+F0 44 00 00 B4 44 = 1920x1440
+20 45 00 00 B4 44 = 2560x1440
+```
+
+there is a cyclic connection between them, it resembles a subnet mask
+
+2560/640=4, and both use code "20" (20-44 20-45)
+
+1920/480=4, and both use code "F0" (F0-43 F0-44)
+
+sry for my eng
+
+### Post 22 — Irshansk (April 27, 2020; edited)
+
+Could you please tell me the values for 3840x2160?
+
+Thanks!
+
+### Post 23 — Lir1066 (April 28, 2020; edited April 29, 2020)
+
+Hello! I play in 2560x1440 resolution and not all maps in the game have a full size in width greater than 2560 pixels. Maps that are "wider" and "higher" than the resolution you use are displayed without problems. But as soon as you exceed this size, graphic artifacts will appear that make the game unplayable, because the engine does not provide for displaying the "edge of the map", as in strategies like the Age of Empires.
+
+So I have to switch to a resolution of 1920x1440 for "narrow" maps, and then everything works fine.
+
+You can play in the resolution of 1920x1080, because it is a multiple of the resolution of your monitor (one graphic pixel fits exactly into the square of the four pixels of your monitor, everything is clear and without blurring), or you will have to play around a bit with the resolutions, as you can read below.
+
+If you use the game zoom, then the map will "fit" within your screen and everything will become normal (you cannot zoom out again until you reload the level). Therefore, if it’s convenient for you to play with zoom, here are the values for 4k (please answer if I calculated correctly, because I have nothing to check for this) -
+
+```
+70 45 00 00 07 45 = 3840x2160
+```
+
+You can also try to run the game in 2304x2160 (do not forget to select "Run in Window" in DXWnd, "Hide desktop background" and enter 2304x2160 size)
+
+```
+10 45 00 00 07 45 = 2304x2160
+```
+
+The second level (Nottingham) will definitely look good with these settings. (It has a width of 2304p). I myself just started to replay, as I progress, I will add the width of each level.
+
+### Post 24 — Irshansk (May 15, 2020)
+
+Spasibo! :)
+
+The 3840x2160 worked perfectly fine, in fact even better than 2560x1440 or 2304x2160. The map size limitation still limits the resolution, but at 4k when I zoom-in the map fits perfectly fine while still being better than under the same conditions at 2560x1440.
+
+### Post 25 — rtwonmac (June 15, 2020; edited)
+
+I tried the fixes above, but it doesn't work for me.
+
+Easy solution (no work required) I found to fix the aspect ratio and the game not starting:
+
+1. Use the compatibility settings in the attached image (win xp S3, no widescreen optimisation)
+2. Manually change the aspect ratio on your monitor UI to 4:3
+3. Use the highest video setting in game
+
+Not perfect, but very close to the original experience.
+
+### Post 26 — MrDOS (June 16, 2020)
+
+Interesting.
+
+`00 96 44` works for me, but so does `00 88 44`. I wonder if some interaction between my graphics driver and the game interprets something differently, because 1920x1200 is the highest resolution my monitor supports. Regardless, I've edited my post to reflect the more-correct value. Thank you for checking it!
+
+That's fascinating. I've updated my omnibus listing to include the other common resolutions you've identified. Because of the limitations of my monitor, I hadn't hypothesized any higher, so thank you for expanding.
+
+I think we nearly have enough information here to make a resolution patcher utility...
+
+### Post 27 — chimaco3 (October 25, 2021)
+
+I can't find with HEX searcher any of the codes, they are not inside. Some help?
+
+### Post 28 — DranSetrius (February 6, 2022)
+
+Hi, I tried to find to find those numbers, but I think that I have different ones. Can someone check if I f up?
+
+### Post 29 — MrDOS (February 21, 2022)
+
+Your screenshot doesn't include enough of your profile data for us to be able to help you find it, sorry.
+
+In my profile, the resolution bytes start at `0x106`. Whatever hex editor you use, when you search for the current value, be sure to search for a hex string, not a text string.
+
+### Post 30 — smuggly (September 5, 2022)
+
+DXwnd

@@ -1,30 +1,31 @@
-# GOG — ambush completion loop through Porting Kit
+# GOG — Ambush mission cannot be won — stuck at ending “scroll”
 
-- Original source: [Ambush mission cannot be won - stuck at ending “scroll”](https://www.gog.com/forum/robin_hood_legend_of_sherwood/ambush_mission_cannot_be_won_stuck_at_ending_scroll/post1)
-- Author / publication: galgogergo; GOG forum.
-- Language / date: English; 2022-02-27.
-- Access: Full thread (single post, no replies) retrieved directly on a retry
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete notes (forum thread, not transcribed)
+- Original source: [Ambush mission cannot be won - stuck at ending “scroll”](https://www.gog.com/forum/robin_hood_legend_of_sherwood/ambush_mission_cannot_be_won_stuck_at_ending_scroll/page1)
+- Forum: [Robin Hood Legend of Sherwood](https://www.gog.com/forum/robin_hood_legend_of_sherwood)
+- Author: galgogergo (New User; registered October 2021; Hungary)
+- Posted: February 27, 2022
+- Thread: 1 post, no replies
+- Language: English
+- Retrieved: September 9, 2026
 
-A player using the GOG edition through Porting Kit on an M1 Pro MacBook running macOS Monterey reports a repeating victory message after collecting four money piles beside a destroyed carriage. Closing the scroll briefly stalls input, then the message reappears before the player can select the mission-exit tick.
+## Original post
 
-Reloading a pre-mission Sherwood save did not resolve the problem. The attempted victory cheat also failed because the player could not enter console text. No solution is supplied. This adds platform and interaction details to the completion-loop evidence without proving that Porting Kit or macOS caused it.
+**galgogergo** — New User; posted February 27, 2022
 
-## Detailed notes
+Hi,
 
-Page facts: GOG forum thread "Ambush mission cannot be won - stuck at ending "scroll"" in the Robin Hood Legend of Sherwood subforum; 1 post; by galgogergo (New User; registered Oct 2021; Hungary); posted 2022-02-27; no replies. Retrieved directly from gog.com on 2026-09-09 after an earlier rate-limited attempt. Forum threads are not licensed for reproduction, so the post is summarised.
+I have a problem. I'm at one of the ambush missions, where I have to collect money from the ground near a demolished carriage. I go there, pick all the four up, when the ending prompt appears (you've won the mission, the Sheriff's gonna be angry! - or something like this). I click okay thus closing the paragraph scroll, and then trying to click the rightmost "Okay/Tick" sign to go back to Sherwood.
 
-Post 1 (galgogergo, 2022-02-27):
+be done?
 
-- In one of the ambush missions where money must be collected from the ground near a demolished carriage. Picks up all four piles; the ending prompt appears (paraphrased by the poster as "you've won the mission, the Sheriff's gonna be angry!"). Clicks okay to close the scroll, then tries to click the rightmost "Okay/Tick" sign to return to Sherwood.
-- First problem: as soon as the prompt closes, the game lags for 1 to 2 seconds with no mouse control. This happens throughout the game, not only here, and is called manageable.
-- Second problem: on regaining control and moving the mouse toward the tick, the same congratulations window appears again; clicking okay brings it back again. No way to exit the loop, win the mission, or return to Sherwood.
-- Tried reloading earlier saves, mainly the Sherwood Forest save from before the mission, and winning the mission again; did not help.
-- Tried the cheat code "winner", but could not type anything into the console window and had to restart the whole game to get out of it.
-- Setup: GOG download, run through Porting Kit on macOS Monterey on an M1 Pro MacBook; the poster doubts the platform matters.
-- No reply was ever posted.
+The first problem is that as soon as I close the prompt window, the game always lags for 1-2 seconds, while I'm unable to use the mouse or do anything. (this is true throughout the game, not just here). But this is managable.
 
-Facts usable for parity work: victory condition of the carriage ambush is collecting four money piles; the victory scroll is expected to be dismissed once and then the mission-exit tick pressed; the reported failure re-fires the victory scroll on mouse movement toward the exit control; the "winner" cheat is the console command the poster expected to work.
+The other thing is that as soon as I regain control, and try to move the mouse to the tick, it gives me the same "Congrats" window again. If I click okay, it gives it again... There's no way to exit the loop, and to win the mission/go back to Sherwood.
+
+I've tried going back to previously saved parts (mainly the Sherwood forest prior the mission), and then winning the mission again, but it didn't work.
+
+I also way trying to use cheat codes (winner), but I couldn't seem to enter anything into the console window, and had to restart the whole game to exit that.
+
+What can be done?
+
+I've downloaded this from GOG, here, and I'm using Porting Kit on Mac OS Monterey and an M1 Pro Macbook, but I don't think it would matter TBH...

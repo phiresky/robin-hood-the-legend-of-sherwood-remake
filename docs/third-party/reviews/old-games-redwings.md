@@ -6,747 +6,133 @@
 - Access: Full page retrieved directly
 - Checked: 2026-09-09
 - Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML
+- Archived copy: [Wayback Machine, 2026-03-14](https://web.archive.org/web/20260314142001/https://www.old-games.ru/articles/42842.html)
+- Format: complete article; site chrome and unrelated recommendations removed
 
-## Converted text from the original HTML
+## English translation
 
+### Robin Hood: the Legend of Sherwood
 
-### reviews__old-games-redwings.html
+> I take from the rich. And give to the middle class. Well, the upper middle class.  
+> —Lawrence Garfield
 
-_Source: `originals/reviews__old-games-redwings.html`._
+In any review of **Robin Hood: TLoS**, sooner or later you will find a mention of **Desperados: Wanted Dead or Alive** or the **Commandos** series. It is good if it does not come with offensive words such as “clone” or “(self-)plagiarism.” Comparing these games is commonplace; I too cannot resist mentioning this game’s differences and similarities to its predecessors.
 
-[ ](/ "Скачать старые игры с Old-Games.RU")
+If anyone is unfamiliar with English folklore, Sir Walter Scott’s *Ivanhoe*, or even the name Robin Hood, let me explain: the main character is a classic “folk hero” who, together with a group of like-minded companions, fights the usurper of the English kingdom’s throne (in Scott’s version, in the twelfth century), helping the poor and taking from the rich.  
+In **Robin Hood: The Legend of Sherwood**, we are invited to step into the roles of Robin and his brave companions in the struggle against tyranny and excessively tight purses.
 
-Вход / Регистрация
+### Eye Candy
 
-[](/?language=eng "English version")
+The game begins with a dynamic, beautifully directed introductory movie that introduces us to the main character and his general occupation. All is not peaceful in ye olde England: Prince John, taking advantage of the prolonged absence of his elder brother, the crusader-king Richard the Lionheart, has seized the vacant throne. At this very time, young Robin Locksley returns from the Crusade and discovers that he has been declared fallen in battle and that the Sheriff of Nottingham has confiscated his lands. Left without property or money, Robin tries to use the last thing he has left—old connections. For this purpose, he heads to Lincoln, the first location in the game.
 
-  * [Каталог игр](/catalog/ "Каталог старых игр")
-  * [ __ ](/search/ "Расширенный поиск") [ __ ](/properties/ "Свойства игр")
+After a short briefing, we finally see the game interface, and the first thing that catches the eye is the intoxicating beauty of the graphics. Yes, I chose those words deliberately. The game has no impressive 3D eye candy; instead, it offers meticulously drawn 2D landscapes that can easily be enjoyed separately from the game itself. That cloaked figure in the middle of the screen is our hero. Beside him, a pig wallows heavily in brown liquid mud, feeding her little piglets. In the lazy rays of the summer sun, roof tiles gleam; ivy clings tenaciously to the stones of the fortress wall. Even the dirt and stones on the road are rendered with mind-boggling care.
 
-  * [Новости](/ "Новости сайта")
-  * [Форум](/forum/ "Форум о старых играх")
-  * [Wiki](/wiki/ "Энциклопедия о старых играх и железе")
-  * [Статьи](/articles/ "Различные статьи и обзоры")
-  * [Файлы](/utils/ "Различные файлы для старых игр")
-  * Информация 
-    * [О проекте](/about/ "О нашем сайте")
-    * [FAQ](/faq/ "FAQ по старым играм")
-    * [Поддержите нас!](/donate/ "Помощь сайту")
-    * [История проекта](/about/history/ "История проекта")
+Finally tearing ourselves away from the beautifully rendered surroundings, we discover a real-time tactical strategy game that is simple to control. Click the left mouse button and our hero drops his cloak and walks to the indicated place with a steady but cautious step. Double-click and we make him run. There is a low roof nearby—Robin will cheerfully jump onto it (not every roof can be jumped onto; such places are highlighted in green).
 
+However, our brief excursion into practical gymnastics soon comes to an end: a guard who had been dozing notices us. A peaceful melody gives way to dynamic, threatening passages: the guard runs toward us and tries to skewer us with a long spear. Crying “Defend yourself!”, Robin draws his sword, and the fight begins.
 
+![Screenshot from the original article](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897c8c58a15.jpg)
 
-Логин: Пароль: Запомнить 
+*There is absolutely no need to kill this guard. After making a couple of intimidating feints, Robin will make a tactical retreat into the nearest barn.*
 
-  
+The combat system is laughably simple, but elegant: you can simply watch the fight without taking any direct part, and Robin will still defeat the spearman. Not all enemies are so weak, however. For such cases, manual combat control is provided: by drawing circles and figure eights with the mouse, the player makes the character swing his weapon, parry, and whirl his “argument” around himself. A quick stroke of the pen and the “brother of the forest” makes a deadly thrust; draw an arc and he strikes in a circle, knocking the unfortunate opponent off his feet. In fairness, it should be noted that most of the mouse flourishes made during combat will go to waste: there are only a few combat moves, and no matter how much you might wish for it, you will not see the beauty of **Jedi Knight** or **Severance** here.
 
+![Screenshot from the original article](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897c9a7b7fb.jpg)
 
-[Регистрация](/forum/login/ "Регистрация на форуме старых игр") \- [Напомнить пароль](/forum/lost-password/)
+*Night missions are paradise for stealth-style playthroughs.*
 
-[Old-Games.RU](/ "старые игры скачать") [ Статьи ](/articles/ "Статьи") Robin Hood: the Legend of Sherwood
+The game, of course, will not be limited to arcade combat. Most of the time you will be making your way through numerous garrisons, blocking detachments, and escorts without revealing your presence. Killing is bad form: Robin will promise to send compensation to the dead man’s widow, and a nasty aftertaste will remain after the battle. Moreover, the bloodthirsty “savior” will not be popular with the population and will therefore lose many followers.
 
-# Robin Hood: the Legend of Sherwood
+### Workers of Knife and Axe
 
-I take from the rich. And give to the middle class. Well, the upper middle class.  
--Лоуренс Гарфильд​
+As you have probably already guessed, Robin will not spend the rest of the game in proud solitude. Our team receives reinforcements as early as the second mission, and the game takes on a new quality. The “brothers of the forest” have many talents, but none of them is a jack-of-all-trades: Stutely can pretend to be a beggar, pick locks, and throw apples; Robin shoots well with a bow and stuns an opponent with a powerful blow to the jaw; Lady Marian heals wounds with medicinal herbs, and so on. Anyone who has played **Commandos** or even **Lost Vikings** will understand what I mean. Some abilities are extremely useful (for example, tying up a stunned opponent or shooting a bow); others you will not use even once during the entire game. In addition, some talents will be required by Robin and his companions to complete missions. The division of labor for missions is very strict: if the group lacks the right person, the brave fighters for social justice will have to throw up their hands and turn back. Fortunately, we are warned in advance which skills will be required for the coming adventure.
 
-  
-  
-_В любом обзоре**Robin Hood: TLoS** вы нет-нет да найдете упоминание о **Desperados: Wanted Dead or Alive** или серии **Commandos**. Хорошо, если там не будет обидных слов вроде "клон" или "(само)плагиат". Сравнение этих игр - общее место; не удержусь и я от упоминания об отличиях и сходствах этой игры от игр-предшественниц._  
-  
-Если кто-то не знаком с английским фольклором, книгой "Айвенго" сэра Вальтера Скотта или вообще с именем Робин Гуда, поясню: главный персонаж - классический "народный герой", который вместе с группой единомышленников борется с узурпатором трона английского королевства (по Скотту - XII века), помогая бедным и отбирая у богатых.   
-В **Robin Hood: The Legend of Sherwood** нам предлагается вжиться в роли Робина и его бравых соратников в борьбе против тирании и слишком тугих кошельков.  
-  
+![Screenshot from the original article](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897ca4e2798.jpg)
 
+*Sherwood. Notice the complicated system of houses and ladders—these are the very “stations” at which we weave, plane, and grow our victory.*
 
-**Eye Candy** ​
+The brave partisans have an operational base in Sherwood Forest, to which we return after every assignment. The base is not merely a nominal “transfer point” between missions, but a fairly substantial part of the gameplay: there we produce the means of class struggle, rest, train (yes, the characters in the game have a scalar weapon-proficiency skill), and generally conduct strategic preparations. If we leave some of the “brothers” at the base when we go out on a “job,” upon returning we will see the real fruits of their labor: Little John has become quite skilled at wielding a quarterstaff, Harvey Brook has gathered a whole basket of apples, and Edward the Strong has whittled two quivers of arrows. The economic element does not end there: there is money in the game (which, of course, is hardly surprising), and on the large stone at the entrance there is always a neat scroll with detailed statistics on equipment produced, enthusiasts shaved, and even skills trained (I wonder who keeps this journal? Apparently, a fairly good accountant died in one of the forest brethren).
 
-  
-Игра начинается с динамичного и прекрасно срежиссированного вступительного ролика, в котором нас и знакомят с главным героем и его примерным родом занятий. Всё неспокойно в ye olde England: принц Джон, воспользовавшись долгим отсутствием своего старшего брата-короля-крестоносца Ричарда Львиное Сердце, захватил пустующий трон. В это самое время из Крестового похода возвращается юный Робин Локсли, который обнаруживает, что его объявили павшим в бою и что его земли конфисковал шериф Ноттингемский. Оставшись без владений и денег, Робин пытается воспользоваться последним, что у него осталось, - старыми связями. С этой целью он и отправляется в Линкольн - первую локацию в игре.  
-  
-После краткого брифинга мы наконец видим игровой интерфейс, и первое, что бросается в глаза, - пьянящая красота графики. Да-да, я не ошибся в словах. В игре нет крутого трехмерного _графона_ ; вместо этого она предлагает подробно выписанные 2D-пейзажи, которыми запросто можно наслаждаться отдельно от самой игры. Вот закутанная в плащ фигура посередине экрана - наш герой. Рядом с ним в коричневой жидкой грязи грузно плескается свинья, кормя маленьких поросят. В ленивых лучах летнего солнца блестит черепица на крыше; по камушкам крепостной стены цепко взобрался плющ. Даже грязь и камни на дороге выписаны с умопомрачительным тщанием.  
-  
-Наконец оторвавшись от прекрасно выписанного антуража, мы обнаружим простую в управлении тактическую стратегию в реальном времени. Щелкнув левой кнопкой мыши, мы видим, как наш герой сбрасывает плащ и четким, но осторожным шагом следует в указанное место. Щелкнув дважды, мы заставим его бежать. Рядом есть низкая крыша - Робин молодецки запрыгнет на нее (не на любую крышу можно запрыгнуть - такие места подсвечены зеленым).   
-  
-Однако скоро наш небольшой экскурс в практическую гимнастику подходит к концу: нас замечает дремавший до этого стражник. Мирную мелодию сменяют динамичные угрожающие пассажи: стражник подбегает к нам и пытается нас заколоть длинным копьем. Воскликнув "Защищайся!", Робин выхватывает меч, и начинается бой.  
-  
+### Exterminatus
 
+From the base we can travel to different points of the English kingdom with various, often criminal, objectives. There are two types of missions—“ordinary” and story missions. Ordinary missions come in several subtypes, all of which boil down to robbing or otherwise taking money from representatives of the authorities. Story missions take place in different locations, at different times of day, with different objectives. Unfortunately, these different objectives are often rather boring, and carrying them out is much more enjoyable than the result.
 
-  
-  
-_Этого стражника совсем не обязательно убивать. Сделав пару устрашающих ложных выпадов, Робин совершит тактическое отступление в ближайший хлев._ ​
+After completing assignments, there is a percentage chance that new followers will join our banner. Sometimes there are very many of them, sometimes none at all. The replenishment of the forest army depends directly on your popularity among the people. Like finishing off people who are already down? Go ahead—minus popularity, no fresh recruits, and a low rating in the game.
 
-  
-Боевая система до смешного проста, но элегантна: вы можете просто наблюдать за схваткой, не принимая никакого непосредственного участия, - Робин всё равно победит копьеносца. Однако не все враги столь слабы. Для таких случаев предусмотрено ручное управление боем: выписывая мышью круги и восьмерки, игрок заставляет персонажа взмахивать оружием, парировать и крутить "аргумент" вокруг себя. Быстрый росчерк пера - и "лесной брат" делает смертоносный выпад, дуга - и он бьет по кругу, сваливая с ног незадачливого оппонента. Справедливости ради стоит заметить, что художества, выписанные мышью во время боя, по большей части пропадут даром: есть всего несколько боевых приемов, и как бы вы ни хотели, красот **Jedi Knight** или **Severance** вы тут не увидите.  
-  
+![Screenshot from the original article](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897cb2bce83.jpg)
 
+*Ambush in the forest. “Rob the caravans” missions are easy and quick, and are carried out according to the hit-and-run pattern.*
 
-  
-  
-_Ночные миссии - рай для прохождения в стиле "стелс"._​
+By the middle of the game, our forest detachment begins to resemble a small army. No one is left idle—those lucky ones not sent to the hot spot work up a sweat at the base. Since there are only a few unique character types, many recruits have completely identical appearances and abilities, despite having different names. Dozens of identical twin brothers, trained at the same school and in exactly the same uniforms, will form the backbone of your army. Some missions allow you to send an utterly absurd number of fighters, and at such moments the game begins to resemble what one reviewer aptly called a **“hack’n’slash RTS”**: hordes of clones storm castle walls while Robin rolls a cigarette, sitting out the action behind a bush. Considering that the game can easily be completed with a few unique characters, permission to recruit such enormous numbers seems inexplicable to me.
 
-  
-Однако аркадным боем, разумеется, игра не ограничится. Большую часть времени вы будете пробираться через многочисленные гарнизоны, заградительные отряды и эскорты, не выдавая своего присутствия. Убийство - моветон: Робин пообещает выслать вдове погибшего компенсацию, а после боя останется неприятный осадок. Кроме того, кровожадный "спаситель" не будет пользоваться популярностью среди населения, а потому лишится многих последователей.  
-  
+The preceding remarks concerned the game’s few shortcomings. It has many advantages: a convenient interface, pleasant music, absolutely gorgeous graphics (resolutions up to 1024×768 are available), funny guard dialogues, and interesting, varied gameplay. This apple has flown a very long way from the **Commandos** tree and has gained in charm, engaging quality, and beauty along the way.
 
+**P.S.** I played the localized version of the game by Novy Disk (translated as *Robin Hood: The Legend of Sherwood*), so a few words about the localization. It is worthy of the original: all in-game text (with rare exceptions) has been translated, the font resembles the original, and the voice acting is at times even brilliant. Robin’s voice is slightly tired, but young and full of enthusiasm; the voices of the forest brethren match their characters; and the comic cries of the guardians of order do not harm the atmosphere—instead, they reinforce it.
 
-**Работники ножа и топора** ​
+**Author:** [redwings](https://www.old-games.ru/users/?userid=69579)  
+**Date:** 03.10.2010
 
-  
-Как вы уже, наверное, догадались, Робин не проведет остаток игры в гордом одиночестве. Уже со второй миссии в нашей команде происходит пополнение, и игра приобретает новое качество. "Лесные братья" обладают многими талантами, но ни один из них не мастер на все руки: Статли умеет притвориться нищим, открывать замки и кидаться яблоками; Робин хорошо стреляет из лука и оглушает противника мощным ударом в челюсть; леди Мериан залечивает раны лечебными травами, и так далее. Игравшие в **Commandos** или даже **Lost Vikings** поймут, о чем речь. Некоторые умения чрезвычайно полезны (например, связывание оглушенного противника или стрельба из лука), другие вы не используете ни разу за всю игру. Кроме того, некоторые таланты потребуются Робину и его товарищам для прохождения миссий. Разделение труда в отношении миссий очень строго: если в отряде нет нужного человека, бравые борцы за социальную справедливость вынуждены будут развести руками и отправиться восвояси. К счастью, нас заранее предупредят, какие навыки потребуются для предстоящей авантюры.  
-  
+## Original text
 
+### Robin Hood: the Legend of Sherwood
 
-  
-  
-_Шервуд. Обратите внимание на сложную систему домиков и лестниц - это именно те "станции", на которых мы плетем, строгаем и выращиваем нашу победу._​
+> I take from the rich. And give to the middle class. Well, the upper middle class.  
+> —Лоуренс Гарфильд
 
-  
-У доблестных партизан есть своя оперативная база в Шервудском лесу, куда мы возвращаемся после каждого задания. База - не просто номинальный "перевалочный пункт" между миссиями, а довольно крупная часть геймплея: на ней мы производим средства классовой борьбы, отдыхаем, тренируемся (да-да, у персонажей в игре есть скалярный навык владения оружием) и вообще ведем стратегическую подготовку. Если мы оставили некоторых "братьев" на базе при уходе на "дело" \- вернувшись, увидим реальные плоды их труда: Малыш Джон изрядно поднаторел в искусстве владения боевым посохом, Харви Брук насобирал целую корзину яблок, а Эдвард Сильный выстрогал два колчана стрел. Экономический элемент на этом не заканчивается: в игре есть деньги (что, собственно, неудивительно), а на большом камне у входа всегда лежит аккуратный свиток с подробной статистикой произведенного обмундирования, забритых энтузиастов и даже натренированных навыков (интересно, кто ведет этот журнал? не иначе, в ком-то из лесной братии умер неплохой бухгалтер).  
-  
+_В любом обзоре **Robin Hood: TLoS** вы нет-нет да найдете упоминание о **Desperados: Wanted Dead or Alive** или серии **Commandos**. Хорошо, если там не будет обидных слов вроде «клон» или «(само)плагиат». Сравнение этих игр — общее место; не удержусь и я от упоминания об отличиях и сходствах этой игры от игр-предшественниц._
 
+Если кто-то не знаком с английским фольклором, книгой «Айвенго» сэра Вальтера Скотта или вообще с именем Робин Гуда, поясню: главный персонаж — классический «народный герой», который вместе с группой единомышленников борется с узурпатором трона английского королевства (по Скотту — XII века), помогая бедным и отбирая у богатых.  
+В **Robin Hood: The Legend of Sherwood** нам предлагается вжиться в роли Робина и его бравых соратников в борьбе против тирании и слишком тугих кошельков.
 
-**Экстерминатус** ​
-
-  
-Из базы мы можем отправиться в разные точки английского королевства с разными и часто криминальными целями. Есть два типа миссий - "обычные" и сюжетные. Обычные миссии бывают разных подтипов, которые все сводятся к ограблению или иному способу отъема денег у представителей власти. Сюжетные миссии проходят в разных локациях в разное время суток с разными целями. К сожалению, эти разные цели зачастую весьма скучны, и процесс их выполнения приносит гораздо больше удовольствия, чем результат.  
-По выполнении заданий есть шанс - в процентах, - что к нашему стягу прибьются новые последователи. Иногда их бывает очень много, иногда - совсем нет. Пополнение лесного войска напрямую зависит от вашей популярности в народе. Любите добивать лежачих? Просим - минус в популярность, отсутствие свежих рекрутов, низкий рейтинг в игре.   
-  
-
-
-  
-  
-_Засада в лесу. Миссии по "ограблению корованов" \- легкие и быстрые и совершаются по схеме hit and run._​
-
-  
-Ближе к середине игры наш лесной отряд начинает напоминать небольшую армию. Без дела не остается никто - счастливчики, не отправленные в горячую точку, в поте лица вкалывают на базе. Поскольку есть всего несколько уникальных типов персонажей, многие рекруты обладают абсолютно идентичной внешностью и способностями, хоть и разными именами. Десятки однояйцевых братьев-близнецов, обученных в одной школе и в строго одинаковой униформе составят костяк вашей армии. На некоторые миссии можно отправлять совершенно безбожное количество бойцов, и в такие моменты игра начинает напоминать именно то, что один из рецензентов метко назвал **" hack'n'slash RTS"**: толпы клонов штурмуют стены замков, в то время как Робин набивает самокрутку, отсиживаясь за кустом. Если учесть, что игру можно легко пройти несколькими уникальными персонажами, разрешение на такое огромное количество рекрутов, на мой взгляд, необъяснимо.  
-  
-****  
-  
-Последние замечания относились к немногочисленным минусам игры. А плюсов у нее много - это и удобный интерфейс, и приятная музыка, и совершенно роскошная графика (доступно разрешение до 1024х768), и смешные диалоги стражников, и интересный разнообразный геймплей. Это яблоко улетело очень далеко от яблони **Commandos** и при этом приобрело в обаянии, увлекательности и красоте.  
-  
-P.S.: Я играл в локализованную "Новым Диском" версию игры (в переводе - "Робин Гуд: Легенда Шервуда"), поэтому - несколько слов  
-о локализации. Она достойна оригинала: все (за редкими исключениями) игровые тексты переведены, шрифт похож на оригинальный, а озвучка местами даже блистательна: голос Робина немного усталый, но молодой и полный энтузиазма, озвучка лесных братьев соответствует их характерам, комичные возгласы блюстителей порядка не вредят атмосфере, а, наоборот, укрепляют ее.   
-  
-**Автор:** [redwings](/users/?userid=69579)   
-**Дата:** 03.10.2010   
-  
+### Eye Candy
 
+Игра начинается с динамичного и прекрасно срежиссированного вступительного ролика, в котором нас и знакомят с главным героем и его примерным родом занятий. Всё неспокойно в ye olde England: принц Джон, воспользовавшись долгим отсутствием своего старшего брата-короля-крестоносца Ричарда Львиное Сердце, захватил пустующий трон. В это самое время из Крестового похода возвращается юный Робин Локсли, который обнаруживает, что его объявили павшим в бою и что его земли конфисковал шериф Ноттингемский. Оставшись без владений и денег, Робин пытается воспользоваться последним, что у него осталось, — старыми связями. С этой целью он и отправляется в Линкольн — первую локацию в игре.
 
-**[Обсудить статью на форуме](https://www.old-games.ru/forum/threads/robin-hood-the-legend-of-sherwood.42842/unread)**   
-  
-**[Перейти к списку статей](/articles/)**
+После краткого брифинга мы наконец видим игровой интерфейс, и первое, что бросается в глаза, — пьянящая красота графики. Да-да, я не ошибся в словах. В игре нет крутого трехмерного _графона_; вместо этого она предлагает подробно выписанные 2D-пейзажи, которыми запросто можно наслаждаться отдельно от самой игры. Вот закутанная в плащ фигура посередине экрана — наш герой. Рядом с ним в коричневой жидкой грязи грузно плескается свинья, кормя маленьких поросят. В ленивых лучах летнего солнца блестит черепица на крыше; по камушкам крепостной стены цепко взобрался плющ. Даже грязь и камни на дороге выписаны с умопомрачительным тщанием.
 
-Это интересно
+Наконец оторвавшись от прекрасно выписанного антуража, мы обнаружим простую в управлении тактическую стратегию в реальном времени. Щелкнув левой кнопкой мыши, мы видим, как наш герой сбрасывает плащ и четким, но осторожным шагом следует в указанное место. Щелкнув дважды, мы заставим его бежать. Рядом есть низкая крыша — Робин молодецки запрыгнет на нее (не на любую крышу можно запрыгнуть — такие места подсвечены зеленым).
 
-В начале 1990-х годов компания Origin вела работу над третьей игрой из мини-серии **Worlds of Ultima**. Игра должна была называться Arthurian Legends: игрок в роли средневекового рыцаря времён короля Артура брал на себя задачу вернуть Камелоту былую славу. Работа над игрой велась девять месяцев, за основу был взят движок от **[Ultima VII](https://www.old-games.ru/game/69.html)**. Была проведена работа по созданию карт, персонажей, оформления, начато создание квестов. Однако в 1993 году проект был закрыт.
+Однако скоро наш небольшой экскурс в практическую гимнастику подходит к концу: нас замечает дремавший до этого стражник. Мирную мелодию сменяют динамичные угрожающие пассажи: стражник подбегает к нам и пытается нас заколоть длинным копьем. Воскликнув «Защищайся!», Робин выхватывает меч, и начинается бой.
 
-Каталог игр
+![Скриншот из оригинальной статьи](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897c8c58a15.jpg)
 
-по жанру
+_Этого стражника совсем не обязательно убивать. Сделав пару устрашающих ложных выпадов, Робин совершит тактическое отступление в ближайший хлев._
 
-  * [Action (1346)](/catalog/?genre=8)
-  * [Adventure (548)](/catalog/?genre=7)
-  * [Arcade (3564)](/catalog/?genre=1)
-  * [Edutainment (1865)](/catalog/?genre=17)
-  * [Fighting (189)](/catalog/?genre=10)
-  * [Interactive Fiction (242)](/catalog/?genre=14)
-  * [Other (178)](/catalog/?genre=11)
-  * [Puzzle (1544)](/catalog/?genre=15)
-  * [Quest (1010)](/catalog/?genre=9)
-  * [Racing (822)](/catalog/?genre=12)
-  * [RPG (686)](/catalog/?genre=4)
-  * [Simulation (727)](/catalog/?genre=5)
-  * [Sports (613)](/catalog/?genre=13)
-  * [Strategy (1536)](/catalog/?genre=6)
-  * [Tabletop (781)](/catalog/?genre=16)
+Боевая система до смешного проста, но элегантна: вы можете просто наблюдать за схваткой, не принимая никакого непосредственного участия, — Робин всё равно победит копьеносца. Однако не все враги столь слабы. Для таких случаев предусмотрено ручное управление боем: выписывая мышью круги и восьмерки, игрок заставляет персонажа взмахивать оружием, парировать и крутить «аргумент» вокруг себя. Быстрый росчерк пера — и «лесной брат» делает смертоносный выпад, дуга — и он бьет по кругу, сваливая с ног незадачливого оппонента. Справедливости ради стоит заметить, что художества, выписанные мышью во время боя, по большей части пропадут даром: есть всего несколько боевых приемов, и как бы вы ни хотели, красот **Jedi Knight** или **Severance** вы тут не увидите.
 
+![Скриншот из оригинальной статьи](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897c9a7b7fb.jpg)
 
+_Ночные миссии — рай для прохождения в стиле «стелс»._
 
-по платформе
+Однако аркадным боем, разумеется, игра не ограничится. Большую часть времени вы будете пробираться через многочисленные гарнизоны, заградительные отряды и эскорты, не выдавая своего присутствия. Убийство — моветон: Робин пообещает выслать вдове погибшего компенсацию, а после боя останется неприятный осадок. Кроме того, кровожадный «спаситель» не будет пользоваться популярностью среди населения, а потому лишится многих последователей.
 
-  * [Amiga (191)](/catalog/?platform=6)
-  * [Amiga CD32 (11)](/catalog/?platform=7)
-  * [Amstrad CPC (59)](/catalog/?platform=14)
-  * [Apple II (63)](/catalog/?platform=18)
-  * [Atari ST (37)](/catalog/?platform=17)
-  * [Commodore 64 (69)](/catalog/?platform=9)
-  * [DOS (7104)](/catalog/?platform=1)
-  * [DVDi (30)](/catalog/?platform=13)
-  * [Macintosh (51)](/catalog/?platform=12)
-  * [MSX (65)](/catalog/?platform=19)
-  * [PC-88 (35)](/catalog/?platform=15)
-  * [PC-98 (103)](/catalog/?platform=16)
-  * [Windows (6163)](/catalog/?platform=2)
-  * [Windows 3.x (518)](/catalog/?platform=5)
-  * [Windows 3.x/DOS (62)](/catalog/?platform=3)
-  * [Windows/DOS (231)](/catalog/?platform=4)
-  * [Windows/Windows 3.x (535)](/catalog/?platform=10)
-  * [ZX Spectrum (98)](/catalog/?platform=8)
+### Работники ножа и топора
 
+Как вы уже, наверное, догадались, Робин не проведет остаток игры в гордом одиночестве. Уже со второй миссии в нашей команде происходит пополнение, и игра приобретает новое качество. «Лесные братья» обладают многими талантами, но ни один из них не мастер на все руки: Статли умеет притвориться нищим, открывать замки и кидаться яблоками; Робин хорошо стреляет из лука и оглушает противника мощным ударом в челюсть; леди Мериан залечивает раны лечебными травами, и так далее. Игравшие в **Commandos** или даже **Lost Vikings** поймут, о чем речь. Некоторые умения чрезвычайно полезны (например, связывание оглушенного противника или стрельба из лука), другие вы не используете ни разу за всю игру. Кроме того, некоторые таланты потребуются Робину и его товарищам для прохождения миссий. Разделение труда в отношении миссий очень строго: если в отряде нет нужного человека, бравые борцы за социальную справедливость вынуждены будут развести руками и отправиться восвояси. К счастью, нас заранее предупредят, какие навыки потребуются для предстоящей авантюры.
 
+![Скриншот из оригинальной статьи](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897ca4e2798.jpg)
 
-по году выпуска
+_Шервуд. Обратите внимание на сложную систему домиков и лестниц — это именно те «станции», на которых мы плетем, строгаем и выращиваем нашу победу._
 
-[2009](/catalog/?year=2009&year2=2009)| [2008](/catalog/?year=2008&year2=2008)| [2007](/catalog/?year=2007&year2=2007)  
----|---|---  
-[2006](/catalog/?year=2006&year2=2006)| [2005](/catalog/?year=2005&year2=2005)| [2004](/catalog/?year=2004&year2=2004)  
-[2003](/catalog/?year=2003&year2=2003)| [2002](/catalog/?year=2002&year2=2002)| [2001](/catalog/?year=2001&year2=2001)  
-[2000](/catalog/?year=2000&year2=2000)| [1999](/catalog/?year=1999&year2=1999)| [1998](/catalog/?year=1998&year2=1998)  
-[1997](/catalog/?year=1997&year2=1997)| [1996](/catalog/?year=1996&year2=1996)| [1995](/catalog/?year=1995&year2=1995)  
-[1994](/catalog/?year=1994&year2=1994)| [1993](/catalog/?year=1993&year2=1993)| [1992](/catalog/?year=1992&year2=1992)  
-[1991](/catalog/?year=1991&year2=1991)| [1990](/catalog/?year=1990&year2=1990)| [1989](/catalog/?year=1989&year2=1989)  
-[1988](/catalog/?year=1988&year2=1988)| [1987](/catalog/?year=1987&year2=1987)| [1986](/catalog/?year=1986&year2=1986)  
-[1985](/catalog/?year=1985&year2=1985)| [1984](/catalog/?year=1984&year2=1984)| [ранее](/catalog/?year=1970&year2=1983)  
-  
-по букве
+У доблестных партизан есть своя оперативная база в Шервудском лесу, куда мы возвращаемся после каждого задания. База — не просто номинальный «перевалочный пункт» между миссиями, а довольно крупная часть геймплея: на ней мы производим средства классовой борьбы, отдыхаем, тренируемся (да-да, у персонажей в игре есть скалярный навык владения оружием) и вообще ведем стратегическую подготовку. Если мы оставили некоторых «братьев» на базе при уходе на «дело» — вернувшись, увидим реальные плоды их труда: Малыш Джон изрядно поднаторел в искусстве владения боевым посохом, Харви Брук насобирал целую корзину яблок, а Эдвард Сильный выстрогал два колчана стрел. Экономический элемент на этом не заканчивается: в игре есть деньги (что, собственно, неудивительно), а на большом камне у входа всегда лежит аккуратный свиток с подробной статистикой произведенного обмундирования, забритых энтузиастов и даже натренированных навыков (интересно, кто ведет этот журнал? не иначе, в ком-то из лесной братии умер неплохой бухгалтер).
 
-[0](/catalog/?letter=0)| [A](/catalog/?letter=A)| [B](/catalog/?letter=B)| [C](/catalog/?letter=C)| [D](/catalog/?letter=D)| [E](/catalog/?letter=E)| [F](/catalog/?letter=F)  
----|---|---|---|---|---|---  
-[G](/catalog/?letter=G)| [H](/catalog/?letter=H)| [I](/catalog/?letter=I)| [J](/catalog/?letter=J)| [K](/catalog/?letter=K)| [L](/catalog/?letter=L)| [M](/catalog/?letter=M)  
-[N](/catalog/?letter=N)| [O](/catalog/?letter=O)| [P](/catalog/?letter=P)| [Q](/catalog/?letter=Q)| [R](/catalog/?letter=R)| [S](/catalog/?letter=S)| [T](/catalog/?letter=T)  
-[U](/catalog/?letter=U)| [V](/catalog/?letter=V)| [W](/catalog/?letter=W)| [X](/catalog/?letter=X)| [Y](/catalog/?letter=Y)| [Z](/catalog/?letter=Z)| [Я](/catalog/?properties\[\]=russian)  
-  
-Поддержите нас!
+### Экстерминатус
 
-Привет, олдгеймер! Если тебе нравится наш проект и тебе не безразлична его судьба, ты можешь поддержать нас на Boosty или любым другим способом 
+Из базы мы можем отправиться в разные точки английского королевства с разными и часто криминальными целями. Есть два типа миссий — «обычные» и сюжетные. Обычные миссии бывают разных подтипов, которые все сводятся к ограблению или иному способу отъема денег у представителей власти. Сюжетные миссии проходят в разных локациях в разное время суток с разными целями. К сожалению, эти разные цели зачастую весьма скучны, и процесс их выполнения приносит гораздо больше удовольствия, чем результат.
 
-[](https://boosty.to/old-games)
+По выполнении заданий есть шанс — в процентах, — что к нашему стягу прибьются новые последователи. Иногда их бывает очень много, иногда — совсем нет. Пополнение лесного войска напрямую зависит от вашей популярности в народе. Любите добивать лежачих? Просим — минус в популярность, отсутствие свежих рекрутов, низкий рейтинг в игре.
 
-[Другие способы...](/donate/)
+![Скриншот из оригинальной статьи](https://static.old-games.ru/uploadedimages/2011/03/23/1266924d897cb2bce83.jpg)
 
-Случайная игра 
+_Засада в лесу. Миссии по «ограблению корованов» — легкие и быстрые и совершаются по схеме hit and run._
 
-[**BANG! Gunship Elite**](/game/1215.html "BANG! Gunship Elite")
+Ближе к середине игры наш лесной отряд начинает напоминать небольшую армию. Без дела не остается никто — счастливчики, не отправленные в горячую точку, в поте лица вкалывают на базе. Поскольку есть всего несколько уникальных типов персонажей, многие рекруты обладают абсолютно идентичной внешностью и способностями, хоть и разными именами. Десятки однояйцевых братьев-близнецов, обученных в одной школе и в строго одинаковой униформе составят костяк вашей армии. На некоторые миссии можно отправлять совершенно безбожное количество бойцов, и в такие моменты игра начинает напоминать именно то, что один из рецензентов метко назвал **«hack’n’slash RTS»**: толпы клонов штурмуют стены замков, в то время как Робин набивает самокрутку, отсиживаясь за кустом. Если учесть, что игру можно легко пройти несколькими уникальными персонажами, разрешение на такое огромное количество рекрутов, на мой взгляд, необъяснимо.
 
-[Windows](/catalog/?platform=2  "Все игры на Windows"), [2000](/catalog/?year=2000&year2=2000 "Все игры 2000 года")   
-[Simulation](/catalog/?genre=5 "Все игры жанра Simulation")
+Последние замечания относились к немногочисленным минусам игры. А плюсов у нее много — это и удобный интерфейс, и приятная музыка, и совершенно роскошная графика (доступно разрешение до 1024х768), и смешные диалоги стражников, и интересный разнообразный геймплей. Это яблоко улетело очень далеко от яблони **Commandos** и при этом приобрело в обаянии, увлекательности и красоте.
 
-[ ](/game/1215.html "BANG! Gunship Elite")
+**P.S.:** Я играл в локализованную «Новым Диском» версию игры (в переводе — «Робин Гуд: Легенда Шервуда»), поэтому — несколько слов о локализации. Она достойна оригинала: все (за редкими исключениями) игровые тексты переведены, шрифт похож на оригинальный, а озвучка местами даже блистательна: голос Робина немного усталый, но молодой и полный энтузиазма, озвучка лесных братьев соответствует их характерам, комичные возгласы блюстителей порядка не вредят атмосфере, а, наоборот, укрепляют ее.
 
-Новинки
+**Автор:** [redwings](https://www.old-games.ru/users/?userid=69579)  
+**Дата:** 03.10.2010
 
-[ **X-O** ](/game/15712.html "X-O")   
-09.09.2026
-
-[ **Želite li da postanete MILIONER?** ](/game/15711.html "Želite li da postanete MILIONER?")   
-08.09.2026
-
-[ **Lembitu** ](/game/15710.html "Lembitu")   
-07.09.2026
-
-[ **Keyboard Cadet** ](/game/15709.html "Keyboard Cadet")   
-07.09.2026
-
-[ **Kiren Tanna's Kaun Banega Crorepati** ](/game/15708.html "Kiren Tanna's Kaun Banega Crorepati")   
-07.09.2026
-
-[Далее...](/catalog/?sort=date)
-
-Последние статьи
-
-**[Обзор]**  [Трилогия Marathon. Недостижимые тайны звёздного неба.](/articles/121154.html)  
-19.08.2026 -- [KOG](/users/?userid=228632)
-
-[Интервью с мультипликатором Артёмом Лукичёвым](/articles/120944.html)  
-04.08.2026 -- [Chapaevec](/users/?userid=218245)
-
-**[Интервью]**  [Назад в прошлое. Часть 6.2. Роковая красота, или Интервью с Лией Монтелонго.](/articles/120699.html)  
-17.07.2026 -- [UnknDoomer](/users/?userid=202403)
-
-**[Интервью]**  [Не то золото, что блестит, или Интервью с коллекционерами из разных стран. Часть 9. Испания.](/articles/120644.html)  
-12.07.2026 -- [UnknDoomer](/users/?userid=202403)
-
-**[Интервью]**  [Не то золото, что блестит, или Интервью с коллекционерами из разных стран. Часть 8. Австралия.](/articles/120607.html)  
-09.07.2026 -- [UnknDoomer](/users/?userid=202403)
-
-[Далее...](/articles/)
-
-Последние файлы
-
-[ **R.S.A Darts**](/game/15516.html) [+] [Электронная версия](/game/download/15516.html "Различные версии игры, распространявшиеся через сеть \(BBS, Интернет, Фидо\).")
-
-[ **Блицкриг: Пылающий горизонт**](/game/14879.html) [+] [Полезные файлы](/game/download/14879.html "Официальная дополнительная глава Carthage 1943. Только на английском языке, но можно устанавливать и на русскую версию.")
-
-[ **Doom 3**](/game/8776.html) [+] [Полезные файлы](/game/download/8776.html "Официальный редактор Doom 3 SDK.")
-
-[ **Crisis in the Kremlin**](/game/2387.html) [+] [Floppy-версия](/game/download/2387.html "Дискетная версия игры \(то есть в оригинале распространявшаяся на floppy-носителе\[-ях\] {дискете}\). Всегда является полной \(сохранены все игровые компоненты\) и не требует инсталляции.")
-
-[ **Daughter of Serpents**](/game/2561.html) [+] [Образы дискет](/game/download/2561.html "Версия игры, распространявшейся на одном или нескольких floppy-носителях \(дискетах\), представленная в виде "электронной копии" дискеты \(или копий нескольких дискет\) и требующая инсталляции. Как правило, это оригинальные, неизмененные образы, которые, соответственно, не содержат файлов взлома и могут не запускаться.
-
-Образы дискет в формате IMA. Из личной коллекции MAZterXP.")
-
-[ **KGB**](/game/2119.html) [+] [Floppy-версия](/game/download/2119.html "Дискетная версия игры \(то есть в оригинале распространявшаяся на floppy-носителе\[-ях\] {дискете}\). Всегда является полной \(сохранены все игровые компоненты\) и не требует инсталляции.")
-
-[ **KGB**](/game/2119.html) [+] [Образы дискет](/game/download/2119.html "Версия игры, распространявшейся на одном или нескольких floppy-носителях \(дискетах\), представленная в виде "электронной копии" дискеты \(или копий нескольких дискет\) и требующая инсталляции. Как правило, это оригинальные, неизмененные образы, которые, соответственно, не содержат файлов взлома и могут не запускаться.
-
-Образы дискет в формате IMA. Из личной коллекции MAZterXP.")
-
-[ **Hexen: Beyond Heretic**](/game/37.html) [+] [Документация](/game/download/37.html "Руководство к прохождению игры на русском языке \(в формате PDF\).
-Отсканировал Skorpion Professional.")
-
-[ **Final DOOM: TNT - Evilution**](/game/926.html) [+] [Документация](/game/download/926.html "Руководство к прохождению игры на русском языке \(в формате PDF\).
-Отсканировал Skorpion Professional.")
-
-[ **Final DOOM: The Plutonia Experiment**](/game/928.html) [+] [Документация](/game/download/928.html "Руководство к прохождению игры на русском языке \(в формате PDF\).
-Отсканировал Skorpion Professional.")
-
-[Далее...](javascript: void\(0\))
-
-Популярные
-
-[**Half-Life**](/game/754.html "Half-Life")  
-Популярность: 1304626
-
-[**Command & Conquer: Red Alert 2**](/game/1350.html "Command & Conquer: Red Alert 2")  
-Популярность: 1134864
-
-[**Diablo II**](/game/808.html "Diablo II")  
-Популярность: 1073110
-
-[**Diablo II: Lord of Destruction**](/game/2126.html "Diablo II: Lord of Destruction")  
-Популярность: 820586
-
-[**Diablo**](/game/232.html "Diablo")  
-Популярность: 735197
-
-[**DOOM II: Hell on Earth**](/game/23.html "DOOM II: Hell on Earth")  
-Популярность: 725152
-
-[**WarCraft II: Tides of Darkness**](/game/73.html "WarCraft II: Tides of Darkness")  
-Популярность: 719744
-
-[**Age of Empires II: The Age of Kings**](/game/612.html "Age of Empires II: The Age of Kings")  
-Популярность: 715386
-
-[**Heroes of Might and Magic III: Complete - Collector's Edition**](/game/1747.html "Heroes of Might and Magic III: Complete - Collector's Edition")  
-Популярность: 705326
-
-[**Blood**](/game/11.html "Blood")  
-Популярность: 657730
-
-[Далее...](/catalog/?sort=popularity)
-
-[VK](https://vk.com/old_games)
-
-[Podcast VK](https://vk.com/podcastogru)
-
-[Podcast YT](https://www.youtube.com/channel/UCjL57vLdE5Ae1frLxevzHaw)
-
-[Поддержка](mailto:support@old-games.ru)
-
-### Разделы
-
-  * [Новости](/)
-  * [Каталог игр](/catalog/)
-  * [Расширенный поиск](/search/)
-  * [Форум](/forum/)
-  * [Статьи](/articles/)
-  * [Wiki](/wiki/)
-  * [Файлы](/utils/)
-
-
-
-### Информация
-
-  * [О проекте](/about/)
-  * [История проекта](/about/history/)
-  * [FAQ](/faq/)
-  * [Поддержите нас!](/donate/)
-
-
-
-### __RSS
-
-  * [Новости сайта](https://feeds.feedburner.com/Old-games-ru-news)
-  * [Новые игры](https://feeds.feedburner.com/Old-games-ru)
-  * [Новые файлы](https://feeds.feedburner.com/Old-games-ru-files)
-  * [Новые статьи](https://feeds.feedburner.com/Old-games-ru-articles)
-
-
-
-(C) Old-Games.RU, 2000--2026
-
-  
-
-
-Ответственность за содержание рекламных объявлений несет рекламодатель.  
-При использовании материалов сайта Old-Games.RU, ссылка на сайт обязательна.  
-Old-Games.RU не несет ответственности за содержание веб-сайтов, на которые даются гиперссылки.  
-Все права на опубликованные на сайте Old-Games.RU материалы принадлежат их законным владельцам.  
-  
-
-
-### [Switch to English](/?language=eng)
-
-
-### reviews__old-games-redwings.txt
-
-_Source: `originals/reviews__old-games-redwings.txt`._
-
-[ ](/ "Скачать старые игры с Old-Games.RU")
-
-Вход / Регистрация
-
-[](/?language=eng "English version")
-
-  * [Каталог игр](/catalog/ "Каталог старых игр")
-  * [ __ ](/search/ "Расширенный поиск") [ __ ](/properties/ "Свойства игр")
-
-  * [Новости](/ "Новости сайта")
-  * [Форум](/forum/ "Форум о старых играх")
-  * [Wiki](/wiki/ "Энциклопедия о старых играх и железе")
-  * [Статьи](/articles/ "Различные статьи и обзоры")
-  * [Файлы](/utils/ "Различные файлы для старых игр")
-  * Информация 
-    * [О проекте](/about/ "О нашем сайте")
-    * [FAQ](/faq/ "FAQ по старым играм")
-    * [Поддержите нас!](/donate/ "Помощь сайту")
-    * [История проекта](/about/history/ "История проекта")
-
-
-
-Логин: Пароль: Запомнить 
-
-  
-
-
-[Регистрация](/forum/login/ "Регистрация на форуме старых игр") \- [Напомнить пароль](/forum/lost-password/)
-
-[Old-Games.RU](/ "старые игры скачать") [ Статьи ](/articles/ "Статьи") Robin Hood: the Legend of Sherwood
-
-# Robin Hood: the Legend of Sherwood
-
-I take from the rich. And give to the middle class. Well, the upper middle class.  
--Лоуренс Гарфильд​
-
-  
-  
-_В любом обзоре**Robin Hood: TLoS** вы нет-нет да найдете упоминание о **Desperados: Wanted Dead or Alive** или серии **Commandos**. Хорошо, если там не будет обидных слов вроде "клон" или "(само)плагиат". Сравнение этих игр - общее место; не удержусь и я от упоминания об отличиях и сходствах этой игры от игр-предшественниц._  
-  
-Если кто-то не знаком с английским фольклором, книгой "Айвенго" сэра Вальтера Скотта или вообще с именем Робин Гуда, поясню: главный персонаж - классический "народный герой", который вместе с группой единомышленников борется с узурпатором трона английского королевства (по Скотту - XII века), помогая бедным и отбирая у богатых.   
-В **Robin Hood: The Legend of Sherwood** нам предлагается вжиться в роли Робина и его бравых соратников в борьбе против тирании и слишком тугих кошельков.  
-  
-
-
-**Eye Candy** ​
-
-  
-Игра начинается с динамичного и прекрасно срежиссированного вступительного ролика, в котором нас и знакомят с главным героем и его примерным родом занятий. Всё неспокойно в ye olde England: принц Джон, воспользовавшись долгим отсутствием своего старшего брата-короля-крестоносца Ричарда Львиное Сердце, захватил пустующий трон. В это самое время из Крестового похода возвращается юный Робин Локсли, который обнаруживает, что его объявили павшим в бою и что его земли конфисковал шериф Ноттингемский. Оставшись без владений и денег, Робин пытается воспользоваться последним, что у него осталось, - старыми связями. С этой целью он и отправляется в Линкольн - первую локацию в игре.  
-  
-После краткого брифинга мы наконец видим игровой интерфейс, и первое, что бросается в глаза, - пьянящая красота графики. Да-да, я не ошибся в словах. В игре нет крутого трехмерного _графона_ ; вместо этого она предлагает подробно выписанные 2D-пейзажи, которыми запросто можно наслаждаться отдельно от самой игры. Вот закутанная в плащ фигура посередине экрана - наш герой. Рядом с ним в коричневой жидкой грязи грузно плескается свинья, кормя маленьких поросят. В ленивых лучах летнего солнца блестит черепица на крыше; по камушкам крепостной стены цепко взобрался плющ. Даже грязь и камни на дороге выписаны с умопомрачительным тщанием.  
-  
-Наконец оторвавшись от прекрасно выписанного антуража, мы обнаружим простую в управлении тактическую стратегию в реальном времени. Щелкнув левой кнопкой мыши, мы видим, как наш герой сбрасывает плащ и четким, но осторожным шагом следует в указанное место. Щелкнув дважды, мы заставим его бежать. Рядом есть низкая крыша - Робин молодецки запрыгнет на нее (не на любую крышу можно запрыгнуть - такие места подсвечены зеленым).   
-  
-Однако скоро наш небольшой экскурс в практическую гимнастику подходит к концу: нас замечает дремавший до этого стражник. Мирную мелодию сменяют динамичные угрожающие пассажи: стражник подбегает к нам и пытается нас заколоть длинным копьем. Воскликнув "Защищайся!", Робин выхватывает меч, и начинается бой.  
-  
-
-
-  
-  
-_Этого стражника совсем не обязательно убивать. Сделав пару устрашающих ложных выпадов, Робин совершит тактическое отступление в ближайший хлев._ ​
-
-  
-Боевая система до смешного проста, но элегантна: вы можете просто наблюдать за схваткой, не принимая никакого непосредственного участия, - Робин всё равно победит копьеносца. Однако не все враги столь слабы. Для таких случаев предусмотрено ручное управление боем: выписывая мышью круги и восьмерки, игрок заставляет персонажа взмахивать оружием, парировать и крутить "аргумент" вокруг себя. Быстрый росчерк пера - и "лесной брат" делает смертоносный выпад, дуга - и он бьет по кругу, сваливая с ног незадачливого оппонента. Справедливости ради стоит заметить, что художества, выписанные мышью во время боя, по большей части пропадут даром: есть всего несколько боевых приемов, и как бы вы ни хотели, красот **Jedi Knight** или **Severance** вы тут не увидите.  
-  
-
-
-  
-  
-_Ночные миссии - рай для прохождения в стиле "стелс"._​
-
-  
-Однако аркадным боем, разумеется, игра не ограничится. Большую часть времени вы будете пробираться через многочисленные гарнизоны, заградительные отряды и эскорты, не выдавая своего присутствия. Убийство - моветон: Робин пообещает выслать вдове погибшего компенсацию, а после боя останется неприятный осадок. Кроме того, кровожадный "спаситель" не будет пользоваться популярностью среди населения, а потому лишится многих последователей.  
-  
-
-
-**Работники ножа и топора** ​
-
-  
-Как вы уже, наверное, догадались, Робин не проведет остаток игры в гордом одиночестве. Уже со второй миссии в нашей команде происходит пополнение, и игра приобретает новое качество. "Лесные братья" обладают многими талантами, но ни один из них не мастер на все руки: Статли умеет притвориться нищим, открывать замки и кидаться яблоками; Робин хорошо стреляет из лука и оглушает противника мощным ударом в челюсть; леди Мериан залечивает раны лечебными травами, и так далее. Игравшие в **Commandos** или даже **Lost Vikings** поймут, о чем речь. Некоторые умения чрезвычайно полезны (например, связывание оглушенного противника или стрельба из лука), другие вы не используете ни разу за всю игру. Кроме того, некоторые таланты потребуются Робину и его товарищам для прохождения миссий. Разделение труда в отношении миссий очень строго: если в отряде нет нужного человека, бравые борцы за социальную справедливость вынуждены будут развести руками и отправиться восвояси. К счастью, нас заранее предупредят, какие навыки потребуются для предстоящей авантюры.  
-  
-
-
-  
-  
-_Шервуд. Обратите внимание на сложную систему домиков и лестниц - это именно те "станции", на которых мы плетем, строгаем и выращиваем нашу победу._​
-
-  
-У доблестных партизан есть своя оперативная база в Шервудском лесу, куда мы возвращаемся после каждого задания. База - не просто номинальный "перевалочный пункт" между миссиями, а довольно крупная часть геймплея: на ней мы производим средства классовой борьбы, отдыхаем, тренируемся (да-да, у персонажей в игре есть скалярный навык владения оружием) и вообще ведем стратегическую подготовку. Если мы оставили некоторых "братьев" на базе при уходе на "дело" \- вернувшись, увидим реальные плоды их труда: Малыш Джон изрядно поднаторел в искусстве владения боевым посохом, Харви Брук насобирал целую корзину яблок, а Эдвард Сильный выстрогал два колчана стрел. Экономический элемент на этом не заканчивается: в игре есть деньги (что, собственно, неудивительно), а на большом камне у входа всегда лежит аккуратный свиток с подробной статистикой произведенного обмундирования, забритых энтузиастов и даже натренированных навыков (интересно, кто ведет этот журнал? не иначе, в ком-то из лесной братии умер неплохой бухгалтер).  
-  
-
-
-**Экстерминатус** ​
-
-  
-Из базы мы можем отправиться в разные точки английского королевства с разными и часто криминальными целями. Есть два типа миссий - "обычные" и сюжетные. Обычные миссии бывают разных подтипов, которые все сводятся к ограблению или иному способу отъема денег у представителей власти. Сюжетные миссии проходят в разных локациях в разное время суток с разными целями. К сожалению, эти разные цели зачастую весьма скучны, и процесс их выполнения приносит гораздо больше удовольствия, чем результат.  
-По выполнении заданий есть шанс - в процентах, - что к нашему стягу прибьются новые последователи. Иногда их бывает очень много, иногда - совсем нет. Пополнение лесного войска напрямую зависит от вашей популярности в народе. Любите добивать лежачих? Просим - минус в популярность, отсутствие свежих рекрутов, низкий рейтинг в игре.   
-  
-
-
-  
-  
-_Засада в лесу. Миссии по "ограблению корованов" \- легкие и быстрые и совершаются по схеме hit and run._​
-
-  
-Ближе к середине игры наш лесной отряд начинает напоминать небольшую армию. Без дела не остается никто - счастливчики, не отправленные в горячую точку, в поте лица вкалывают на базе. Поскольку есть всего несколько уникальных типов персонажей, многие рекруты обладают абсолютно идентичной внешностью и способностями, хоть и разными именами. Десятки однояйцевых братьев-близнецов, обученных в одной школе и в строго одинаковой униформе составят костяк вашей армии. На некоторые миссии можно отправлять совершенно безбожное количество бойцов, и в такие моменты игра начинает напоминать именно то, что один из рецензентов метко назвал **" hack'n'slash RTS"**: толпы клонов штурмуют стены замков, в то время как Робин набивает самокрутку, отсиживаясь за кустом. Если учесть, что игру можно легко пройти несколькими уникальными персонажами, разрешение на такое огромное количество рекрутов, на мой взгляд, необъяснимо.  
-  
-****  
-  
-Последние замечания относились к немногочисленным минусам игры. А плюсов у нее много - это и удобный интерфейс, и приятная музыка, и совершенно роскошная графика (доступно разрешение до 1024х768), и смешные диалоги стражников, и интересный разнообразный геймплей. Это яблоко улетело очень далеко от яблони **Commandos** и при этом приобрело в обаянии, увлекательности и красоте.  
-  
-P.S.: Я играл в локализованную "Новым Диском" версию игры (в переводе - "Робин Гуд: Легенда Шервуда"), поэтому - несколько слов  
-о локализации. Она достойна оригинала: все (за редкими исключениями) игровые тексты переведены, шрифт похож на оригинальный, а озвучка местами даже блистательна: голос Робина немного усталый, но молодой и полный энтузиазма, озвучка лесных братьев соответствует их характерам, комичные возгласы блюстителей порядка не вредят атмосфере, а, наоборот, укрепляют ее.   
-  
-**Автор:** [redwings](/users/?userid=69579)   
-**Дата:** 03.10.2010   
-  
-
-
-**[Обсудить статью на форуме](https://www.old-games.ru/forum/threads/robin-hood-the-legend-of-sherwood.42842/unread)**   
-  
-**[Перейти к списку статей](/articles/)**
-
-Это интересно
-
-В начале 1990-х годов компания Origin вела работу над третьей игрой из мини-серии **Worlds of Ultima**. Игра должна была называться Arthurian Legends: игрок в роли средневекового рыцаря времён короля Артура брал на себя задачу вернуть Камелоту былую славу. Работа над игрой велась девять месяцев, за основу был взят движок от **[Ultima VII](https://www.old-games.ru/game/69.html)**. Была проведена работа по созданию карт, персонажей, оформления, начато создание квестов. Однако в 1993 году проект был закрыт.
-
-Каталог игр
-
-по жанру
-
-  * [Action (1346)](/catalog/?genre=8)
-  * [Adventure (548)](/catalog/?genre=7)
-  * [Arcade (3564)](/catalog/?genre=1)
-  * [Edutainment (1865)](/catalog/?genre=17)
-  * [Fighting (189)](/catalog/?genre=10)
-  * [Interactive Fiction (242)](/catalog/?genre=14)
-  * [Other (178)](/catalog/?genre=11)
-  * [Puzzle (1544)](/catalog/?genre=15)
-  * [Quest (1010)](/catalog/?genre=9)
-  * [Racing (822)](/catalog/?genre=12)
-  * [RPG (686)](/catalog/?genre=4)
-  * [Simulation (727)](/catalog/?genre=5)
-  * [Sports (613)](/catalog/?genre=13)
-  * [Strategy (1536)](/catalog/?genre=6)
-  * [Tabletop (781)](/catalog/?genre=16)
-
-
-
-по платформе
-
-  * [Amiga (191)](/catalog/?platform=6)
-  * [Amiga CD32 (11)](/catalog/?platform=7)
-  * [Amstrad CPC (59)](/catalog/?platform=14)
-  * [Apple II (63)](/catalog/?platform=18)
-  * [Atari ST (37)](/catalog/?platform=17)
-  * [Commodore 64 (69)](/catalog/?platform=9)
-  * [DOS (7104)](/catalog/?platform=1)
-  * [DVDi (30)](/catalog/?platform=13)
-  * [Macintosh (51)](/catalog/?platform=12)
-  * [MSX (65)](/catalog/?platform=19)
-  * [PC-88 (35)](/catalog/?platform=15)
-  * [PC-98 (103)](/catalog/?platform=16)
-  * [Windows (6163)](/catalog/?platform=2)
-  * [Windows 3.x (518)](/catalog/?platform=5)
-  * [Windows 3.x/DOS (62)](/catalog/?platform=3)
-  * [Windows/DOS (231)](/catalog/?platform=4)
-  * [Windows/Windows 3.x (535)](/catalog/?platform=10)
-  * [ZX Spectrum (98)](/catalog/?platform=8)
-
-
-
-по году выпуска
-
-[2009](/catalog/?year=2009&year2=2009)| [2008](/catalog/?year=2008&year2=2008)| [2007](/catalog/?year=2007&year2=2007)  
----|---|---  
-[2006](/catalog/?year=2006&year2=2006)| [2005](/catalog/?year=2005&year2=2005)| [2004](/catalog/?year=2004&year2=2004)  
-[2003](/catalog/?year=2003&year2=2003)| [2002](/catalog/?year=2002&year2=2002)| [2001](/catalog/?year=2001&year2=2001)  
-[2000](/catalog/?year=2000&year2=2000)| [1999](/catalog/?year=1999&year2=1999)| [1998](/catalog/?year=1998&year2=1998)  
-[1997](/catalog/?year=1997&year2=1997)| [1996](/catalog/?year=1996&year2=1996)| [1995](/catalog/?year=1995&year2=1995)  
-[1994](/catalog/?year=1994&year2=1994)| [1993](/catalog/?year=1993&year2=1993)| [1992](/catalog/?year=1992&year2=1992)  
-[1991](/catalog/?year=1991&year2=1991)| [1990](/catalog/?year=1990&year2=1990)| [1989](/catalog/?year=1989&year2=1989)  
-[1988](/catalog/?year=1988&year2=1988)| [1987](/catalog/?year=1987&year2=1987)| [1986](/catalog/?year=1986&year2=1986)  
-[1985](/catalog/?year=1985&year2=1985)| [1984](/catalog/?year=1984&year2=1984)| [ранее](/catalog/?year=1970&year2=1983)  
-  
-по букве
-
-[0](/catalog/?letter=0)| [A](/catalog/?letter=A)| [B](/catalog/?letter=B)| [C](/catalog/?letter=C)| [D](/catalog/?letter=D)| [E](/catalog/?letter=E)| [F](/catalog/?letter=F)  
----|---|---|---|---|---|---  
-[G](/catalog/?letter=G)| [H](/catalog/?letter=H)| [I](/catalog/?letter=I)| [J](/catalog/?letter=J)| [K](/catalog/?letter=K)| [L](/catalog/?letter=L)| [M](/catalog/?letter=M)  
-[N](/catalog/?letter=N)| [O](/catalog/?letter=O)| [P](/catalog/?letter=P)| [Q](/catalog/?letter=Q)| [R](/catalog/?letter=R)| [S](/catalog/?letter=S)| [T](/catalog/?letter=T)  
-[U](/catalog/?letter=U)| [V](/catalog/?letter=V)| [W](/catalog/?letter=W)| [X](/catalog/?letter=X)| [Y](/catalog/?letter=Y)| [Z](/catalog/?letter=Z)| [Я](/catalog/?properties\[\]=russian)  
-  
-Поддержите нас!
-
-Привет, олдгеймер! Если тебе нравится наш проект и тебе не безразлична его судьба, ты можешь поддержать нас на Boosty или любым другим способом 
-
-[](https://boosty.to/old-games)
-
-[Другие способы...](/donate/)
-
-Случайная игра 
-
-[**BANG! Gunship Elite**](/game/1215.html "BANG! Gunship Elite")
-
-[Windows](/catalog/?platform=2  "Все игры на Windows"), [2000](/catalog/?year=2000&year2=2000 "Все игры 2000 года")   
-[Simulation](/catalog/?genre=5 "Все игры жанра Simulation")
-
-[ ](/game/1215.html "BANG! Gunship Elite")
-
-Новинки
-
-[ **X-O** ](/game/15712.html "X-O")   
-09.09.2026
-
-[ **Želite li da postanete MILIONER?** ](/game/15711.html "Želite li da postanete MILIONER?")   
-08.09.2026
-
-[ **Lembitu** ](/game/15710.html "Lembitu")   
-07.09.2026
-
-[ **Keyboard Cadet** ](/game/15709.html "Keyboard Cadet")   
-07.09.2026
-
-[ **Kiren Tanna's Kaun Banega Crorepati** ](/game/15708.html "Kiren Tanna's Kaun Banega Crorepati")   
-07.09.2026
-
-[Далее...](/catalog/?sort=date)
-
-Последние статьи
-
-**[Обзор]**  [Трилогия Marathon. Недостижимые тайны звёздного неба.](/articles/121154.html)  
-19.08.2026 -- [KOG](/users/?userid=228632)
-
-[Интервью с мультипликатором Артёмом Лукичёвым](/articles/120944.html)  
-04.08.2026 -- [Chapaevec](/users/?userid=218245)
-
-**[Интервью]**  [Назад в прошлое. Часть 6.2. Роковая красота, или Интервью с Лией Монтелонго.](/articles/120699.html)  
-17.07.2026 -- [UnknDoomer](/users/?userid=202403)
-
-**[Интервью]**  [Не то золото, что блестит, или Интервью с коллекционерами из разных стран. Часть 9. Испания.](/articles/120644.html)  
-12.07.2026 -- [UnknDoomer](/users/?userid=202403)
-
-**[Интервью]**  [Не то золото, что блестит, или Интервью с коллекционерами из разных стран. Часть 8. Австралия.](/articles/120607.html)  
-09.07.2026 -- [UnknDoomer](/users/?userid=202403)
-
-[Далее...](/articles/)
-
-Последние файлы
-
-[ **R.S.A Darts**](/game/15516.html) [+] [Электронная версия](/game/download/15516.html "Различные версии игры, распространявшиеся через сеть \(BBS, Интернет, Фидо\).")
-
-[ **Блицкриг: Пылающий горизонт**](/game/14879.html) [+] [Полезные файлы](/game/download/14879.html "Официальная дополнительная глава Carthage 1943. Только на английском языке, но можно устанавливать и на русскую версию.")
-
-[ **Doom 3**](/game/8776.html) [+] [Полезные файлы](/game/download/8776.html "Официальный редактор Doom 3 SDK.")
-
-[ **Crisis in the Kremlin**](/game/2387.html) [+] [Floppy-версия](/game/download/2387.html "Дискетная версия игры \(то есть в оригинале распространявшаяся на floppy-носителе\[-ях\] {дискете}\). Всегда является полной \(сохранены все игровые компоненты\) и не требует инсталляции.")
-
-[ **Daughter of Serpents**](/game/2561.html) [+] [Образы дискет](/game/download/2561.html "Версия игры, распространявшейся на одном или нескольких floppy-носителях \(дискетах\), представленная в виде "электронной копии" дискеты \(или копий нескольких дискет\) и требующая инсталляции. Как правило, это оригинальные, неизмененные образы, которые, соответственно, не содержат файлов взлома и могут не запускаться.
-
-Образы дискет в формате IMA. Из личной коллекции MAZterXP.")
-
-[ **KGB**](/game/2119.html) [+] [Floppy-версия](/game/download/2119.html "Дискетная версия игры \(то есть в оригинале распространявшаяся на floppy-носителе\[-ях\] {дискете}\). Всегда является полной \(сохранены все игровые компоненты\) и не требует инсталляции.")
-
-[ **KGB**](/game/2119.html) [+] [Образы дискет](/game/download/2119.html "Версия игры, распространявшейся на одном или нескольких floppy-носителях \(дискетах\), представленная в виде "электронной копии" дискеты \(или копий нескольких дискет\) и требующая инсталляции. Как правило, это оригинальные, неизмененные образы, которые, соответственно, не содержат файлов взлома и могут не запускаться.
-
-Образы дискет в формате IMA. Из личной коллекции MAZterXP.")
-
-[ **Hexen: Beyond Heretic**](/game/37.html) [+] [Документация](/game/download/37.html "Руководство к прохождению игры на русском языке \(в формате PDF\).
-Отсканировал Skorpion Professional.")
-
-[ **Final DOOM: TNT - Evilution**](/game/926.html) [+] [Документация](/game/download/926.html "Руководство к прохождению игры на русском языке \(в формате PDF\).
-Отсканировал Skorpion Professional.")
-
-[ **Final DOOM: The Plutonia Experiment**](/game/928.html) [+] [Документация](/game/download/928.html "Руководство к прохождению игры на русском языке \(в формате PDF\).
-Отсканировал Skorpion Professional.")
-
-[Далее...](javascript: void\(0\))
-
-Популярные
-
-[**Half-Life**](/game/754.html "Half-Life")  
-Популярность: 1304626
-
-[**Command & Conquer: Red Alert 2**](/game/1350.html "Command & Conquer: Red Alert 2")  
-Популярность: 1134864
-
-[**Diablo II**](/game/808.html "Diablo II")  
-Популярность: 1073110
-
-[**Diablo II: Lord of Destruction**](/game/2126.html "Diablo II: Lord of Destruction")  
-Популярность: 820586
-
-[**Diablo**](/game/232.html "Diablo")  
-Популярность: 735197
-
-[**DOOM II: Hell on Earth**](/game/23.html "DOOM II: Hell on Earth")  
-Популярность: 725152
-
-[**WarCraft II: Tides of Darkness**](/game/73.html "WarCraft II: Tides of Darkness")  
-Популярность: 719744
-
-[**Age of Empires II: The Age of Kings**](/game/612.html "Age of Empires II: The Age of Kings")  
-Популярность: 715386
-
-[**Heroes of Might and Magic III: Complete - Collector's Edition**](/game/1747.html "Heroes of Might and Magic III: Complete - Collector's Edition")  
-Популярность: 705326
-
-[**Blood**](/game/11.html "Blood")  
-Популярность: 657730
-
-[Далее...](/catalog/?sort=popularity)
-
-[VK](https://vk.com/old_games)
-
-[Podcast VK](https://vk.com/podcastogru)
-
-[Podcast YT](https://www.youtube.com/channel/UCjL57vLdE5Ae1frLxevzHaw)
-
-[Поддержка](mailto:support@old-games.ru)
-
-### Разделы
-
-  * [Новости](/)
-  * [Каталог игр](/catalog/)
-  * [Расширенный поиск](/search/)
-  * [Форум](/forum/)
-  * [Статьи](/articles/)
-  * [Wiki](/wiki/)
-  * [Файлы](/utils/)
-
-
-
-### Информация
-
-  * [О проекте](/about/)
-  * [История проекта](/about/history/)
-  * [FAQ](/faq/)
-  * [Поддержите нас!](/donate/)
-
-
-
-### __RSS
-
-  * [Новости сайта](https://feeds.feedburner.com/Old-games-ru-news)
-  * [Новые игры](https://feeds.feedburner.com/Old-games-ru)
-  * [Новые файлы](https://feeds.feedburner.com/Old-games-ru-files)
-  * [Новые статьи](https://feeds.feedburner.com/Old-games-ru-articles)
-
-
-
-(C) Old-Games.RU, 2000--2026
-
-  
-
-
-Ответственность за содержание рекламных объявлений несет рекламодатель.  
-При использовании материалов сайта Old-Games.RU, ссылка на сайт обязательна.  
-Old-Games.RU не несет ответственности за содержание веб-сайтов, на которые даются гиперссылки.  
-Все права на опубликованные на сайте Old-Games.RU материалы принадлежат их законным владельцам.  
-  
-
-
-### [Switch to English](/?language=eng)
+**[Обсудить статью на форуме](https://www.old-games.ru/forum/threads/robin-hood-the-legend-of-sherwood.42842/unread)**

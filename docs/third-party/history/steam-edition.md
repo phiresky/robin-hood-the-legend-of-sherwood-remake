@@ -2,145 +2,177 @@
 
 - Original source: [Steam — localized store description](https://store.steampowered.com/app/46560?l=spanish)
 - Author / publication: Steam / Microids publisher listing
-- Language / date: Spanish storefront; also inspected Portuguese listings
-- Access: Indexed product text inspected
-- Checked: 2026-09-09
-- Format: header notes, then the page text converted from the original HTML
+- Language / date: Spanish storefront; page checked 2026-09-09
+- Source file: `originals/history__steam-edition.html` (with `originals/history__steam-edition.txt` used as a text rendering)
 
-## Converted text from the original HTML
+## English translation
 
-### history__steam-edition.html
+### Robin Hood: The Legend of Sherwood
 
-_Source: `originals/history__steam-edition.html`._
+**Developer:** [Spellbound](https://store.steampowered.com/developer/microids)  
+**Publisher:** [Microids](https://store.steampowered.com/publisher/microids)  
+**Release date:** 1 NOV 2002
 
-[ Iniciar sesión ](https://store.steampowered.com/login/?redir=app%2F46560%3Fl%3Dspanish&redir_ssl=1&snr=1_5_9__global-header) [ Tienda ](https://store.steampowered.com/?snr=1_5_9__global-responsive-menu)
+Roam through the dense foliage of Sherwood, face the royal problem head-on, and fight Prince John’s forces as the legendary nobleman Robin Hood.
 
-[ Página principal ](https://store.steampowered.com/?snr=1_5_9__global-responsive-menu) [ Lista de descubrimientos ](https://store.steampowered.com/explore/?snr=1_5_9__global-responsive-menu) [ Lista de deseados ](https://store.steampowered.com/wishlist/?snr=1_5_9__global-responsive-menu) [ Tienda de puntos ](https://store.steampowered.com/points/shop/?snr=1_5_9__global-responsive-menu) [ Noticias ](https://store.steampowered.com/news/?snr=1_5_9__global-responsive-menu) [ Gráficos ](https://store.steampowered.com/stats/?snr=1_5_9__global-responsive-menu)
+**All reviews:** Mixed (1,309) — 66% of the 1,309 user reviews for this game are positive.
 
-[ Comunidad ](https://steamcommunity.com/)
+**Popular tags for this product:** Strategy; Stealth; Isometric; Medieval; Tactical; Single-player; Adventure; Classic; Real-time tactics; Historical; RPG; Action; Point & Click.
 
-[ Página principal ](https://steamcommunity.com/) [ Discusiones ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Mercado ](https://steamcommunity.com/market/) [ Retransmisiones ](https://steamcommunity.com/?subsection=broadcasts)
+### Features
 
-[ Acerca de ](https://store.steampowered.com/about/?snr=1_5_9__global-responsive-menu) [ Soporte ](https://help.steampowered.com/es/)
+- Single-player
+- Family Sharing
 
-Cambiar idioma
+### Languages
 
-[Descargar Steam Mobile](https://store.steampowered.com/mobile)
+| Language | Interface | Voices | Subtitles |
+| --- | --- | --- | --- |
+| Spanish (Spain) | ✔ |  |  |
+| English | ✔ |  |  |
+| French | ✔ |  |  |
+| German | ✔ |  |  |
 
-Ver versión clásica
+**Title:** Robin Hood: The Legend of Sherwood  
+**Genre:** [Strategy](https://store.steampowered.com/genre/Strategy/)  
+**Developer:** [Spellbound](https://store.steampowered.com/developer/microids)  
+**Publisher:** [Microids](https://store.steampowered.com/publisher/microids)  
+**Franchise:** [Microids](https://store.steampowered.com/franchise/microids)  
+**Release date:** 1 NOV 2002
 
-© Valve Corporation. Todos los derechos reservados. Todas las marcas registradas pertenecen a sus respectivos dueños en EE. UU. y otros países.  [Política de Privacidad](https://store.steampowered.com/privacy_agreement/?snr=1_5_9__global-responsive-menu)  |  [Información legal](http://www.valvesoftware.com/legal.htm)  |  [Accesibilidad](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Acuerdo de Suscriptor a Steam](https://store.steampowered.com/subscriber_agreement/?snr=1_5_9__global-responsive-menu)  |  [Reembolsos](https://store.steampowered.com/steam_refunds/?snr=1_5_9__global-responsive-menu)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/?snr=1_5_9__global-responsive-menu)
+### Metacritic
 
-[ ](https://store.steampowered.com/?snr=1_5_9__global-responsive-menu)
+80 — [Read the reviews](https://www.metacritic.com/game/pc/robin-hood-the-legend-of-sherwood?ftag=MCD-06-10aaa1f)
 
-[ ](https://store.steampowered.com/?snr=1_5_9__global-header)
+### Purchase listing
 
-[ TIENDA ](https://store.steampowered.com/?snr=1_5_9__global-header)
+**Buy “Robin Hood: The Legend of Sherwood”** — 7.99€
 
-[ Página principal ](https://store.steampowered.com/?snr=1_5_9__global-header) [ Lista de descubrimientos ](https://store.steampowered.com/explore/?snr=1_5_9__global-header) [ Lista de deseados ](https://store.steampowered.com/wishlist/?snr=1_5_9__global-header) [ Tienda de puntos ](https://store.steampowered.com/points/shop/?snr=1_5_9__global-header) [ Noticias ](https://store.steampowered.com/news/?snr=1_5_9__global-header) [ Gráficos ](https://store.steampowered.com/stats/?snr=1_5_9__global-header)
+### Reviews
 
-[ COMUNIDAD ](https://steamcommunity.com/)
+> “The game has it all: the lush setting will create the perfect atmosphere of medieval England, and when you add how well animated the characters are, this will make you feel part of Robin Hood’s adventures.”  
+> **87% — ActionTrip**
 
-[ Página principal ](https://steamcommunity.com/) [ Discusiones ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Mercado ](https://steamcommunity.com/market/) [ Retransmisiones ](https://steamcommunity.com/?subsection=broadcasts)
+> “...an absorbing game that strategy fans will be playing for some time.”  
+> **87% — Gamespy**
 
-[ Acerca de ](https://store.steampowered.com/about/?snr=1_5_9__global-header) [ SOPORTE ](https://help.steampowered.com/es/)
+> “A pleasant excursion into a historical period. Robin Hood offers solid tactical combat and beautiful animations.”  
+> **85% — GameZone**
 
-[ Instalar Steam  ](https://store.steampowered.com/about/?snr=1_5_9__global-header) [iniciar sesión](https://store.steampowered.com/login/?redir=app%2F46560%3Fl%3Dspanish&redir_ssl=1&snr=1_5_9__global-header)  |  idioma
+### About this game
 
-[ 简体中文 (chino simplificado) ](?l=schinese) [ 繁體中文 (chino tradicional) ](?l=tchinese) [ 日本語 (japonés) ](?l=japanese) [ 한국어 (coreano) ](?l=koreana) [ ไทย (tailandés) ](?l=thai) [ Bahasa Indonesia (indonesio) ](?l=indonesian) [ Bahasa Melayu (malayo) BETA ](?l=malay) [ Български (búlgaro) ](?l=bulgarian) [ Čeština (checo) ](?l=czech) [ Dansk (danés) ](?l=danish) [ Deutsch (alemán) ](?l=german) [ English (inglés) ](?l=english) [ Español de Hispanoamérica ](?l=latam) [ Ελληνικά (griego) ](?l=greek) [ Français (francés) ](?l=french) [ Italiano ](?l=italian) [ Magyar (húngaro) ](?l=hungarian) [ Nederlands (holandés) ](?l=dutch) [ Norsk (noruego) ](?l=norwegian) [ Polski (polaco) ](?l=polish) [ Português (Portugués de Portugal) ](?l=portuguese) [ Português-Brasil (portugués de Brasil) ](?l=brazilian) [ Română (rumano) ](?l=romanian) [ Русский (ruso) ](?l=russian) [ Suomi (finés) ](?l=finnish) [ Svenska (sueco) ](?l=swedish) [ Türkçe (turco) ](?l=turkish) [ Tiếng Việt (vietnamita) ](?l=vietnamese) [ Українська (ucraniano) ](?l=ukrainian) [Comunicar un error de traducción](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
+England, in the year of Our Lord 1190. Richard “the Lionheart” is captive, and his brother, Prince John, rules the peasants with an iron hand, using the brute force of arms to subjugate them to his authority. Only one man fights the oppressors, aided by a small band of brave and loyal followers. His name is Robin Hood.
 
-[Todos los juegos](https://store.steampowered.com/search/?term=&snr=1_5_9__205) > [Estrategia](https://store.steampowered.com/genre/Strategy/?snr=1_5_9__205) > [Franquicia Microids](https://store.steampowered.com/franchise/microids?snr=1_5_9__205) > [Robin Hood: The Legend of Sherwood](https://store.steampowered.com/app/46560/?snr=1_5_9__205)
+Roam through the dense foliage of Sherwood, face the royal problems and Prince John’s forces head-on as the legendary nobleman Robin Hood. Join Little John and the rest of the Merry Men, for the battle for the King’s throne is assured in this stealth and real-time strategy game.
 
-[ Centro de la comunidad ](https://steamcommunity.com/app/46560)
+### Main Features
 
-Robin Hood: The Legend of Sherwood
+- Non-linear campaign with more than 30 different missions.
+- Varied mission types, from Robbery and Infiltration to Castle Assault and Ambush.
+- Combine action and adventure with elements of tactical stealth.
+- Innovative combat system: interact with the mouse while fighting to access special combat abilities.
+- Play as Robin Hood, Little John, Friar Tuck, or even Lady Marian—nine characters in total, each with their own specific attributes and abilities.
+- Spectacular graphics with real atmospheric conditions such as day, night, and fog.
+- Explore historical locations such as Sherwood Forest, Nottingham Castle, York, and many more.
 
-Robin Hood: The Legend of Sherwood
+### System Requirements
 
-Desarrollador
+- **OS:** Windows® XP / Vista™ / Windows® 7
+- **Processor:** 1.0 GHz
+- **Memory:** 512 MB RAM
+- **Hard Drive:** 1 GB free space
+- **Graphics:** Graphics card with 64 MB dedicated memory
+- **Sound:** DirectX 9.0c-compatible device
+- **DirectX® Version:** 9.0c
 
-[Spellbound](https://store.steampowered.com/developer/microids?snr=1_5_9__400)
+nVidia GTX 580, GTX 260, and GTS 250 graphics cards are not supported.
 
-Editor
+\* From January 1, 2024, the Steam client will only support Windows 10 and later versions.
 
-[Microids](https://store.steampowered.com/publisher/microids?snr=1_5_9__400)
+2011 © Microids. All rights reserved. Robin Hood – The Legend of Sherwood is a trademark of Spellbound and Anuman. All rights reserved. All other trademarks and copyrights are the property of their respective owners.
 
-Lanzado el
+## Original text
 
-1 NOV 2002
+### Robin Hood: The Legend of Sherwood
+
+**Desarrollador:** [Spellbound](https://store.steampowered.com/developer/microids)  
+**Editor:** [Microids](https://store.steampowered.com/publisher/microids)  
+**Lanzado el:** 1 NOV 2002
 
 Vaga por el denso follaje de Sherwood, enfréntate cara a cara con el problema de la realeza y lucha contra las fuerzas del Príncipe Juan al tomar el papel del legendario noble, Robin Hood.
 
-Todas las reseñas:  Variadas (1.309)  \- El 66 % de las 1,309 reseñas de los usuarios sobre este juego son positivas.
+**Todas las reseñas:** Variadas (1.309) — El 66 % de las 1,309 reseñas de los usuarios sobre este juego son positivas.
 
-Fecha de lanzamiento:
+**Etiquetas populares para este producto:** [Estrategia](https://store.steampowered.com/tags/es/Estrategia/) · [Sigilo](https://store.steampowered.com/tags/es/Sigilo/) · [Isométricos](https://store.steampowered.com/tags/es/Isom%C3%A9tricos/) · [Medievales](https://store.steampowered.com/tags/es/Medievales/) · [Tácticos](https://store.steampowered.com/tags/es/T%C3%A1cticos/) · [Un jugador](https://store.steampowered.com/tags/es/Un%20jugador/) · [Aventura](https://store.steampowered.com/tags/es/Aventura/) · [Clásicos](https://store.steampowered.com/tags/es/Cl%C3%A1sicos/) · [Tácticas en tiempo real](https://store.steampowered.com/tags/es/T%C3%A1cticas%20en%20tiempo%20real/) · [Históricos](https://store.steampowered.com/tags/es/Hist%C3%B3ricos/) · [Rol](https://store.steampowered.com/tags/es/Rol/) · [Acción](https://store.steampowered.com/tags/es/Acci%C3%B3n/) · [Apuntar y clic](https://store.steampowered.com/tags/es/Apuntar%20y%20clic/)
 
-1 NOV 2002
+### Características
 
-Desarrollador:
+- [Un jugador](https://store.steampowered.com/search/?category2=2)
+- [Préstamo familiar](https://store.steampowered.com/search/?category2=62)
 
-[Spellbound](https://store.steampowered.com/developer/microids?snr=1_5_9__2000)
+### Idiomas
 
-Editor:
+| Idioma | Interfaz | Voces | Subtítulos |
+| --- | --- | --- | --- |
+| Español de España | ✔ |  |  |
+| Inglés | ✔ |  |  |
+| Francés | ✔ |  |  |
+| Alemán | ✔ |  |  |
 
-[Microids](https://store.steampowered.com/publisher/microids?snr=1_5_9__2000)
-
-Etiquetas
-
-Etiquetas populares para este producto:
-
-[ Estrategia ](https://store.steampowered.com/tags/es/Estrategia/?snr=1_5_9__409)[ Sigilo ](https://store.steampowered.com/tags/es/Sigilo/?snr=1_5_9__409)[ Isométricos ](https://store.steampowered.com/tags/es/Isom%C3%A9tricos/?snr=1_5_9__409)[ Medievales ](https://store.steampowered.com/tags/es/Medievales/?snr=1_5_9__409)[ Tácticos ](https://store.steampowered.com/tags/es/T%C3%A1cticos/?snr=1_5_9__409)[ Un jugador ](https://store.steampowered.com/tags/es/Un%20jugador/?snr=1_5_9__409)[ Aventura ](https://store.steampowered.com/tags/es/Aventura/?snr=1_5_9__409)[ Clásicos ](https://store.steampowered.com/tags/es/Cl%C3%A1sicos/?snr=1_5_9__409)[ Tácticas en tiempo real ](https://store.steampowered.com/tags/es/T%C3%A1cticas%20en%20tiempo%20real/?snr=1_5_9__409)[ Históricos ](https://store.steampowered.com/tags/es/Hist%C3%B3ricos/?snr=1_5_9__409)[ Rol ](https://store.steampowered.com/tags/es/Rol/?snr=1_5_9__409)[ Acción ](https://store.steampowered.com/tags/es/Acci%C3%B3n/?snr=1_5_9__409)[ Apuntar y clic ](https://store.steampowered.com/tags/es/Apuntar%20y%20clic/?snr=1_5_9__409)
-
-+
-
-Reseñas
-
-Todas las reseñas: Desde el principio: Variadas (66 % de 1,309)
-
-[Inicia sesión](https://store.steampowered.com/login/?redir=app%2F46560&snr=1_5_9_) para añadir este artículo a tu lista de deseados, seguirlo o marcarlo como ignorado.
-
-[](javascript:void\(0\))
-
-Características
-
-[Un jugador](https://store.steampowered.com/search/?category2=2&snr=1_5_9__423)[Préstamo familiar](https://store.steampowered.com/search/?category2=62&snr=1_5_9__423)
-
-Idiomas:
-
-Español de España y 3 más
-
-| Interfaz | Voces | Subtítulos
----|---|---|---
-Español de España  |  ✔ |  |
-Inglés  |  ✔ |  |
-Francés  |  ✔ |  |
-Alemán  |  ✔ |  |
-
-**Título:** Robin Hood: The Legend of Sherwood
-**Género:** [Estrategia](https://store.steampowered.com/genre/Strategy/?snr=1_5_9__408)
-
-
-**Desarrollador:** [Spellbound](https://store.steampowered.com/developer/microids?snr=1_5_9__408)
-
-**Editor:** [Microids](https://store.steampowered.com/publisher/microids?snr=1_5_9__408)
-
-**Franquicia:** [Microids](https://store.steampowered.com/franchise/microids?snr=1_5_9__408)
-
+**Título:** Robin Hood: The Legend of Sherwood  
+**Género:** [Estrategia](https://store.steampowered.com/genre/Strategy/)  
+**Desarrollador:** [Spellbound](https://store.steampowered.com/developer/microids)  
+**Editor:** [Microids](https://store.steampowered.com/publisher/microids)  
+**Franquicia:** [Microids](https://store.steampowered.com/franchise/microids)  
 **Fecha de lanzamiento:** 1 NOV 2002
 
+### Metacritic
 
-[ Ver historial de actualizaciones ](https://store.steampowered.com/newshub/?appids=46560&snr=1_5_9__408) [ Leer noticias relacionadas ](https://store.steampowered.com/newshub/app/46560?snr=1_5_9__408) [ Ver discusiones ](https://steamcommunity.com/app/46560/discussions/) [ Buscar grupos de la comunidad ](https://steamcommunity.com/actions/Search?T=ClanAccount&K=Robin%20Hood%3A%20The%20Legend%20of%20Sherwood)
+80 — [Leer las reseñas](https://www.metacritic.com/game/pc/robin-hood-the-legend-of-sherwood?ftag=MCD-06-10aaa1f)
 
-Insertar [__ ](javascript:void\(0\))
+### Comprar «Robin Hood: The Legend of Sherwood»
 
-[](javascript:void\(0\))
+7,99€
 
-80
+### Reseñas
 
-metacritic
+> “El juego lo tiene todo: el exuberante entorno creará la atmósfera perfecta de la Inglaterra medieval, y si añadimos lo bien animados que están los personajes, esto hará que te sientas parte de las aventuras de Robin Hood”.  
+> **87% – ActionTrip**
 
-[Leer las reseñas](https://www.metacritic.com/game/pc/robin-hood-the-legend-of-sherwood?ftag=MCD-06-10aaa1f)
+> “…un juego absorbente al que los amantes de la estrategia estarán jugando durante algún tiempo”.  
+> **87% – Gamespy**
 
-Enlaces e información
+> “Una agradable excursión por un momento histórico. Robin Hood ofrece un combate táctico sólido y unas preciosas animaciones”.  
+> **85% – GameZone**
 
-[ Echa un vistazo a toda la colección de Microids en Steam ](https://store.steampowered.com/franchise/microids?snr=1_5_9__2001)
+### Acerca de este juego
+
+Inglaterra, año de Nuestro Señor de 1190. Ricardo "Corazón de León" está cautivo y su hermano, el Príncipe Juan, gobierna a los campesinos con mano de hierro utilizando la fuerza bruta de las armas para someterlos a su autoridad. Sólo un hombre lucha contra los opresores, ayudado por una pequeña banda de valientes y fieles seguidores. Su nombre es Robin Hood.
+
+Vaga por el denso follaje de Sherwood, enfréntate cara a cara con los problemas Reales y con las fuerzas del Príncipe Juan en el papel del legendario noble Robin Hood. Alíate con Pequeño Juan y el resto de los Hombres Felices, pues la batalla por el trono del Rey está asegurada en este juego de sigilo y estrategia en tiempo real.
+
+### Características Principales
+
+- Campaña no lineal con más de 30 misiones diferentes.
+- Variados tipos de misión, desde Robo e Infiltración hasta Ataque al Castillo y Emboscada.
+- Combina acción y aventuras con elementos de sigilo táctico.
+- Innovador sistema de combate, interactúa con el ratón mientras peleas para acceder a las habilidades especiales de combate.
+- Juega como Robin Hood, Pequeño Juan, el Fraile Tuck o incluso Lady Marian, nueve personajes en total, cada uno con sus atributos y habilidades específicos.
+- Espectaculares gráficos con condiciones atmosféricas reales como día, noche y niebla.
+- Explora lugares históricos como el Bosque de Sherwood, el Castillo de Nottingham, York y muchos más.
+
+### Requisitos del sistema
+
+- **SO:** Windows® XP / Vista™ / Windows® 7
+- **Procesador:** 1.0 GHz
+- **Memoria:** 512 MB de RAM
+- **Disco Duro:** 1 GB de espacio libre
+- **Gráficos:** Gráfica con 64 MB de memoria dedicada
+- **Sonido:** Dispositivo compatible con DirectX 9.0c
+- **Versión de DirectX®:** 9.0c
+
+Las gráficas nVidia GTX 580, GTX 260 y GTS 250 no están soportadas.
+
+\* A partir del 1 de enero de 2024, el cliente de Steam solo será compatible con Windows 10 y versiones posteriores.
+
+2011 © Microids. All rights reserved. Robin Hood – The Legend of Sherwood is a trademark of Spellbound and Anuman. All rights reserved. All other trademarks and copyrights are the properties of their respective owners.
