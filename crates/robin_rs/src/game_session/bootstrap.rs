@@ -178,7 +178,9 @@ impl MissionBootstrap {
     /// Start the campaign segment clock after the lost-Sherwood gate, matching
     /// the original `GameLoop` boundary.
     fn start_campaign_clock(&mut self) {
-        self.loaded.engine.finish_mission_bootstrap();
+        self.loaded
+            .engine
+            .finish_mission_bootstrap(engine_api::MissionBootstrapCompletion::StartClock);
     }
 
     fn prepare_interactive_entry(
@@ -191,6 +193,10 @@ impl MissionBootstrap {
         if !(self.game.is_sherwood && self.loaded.engine.campaign().get_ares() == 0) {
             self.start_campaign_clock();
             self.setup_restart_or_sherwood(callbacks, args);
+        } else {
+            self.loaded
+                .engine
+                .finish_mission_bootstrap(engine_api::MissionBootstrapCompletion::DebriefOnly);
         }
     }
 
