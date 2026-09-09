@@ -115,11 +115,13 @@ impl KeyConfigStore {
     }
 
     /// Atomically persist to `<save_directory>/keyconfigs.json`.
+    /// Invalid snapshots are rejected before touching the existing archive.
     /// On error retain this desired snapshot for retry. Native errors expose
     /// [`crate::desktop_persistence::PublicationFailure`] to distinguish a
     /// published archive whose directory synchronization failed.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self) -> std::io::Result<()> {
+        self.validate_archive()?;
         let path = Self::store_path(&self.save_directory);
         crate::desktop_persistence::write_json(&path, self)
     }
@@ -382,6 +384,55 @@ mod tests {
             Some(KeyCode::Backspace)
         );
         assert_eq!(store.configs.len(), 1);
+    }
+
+    #[test]
+    fn invalid_save_preserves_the_last_valid_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().to_str().unwrap();
+        let mut valid = KeyConfigStore::new(directory.into());
+        valid.entry_or_default(7);
+        valid.save().unwrap();
+        let path = dir.path().join("keyconfigs.json");
+        let original = fs::read(&path).unwrap();
+        for custom in [false, true] {
+            for invalid_kind in 0..4 {
+                let mut invalid = valid.clone();
+                let entry = invalid.entry_or_default(7);
+                let config = if custom {
+                    &mut entry.custom
+                } else {
+                    &mut entry.active
+                };
+                match invalid_kind {
+                    0 => config.bindings[0].action.clear(),
+                    1 => config.bindings[0].action = "x".repeat(KEY_CONFIG_ACTION_BYTE_LIMIT + 1),
+                    2 => config.bindings.push(config.bindings[0].clone()),
+                    3 => config
+                        .bindings
+                        .resize(KEY_CONFIG_BINDING_LIMIT + 1, config.bindings[0].clone()),
+                    _ => unreachable!(),
+                }
+                assert_eq!(
+                    invalid.save().unwrap_err().kind(),
+                    std::io::ErrorKind::InvalidData
+                );
+                assert_eq!(fs::read(&path).unwrap(), original);
+            }
+        }
+        let mut invalid = valid.clone();
+        for id in 0..=KEY_CONFIG_PROFILE_LIMIT as u32 {
+            invalid.entry_or_default(id);
+        }
+        assert_eq!(
+            invalid.save().unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(
+            serde_json::to_value(KeyConfigStore::load(directory).unwrap()).unwrap(),
+            serde_json::to_value(valid).unwrap()
+        );
     }
 
     #[test]

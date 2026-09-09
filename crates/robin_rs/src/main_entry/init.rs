@@ -1544,9 +1544,12 @@ mod tests {
         let mut invalid = PlayerProfileManager::new(directory_string.clone());
         invalid.create_profile("orphan".to_owned(), DifficultyLevel::Hard);
         invalid.active_index = Some(99);
-        crate::player_profile_store::PlayerProfileStore::for_directory(&directory_string)
-            .save(&invalid)
-            .expect("write invalid player-profile fixture");
+        // Seed corruption directly; the persistence API rejects invalid snapshots.
+        std::fs::write(
+            directory.path().join("profiles.json"),
+            serde_json::to_vec(&invalid).expect("serialize invalid player-profile fixture"),
+        )
+        .expect("write invalid player-profile fixture");
         let mut stale_key_configs = KeyConfigStore::new(directory_string.clone());
         stale_key_configs.entry_or_default(0);
         stale_key_configs

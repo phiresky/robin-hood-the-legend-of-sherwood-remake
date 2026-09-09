@@ -95,6 +95,7 @@ impl PlayerProfileStore {
     }
 
     /// Persist this snapshot without changing the caller's in-memory state.
+    /// Invalid snapshots are rejected before touching the existing archive.
     /// Native publication failures include their publication stage in the
     /// error; retain and retry the desired snapshot even when replacement was
     /// visible but its directory synchronization could not be confirmed.
@@ -108,6 +109,9 @@ impl PlayerProfileStore {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Native { directory } => {
+                manager
+                    .validate_archive()
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
                 crate::desktop_persistence::write_json(&directory.join("profiles.json"), manager)
             }
             #[cfg(target_arch = "wasm32")]
@@ -406,10 +410,45 @@ mod tests {
         let mut invalid = PlayerProfileManager::new(selected.path().to_str().unwrap().into());
         invalid.create_profile("Robin".into(), DifficultyLevel::Medium);
         invalid.active_index = Some(99);
-        store.save(&invalid).unwrap();
+        // Seed corruption directly: the public writer must reject it.
+        fs::write(
+            selected.path().join("profiles.json"),
+            serde_json::to_vec(&invalid).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             store.load().unwrap_err().kind(),
             std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn invalid_save_preserves_the_last_valid_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PlayerProfileStore::for_directory(dir.path().to_str().unwrap());
+        let valid = store.load().unwrap();
+        let path = dir.path().join("profiles.json");
+        let original = fs::read(&path).unwrap();
+        for invalid_kind in 0..6 {
+            let mut invalid = valid.clone();
+            match invalid_kind {
+                0 => invalid.profiles.clear(),
+                1 => invalid.active_index = None,
+                2 => invalid.active_index = Some(99),
+                3 => invalid.profiles[0].active = false,
+                4 => invalid.profiles[0].name.clear(),
+                5 => invalid.profiles.push(invalid.profiles[0].clone()),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                store.save(&invalid).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        assert_eq!(
+            serde_json::to_value(store.load().unwrap()).unwrap(),
+            serde_json::to_value(valid).unwrap()
         );
     }
 
