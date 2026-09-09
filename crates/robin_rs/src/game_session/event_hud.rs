@@ -187,7 +187,7 @@ fn apply_frame_resizes(
             base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
             corner_size: host.frontend.mission_surfaces.corner_size(),
         };
-        dispatch_local_command(&host.transport, &mut frame.commands, &cmd);
+        dispatch_local_command(&host.transport, &mut frame.stage_commands(), &cmd);
     }
     hud.resize(new_w, new_h);
 }
@@ -246,7 +246,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         host,
         manager,
         &mut input.threaded,
-        &mut frame.commands,
+        &mut frame.stage_commands(),
         &mut window.gamepad_input,
         gamepad_gameplay_allowed,
     );
@@ -260,7 +260,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         game,
         manager,
         host,
-        &mut frame.commands,
+        &mut frame.stage_commands(),
         assets,
         callbacks,
         window,
@@ -291,7 +291,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                 if cancel_planned {
                     dispatch_local_command(
                         &host.transport,
-                        &mut frame.commands,
+                        &mut frame.stage_commands(),
                         &PlayerCommand::CancelPlannedAction,
                     );
                 }
@@ -359,7 +359,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                         &manager.engine,
                         game,
                         host,
-                        &mut frame.commands,
+                        &mut frame.stage_commands(),
                     );
                 }
             } else if stature_hit.is_some()
@@ -380,7 +380,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                 } else {
                     button.as_command()
                 };
-                dispatch_local_command(&host.transport, &mut frame.commands, &command);
+                dispatch_local_command(&host.transport, &mut frame.stage_commands(), &command);
                 if !planning_active {
                     match button {
                         StatureButton::Up => game.stature_focus.latch_stand_up(stature),
@@ -389,7 +389,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                 }
             }
         } else if let Some(button) = corner {
-            dispatch_corner_button_right_click(button, host, &mut frame.commands);
+            dispatch_corner_button_right_click(button, host, &mut frame.stage_commands());
         }
         false
     });

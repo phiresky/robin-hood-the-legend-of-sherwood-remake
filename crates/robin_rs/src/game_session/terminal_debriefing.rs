@@ -143,8 +143,7 @@ fn stage_terminal_campaign_update(
         // tick. Its debrief is ready now; a post-command (or later echo) still
         // needs the normal attempt-sequence advancement gate.
         let applied = frame
-            .commands
-            .commands
+            .commands()
             .iter()
             .filter(|input| {
                 matches!(
@@ -168,7 +167,7 @@ fn stage_terminal_campaign_update(
     let (completed_at_unix_seconds, campaign_run_nonce) = mission_completion_clock();
     dispatch_local_command(
         transport,
-        &mut frame.post_commands,
+        &mut frame.stage_post_commands(),
         &PlayerCommand::ApplyQuitMissionUpdates {
             exit_code,
             difficulty,
@@ -1372,13 +1371,13 @@ mod tests {
         for pre_command in [false, true] {
             let mut frame = MissionFrame::new(0);
             if pre_command {
-                frame.commands.push(command.clone());
+                frame.stage_commands().push(command.clone());
             } else {
-                frame.post_commands.push(command.clone());
+                frame.stage_post_commands().push(command.clone());
             }
             let before = (
-                bitcode::encode(&frame.commands.commands),
-                bitcode::encode(&frame.post_commands.commands),
+                bitcode::encode(frame.commands()),
+                bitcode::encode(frame.post_commands()),
             );
             let current = if pre_command { 42 } else { 41 };
             let previous = stage_terminal_campaign_update(
@@ -1392,8 +1391,8 @@ mod tests {
             assert_eq!(previous, 41);
             assert_eq!(
                 (
-                    bitcode::encode(&frame.commands.commands),
-                    bitcode::encode(&frame.post_commands.commands)
+                    bitcode::encode(frame.commands()),
+                    bitcode::encode(frame.post_commands())
                 ),
                 before,
                 "playback must retain exactly the recorded command, timestamp and nonce"
@@ -1414,7 +1413,7 @@ mod tests {
             41,
         );
         assert!(
-            frame.post_commands.commands.is_empty(),
+            frame.post_commands().is_empty(),
             "await a later recorded multiplayer echo"
         );
         assert!(!terminal_campaign_update_applied(41, previous));
@@ -1434,9 +1433,9 @@ mod tests {
             41,
         );
         assert_eq!(previous, 41);
-        assert_eq!(frame.post_commands.commands.len(), 1);
+        assert_eq!(frame.post_commands().len(), 1);
         assert!(matches!(
-            frame.post_commands.commands[0].command,
+            frame.post_commands()[0].command,
             PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: GameCode::LevelFailed,
                 ..

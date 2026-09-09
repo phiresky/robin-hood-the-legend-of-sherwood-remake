@@ -121,7 +121,7 @@ impl HeadlessMission {
         // them so rollback replay does not start post-command and apply the
         // journaled inputs a second time.
         let mut frame = self.runtime.begin_frame(frame_started_at_ms);
-        frame.commands.commands.extend(net_inputs);
+        frame.stage_commands().commands.extend(net_inputs);
 
         if !tick_paused
             && self
@@ -303,7 +303,7 @@ impl HeadlessMission {
                             tracing::error!(%error, "multiplayer quit request send failed");
                         }
                     }
-                    frame.post_commands.push(PlayerInput::new(
+                    frame.stage_post_commands().push(PlayerInput::new(
                         host.transport.local_seat(),
                         PlayerCommand::QuitMissionRequested,
                     ));

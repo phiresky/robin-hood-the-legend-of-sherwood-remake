@@ -429,7 +429,7 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_active_modal_outcome(outcome, host, &mut frame.post_commands);
+            dispatch_active_modal_outcome(outcome, host, &mut frame.stage_post_commands());
             rendered = true;
             processed = true;
         }
@@ -499,7 +499,7 @@ fn drive_leave_mission_prompt(
     if host.effects.take_signal(HostSignal::MissionStatePopup) {
         if mode == ScriptedModalMode::AutoDismiss {
             let cmd = PlayerCommand::QuitMissionRequested;
-            dispatch_local_command(&host.transport, &mut frame.post_commands, &cmd);
+            dispatch_local_command(&host.transport, &mut frame.stage_post_commands(), &cmd);
         } else if let Some(menu_resources) = resources.menu.as_ref() {
             let kind = engine_player_command::ModalKind::MissionState {
                 kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
@@ -547,7 +547,7 @@ fn drive_leave_mission_prompt(
         &manager.engine,
         &assets.profile_manager,
     );
-    dispatch_active_modal_outcome(outcome, host, &mut frame.post_commands);
+    dispatch_active_modal_outcome(outcome, host, &mut frame.stage_post_commands());
     true
 }
 
@@ -772,7 +772,7 @@ impl InteractiveFrameSimulation {
                     host,
                     assets.as_ref(),
                     dev,
-                    &mut frame.post_external_actions,
+                    &mut frame.stage_post_external_actions(),
                     &mut presentation.renderer,
                     &mut resources.cursor,
                     &mut presentation.sprites.cursor_renderer,
@@ -897,7 +897,7 @@ impl InteractiveFrameSimulation {
                         if effects.cancel_planned_action {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::CancelPlannedAction,
                             );
                         }
@@ -910,7 +910,7 @@ impl InteractiveFrameSimulation {
                         if effects.release_tactical_control {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::ReleaseTacticalControl,
                             );
                         }
@@ -919,7 +919,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetAmountOfSpeaking {
                                     amount: result.sound_config.amount_of_speaking,
                                 },
@@ -930,7 +930,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetFixHardReactionTimes {
                                     enabled: result.gameplay_config.fix_hard_reaction_times,
                                 },
@@ -941,7 +941,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetUnbindingEnabled {
                                     enabled: result.gameplay_config.enable_unbinding,
                                 },
@@ -954,7 +954,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetCleanHandsNpcKillsInvalidate {
                                     enabled: result
                                         .gameplay_config
@@ -967,7 +967,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetReusableCloaks {
                                     enabled: result.gameplay_config.reusable_cloaks,
                                 },
@@ -978,7 +978,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetItemGameplayConfig {
                                     config: result.gameplay_config.item_gameplay,
                                 },
@@ -989,7 +989,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetNoiseDistractionFeedback {
                                     enabled: result.gameplay_config.noise_distraction_feedback,
                                 },
@@ -1000,7 +1000,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetSherwoodTrading {
                                     enabled: result.gameplay_config.sherwood_trading,
                                 },
@@ -1011,7 +1011,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetTimedMissionsEnabled {
                                     enabled: result.gameplay_config.enable_timed_missions,
                                 },
@@ -1022,7 +1022,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetDynamicAmbienceEnabled {
                                     enabled: result.gameplay_config.enable_dynamic_ambience,
                                 },
@@ -1033,7 +1033,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetDiplomacyEnabled {
                                     enabled: result.gameplay_config.diplomacy,
                                 },
@@ -1044,7 +1044,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetNpcFactionWars {
                                     enabled: result.gameplay_config.npc_faction_wars,
                                 },
@@ -1057,7 +1057,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetCombatGestureRules {
                                     more_combat_gestures: result
                                         .gameplay_config
@@ -1073,7 +1073,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetFogOfWar {
                                     enabled: result.gameplay_config.fog_of_war,
                                 },
@@ -1109,7 +1109,7 @@ impl InteractiveFrameSimulation {
                             if host.frontend.mission_surfaces.corner_size().x > 0.0 {
                                 dispatch_local_command(
                                     &host.transport,
-                                    &mut frame.post_commands,
+                                    &mut frame.stage_post_commands(),
                                     &PlayerCommand::MinimapResize {
                                         base: engine_coordinates::ScreenPoint::new(
                                             width - 83.0,
@@ -1297,7 +1297,7 @@ impl InteractiveFrameSimulation {
                     &mut manager.engine,
                     dev,
                     frame.unapplied_post_external_actions(),
-                    &frame.post_commands.commands,
+                    frame.post_commands(),
                     frame.run_post_initialize,
                 )
             });
@@ -1352,7 +1352,7 @@ impl InteractiveFrameSimulation {
                     &mut manager.engine,
                     dev,
                     frame.unapplied_post_external_actions(),
-                    &frame.post_commands.commands,
+                    frame.post_commands(),
                     frame.run_post_initialize,
                 )
             });
@@ -1748,7 +1748,7 @@ mod tests {
             );
             let mut frame = MissionFrame::new(0);
             timeline.open_frame(&mut frame, &engine, &assets);
-            frame.commands.push(PlayerInput::new(
+            frame.stage_commands().push(PlayerInput::new(
                 PlayerId::HOST,
                 PlayerCommand::SetLockAlt(true),
             ));
@@ -1757,7 +1757,7 @@ mod tests {
                 ..Default::default()
             };
             frame
-                .post_external_actions
+                .stage_post_external_actions()
                 .push(ExternalAction::ReplaceCampaign { campaign });
             let before_tick = engine.simulation_tick();
             let mut http = crate::http_server::SessionIngress::detached_for_test();

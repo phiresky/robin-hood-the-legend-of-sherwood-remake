@@ -92,8 +92,8 @@ pub(super) struct MissionInputPhase<'a> {
     pub(super) engine: &'a Engine,
     pub(super) assets: &'a Arc<LevelAssets>,
     pub(super) dev: &'a mut DevState,
-    pub(super) commands: &'a mut FrameCommands,
-    pub(super) external_actions: &'a mut Vec<robin_engine::engine::ExternalAction>,
+    pub(super) commands: FrameCommandBatch<'a>,
+    pub(super) external_actions: FrameActionBatch<'a>,
 }
 
 /// Explicit privileged simulation mutation boundary: simulation, snapshot
@@ -196,8 +196,8 @@ impl MissionWorld {
             engine: &self.manager.engine,
             assets: &self.assets,
             dev: &mut self.dev,
-            commands: &mut frame.commands,
-            external_actions: &mut frame.external_actions,
+            commands: FrameCommandBatch::new(&mut frame.commands),
+            external_actions: FrameActionBatch::new(&mut frame.external_actions),
         }
     }
 
@@ -223,8 +223,8 @@ impl MissionWorld {
             engine: &self.manager.engine,
             assets: &self.assets,
             dev: &mut self.dev,
-            commands: &mut frame.post_commands,
-            external_actions: &mut frame.post_external_actions,
+            commands: FrameCommandBatch::new(&mut frame.post_commands),
+            external_actions: FrameActionBatch::new(&mut frame.post_external_actions),
         }
     }
 
@@ -295,13 +295,13 @@ impl MissionControl {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct MissionFrame {
     pub(super) started_at_ms: u32,
-    pub(super) commands: FrameCommands,
-    pub(super) external_actions: Vec<robin_engine::engine::ExternalAction>,
+    commands: FrameCommands,
+    external_actions: Vec<robin_engine::engine::ExternalAction>,
     external_actions_applied: usize,
-    pub(super) post_commands: FrameCommands,
-    pub(super) post_external_actions: Vec<robin_engine::engine::ExternalAction>,
+    post_commands: FrameCommands,
+    post_external_actions: Vec<robin_engine::engine::ExternalAction>,
     post_external_actions_applied: usize,
-    pub(super) external_facts: robin_engine::engine::ExternalFacts,
+    external_facts: robin_engine::engine::ExternalFacts,
     pub(super) run_hourglass: bool,
     pub(super) simulation_body_allowed: bool,
     pub(super) run_post_initialize: bool,
@@ -328,7 +328,124 @@ enum RecorderFrameState {
     Finished,
 }
 
+// These adapters expose only a fresh batch, never the journal they append to.
+// Legacy command producers may clear/reorder their batch without invalidating
+// already-admitted input or the applied-action cursor. Admission occurs once,
+// at the end of the producer's scope, including its early-return paths.
+macro_rules! frame_append_batch {
+    ($name:ident, $batch:ty, $append:expr) => {
+        #[derive(Serialize)]
+        pub(super) struct $name<'a> {
+            #[serde(skip)]
+            journal: &'a mut $batch,
+            staged: $batch,
+        }
+
+        impl<'a> $name<'a> {
+            fn new(journal: &'a mut $batch) -> Self {
+                Self {
+                    journal,
+                    staged: Default::default(),
+                }
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name<'_> {
+            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+                Err(serde::de::Error::custom(
+                    "frame append authority cannot be deserialized",
+                ))
+            }
+        }
+
+        impl std::ops::Deref for $name<'_> {
+            type Target = $batch;
+            fn deref(&self) -> &Self::Target {
+                &self.staged
+            }
+        }
+
+        impl std::ops::DerefMut for $name<'_> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.staged
+            }
+        }
+
+        impl Drop for $name<'_> {
+            fn drop(&mut self) {
+                ($append)(self.journal, &mut self.staged);
+            }
+        }
+    };
+}
+
+frame_append_batch!(
+    FrameCommandBatch,
+    FrameCommands,
+    |journal: &mut FrameCommands, staged: &mut FrameCommands| {
+        journal.commands.append(&mut staged.commands);
+    }
+);
+frame_append_batch!(
+    FrameActionBatch,
+    Vec<robin_engine::engine::ExternalAction>,
+    |journal: &mut Vec<robin_engine::engine::ExternalAction>,
+     staged: &mut Vec<robin_engine::engine::ExternalAction>| {
+        journal.append(staged);
+    }
+);
+
 impl MissionFrame {
+    pub(super) fn commands(&self) -> &[robin_engine::player_command::PlayerInput] {
+        &self.commands.commands
+    }
+
+    pub(super) fn post_commands(&self) -> &[robin_engine::player_command::PlayerInput] {
+        &self.post_commands.commands
+    }
+
+    pub(super) fn external_actions(&self) -> &[robin_engine::engine::ExternalAction] {
+        &self.external_actions
+    }
+
+    pub(super) fn stage_commands(&mut self) -> FrameCommandBatch<'_> {
+        FrameCommandBatch::new(&mut self.commands)
+    }
+
+    pub(super) fn stage_post_commands(&mut self) -> FrameCommandBatch<'_> {
+        FrameCommandBatch::new(&mut self.post_commands)
+    }
+
+    pub(super) fn stage_external_actions(&mut self) -> FrameActionBatch<'_> {
+        FrameActionBatch::new(&mut self.external_actions)
+    }
+
+    pub(super) fn stage_post_external_actions(&mut self) -> FrameActionBatch<'_> {
+        FrameActionBatch::new(&mut self.post_external_actions)
+    }
+
+    /// Discard live pre-tick commands superseded by replay or a loaded state.
+    pub(super) fn discard_commands(&mut self) {
+        self.commands.commands.clear();
+    }
+
+    /// A terminal restore starts a new recording attempt, retaining scheduling
+    /// policy but none of the replaced state's admitted effects or recorder token.
+    pub(super) fn reset_after_terminal_restore(&mut self, hash: u64) {
+        self.external_actions.clear();
+        self.external_actions_applied = 0;
+        self.post_commands.commands.clear();
+        self.post_external_actions.clear();
+        self.post_external_actions_applied = 0;
+        self.external_facts = Default::default();
+        self.modal_dismissals.clear();
+        self.replay_modal_dismissals = Default::default();
+        self.replay_timeline_transition = None;
+        self.replay_record_consumed = false;
+        self.recorder_state = RecorderFrameState::Inactive;
+        self.recorder_hash = Some(hash);
+    }
+
     pub(super) fn new(started_at_ms: u32) -> Self {
         Self {
             started_at_ms,
@@ -767,7 +884,7 @@ pub(super) fn drain_post_tick_rpc(
         transport.local_seat(),
         transport.net(),
         assets,
-        &mut frame.post_commands,
+        &mut frame.stage_post_commands(),
     );
     timeline.record_input_taints(http.take_pending_replay_taints());
     frame.record_applied_post_external_actions(actions);
@@ -2165,6 +2282,84 @@ mod tests {
     use super::*;
 
     #[test]
+    fn command_batches_cannot_edit_previously_admitted_inputs() {
+        let mut frame = MissionFrame::new(0);
+        frame.stage_commands().push(PlayerCommand::CrouchDown);
+        {
+            let mut batch = frame.stage_commands();
+            assert!(
+                batch.is_empty(),
+                "producers never receive the existing journal"
+            );
+            batch.push(PlayerCommand::SetLockAlt(false));
+            batch.commands.clear();
+            batch.push(PlayerCommand::SetLockAlt(true));
+        }
+        frame
+            .stage_post_commands()
+            .push(PlayerCommand::QuitMissionRequested);
+        drop(frame.stage_commands());
+        assert_eq!(frame.commands().len(), 2);
+        assert!(matches!(
+            frame.commands()[0].command,
+            PlayerCommand::CrouchDown
+        ));
+        assert!(matches!(
+            frame.commands()[1].command,
+            PlayerCommand::SetLockAlt(true)
+        ));
+        assert_eq!(frame.post_commands().len(), 1);
+        frame.discard_commands();
+        assert!(frame.commands().is_empty());
+        assert_eq!(frame.post_commands().len(), 1, "discard is phase-specific");
+    }
+
+    #[test]
+    fn appended_actions_preserve_applied_prefix_and_drain_once() {
+        use robin_engine::engine::ExternalAction;
+        let action = |ares| ExternalAction::ReplaceCampaign {
+            campaign: robin_engine::campaign::Campaign {
+                ares,
+                ..Default::default()
+            },
+        };
+        let mut frame = MissionFrame::new(0);
+        frame.record_applied_post_external_actions(vec![action(1)]);
+        {
+            let mut batch = frame.stage_post_external_actions();
+            batch.push(action(2));
+            batch.clear();
+            batch.push(action(3));
+        }
+        assert_eq!(frame.post_external_actions_applied, 1);
+        assert_eq!(frame.unapplied_post_external_actions().len(), 1);
+        assert!(matches!(frame.unapplied_post_external_actions()[0],
+            ExternalAction::ReplaceCampaign { ref campaign } if campaign.ares == 3));
+        frame.mark_post_external_actions_applied();
+        frame.mark_post_external_actions_applied();
+        assert!(frame.unapplied_post_external_actions().is_empty());
+        frame.record_applied_post_external_actions(vec![action(4)]);
+        assert!(frame.unapplied_post_external_actions().is_empty());
+        assert_eq!(frame.authoritative_input().post_external_actions.len(), 3);
+
+        frame.reset_after_terminal_restore(42);
+        assert!(frame.authoritative_input().post_external_actions.is_empty());
+        frame.stage_post_external_actions().push(action(5));
+        assert_eq!(frame.unapplied_post_external_actions().len(), 1);
+        assert_eq!(frame.recorder_hash, Some(42));
+        assert_eq!(frame.recorder_state, RecorderFrameState::Inactive);
+    }
+
+    #[test]
+    fn append_authority_is_diagnostic_only() {
+        let mut frame = MissionFrame::new(0);
+        let value = serde_json::to_value(frame.stage_commands()).unwrap();
+        assert!(serde_json::from_value::<FrameCommandBatch<'_>>(value).is_err());
+        let value = serde_json::to_value(frame.stage_external_actions()).unwrap();
+        assert!(serde_json::from_value::<FrameActionBatch<'_>>(value).is_err());
+    }
+
+    #[test]
     fn post_tick_effects_preserve_recorded_order_and_are_not_reapplied() {
         use robin_engine::engine::{ExternalAction, SimulationFrameInput};
 
@@ -2289,7 +2484,7 @@ mod tests {
                 host,
                 game,
                 engine,
-                commands,
+                mut commands,
                 ..
             } = world.input_phase(&mut frame);
             super::super::mouse_input::dispatch_corner_button_left_click(
@@ -2297,7 +2492,7 @@ mod tests {
                 engine,
                 game,
                 host,
-                commands,
+                &mut commands,
             );
             assert_eq!(robin_engine::replay::state_hash(engine), original);
         }
@@ -2307,7 +2502,7 @@ mod tests {
             PlayerCommand::SetLockAlt(true)
         ));
         {
-            let phase = world.post_tick_input_phase(&mut frame);
+            let mut phase = world.post_tick_input_phase(&mut frame);
             phase
                 .commands
                 .push(PlayerCommand::ClearNpcDoubleStatusBarFlags);
