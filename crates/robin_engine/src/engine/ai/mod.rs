@@ -14,6 +14,7 @@ mod event_dispatch;
 mod initialization;
 mod owner_scheduling;
 pub(in crate::engine) use owner_scheduling::OwnerBoundaryPolicy;
+mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
 pub(crate) use detection::debug_detectable_mutation_load_snapshot;

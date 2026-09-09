@@ -151,6 +151,7 @@ impl SharedReplayRecorder {
         &self,
         save: &GameSaveFile,
         control: &crate::replay_service::ReplayRecordingControl,
+        _recording_index: &crate::mission_replays::RecordingIndex,
     ) -> Result<(u32, u32, Option<u32>)> {
         // Include signed participant events from abandoned gameplay before
         // adopting the original archive's authority.
@@ -221,7 +222,7 @@ impl SharedReplayRecorder {
         recording.captured.clear();
         control.restore_ranked_input(ranked_input);
         #[cfg(not(target_arch = "wasm32"))]
-        crate::mission_replays::recording_started(
+        _recording_index.recording_started(
             &recording
                 .archive
                 .as_ref()

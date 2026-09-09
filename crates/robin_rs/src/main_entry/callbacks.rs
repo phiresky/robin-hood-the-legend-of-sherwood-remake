@@ -18,7 +18,7 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 
-use super::cli::CliArgs;
+use super::cli::MissionLaunch;
 
 mod executor;
 mod load_owner;
@@ -563,14 +563,10 @@ impl crate::game::GameCallbacks for RustCallbacks {
         self.queue_operation(SaveLoadRequest::Continue { mission_id });
     }
     fn save_profiles(&mut self) {
-        match self
-            .application_context
-            .with_player_profiles_mut(|mgr| self.application_context.persist_player_profiles(mgr))
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => tracing::error!("save_profiles failed: {err}"),
-            Err(error) => panic!("save_profiles lost its ApplicationContext: {error}"),
-        }
+        self.application_context
+            .save_player_profiles()
+            .unwrap_or_else(|error| panic!("save_profiles lost its ApplicationContext: {error}"))
+            .log_persistence_error("save_profiles failed");
     }
     fn synchronize_profile_with_campaign(
         &mut self,
@@ -1023,7 +1019,7 @@ pub(super) fn force_mission_launch(
     campaign: &mut Campaign,
     profiles: &mut std::sync::Arc<ProfileManager>,
     application_context: &ApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
 ) -> Result<Option<(usize, MissionLocation)>, String> {
     let Some(mission_name) = args.mission.as_deref() else {
         return Ok(None);

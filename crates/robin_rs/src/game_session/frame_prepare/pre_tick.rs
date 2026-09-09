@@ -138,8 +138,10 @@ struct PreTickPauseSources {
     modal: bool,
 }
 
-fn pre_tick_is_paused(sources: PreTickPauseSources) -> bool {
-    sources.pause_menu || sources.manual || sources.multiplayer_clock || sources.modal
+fn pre_tick_is_paused(sources: PreTickPauseSources, replaying: bool) -> bool {
+    // A replay carries its own simulation-body gate, including modal pauses.
+    // Local presentation must not suppress a recorded simulation transaction.
+    replay_cursor_is_paused(sources) || (!replaying && sources.modal)
 }
 
 fn local_pause_stops_timeline(menu_open: bool, multiplayer: bool) -> bool {
@@ -194,6 +196,10 @@ fn prepare_pre_tick_timeline(
             runtime.inject_replay_input(frame);
             frame.assert_replay_timeline_before(runtime.current_frame());
         }
+    }
+
+    if runtime.playback().is_some() && !frame.has_recorded_input() {
+        frame.host_controls_only();
     }
 
     let mut consumed_buffered = false;
@@ -357,7 +363,7 @@ pub(super) fn finalize_pre_tick(
         multiplayer_clock: mp_clock_pause,
         modal: modal_pause,
     };
-    let paused = pre_tick_is_paused(pause_sources);
+    let paused = pre_tick_is_paused(pause_sources, runtime.playback().is_some());
     let replay_cursor_paused = replay_cursor_is_paused(pause_sources);
     let PreTickTimelineOutput {
         paused,
@@ -730,7 +736,7 @@ mod tests {
             multiplayer_clock: false,
             modal: false,
         };
-        assert!(!pre_tick_is_paused(clear));
+        assert!(!pre_tick_is_paused(clear, false));
 
         for paused in [
             PreTickPauseSources {
@@ -750,7 +756,7 @@ mod tests {
                 ..clear
             },
         ] {
-            assert!(pre_tick_is_paused(paused));
+            assert!(pre_tick_is_paused(paused, false));
         }
     }
 
@@ -762,7 +768,8 @@ mod tests {
             multiplayer_clock: false,
             modal: true,
         };
-        assert!(pre_tick_is_paused(modal_only));
+        assert!(pre_tick_is_paused(modal_only, false));
+        assert!(!pre_tick_is_paused(modal_only, true));
         assert!(!replay_cursor_is_paused(modal_only));
 
         for explicit_pause in [
@@ -780,6 +787,7 @@ mod tests {
             },
         ] {
             assert!(replay_cursor_is_paused(explicit_pause));
+            assert!(pre_tick_is_paused(explicit_pause, true));
         }
     }
 }

@@ -293,7 +293,13 @@ pub(super) async fn process_operation_and_save(
         }
         runtime.synchronize_save_boundary(&mut frame, &manager.engine);
         if let Some(event) = save_load.event.take() {
-            runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
+            runtime.note_save_load_event(
+                host.application_context().recording_index(),
+                event,
+                &mut frame,
+                &manager.engine,
+                assets.as_ref(),
+            );
         }
         if let Some(transition) = save_load.take_transition() {
             *campaign_transition = Some(transition);
@@ -333,7 +339,13 @@ pub(super) async fn process_operation_and_save(
     }
     runtime.synchronize_save_boundary(&mut frame, &manager.engine);
     if let Some(event) = save_load.event.take() {
-        runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
+        runtime.note_save_load_event(
+            host.application_context().recording_index(),
+            event,
+            &mut frame,
+            &manager.engine,
+            assets.as_ref(),
+        );
     }
 
     // A rejected/missing/unappliable Restart payload must leave this

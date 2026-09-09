@@ -928,7 +928,7 @@ fn rewind_from_recent_timeline_history(
 #[cfg(not(feature = "multiplayer"))]
 pub(super) async fn setup_multiplayer_session(
     _host: &mut Host,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     _authoritative_mission_id: &str,
     _authoritative_rng_seed: u64,
     _authoritative_sim_config: robin_engine::engine::SimConfig,
@@ -946,7 +946,7 @@ pub(super) async fn setup_multiplayer_session(
 #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
 pub(super) async fn setup_multiplayer_session(
     host: &mut Host,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     authoritative_mission_id: &str,
     authoritative_rng_seed: u64,
     authoritative_sim_config: robin_engine::engine::SimConfig,
@@ -1293,7 +1293,9 @@ pub(super) async fn setup_multiplayer_session(
 }
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
+fn resolve_browser_join_publication(
+    args: &crate::main_entry::MissionLaunch,
+) -> Result<bool, String> {
     let saved = args
         .global_options
         .active_profile_snapshot()
@@ -1313,7 +1315,7 @@ fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bo
 }
 
 #[cfg(any(test, feature = "multiplayer"))]
-fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result<(), String> {
+fn validate_multiplayer_launch_args(args: &crate::main_entry::MissionLaunch) -> Result<(), String> {
     if args.server && args.connect.is_some() {
         return Err("multiplayer host and client modes are mutually exclusive".to_string());
     }
@@ -1511,22 +1513,31 @@ mod tests {
 
     #[test]
     fn multiplayer_rejects_replay_before_engine_construction() {
-        let args = crate::main_entry::CliArgs {
-            connect: Some("127.0.0.1:7878".to_string()),
-            replay: Some("session.rhrec.jsonl".to_string()),
+        let args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                connect: Some("127.0.0.1:7878".to_string()),
+                replay: Some("session.rhrec.jsonl".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&args).is_err());
 
-        let multiplayer_only = crate::main_entry::CliArgs {
-            connect: Some("127.0.0.1:7878".to_string()),
+        let multiplayer_only = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                connect: Some("127.0.0.1:7878".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&multiplayer_only).is_ok());
 
-        let peer_recording = crate::main_entry::CliArgs {
-            connect: Some("127.0.0.1:7878".to_string()),
-            record: Some("peer-canonical-replay.rhrec.jsonl".to_string()),
+        let peer_recording = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                connect: Some("127.0.0.1:7878".to_string()),
+                record: Some("peer-canonical-replay.rhrec.jsonl".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&peer_recording).is_ok());
@@ -1542,16 +1553,22 @@ mod tests {
 
     #[test]
     fn multiplayer_launch_rejects_ambiguous_mode_and_player_count() {
-        let both = crate::main_entry::CliArgs {
-            server: true,
-            connect: Some("host".to_string()),
+        let both = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                server: true,
+                connect: Some("host".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&both).is_err());
 
-        let too_many = crate::main_entry::CliArgs {
-            server: true,
-            mp_expected_players: Some(5),
+        let too_many = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                server: true,
+                mp_expected_players: Some(5),
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(validate_multiplayer_launch_args(&too_many).is_err());

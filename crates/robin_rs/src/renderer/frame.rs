@@ -164,6 +164,37 @@ struct CachedPresentation {
 }
 
 impl FrameState {
+    pub(super) fn offscreen(
+        gpu: &GpuContext,
+        resources: &GpuResources,
+        layout: &wgpu::BindGroupLayout,
+        width: u16,
+        height: u16,
+    ) -> Self {
+        let uniforms = || {
+            let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("capture screen uniform"),
+                size: std::mem::size_of::<ScreenUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("capture screen bg"),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+            });
+            (buffer, group)
+        };
+        let (screen, screen_bg) = uniforms();
+        let (swap, swap_bg) = uniforms();
+        Self::new(
+            gpu, resources, screen, screen_bg, swap, swap_bg, None, None, width, height,
+        )
+    }
+
     pub(super) fn present(
         &mut self,
         gpu: &GpuContext,
@@ -1007,9 +1038,8 @@ impl FrameState {
         }
         self.width = width;
         self.height = height;
-        // Logical resizes include temporary full-map captures. Do not retain
-        // their potentially much larger CPU staging allocation on return to
-        // the ordinary viewport; steady-size presentation still reuses it.
+        // Release staging storage when this target's actual size changes;
+        // captures own a separate target and never resize the live frame.
         self.vertex_scratch = Vec::new();
         self.render_target_texture = create_render_target(&gpu.device, width, height);
         self.render_target_view = self

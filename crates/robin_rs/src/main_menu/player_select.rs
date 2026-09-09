@@ -497,19 +497,15 @@ fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: boo
 
 fn commit_active(application_context: &ApplicationContext, idx: usize) {
     let profile_id = application_context
-        .with_player_profiles_mut(|mgr| {
+        .update_and_retain_player_profiles(|mgr| {
             if idx < mgr.profile_count() {
                 mgr.set_active(idx);
-                if let Err(err) = application_context.persist_player_profiles(mgr) {
-                    tracing::error!(
-                        "Select Player: failed to persist active profile change: {err:#}"
-                    );
-                }
                 return Some(mgr.profiles[idx].id);
             }
             None
         })
-        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"));
+        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"))
+        .log_persistence_error("Select Player: failed to persist active profile change");
     if let Some(profile_id) = profile_id {
         application_context
             .with_key_configs_mut(|store| {
@@ -579,73 +575,19 @@ fn rename_profile(application_context: &ApplicationContext, idx: usize, new_name
     let trimmed = new_name.trim();
     let final_name = if trimmed.is_empty() { "Robin" } else { trimmed };
     application_context
-        .with_player_profiles_mut(|mgr| {
+        .update_and_retain_player_profiles(|mgr| {
             if idx >= mgr.profile_count() {
                 return;
             }
             mgr.profiles[idx].name = final_name.to_string();
             mgr.set_active(idx);
-            if let Err(err) = application_context.persist_player_profiles(mgr) {
-                tracing::error!("Select Player: failed to persist rename: {err:#}");
-            }
         })
-        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"));
+        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"))
+        .log_persistence_error("Select Player: failed to persist rename");
 }
 
 fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Result<bool, String> {
-    let deleted_profile_id = application_context.with_player_profiles(|mgr| {
-        if idx >= mgr.profile_count() {
-            return None;
-        }
-        if mgr.profile_count() == 1 {
-            tracing::warn!(
-                "Select Player: refusing to delete the final profile; create a replacement first"
-            );
-            return None;
-        }
-        Some(mgr.profiles[idx].id)
-    })?;
-    let Some(deleted_profile_id) = deleted_profile_id else {
-        return Ok(false);
-    };
-
-    // Remove durable executable-content authority first. If the trust store
-    // is corrupt or cannot be written, retain the profile so an approval can
-    // never outlive the identity whose explicit consent created it.
-    application_context
-        .with_spellforge_trust_mut(|store| store.remove_profile(deleted_profile_id))??;
-
-    // The application-owned profile store wipes
-    // `<save_directory>/Profile_NNN`.
-    application_context.with_player_profiles_mut(|mgr| {
-        let current_idx = mgr
-            .profiles
-            .iter()
-            .position(|profile| profile.id == deleted_profile_id)
-            .ok_or_else(|| {
-                format!("player profile {deleted_profile_id} disappeared during deletion")
-            })?;
-        if let Err(error) = application_context.remove_profile_saves(deleted_profile_id) {
-            tracing::warn!("failed to remove deleted player saves: {error}");
-        }
-        mgr.delete_profile(current_idx);
-        // Unconditionally promote index 0 to active whenever any profile
-        // remains — regardless of whether the deleted one was the active
-        // one.
-        if mgr.profile_count() > 0 {
-            mgr.set_active(0);
-        }
-        application_context
-            .persist_player_profiles(mgr)
-            .map_err(|error| format!("persist player deletion: {error:#}"))
-    })??;
-    application_context.with_key_configs_mut(|store| {
-        store.configs.remove(&deleted_profile_id);
-        store
-            .save()
-            .map_err(|error| format!("persist deleted key configuration: {error:#}"))
-    })??;
-    Ok(true)
+    application_context.delete_player_profile(idx)
 }
 
 /// Format a profile row as `"<Name> / <Difficulty> / <Progression>%"`.
@@ -1630,16 +1572,14 @@ fn set_profile_difficulty(
         .validate()
         .expect("difficulty dialog returned invalid rules");
     application_context
-        .with_player_profiles_mut(|profiles| {
+        .update_and_retain_player_profiles(|profiles| {
             let profile = profiles.profiles.get_mut(idx).unwrap_or_else(|| {
                 panic!("difficulty profile index {idx} disappeared during editing")
             });
             profile.difficulty = difficulty;
-            if let Err(error) = application_context.persist_player_profiles(profiles) {
-                tracing::error!("Select Player: failed to persist difficulty: {error:#}");
-            }
         })
-        .unwrap_or_else(|error| panic!("Select Player difficulty update failed: {error}"));
+        .unwrap_or_else(|error| panic!("Select Player difficulty update failed: {error}"))
+        .log_persistence_error("Select Player: failed to persist difficulty");
 }
 
 #[cfg(test)]
@@ -1705,6 +1645,47 @@ mod tests {
             })
             .unwrap();
         assert!(context.active_key_configs().is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn failed_profile_deletion_does_not_publish_staged_profiles() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let mut profiles = PlayerProfileManager::new(root_path.clone());
+        let first = profiles.create_profile("Robin".into(), DifficultyLevel::Medium);
+        profiles.create_profile("Marian".into(), DifficultyLevel::Hard);
+        profiles.set_active(first);
+        let context = ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&root_path),
+            GlobalOptions::default(),
+            profiles,
+            KeyConfigStore::new(root_path),
+            None,
+        )
+        .unwrap();
+        let before = serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap();
+        let config = context.sim_config();
+        // Reject the profile store's atomic rename without changing permissions.
+        let saves = root.path().join("Profile_000");
+        std::fs::create_dir(&saves).unwrap();
+        std::fs::write(saves.join("QuickSave.json"), b"retained save").unwrap();
+        std::fs::create_dir(root.path().join("profiles.json")).unwrap();
+        assert!(
+            delete_profile(&context, first)
+                .unwrap_err()
+                .contains("persist player deletion")
+        );
+        assert_eq!(
+            serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(context.sim_config(), config);
+        assert_eq!(
+            std::fs::read(saves.join("QuickSave.json")).unwrap(),
+            b"retained save"
+        );
+        assert!(!root.path().join(".deleted-Profile_000").exists());
     }
 
     #[test]

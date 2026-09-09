@@ -585,7 +585,7 @@ impl InteractiveRendererAssembly {
         audio_backend: Option<crate::audio_backend::KiraAudioBackend>,
         decoded: LoadedInteractiveResources,
         short_briefing_strings: HashMap<u32, String>,
-        args: &crate::main_entry::CliArgs,
+        args: &crate::main_entry::MissionLaunch,
         mission_idx: usize,
         location: MissionLocation,
     ) -> Result<InteractiveFrontendAssembly, String> {

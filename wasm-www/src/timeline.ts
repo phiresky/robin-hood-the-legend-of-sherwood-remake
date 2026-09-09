@@ -49,7 +49,7 @@ export function installTimeline(container: HTMLElement, rpc: RobinRpc): void {
     scrub.addEventListener('input', () => {
         const frame = Number(scrub.value);
         current.textContent = formatTime(frame);
-        void rpc('go-to-frame', { frame }).catch((e: unknown) => {
+        void rpc('go-to-frame', { frame, auto_dismiss: true }).catch((e: unknown) => {
             console.warn('timeline: go-to-frame failed:', e);
         });
     });

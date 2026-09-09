@@ -20,7 +20,7 @@ pub(super) struct MissionServices<'a> {
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
-    pub(super) args: &'a crate::main_entry::CliArgs,
+    pub(super) args: &'a crate::main_entry::MissionLaunch,
 }
 
 /// Control returned by one interactive host-frame iteration.
@@ -488,7 +488,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             saved_camera.apply(host.frontend);
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
-            post_render_engine_cleanup(&mut frame, host.local_seat);
+            post_render_engine_cleanup(&mut frame, host.local_seat, runtime.playback().is_some());
         } else {
             native_refresh_interpolation.clear();
         }
@@ -537,15 +537,17 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let was_recording = runtime.is_recording();
         if runtime.seal_terminal_recording(&frame) && was_recording {
             if let Some(key) = manager.engine.campaign().latest_mission_attempt_key() {
-                crate::mission_replays::recording_finished(
-                    key,
-                    manager
-                        .engine
-                        .campaign()
-                        .latest_mission_attempt()
-                        .expect("attempt key requires an attempt")
-                        .completed_at_unix_seconds(),
-                );
+                host.application_context()
+                    .recording_index()
+                    .recording_finished(
+                        key,
+                        manager
+                            .engine
+                            .campaign()
+                            .latest_mission_attempt()
+                            .expect("attempt key requires an attempt")
+                            .completed_at_unix_seconds(),
+                    );
             } else {
                 tracing::warn!("Terminal recording has no mission attempt identity");
             }
@@ -825,7 +827,11 @@ fn run_interactive_post_initialize(
 ) {
     let application_context = host.application_context().clone();
     let requested = frame.begin_post_initialize();
+    let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
     let post_initialized = runtime.cross_post_initialize(|| {
+        if replay_idle {
+            return false;
+        }
         crate::sim_timeline::run_post_initialize_stage_with_actions(
             &mut host.frontend,
             &mut host.audio,
@@ -923,7 +929,7 @@ fn plan_interactive_pacing(
     host: &Host,
     engine: &Engine,
     frame: &MissionFrame,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
 ) -> (u32, u64) {
     runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──

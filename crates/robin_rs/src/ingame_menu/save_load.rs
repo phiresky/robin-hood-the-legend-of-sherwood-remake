@@ -39,7 +39,7 @@ use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
     MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
 };
-use super::save_picker::{
+pub(crate) use super::save_picker::{
     ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, ListRow, PickerAction, PickerController, PickerModel,
     PickerSlot, PickerTarget, retire_thumbnail,
 };
@@ -784,57 +784,8 @@ pub async fn show_save_load(
                 sync_input_for_selection(&mut input_widget, selected, mode, &visible, save_manager);
                 caret_started_at_ms = crate::window::process_uptime_ms();
             }
-            match event {
-                GameEvent::KeyDown {
-                    keycode: Keycode::Backspace,
-                    ..
-                } if input_editable => {
-                    input_widget.backspace();
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Delete,
-                    ..
-                } if input_editable => {
-                    input_widget.delete_char();
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Left,
-                    ..
-                } if input_editable => {
-                    input_widget.move_caret_left();
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Right,
-                    ..
-                } if input_editable => {
-                    input_widget.move_caret_right();
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Home,
-                    ..
-                } if input_editable => {
-                    input_widget.move_caret_home();
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::End,
-                    ..
-                } if input_editable => {
-                    input_widget.move_caret_end();
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::TextInput { .. } if input_editable => {
-                    // Text input is consumed by the widget below via
-                    // `ModalInputState::as_widget_input().text_input`
-                    // after it's been accumulated. Reset the caret
-                    // blink so the insertion stays visible.
-                    caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                _ => {}
+            if input_editable && edit_save_name(&mut input_widget, &event) {
+                caret_started_at_ms = crate::window::process_uptime_ms();
             }
         }
 
@@ -1746,7 +1697,7 @@ fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i
 ///
 /// `set_text` leaves the widget in `SelectedEditable` (it only touches
 /// the buffer + caret) so subsequent text input keeps flowing through.
-fn sync_input_for_selection(
+pub(crate) fn sync_input_for_selection(
     input_widget: &mut WidgetInputField,
     selection: Option<ListRow>,
     mode: SaveLoadMode,
@@ -1773,7 +1724,7 @@ fn sync_input_for_selection(
 }
 
 /// Snapshot manager rows for the pure model's shared filtering policy.
-fn picker_slots(save_manager: &SaveGameManager) -> Vec<PickerSlot> {
+pub(crate) fn picker_slots(save_manager: &SaveGameManager) -> Vec<PickerSlot> {
     (0..save_manager.count())
         .map(|i| {
             let save = save_manager
@@ -1799,7 +1750,29 @@ fn picker_slots(save_manager: &SaveGameManager) -> Vec<PickerSlot> {
         .collect()
 }
 
-fn feed_save_name(
+/// Shared press-edge editing; text insertion is consumed once by the widget.
+pub(crate) fn edit_save_name(field: &mut WidgetInputField, event: &GameEvent) -> bool {
+    match event {
+        GameEvent::KeyDown { keycode, .. } => match keycode {
+            Keycode::Backspace => {
+                field.backspace();
+            }
+            Keycode::Delete => {
+                field.delete_char();
+            }
+            Keycode::Left => field.move_caret_left(),
+            Keycode::Right => field.move_caret_right(),
+            Keycode::Home => field.move_caret_home(),
+            Keycode::End => field.move_caret_end(),
+            _ => return false,
+        },
+        GameEvent::TextInput { .. } => {}
+        _ => return false,
+    }
+    true
+}
+
+pub(crate) fn feed_save_name(
     field: &mut WidgetInputField,
     input: &WidgetInput<'_>,
     empty_keyboard: &UiKeyboard,
@@ -1819,7 +1792,7 @@ fn feed_save_name(
     events
 }
 
-fn begin_picker_delete(model: &mut PickerModel, name: SlotName) -> bool {
+pub(crate) fn begin_picker_delete(model: &mut PickerModel, name: SlotName) -> bool {
     match model.request_delete_named(name) {
         Ok(()) => true,
         Err(error) => {
@@ -1831,7 +1804,11 @@ fn begin_picker_delete(model: &mut PickerModel, name: SlotName) -> bool {
 
 /// Both scheduling adapters resolve confirmation and publish its outcome here.
 /// An error can follow index publication, so refresh even when deletion fails.
-fn finish_picker_delete(model: &mut PickerModel, manager: &mut SaveGameManager, confirmed: bool) {
+pub(crate) fn finish_picker_delete(
+    model: &mut PickerModel,
+    manager: &mut SaveGameManager,
+    confirmed: bool,
+) {
     model.refresh(picker_slots(manager));
     let error = match model.confirm_delete(confirmed) {
         Ok(Some(slot)) => manager

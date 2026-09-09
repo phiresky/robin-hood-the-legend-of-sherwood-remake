@@ -15,15 +15,75 @@ pub(super) enum RecordingValidity {
     Invalid { reason: String },
 }
 
+/// A live writer cannot coexist with a sealed header or invalidation reason.
+/// Playback remains independent: recording a playback is a supported mode.
+enum RecordingState {
+    Inactive,
+    Recording(crate::replay_recording::SharedReplayRecorder),
+    Sealed(ReplayHeader),
+    Invalid {
+        header: Option<ReplayHeader>,
+        reason: String,
+    },
+}
+
+impl RecordingState {
+    fn recorder(&self) -> Option<&crate::replay_recording::SharedReplayRecorder> {
+        match self {
+            Self::Recording(recorder) => Some(recorder),
+            _ => None,
+        }
+    }
+
+    fn recorder_mut(&mut self) -> Option<&mut crate::replay_recording::SharedReplayRecorder> {
+        match self {
+            Self::Recording(recorder) => Some(recorder),
+            _ => None,
+        }
+    }
+
+    fn sealed_header(&self) -> Option<&ReplayHeader> {
+        match self {
+            Self::Sealed(header)
+            | Self::Invalid {
+                header: Some(header),
+                ..
+            } => Some(header),
+            _ => None,
+        }
+    }
+
+    fn into_header(self) -> Option<ReplayHeader> {
+        match self {
+            Self::Recording(recorder) => Some(recorder.into_recording_header()),
+            Self::Sealed(header) => Some(header),
+            Self::Invalid { header, .. } => header,
+            Self::Inactive => None,
+        }
+    }
+
+    fn validity(&self) -> RecordingValidity {
+        match self {
+            Self::Invalid { reason, .. } => RecordingValidity::Invalid {
+                reason: reason.clone(),
+            },
+            _ => RecordingValidity::Linear,
+        }
+    }
+}
+
 pub(super) struct ReplayLifecycle {
-    recorder: Option<crate::replay_recording::SharedReplayRecorder>,
-    sealed_header: Option<ReplayHeader>,
-    validity: RecordingValidity,
+    recording: RecordingState,
     bootstrap_save: Option<(ReplaySaveIdentity, ReplaySaveMarker)>,
     saved_frames: BTreeMap<ReplaySaveIdentity, (ReplayFrameOrdinal, TimelineFrame)>,
     player: Option<ReplayPlayer>,
     pinned_saves: BTreeMap<u32, GameRuntimeSnapshot>,
     control: crate::replay_service::ReplayRecordingControl,
+    initial_state: Option<(
+        robin_engine::engine::Engine,
+        GameRuntimeSnapshot,
+        super::super::session_policy::SessionModalScheduler,
+    )>,
 }
 
 impl ReplayLifecycle {
@@ -33,20 +93,19 @@ impl ReplayLifecycle {
         control: crate::replay_service::ReplayRecordingControl,
     ) -> Self {
         Self {
-            recorder,
-            sealed_header: None,
-            validity: RecordingValidity::Linear,
+            recording: recorder.map_or(RecordingState::Inactive, RecordingState::Recording),
             bootstrap_save: None,
             saved_frames: BTreeMap::new(),
             player,
             pinned_saves: BTreeMap::new(),
             control,
+            initial_state: None,
         }
     }
 
     pub(super) fn next_ordinal(&self) -> Option<u32> {
-        self.recorder
-            .as_ref()
+        self.recording
+            .recorder()
             .map(|recorder| recorder.next_ordinal())
     }
 
@@ -55,8 +114,8 @@ impl ReplayLifecycle {
         timeline: TimelineFrame,
         hash: u64,
     ) -> Result<u32, String> {
-        self.recorder
-            .as_ref()
+        self.recording
+            .recorder()
             .expect("active archive restore")
             .commit_restore_boundary(timeline.number(), hash)
             .map_err(|error| format!("{error:#}"))
@@ -65,10 +124,12 @@ impl ReplayLifecycle {
     pub(super) fn restore_archive(
         &mut self,
         snapshot: &[u8],
+        recording_index: &crate::mission_replays::RecordingIndex,
     ) -> Result<Option<(u32, u32, Option<u32>)>, String> {
         let recorder = self
-            .recorder
-            .clone()
+            .recording
+            .recorder()
+            .cloned()
             .or_else(|| self.control.capture_recorder());
         let Some(recorder) = recorder.filter(|recorder| recorder.has_archive()) else {
             return Ok(None);
@@ -76,21 +137,15 @@ impl ReplayLifecycle {
         let save: crate::save_file::GameSaveFile =
             serde_json::from_slice(snapshot).map_err(|error| error.to_string())?;
         let boundary = recorder
-            .restore(&save, &self.control)
+            .restore(&save, &self.control, recording_index)
             .map_err(|error| format!("{error:#}"))?;
-        self.recorder = Some(recorder);
-        self.sealed_header = None;
-        self.validity = RecordingValidity::Linear;
+        self.recording = RecordingState::Recording(recorder);
         self.saved_frames.clear();
         Ok(Some(boundary))
     }
 
     pub(super) fn is_recording(&self) -> bool {
-        assert!(
-            matches!(self.validity, RecordingValidity::Linear) || self.recorder.is_none(),
-            "an invalidated recording cannot own a live recorder"
-        );
-        self.recorder.is_some()
+        matches!(self.recording, RecordingState::Recording(_))
     }
 
     pub(super) fn playback(&self) -> Option<&ReplayPlayer> {
@@ -180,6 +235,16 @@ impl ReplayLifecycle {
                 ordinal.number()
             ));
         }
+        if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
+            let mut modals = super::super::session_policy::SessionModalScheduler::default();
+            modals.checkpoint(0, &host.effects);
+            self.initial_state = Some((
+                manager.engine.clone(),
+                GameRuntimeSnapshot::capture(&manager.engine, host, game)
+                    .map_err(|error| format!("capture replay start: {error:#}"))?,
+                modals,
+            ));
+        }
         super::apply_replay_timeline_events_at_boundary(
             player,
             timeline,
@@ -192,12 +257,41 @@ impl ReplayLifecycle {
         )
     }
 
+    pub(super) fn restore_initial(
+        &mut self,
+        manager: &mut robin_engine::engine_manager::EngineManager,
+        host: &mut crate::host::Host,
+        game: &mut crate::game::Game,
+        assets: &robin_engine::engine::LevelAssets,
+    ) -> Result<(), String> {
+        let (engine, snapshot, modals) = self
+            .initial_state
+            .as_mut()
+            .ok_or("replay start has not been captured")?;
+        snapshot
+            .clone()
+            .apply_to_with_game(&mut manager.engine, host, game, assets)
+            .map_err(|error| format!("restore replay start: {error}"))?;
+        // Seeking is rollback, not a save load: retain the exact pre-frame-zero
+        // engine, including runtime queues that persisted-load reconciliation changes.
+        manager.engine = engine.clone();
+        game.apply_post_load_sync(false);
+        game.post_load_resolution_resync();
+        modals.restore(0, &mut host.effects);
+        self.player
+            .as_mut()
+            .ok_or("no active replay")?
+            .seek_ordinal(ReplayFrameOrdinal::ZERO);
+        self.pinned_saves.clear();
+        Ok(())
+    }
+
     pub(super) fn saved_frame(
         &self,
         identity: ReplaySaveIdentity,
     ) -> Option<(ReplayFrameOrdinal, TimelineFrame)> {
-        self.recorder
-            .as_ref()
+        self.recording
+            .recorder()
             .and_then(|recorder| recorder.captured_frame(identity))
             .map(|(ordinal, timeline)| {
                 (
@@ -215,7 +309,7 @@ impl ReplayLifecycle {
         timeline: TimelineFrame,
         hash: u64,
     ) {
-        let Some(recorder) = &mut self.recorder else {
+        let Some(recorder) = self.recording.recorder_mut() else {
             return;
         };
         recorder.write_save_marker(
@@ -234,8 +328,8 @@ impl ReplayLifecycle {
         target: ReplayFrameOrdinal,
         is_continue: bool,
     ) {
-        self.recorder
-            .as_mut()
+        self.recording
+            .recorder_mut()
             .expect("load-back requires an active recording")
             .write_load_back(ordinal.number(), target.number(), is_continue);
     }
@@ -247,8 +341,8 @@ impl ReplayLifecycle {
         timeline: TimelineFrame,
         is_continue: bool,
     ) {
-        self.recorder
-            .as_mut()
+        self.recording
+            .recorder_mut()
             .expect("snapshot load requires an active recording")
             .write_load_snapshot(ordinal.number(), snapshot, timeline.number(), is_continue);
     }
@@ -258,7 +352,7 @@ impl ReplayLifecycle {
         ordinal: ReplayFrameOrdinal,
         taints: impl IntoIterator<Item = robin_engine::replay_rankability::InputTaintKind>,
     ) {
-        if let Some(recorder) = &mut self.recorder {
+        if let Some(recorder) = self.recording.recorder_mut() {
             for kind in taints {
                 recorder.record_input_taint(kind, ordinal.number());
             }
@@ -275,8 +369,8 @@ impl ReplayLifecycle {
         controls: Vec<robin_engine::replay::ReplayHostControl>,
         hash: Option<u64>,
     ) -> bool {
-        self.recorder
-            .as_mut()
+        self.recording
+            .recorder_mut()
             .expect("open recorder frame lost its recorder owner")
             .write_frame(
                 ordinal.number(),
@@ -290,18 +384,24 @@ impl ReplayLifecycle {
 
     pub(super) fn seal(&mut self) {
         self.control.checkpoint_ranked_input();
-        if let Some(recorder) = self.recorder.take() {
-            self.sealed_header = Some(recorder.into_recording_header());
-        }
+        self.recording = match std::mem::replace(&mut self.recording, RecordingState::Inactive) {
+            RecordingState::Recording(recorder) => {
+                RecordingState::Sealed(recorder.into_recording_header())
+            }
+            state => state,
+        };
     }
 
     pub(super) fn invalidate(&mut self, reason: impl Into<String>) {
         let reason = reason.into();
-        self.seal();
+        let recording = std::mem::replace(&mut self.recording, RecordingState::Inactive);
+        self.recording = RecordingState::Invalid {
+            header: recording.into_header(),
+            reason: reason.clone(),
+        };
         self.saved_frames.clear();
         self.control.invalidate(reason.clone());
         tracing::warn!("{reason}");
-        self.validity = RecordingValidity::Invalid { reason };
     }
 
     /// Start a new attempt after a terminal record using a bootstrap marker
@@ -310,8 +410,9 @@ impl ReplayLifecycle {
         &mut self,
         identity: ReplaySaveIdentity,
         has_snapshot: bool,
+        recording_index: &crate::mission_replays::RecordingIndex,
     ) -> bool {
-        let Some(header) = self.sealed_header.as_ref() else {
+        let Some(header) = self.recording.sealed_header() else {
             return false;
         };
         let bootstrap = self.bootstrap_save.filter(|(saved, _)| *saved == identity);
@@ -319,14 +420,16 @@ impl ReplayLifecycle {
             self.invalidate("replay unavailable after post-terminal load without a save payload");
             return false;
         }
-        match crate::game_session::replay_init::restart_recording(&self.control, header.clone()) {
+        match crate::game_session::replay_init::restart_recording(
+            &self.control,
+            recording_index,
+            header.clone(),
+        ) {
             Ok(mut recorder) => {
                 if let Some((_, marker)) = bootstrap {
                     recorder.write_save_marker(0, marker);
                 }
-                self.recorder = Some(recorder.into());
-                self.validity = RecordingValidity::Linear;
-                self.sealed_header = None;
+                self.recording = RecordingState::Recording(recorder.into());
                 self.saved_frames.clear();
                 if bootstrap.is_some() {
                     self.saved_frames
@@ -360,7 +463,7 @@ impl ReplayLifecycle {
             ReplayFrameOrdinal::ZERO,
             "bootstrap save must be registered before the first recorded frame"
         );
-        if let Some(recorder) = &self.recorder {
+        if let Some(recorder) = self.recording.recorder() {
             if recorder.has_archive() {
                 // The central capture hook already wrote the durable frame-zero marker.
                 self.bootstrap_save = Some((identity, marker));
@@ -373,10 +476,9 @@ impl ReplayLifecycle {
 
     #[cfg(test)]
     pub(super) fn install_test_recorder(&mut self, recorder: ReplayRecorder) {
-        assert!(self.recorder.is_none());
-        assert!(self.sealed_header.is_none());
+        assert!(matches!(self.recording, RecordingState::Inactive));
         assert!(self.saved_frames.is_empty());
-        self.recorder = Some(recorder.into());
+        self.recording = RecordingState::Recording(recorder.into());
     }
 
     #[cfg(test)]
@@ -387,8 +489,8 @@ impl ReplayLifecycle {
     }
 
     #[cfg(test)]
-    pub(super) fn validity(&self) -> &RecordingValidity {
-        &self.validity
+    pub(super) fn validity(&self) -> RecordingValidity {
+        self.recording.validity()
     }
 
     #[cfg(test)]
@@ -403,7 +505,7 @@ impl ReplayLifecycle {
 
     #[cfg(test)]
     pub(super) fn has_sealed_header(&self) -> bool {
-        self.sealed_header.is_some()
+        self.recording.sealed_header().is_some()
     }
 }
 
@@ -412,7 +514,7 @@ impl Serialize for ReplayLifecycle {
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("ReplayLifecycle", 5)?;
         state.serialize_field("is_recording", &self.is_recording())?;
-        state.serialize_field("validity", &self.validity)?;
+        state.serialize_field("validity", &self.recording.validity())?;
         state.serialize_field("is_playing", &self.player.is_some())?;
         state.serialize_field("saved_frames", &self.saved_frames.len())?;
         state.serialize_field("pinned_saves", &self.pinned_saves.len())?;
@@ -449,6 +551,45 @@ mod tests {
         )
         .unwrap();
         ReplayLifecycle::new(Some(recorder.into()), None, service.recording())
+    }
+
+    #[test]
+    fn sealing_and_invalidation_are_idempotent_without_creating_a_writer() {
+        let service = Arc::new(crate::replay_service::ReplayService::default());
+        let mut inactive = ReplayLifecycle::new(None, None, service.recording());
+        inactive.seal();
+        inactive.invalidate("disabled");
+        inactive.seal();
+        assert!(!inactive.is_recording());
+        assert!(!inactive.has_sealed_header());
+        assert_eq!(
+            inactive.validity(),
+            RecordingValidity::Invalid {
+                reason: "disabled".into()
+            }
+        );
+        assert!(!inactive.reopen_after_restore(
+            ReplaySaveIdentity::SessionRestart(1),
+            false,
+            &crate::mission_replays::RecordingIndex::disabled()
+        ));
+
+        let mut lifecycle = recording(&service);
+        lifecycle.seal();
+        lifecycle.seal();
+        assert!(!lifecycle.is_recording());
+        assert!(lifecycle.has_sealed_header());
+        lifecycle.invalidate("first");
+        lifecycle.invalidate("second");
+        lifecycle.seal();
+        assert!(lifecycle.has_sealed_header());
+        assert!(!lifecycle.is_recording());
+        assert_eq!(
+            lifecycle.validity(),
+            RecordingValidity::Invalid {
+                reason: "second".into()
+            }
+        );
     }
 
     #[test]
@@ -499,13 +640,21 @@ mod tests {
         lifecycle.invalidate("foreign save");
         assert!(!lifecycle.is_recording());
         assert!(lifecycle.saved_frames.is_empty());
-        assert!(lifecycle.sealed_header.is_some());
+        assert!(lifecycle.has_sealed_header());
         assert!(service.exports().snapshot().is_err());
-        assert!(!lifecycle.reopen_after_restore(later, false));
-        assert!(lifecycle.reopen_after_restore(bootstrap, false));
+        assert!(!lifecycle.reopen_after_restore(
+            later,
+            false,
+            &crate::mission_replays::RecordingIndex::disabled()
+        ));
+        assert!(lifecycle.reopen_after_restore(
+            bootstrap,
+            false,
+            &crate::mission_replays::RecordingIndex::disabled()
+        ));
         assert!(lifecycle.is_recording());
-        assert_eq!(lifecycle.validity, RecordingValidity::Linear);
-        assert!(lifecycle.sealed_header.is_none());
+        assert_eq!(lifecycle.validity(), RecordingValidity::Linear);
+        assert!(!lifecycle.has_sealed_header());
         assert_eq!(
             lifecycle.saved_frame(bootstrap),
             Some((ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO))

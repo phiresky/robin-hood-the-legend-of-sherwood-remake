@@ -575,13 +575,11 @@ pub(crate) async fn show_main_menu(
                 // unsaved profile-level changes (active selection,
                 // renames, etc.) survive the exit.
                 application_context
-                    .with_player_profiles(|mgr| application_context.persist_player_profiles(mgr))
+                    .save_player_profiles()
                     .unwrap_or_else(|error| {
                         panic!("Main menu Exit lost its ApplicationContext: {error}")
                     })
-                    .unwrap_or_else(|err| {
-                        tracing::error!("Main menu Exit: failed to save profile manager: {err:#}")
-                    });
+                    .log_persistence_error("Main menu Exit: failed to save profile manager");
                 return Ok(MainMenuChoice::Exit);
             }
             // Cancelled — stay in the menu and redraw next frame.

@@ -2388,6 +2388,18 @@ pub enum StimulusInfo {
     LegacyInvalidType(i32),
 }
 
+impl StimulusInfo {
+    /// Direct object/human dispatch requires a live target. Other payloads
+    /// describe events (noise, theft, combat) and retain their historical
+    /// identities and positions even when an originating actor disappears.
+    pub(crate) fn live_target(&self) -> Option<AiEntityHandle> {
+        match self {
+            Self::Human(handle) | Self::Object(handle) => Some(*handle),
+            _ => None,
+        }
+    }
+}
+
 /// Runtime-only provenance for a self-stimulus queued while the engine closes
 /// an Original synchronous callback boundary.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

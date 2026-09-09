@@ -164,7 +164,7 @@ fn request_sherwood_trading_panel(
 
 fn prepare_replay_mission(
     profiles: &mut engine_profiles::ProfileManager,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     data: robin_engine::replay::ReplayData,
     paused: bool,
 ) -> Result<
@@ -172,7 +172,7 @@ fn prepare_replay_mission(
         Campaign,
         usize,
         MissionLocation,
-        crate::main_entry::CliArgs,
+        crate::main_entry::MissionLaunch,
         u64,
         engine_api::SimConfig,
     ),
@@ -237,6 +237,7 @@ fn prepare_replay_mission(
     let rng_seed = data.header().rng_seed;
     let sim_config = data.header().sim_config;
     let mut replay_args = args.clone();
+    replay_args.mission_restart = false;
     replay_args.replay_data = Some(data);
     replay_args.replay = None;
     // A queued replay can supersede a live custom/multiplayer mission. Its
@@ -263,7 +264,7 @@ fn prepare_replay_mission(
 pub(crate) async fn prepare_replay_launch(
     application_context: &ApplicationContext,
     profiles: &mut engine_profiles::ProfileManager,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     data: robin_engine::replay::ReplayData,
     paused: bool,
 ) -> Result<
@@ -271,7 +272,7 @@ pub(crate) async fn prepare_replay_launch(
         Campaign,
         usize,
         MissionLocation,
-        crate::main_entry::CliArgs,
+        crate::main_entry::MissionLaunch,
         u64,
         engine_api::SimConfig,
     ),
@@ -576,7 +577,7 @@ pub(super) enum HandlerAction {
 /// custom missions may legitimately produce no session.
 pub(super) fn install_pending_lua_session(
     host: &mut Host,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
 ) -> Result<(), crate::lua_session::SpellforgeSessionError> {
     if let Some(package) = args
         .replay_data
@@ -649,7 +650,7 @@ pub(super) fn install_pending_lua_session(
 /// ambient library package is accepted as a substitute.
 pub(super) fn pending_cold_save_lua_launch(
     callbacks: &RustCallbacks,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
 ) -> Result<Option<(String, robin_engine::spellforge::SpellforgePackage)>, String> {
     let Some(SaveLoadRequest::ApplyLoad(load)) = callbacks.pending_request() else {
         return Ok(None);
@@ -675,7 +676,7 @@ pub(super) fn pending_cold_save_lua_launch(
 
 pub(super) fn install_cold_save_lua_session(
     host: &mut Host,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     launch: Option<(String, robin_engine::spellforge::SpellforgePackage)>,
 ) -> Result<(), crate::lua_session::SpellforgeSessionError> {
     let Some((mission, package)) = launch else {
@@ -763,7 +764,7 @@ pub(crate) async fn run_mission_headless(
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
@@ -824,32 +825,22 @@ pub(crate) async fn run_mission_headless(
             if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
                 return outcome;
             }
-            replay_init::carry_replay_taint_to_next_mission(
-                robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-            );
+            args.mission_restart = true;
             let outcome_sim_config = outcome.sim_config;
             campaign = outcome.campaign;
-            if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
-                campaign = replay_campaign.clone();
-                rng_seed = *replay_seed;
-                sim_config =
-                    simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
-            } else {
-                if !restore_direct_restart_boundary(&mut campaign, args) {
-                    return MissionOutcome::new(
-                        campaign,
-                        rng_seed,
-                        sim_config,
-                        Err(
-                            "direct LevelRestart is missing its preselected mission checkpoint"
-                                .to_string(),
-                        ),
-                    );
+            match prepare_direct_restart(
+                &mut campaign,
+                args,
+                replay_restart.as_ref(),
+                outcome_sim_config,
+            ) {
+                Ok((seed, config)) => {
+                    rng_seed = seed;
+                    sim_config = config;
                 }
-                let checkpoint = campaign.restart_simulation_checkpoint();
-                rng_seed = checkpoint.0;
-                sim_config =
-                    simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
+                Err(error) => {
+                    return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+                }
             }
         }
     })
@@ -866,7 +857,7 @@ pub(crate) async fn run_session(
     mut campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     initial_load: Option<(crate::savegame::SlotName, u32)>,
 ) -> SessionOutcome {
     let mut session_args = args.clone();
@@ -1069,6 +1060,9 @@ pub(crate) async fn run_session(
             MultiplayerSetupFailurePolicy::ReturnToMenu,
         )
         .await;
+        // This evidence belongs to the just-consumed reconstruction, not the
+        // next campaign mission. Only LevelRestart below installs it again.
+        session_args.mission_restart = false;
         campaign = mission_outcome.campaign;
         authoritative_rng_seed = mission_outcome.rng_seed;
         authoritative_sim_config = mission_outcome.sim_config;
@@ -1139,9 +1133,7 @@ pub(crate) async fn run_session(
                 );
                 replay_restart = replay_for_restart;
                 session_args.mp_continue_session = session_args.server;
-                replay_init::carry_replay_taint_to_next_mission(
-                    robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-                );
+                session_args.mission_restart = true;
                 tracing::info!("Restarting mission idx={}", mission_idx);
                 continue;
             }
@@ -1209,7 +1201,7 @@ pub(crate) async fn run_session(
     }).await
 }
 
-fn clear_ambient_custom_launch(args: &mut crate::main_entry::CliArgs) {
+fn clear_ambient_custom_launch(args: &mut crate::main_entry::MissionLaunch) {
     args.custom_mission = None;
     args.pending_lua_mission = None;
     args.pending_distributed_mod = None;
@@ -1521,7 +1513,7 @@ pub(crate) async fn run_mission(
     profiles: &mut engine_profiles::ProfileManager,
     mut mission_idx: usize,
     mut location: MissionLocation,
-    mut args: crate::main_entry::CliArgs,
+    mut args: crate::main_entry::MissionLaunch,
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
@@ -1568,9 +1560,7 @@ pub(crate) async fn run_mission(
             if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
                 return outcome;
             }
-            replay_init::carry_replay_taint_to_next_mission(
-                robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-            );
+            args.mission_restart = true;
             let outcome_sim_config = outcome.sim_config;
             campaign = outcome.campaign;
             pending_replay = args.global_options.replay_launches().take_pending();
@@ -1579,38 +1569,56 @@ pub(crate) async fn run_mission(
                 // restore the previous mission checkpoint or reuse its selection.
                 continue;
             }
-            if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
-                campaign = replay_campaign.clone();
-                rng_seed = *replay_seed;
-                sim_config =
-                    simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
-            } else {
-                if !restore_direct_restart_boundary(&mut campaign, &mut args) {
-                    return MissionOutcome::new(
-                        campaign,
-                        rng_seed,
-                        sim_config,
-                        Err(
-                            "direct LevelRestart is missing its preselected mission checkpoint"
-                                .to_string(),
-                        ),
-                    );
+            match prepare_direct_restart(
+                &mut campaign,
+                &mut args,
+                replay_restart.as_ref(),
+                outcome_sim_config,
+            ) {
+                Ok((seed, config)) => {
+                    rng_seed = seed;
+                    sim_config = config;
                 }
-                let checkpoint = campaign.restart_simulation_checkpoint();
-                rng_seed = checkpoint.0;
-                sim_config =
-                    simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
+                Err(error) => {
+                    return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+                }
             }
         }
     })
     .await
 }
 
+/// Shared cold-restart policy for graphical and headless direct missions.
+/// Replay restarts retain the admitted initial world and configuration; live
+/// restarts restore the campaign checkpoint and carry current gameplay options.
+fn prepare_direct_restart(
+    campaign: &mut Campaign,
+    args: &mut crate::main_entry::MissionLaunch,
+    replay_restart: Option<&(Campaign, u64, engine_api::SimConfig)>,
+    outcome_sim_config: engine_api::SimConfig,
+) -> Result<(u64, engine_api::SimConfig), String> {
+    if let Some((replay_campaign, seed, config)) = replay_restart {
+        *campaign = replay_campaign.clone();
+        return Ok((
+            *seed,
+            simulation_config_for_level_restart(*config, outcome_sim_config, true),
+        ));
+    }
+    if !restore_direct_restart_boundary(campaign, args) {
+        return Err("direct LevelRestart is missing its preselected mission checkpoint".to_owned());
+    }
+    let (seed, config) = campaign.restart_simulation_checkpoint();
+    Ok((
+        seed,
+        simulation_config_for_level_restart(config, outcome_sim_config, false),
+    ))
+}
+
 /// Match campaign-loop handoff policy only after a direct, non-replay host
 /// restart has restored its checkpoint. Failed admission never changes policy.
 fn restore_direct_restart_boundary(
     campaign: &mut Campaign,
-    args: &mut crate::main_entry::CliArgs,
+    args: &mut crate::main_entry::MissionLaunch,
 ) -> bool {
     let restored = campaign.restore_snapshot() && campaign.pre_mission_was_preselected;
     carry_direct_restart_multiplayer_continuation(args, restored);
@@ -1618,7 +1626,7 @@ fn restore_direct_restart_boundary(
 }
 
 fn carry_direct_restart_multiplayer_continuation(
-    args: &mut crate::main_entry::CliArgs,
+    args: &mut crate::main_entry::MissionLaunch,
     restored_checkpoint: bool,
 ) {
     if restored_checkpoint && args.server && args.replay.is_none() && args.replay_data.is_none() {
@@ -1633,7 +1641,7 @@ async fn prepare_pending_direct_replay(
     pending: &mut Option<crate::replay_service::PendingReplay>,
     application_context: &ApplicationContext,
     profiles: &mut engine_profiles::ProfileManager,
-    args: &mut crate::main_entry::CliArgs,
+    args: &mut crate::main_entry::MissionLaunch,
 ) -> Result<Option<(Campaign, usize, MissionLocation, u64, engine_api::SimConfig)>, String> {
     let Some(pending) = pending.take() else {
         return Ok(None);
@@ -1658,7 +1666,7 @@ async fn prepare_pending_direct_replay(
     )))
 }
 
-fn unprepared_replay_launch_error(args: &crate::main_entry::CliArgs) -> Option<String> {
+fn unprepared_replay_launch_error(args: &crate::main_entry::MissionLaunch) -> Option<String> {
     if args.replay.is_some() {
         return Some(
             "replay path/compact input reached mission construction before canonical decode and cold asset resolution"
@@ -1682,7 +1690,7 @@ async fn run_mission_with_seed(
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     rng_seed: u64,
     sim_config: engine_api::SimConfig,
     multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
@@ -1709,7 +1717,7 @@ async fn run_mission_with_seed(
 }
 
 async fn ensure_shipping_mission<F>(
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     mission: &str,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
@@ -1758,9 +1766,52 @@ fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
 #[cfg(test)]
 mod required_state_tests {
     #[test]
+    fn shared_direct_restart_policy_preserves_live_and_replay_checkpoints() {
+        let initial = robin_engine::engine::SimConfig::default();
+        let changed = robin_engine::engine::SimConfig {
+            enable_unbinding: !initial.enable_unbinding,
+            ..initial
+        };
+        for headless in [false, true] {
+            let mut args = crate::main_entry::MissionLaunch::from(crate::main_entry::CliArgs {
+                server: true,
+                headless,
+                ..Default::default()
+            });
+            let mut campaign = Campaign::default();
+            assert!(
+                super::prepare_direct_restart(&mut campaign, &mut args, None, changed).is_err()
+            );
+            assert!(!args.mp_continue_session);
+            campaign.snapshot_preselected_with_simulation(11, initial);
+            let (seed, config) =
+                super::prepare_direct_restart(&mut campaign, &mut args, None, changed).unwrap();
+            assert_eq!(seed, 11);
+            assert_eq!(config.enable_unbinding, changed.enable_unbinding);
+            assert!(args.mp_continue_session);
+
+            args.mp_continue_session = false;
+            let replay = (Campaign::default(), 23, initial);
+            let (seed, config) =
+                super::prepare_direct_restart(&mut campaign, &mut args, Some(&replay), changed)
+                    .unwrap();
+            assert_eq!(seed, 23);
+            assert_eq!(config.enable_unbinding, initial.enable_unbinding);
+            assert!(!args.mp_continue_session);
+            assert_eq!(
+                serde_json::to_value(&campaign).unwrap(),
+                serde_json::to_value(&replay.0).unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn direct_restart_adapter_restores_checkpoint_before_admitting_continuation() {
-        let mut args = crate::main_entry::CliArgs {
-            server: true,
+        let mut args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                server: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut campaign = Campaign::default();
@@ -1791,10 +1842,13 @@ mod required_state_tests {
             for restored in [false, true] {
                 for replay in [false, true] {
                     for headless in [false, true] {
-                        let mut args = crate::main_entry::CliArgs {
-                            server,
-                            headless,
-                            replay: replay.then(|| "recorded.rhrec".into()),
+                        let mut args = crate::main_entry::MissionLaunch {
+                            config: crate::main_entry::CliArgs {
+                                server,
+                                headless,
+                                replay: replay.then(|| "recorded.rhrec".into()),
+                                ..Default::default()
+                            },
                             ..Default::default()
                         };
                         super::carry_direct_restart_multiplayer_continuation(&mut args, restored);
@@ -1804,8 +1858,11 @@ mod required_state_tests {
             }
         }
         // Ineligible transitions do not revoke already-established policy.
-        let mut args = crate::main_entry::CliArgs {
-            server: true,
+        let mut args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                server: true,
+                ..Default::default()
+            },
             mp_continue_session: true,
             ..Default::default()
         };
@@ -2148,9 +2205,12 @@ mod required_state_tests {
     #[test]
     fn pending_direct_replay_absent_preserves_ordinary_launch() {
         let mut profiles = ProfileManager::new();
-        let mut args = crate::main_entry::CliArgs {
-            start_paused: true,
-            custom_mission: Some("ordinary-custom-mission".into()),
+        let mut args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                start_paused: true,
+                custom_mission: Some("ordinary-custom-mission".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut pending = None;
@@ -2180,7 +2240,7 @@ mod required_state_tests {
         let mut args = pollster::block_on(prepare_replay_launch(
             &context,
             &mut profiles,
-            &crate::main_entry::CliArgs::default(),
+            &crate::main_entry::MissionLaunch::default(),
             data.clone(),
             true,
         ))
@@ -2253,7 +2313,7 @@ mod required_state_tests {
     #[test]
     fn pending_direct_replay_same_mission_restores_recorded_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let mut args = crate::main_entry::CliArgs::default();
+        let mut args = crate::main_entry::MissionLaunch::default();
         let mut pending = Some(crate::replay_service::PendingReplay { data, paused: true });
         let (campaign, index, _, seed, config) = pollster::block_on(prepare_pending_direct_replay(
             &mut pending,
@@ -2275,7 +2335,7 @@ mod required_state_tests {
     #[test]
     fn pending_direct_replay_rejection_is_consumed_without_fallback() {
         let (mut profiles, data) = replay_fixture(None);
-        let mut args = crate::main_entry::CliArgs::default();
+        let mut args = crate::main_entry::MissionLaunch::default();
         let mut pending = Some(crate::replay_service::PendingReplay {
             data,
             paused: false,
@@ -2296,7 +2356,10 @@ mod required_state_tests {
     #[test]
     fn replay_preparation_restores_all_frame_zero_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let args = crate::main_entry::CliArgs::default();
+        let args = crate::main_entry::MissionLaunch {
+            mission_restart: true,
+            ..Default::default()
+        };
 
         let (campaign, mission_idx, location, prepared_args, seed, config) =
             prepare_replay_mission(&mut profiles, &args, data, true).unwrap();
@@ -2310,6 +2373,10 @@ mod required_state_tests {
         assert_eq!(seed, 0x2020);
         assert!(config.highlander2);
         assert!(prepared_args.start_paused);
+        assert!(
+            !prepared_args.mission_restart,
+            "an admitted replay supersedes live restart evidence"
+        );
         assert!(prepared_args.replay.is_none());
         assert_eq!(
             prepared_args.replay_data.unwrap().header().sim_config,
@@ -2322,7 +2389,7 @@ mod required_state_tests {
         let (mut profiles, data) = replay_fixture(None);
         let error = prepare_replay_mission(
             &mut profiles,
-            &crate::main_entry::CliArgs::default(),
+            &crate::main_entry::MissionLaunch::default(),
             data,
             false,
         )
@@ -2338,7 +2405,7 @@ mod required_state_tests {
 
         let (_, _, _, prepared_args, _, _) = prepare_replay_mission(
             &mut profiles,
-            &crate::main_entry::CliArgs::default(),
+            &crate::main_entry::MissionLaunch::default(),
             data,
             false,
         )
@@ -2384,7 +2451,7 @@ mod required_state_tests {
 
         let (_, mission_idx, _, _, _, _) = prepare_replay_mission(
             &mut profiles,
-            &crate::main_entry::CliArgs::default(),
+            &crate::main_entry::MissionLaunch::default(),
             data,
             false,
         )
@@ -2472,7 +2539,7 @@ mod required_state_tests {
         let error = pollster::block_on(prepare_replay_launch(
             &application_context,
             &mut profiles,
-            &crate::main_entry::CliArgs::default(),
+            &crate::main_entry::MissionLaunch::default(),
             data,
             false,
         ))
@@ -2492,7 +2559,7 @@ mod required_state_tests {
     #[test]
     fn current_replay_rejects_original_parity_capture_before_resolution() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let args = crate::main_entry::CliArgs {
+        let args = crate::main_entry::MissionLaunch {
             mission_start_legacy_save: Some(vec![0; 4]),
             ..Default::default()
         };

@@ -1,12 +1,15 @@
 """Create the non-destructive Sherwood inspection scene through Blender MCP."""
 
 import math
+import sys
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
 
 ROOT=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(Path(__file__).parent))
+from paths import DATA
 OUT=ROOT/'level-editor/work/sherwood-refinement'
 if 'Sherwood Refinement' in bpy.data.scenes:
     raise RuntimeError('Sherwood scene already exists; open its saved checkpoint instead')
@@ -52,7 +55,7 @@ def camera(name,px,py,span,yaw=0,elevation=35):
 
 
 scene.camera=camera('Reference Camera',960,544,1920)
-reference=bpy.data.images.load(str(ROOT/'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'),check_existing=True)
+reference=bpy.data.images.load(str(DATA/'Levels/Day/sherwood.map.png'),check_existing=True)
 reference.pack()
 background=scene.camera.data.background_images.new()
 background.image=reference

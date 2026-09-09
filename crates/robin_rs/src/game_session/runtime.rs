@@ -478,7 +478,7 @@ impl MissionFrame {
         self.execution.run_hourglass &= allowed;
     }
 
-    fn host_controls_only(&mut self) {
+    pub(super) fn host_controls_only(&mut self) {
         self.execution.assert_pre_simulation();
         self.execution.run_hourglass = false;
         self.execution.simulation_body_allowed = false;
@@ -718,6 +718,10 @@ impl MissionFrame {
         &self,
     ) -> &[robin_engine::engine::ExternalAction] {
         &self.post_external_actions[self.post_external_actions_applied..]
+    }
+
+    pub(super) fn has_recorded_input(&self) -> bool {
+        self.replay_record_consumed
     }
 
     /// Adopt one complete replay frame, splitting presentation-only modal
@@ -1904,10 +1908,11 @@ impl TimelineRuntime {
     /// load-back.  A load resets rewind history (the buffered timeline no
     /// longer describes the engine's future), drops commands already
     /// dispatched this frame (their effects were overwritten wholesale),
-    /// and — when the decoded payload identity matches a save made this session —
-    /// records a load-back to that save's frame.
+    /// and records a load-back to the linked mission archive marker, including
+    /// saves made by earlier processes.
     pub(super) fn note_save_load_event(
         &mut self,
+        recording_index: &crate::mission_replays::RecordingIndex,
         event: crate::main_entry::SaveLoadEvent,
         frame: &mut MissionFrame,
         engine: &Engine,
@@ -1943,7 +1948,7 @@ impl TimelineRuntime {
             } => {
                 self.state_restored = true;
                 if let Some(bytes) = snapshot.as_ref() {
-                    match self.replay.restore_archive(bytes) {
+                    match self.replay.restore_archive(bytes, recording_index) {
                         Ok(Some((ordinal, timeline, target))) => {
                             self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
                             let timeline = TimelineFrame::from_wire(timeline);
@@ -2006,9 +2011,9 @@ impl TimelineRuntime {
                         }
                     }
                 }
-                let reopened = self
-                    .replay
-                    .reopen_after_restore(identity, snapshot.is_some());
+                let reopened =
+                    self.replay
+                        .reopen_after_restore(identity, snapshot.is_some(), recording_index);
                 if reopened {
                     self.replay_ordinal = ReplayFrameOrdinal::ZERO;
                     // The load replaced every effect admitted before it. Keep
@@ -2140,6 +2145,24 @@ impl TimelineRuntime {
             // every reconstruction consumer on the adopted pre-tick state.
             self.reset_reconstruction_history(target, &manager.engine, assets);
         }
+        Ok(())
+    }
+
+    /// Rebuild ordinal seeks from the immutable mission start. Simulation-frame
+    /// rewind history is intentionally discarded on each save load and cannot
+    /// identify an abandoned branch.
+    pub(super) fn rewind_replay_to_start(
+        &mut self,
+        manager: &mut EngineManager,
+        host: &mut Host,
+        game: &mut Game,
+        assets: &LevelAssets,
+    ) -> Result<(), String> {
+        self.replay.restore_initial(manager, host, game, assets)?;
+        self.replay_ordinal = ReplayFrameOrdinal::ZERO;
+        self.reset_reconstruction_history(TimelineFrame::ZERO, &manager.engine, assets);
+        self.state_restored = true;
+        self.replay_finished_logged = false;
         Ok(())
     }
 
@@ -2426,18 +2449,19 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
         ));
         game.apply_post_load_sync(load_back.is_continue);
         game.post_load_resolution_resync();
-        if let Some(expected) = player.hash_for_frame(frame) {
-            let actual = robin_engine::replay::state_hash(&manager.engine);
-            if actual != expected {
-                return Err(format!(
-                    "Replay desync after bootstrap restore: expected {expected:016x}, got {actual:016x}"
-                ));
-            }
+        let restored_hash = robin_engine::replay::state_hash(&manager.engine);
+        if let Some(expected) = player.hash_for_frame(frame)
+            && restored_hash != expected
+        {
+            return Err(format!(
+                "Replay desync after save restore at frame {frame}: expected {expected:016x}, got {restored_hash:016x}"
+            ));
         }
         *rewind_buffer = RewindBuffer::new();
         tracing::info!(
             frame,
             to_frame = load_back.to_frame,
+            state_hash = format_args!("{restored_hash:016x}"),
             "replay playback: jumped back to saved state"
         );
     }
@@ -3003,6 +3027,7 @@ mod tests {
         frame.bind_timeline(timeline.current_frame());
         timeline.begin_recording(&mut frame, true);
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 snapshot: None,
                 identity,
@@ -3037,6 +3062,7 @@ mod tests {
             .unwrap();
         next.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 snapshot: None,
                 identity: bootstrap_identity,
@@ -3046,7 +3072,7 @@ mod tests {
             &engine,
             &assets,
         );
-        assert_eq!(timeline.replay.validity(), &RecordingValidity::Linear);
+        assert_eq!(timeline.replay.validity(), RecordingValidity::Linear);
         assert!(timeline.is_recording());
         assert!(!timeline.replay.has_sealed_header());
         assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
@@ -3171,6 +3197,7 @@ mod tests {
             let mut frame = MissionFrame::new(0);
             frame.bind_timeline(timeline.current_frame());
             timeline.note_save_load_event(
+                &crate::mission_replays::RecordingIndex::disabled(),
                 crate::main_entry::SaveLoadEvent::LoadApplied {
                     snapshot: None,
                     identity,
@@ -3271,7 +3298,7 @@ mod tests {
                         &assets,
                     )
                     .unwrap_err()
-                    .contains("desync after bootstrap restore")
+                    .contains("desync after save restore")
             );
             let mut playback = timeline_for_trace_test(FrameContract::Headless);
             playback
@@ -3302,6 +3329,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 snapshot: None,
                 identity: foreign.replay_identity().unwrap(),
@@ -3376,6 +3404,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 snapshot: None,
                 identity,
@@ -3498,6 +3527,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(live.current_frame());
         live.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::SaveWritten { identity },
             &mut frame,
             &engine,
@@ -3536,6 +3566,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(live.current_frame());
         live.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 snapshot: None,
                 identity,
@@ -3752,6 +3783,7 @@ mod tests {
                 .apply_to_with_game(engine, host, game, assets)
                 .unwrap();
             runtime.note_save_load_event(
+                &crate::mission_replays::RecordingIndex::disabled(),
                 crate::main_entry::SaveLoadEvent::LoadApplied {
                     snapshot: Some(bytes),
                     identity: save.replay_identity().unwrap(),
@@ -3795,6 +3827,7 @@ mod tests {
             .push(PlayerCommand::SetAmountOfSpeaking { amount: 1 });
         let first_save = save(&engine, &host, &game, &service);
         live.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::SaveWritten {
                 identity: first_save.replay_identity().unwrap(),
             },
@@ -3865,7 +3898,10 @@ mod tests {
             }
             let error = live
                 .replay
-                .restore_archive(&serde_json::to_vec(&bad).unwrap())
+                .restore_archive(
+                    &serde_json::to_vec(&bad).unwrap(),
+                    &crate::mission_replays::RecordingIndex::disabled(),
+                )
                 .unwrap_err();
             assert!(
                 error.contains(if corrupt_digest {
@@ -3930,6 +3966,8 @@ mod tests {
         );
         let (_, data) =
             crate::replay_format::decode_compact(&snapshot.compact_sync().unwrap()).unwrap();
+        let seek_data = data.clone();
+        let seek_initial = initial.clone();
         let mut player = ReplayPlayer::new(data);
         let mut manager = EngineManager::new(initial);
         let mut playback_host = Host::scratch(1024.0, 768.0);
@@ -3961,6 +3999,54 @@ mod tests {
             robin_engine::replay::state_hash(&manager.engine),
             expected_hash
         );
+        let mut seek_runtime = TimelineRuntime::new(
+            ReplayAndRollback {
+                recording_control: service.recording(),
+                recorder: None,
+                player: Some(ReplayPlayer::new(seek_data)),
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Graphical,
+            false,
+            false,
+        );
+        let mut seek_manager = EngineManager::new(seek_initial.clone());
+        let mut seek_host = Host::scratch(1024.0, 768.0);
+        let mut seek_game = Game::default();
+        let mut dev = Default::default();
+        let mut policy = crate::http_server::StepModalPolicy {
+            auto_dismiss: true,
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            super::super::tick::run_forward_ticks_with_session_modals(
+                &mut seek_manager,
+                &mut seek_host,
+                &assets,
+                &mut dev,
+                &mut seek_game,
+                &mut seek_runtime,
+                11,
+                &mut policy,
+                None,
+            )
+            .unwrap();
+            assert_eq!(seek_runtime.playback().unwrap().current_frame(), 11);
+            assert_eq!(
+                robin_engine::replay::state_hash(&seek_manager.engine),
+                expected_hash
+            );
+            seek_runtime
+                .rewind_replay_to_start(&mut seek_manager, &mut seek_host, &mut seek_game, &assets)
+                .unwrap();
+            assert_eq!(seek_runtime.playback().unwrap().current_frame(), 0);
+            assert_eq!(
+                robin_engine::replay::state_hash(&seek_manager.engine),
+                robin_engine::replay::state_hash(&seek_initial)
+            );
+        }
     }
 
     #[test]
@@ -4056,6 +4142,7 @@ mod tests {
                 .stage_commands()
                 .push(PlayerCommand::SetAmountOfSpeaking { amount: 3 });
             live.note_save_load_event(
+                &crate::mission_replays::RecordingIndex::disabled(),
                 crate::main_entry::SaveLoadEvent::LoadApplied {
                     identity,
                     is_continue: true,
@@ -4742,6 +4829,14 @@ mod tests {
         assert!(!recorded.run_hourglass);
         assert!(!recorded.simulation_body_allowed);
         assert!(!recorded.run_post_initialize);
+
+        // Renderer cleanup must not append commands to replay transactions.
+        super::super::tick::post_render_engine_cleanup(
+            &mut frame,
+            robin_engine::player_command::PlayerId::HOST,
+            true,
+        );
+        assert!(frame.post_commands().is_empty());
     }
 
     #[test]

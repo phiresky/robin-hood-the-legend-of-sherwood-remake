@@ -1298,7 +1298,13 @@ mod tests {
         save.clone()
             .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
             .unwrap();
-        let (ordinal, timeline, target) = recorder.restore(&save, &service.recording()).unwrap();
+        let (ordinal, timeline, target) = recorder
+            .restore(
+                &save,
+                &service.recording(),
+                &crate::mission_replays::RecordingIndex::disabled(),
+            )
+            .unwrap();
         recorder.write_load_back(ordinal, target.unwrap(), false);
         recorder
             .commit_restore_boundary(timeline, robin_engine::replay::state_hash(&engine))

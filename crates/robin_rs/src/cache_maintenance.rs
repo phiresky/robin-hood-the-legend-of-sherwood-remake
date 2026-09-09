@@ -3,6 +3,11 @@ use futures::channel::oneshot;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
+#[cfg(not(target_arch = "wasm32"))]
+type Worker = std::thread::JoinHandle<()>;
+#[cfg(target_arch = "wasm32")]
+type Worker = futures::future::AbortHandle;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum CacheClearStatus {
     #[default]
@@ -24,6 +29,9 @@ impl CacheClearStatus {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct State {
+    closed: bool,
+    #[serde(skip)]
+    worker: Option<Worker>,
     next_operation: u64,
     status: CacheClearStatus,
     #[serde(skip)]
@@ -31,6 +39,17 @@ struct State {
 }
 
 impl State {
+    fn retire_worker(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            #[cfg(not(target_arch = "wasm32"))]
+            if worker.join().is_err() {
+                tracing::error!("cache-clear worker panicked");
+            }
+            #[cfg(target_arch = "wasm32")]
+            worker.abort();
+        }
+    }
+
     fn poll(&mut self) {
         let Some(receiver) = self.receiver.as_mut() else {
             return;
@@ -46,6 +65,7 @@ impl State {
             panic!("cache-clear receiver requires a pending operation");
         };
         self.receiver = None;
+        self.retire_worker();
         self.status = CacheClearStatus::Completed { operation, result };
     }
 }
@@ -84,10 +104,13 @@ impl CacheMaintenance {
     /// observable until an explicitly requested subsequent operation replaces them.
     fn begin_with(
         &self,
-        start: impl FnOnce(oneshot::Sender<Result<usize, String>>) -> Result<(), String>,
+        start: impl FnOnce(oneshot::Sender<Result<usize, String>>) -> Result<Option<Worker>, String>,
     ) -> Result<CacheClearStatus, String> {
         let mut state = self.state()?;
         state.poll();
+        if state.closed {
+            return Err("cache maintenance is shut down".into());
+        }
         if state.status.is_pending() {
             return Ok(state.status.clone());
         }
@@ -99,19 +122,24 @@ impl CacheMaintenance {
         let (sender, receiver) = oneshot::channel();
         state.status = CacheClearStatus::Pending { operation };
         state.receiver = Some(receiver);
-        if let Err(error) = start(sender) {
-            state.receiver = None;
-            state.status = CacheClearStatus::Completed {
-                operation,
-                result: Err(error),
-            };
+        match start(sender) {
+            Ok(worker) => state.worker = worker,
+            Err(error) => {
+                state.receiver = None;
+                state.status = CacheClearStatus::Completed {
+                    operation,
+                    result: Err(error),
+                };
+            }
         }
         Ok(state.status.clone())
     }
 
     pub(crate) fn begin(
         &self,
-        application: crate::host::ApplicationContext,
+        #[cfg(not(target_arch = "wasm32"))] cache: std::sync::Arc<
+            Mutex<Result<crate::distributed_mod_cache::DistributedModCache, String>>,
+        >,
     ) -> Result<CacheClearStatus, String> {
         self.begin_with(move |sender| {
             #[cfg(not(target_arch = "wasm32"))]
@@ -119,34 +147,248 @@ impl CacheMaintenance {
                 std::thread::Builder::new()
                     .name("spellforge-cache-clear".to_owned())
                     .spawn(move || {
-                        // The application clone retains the receiver throughout
-                        // physical work, even if every settings panel closes.
-                        let result = application.clear_distributed_mod_cache();
+                        let result = cache
+                            .lock()
+                            .map_err(|_| "distributed-mod cache lock poisoned".to_owned())
+                            .and_then(|mut cache| match cache.as_mut() {
+                                Ok(cache) => cache.clear(),
+                                Err(error) => {
+                                    Err(format!("distributed-mod cache is unavailable: {error}"))
+                                }
+                            });
                         if let Err(result) = sender.send(result) {
                             tracing::error!(?result, "cache-clear completion receiver unavailable");
                         }
                     })
-                    .map(|_| ())
+                    .map(Some)
                     .map_err(|error| format!("could not start cache-clear worker: {error}"))
             }
             #[cfg(target_arch = "wasm32")]
             {
+                let (abort, registration) = futures::future::AbortHandle::new_pair();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let _application = application;
-                    let result = crate::distributed_mod_cache::clear().await;
-                    if let Err(result) = sender.send(result) {
-                        tracing::error!(?result, "cache-clear completion receiver unavailable");
-                    }
+                    let task = async move {
+                        let result = crate::distributed_mod_cache::clear().await;
+                        if let Err(result) = sender.send(result) {
+                            tracing::error!(?result, "cache-clear completion receiver unavailable");
+                        }
+                    };
+                    let _ = futures::future::Abortable::new(task, registration).await;
                 });
-                Ok(())
+                Ok(Some(abort))
             }
         })
+    }
+
+    /// Close admission and await physical work before application services retire.
+    pub(crate) async fn shutdown(&self) -> Result<(), String> {
+        if self.runtime.is_none() {
+            return Ok(());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut state = self.state()?;
+            state.closed = true;
+            state.retire_worker();
+            state.poll();
+            if let CacheClearStatus::Completed {
+                result: Err(error), ..
+            } = &state.status
+            {
+                return Err(error.clone());
+            }
+            Ok(())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let pending = {
+                let mut state = self.state()?;
+                state.closed = true;
+                state.poll();
+                state
+                    .receiver
+                    .take()
+                    .map(|receiver| (state.next_operation, receiver))
+            };
+            if let Some((operation, receiver)) = pending {
+                let result = receiver.await.unwrap_or_else(|error| {
+                    Err(format!(
+                        "cache-clear worker disconnected during shutdown: {error}"
+                    ))
+                });
+                let mut state = self.state()?;
+                state.retire_worker();
+                state.status = CacheClearStatus::Completed {
+                    operation,
+                    result: result.clone(),
+                };
+                result.map(|_| ())
+            } else {
+                match self.status()? {
+                    CacheClearStatus::Completed {
+                        result: Err(error), ..
+                    } => Err(error),
+                    CacheClearStatus::Pending { .. } => {
+                        Err("cache shutdown is already pending".into())
+                    }
+                    _ => Ok(()),
+                }
+            }
+        }
+    }
+
+    /// Native Drop joins; browser Drop cancels future continuations. An already
+    /// submitted IndexedDB request may complete, but cannot schedule further work.
+    pub(crate) fn shutdown_on_drop(&self) {
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        let mut state = runtime.lock().unwrap_or_else(|error| {
+            tracing::error!("cache maintenance poisoned during shutdown");
+            error.into_inner()
+        });
+        state.closed = true;
+        state.retire_worker();
+        state.poll();
+    }
+}
+
+impl Drop for CacheMaintenance {
+    fn drop(&mut self) {
+        self.shutdown_on_drop();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_shutdown_and_drop_join_workers_and_close_admission() {
+        for explicit in [false, true] {
+            let owner = CacheMaintenance::new();
+            let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let worker_finished = finished.clone();
+            owner
+                .begin_with(|sender| {
+                    Ok(Some(std::thread::spawn(move || {
+                        sender.send(Ok(7)).unwrap();
+                        worker_finished.store(true, std::sync::atomic::Ordering::SeqCst);
+                    })))
+                })
+                .unwrap();
+            if explicit {
+                pollster::block_on(owner.shutdown()).unwrap();
+                assert!(
+                    owner
+                        .begin_with(|_| panic!("closed owner admitted work"))
+                        .is_err()
+                );
+                assert!(matches!(
+                    owner.status().unwrap(),
+                    CacheClearStatus::Completed { result: Ok(7), .. }
+                ));
+            }
+            drop(owner);
+            assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "requires LLVM panic unwinding; run explicitly with test codegen-backend=llvm"]
+    fn native_worker_panic_is_joined_and_reported_at_shutdown() {
+        let owner = CacheMaintenance::new();
+        owner
+            .begin_with(|sender| {
+                Ok(Some(std::thread::spawn(move || {
+                    let _sender = sender;
+                    panic!("injected cache worker panic");
+                })))
+            })
+            .unwrap();
+        assert!(
+            pollster::block_on(owner.shutdown())
+                .unwrap_err()
+                .contains("disconnected")
+        );
+        assert!(owner.state().unwrap().worker.is_none());
+        assert!(
+            owner
+                .begin_with(|_| panic!("closed owner admitted work"))
+                .is_err()
+        );
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn browser_shutdown_waits_for_work_and_closes_admission() {
+        let owner = CacheMaintenance::new();
+        let (release, gate) = oneshot::channel::<()>();
+        owner
+            .begin_with(|sender| {
+                let (abort, registration) = futures::future::AbortHandle::new_pair();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let _ = futures::future::Abortable::new(
+                        async move {
+                            gate.await.unwrap();
+                            sender.send(Ok(7)).unwrap();
+                        },
+                        registration,
+                    )
+                    .await;
+                });
+                Ok(Some(abort))
+            })
+            .unwrap();
+        let shutdown = owner.shutdown();
+        futures::pin_mut!(shutdown);
+        assert!(futures::poll!(&mut shutdown).is_pending());
+        assert!(
+            owner
+                .begin_with(|_| panic!("closed owner admitted work"))
+                .is_err()
+        );
+        release.send(()).unwrap();
+        shutdown.await.unwrap();
+        assert!(matches!(
+            owner.status().unwrap(),
+            CacheClearStatus::Completed { result: Ok(7), .. }
+        ));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn browser_drop_cancels_worker_continuations() {
+        let owner = CacheMaintenance::new();
+        let continued = std::rc::Rc::new(std::cell::Cell::new(false));
+        let worker_continued = continued.clone();
+        let (release, gate) = oneshot::channel::<()>();
+        let (finished, completion) = oneshot::channel();
+        owner
+            .begin_with(|sender| {
+                let (abort, registration) = futures::future::AbortHandle::new_pair();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let result = futures::future::Abortable::new(
+                        async move {
+                            let _ = gate.await;
+                            worker_continued.set(true);
+                            let _ = sender.send(Ok(1));
+                        },
+                        registration,
+                    )
+                    .await;
+                    finished.send(result.is_err()).unwrap();
+                });
+                Ok(Some(abort))
+            })
+            .unwrap();
+        drop(owner);
+        let _ = release.send(());
+        assert!(completion.await.unwrap());
+        assert!(!continued.get());
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -157,7 +399,7 @@ mod tests {
             let panel = application
                 .begin_with(|sender| {
                     worker = Some(sender);
-                    Ok(())
+                    Ok(None)
                 })
                 .unwrap();
             assert!(panel.is_pending());
@@ -188,7 +430,7 @@ mod tests {
         let first = application
             .begin_with(|sender| {
                 worker = Some(sender);
-                Ok(())
+                Ok(None)
             })
             .unwrap();
         assert_eq!(
@@ -205,7 +447,7 @@ mod tests {
         let second = application
             .begin_with(|sender| {
                 sender.send(Ok(2)).unwrap();
-                Ok(())
+                Ok(None)
             })
             .unwrap();
         assert_eq!(second, CacheClearStatus::Pending { operation: 2 });
@@ -225,7 +467,7 @@ mod tests {
         application
             .begin_with(|sender| {
                 drop(sender);
-                Ok(())
+                Ok(None)
             })
             .unwrap();
         let disconnected = application.status().unwrap();
@@ -255,14 +497,14 @@ mod tests {
         first
             .begin_with(|sender| {
                 worker = Some(sender);
-                Ok(())
+                Ok(None)
             })
             .unwrap();
         assert_eq!(second.status().unwrap(), CacheClearStatus::Idle);
         second
             .begin_with(|sender| {
                 sender.send(Ok(8)).unwrap();
-                Ok(())
+                Ok(None)
             })
             .unwrap();
         assert!(first.status().unwrap().is_pending());

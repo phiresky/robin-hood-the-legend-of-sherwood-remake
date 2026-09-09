@@ -817,7 +817,11 @@ impl InteractiveFrameSimulation {
                     dev,
                     &mut render_context,
                 );
-                post_render_engine_cleanup(&mut frame, host.transport.local_seat());
+                post_render_engine_cleanup(
+                    &mut frame,
+                    host.transport.local_seat(),
+                    runtime.playback().is_some(),
+                );
             }
             let menu_resources =
                 required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");
@@ -868,7 +872,7 @@ impl InteractiveFrameSimulation {
                     UiTaskOutcome::OptionsAccepted(result) => {
                         if result.changed {
                             host.application_context()
-                                .with_player_profiles_mut(|manager| {
+                                .update_and_retain_player_profiles(|manager| {
                                     let profile = manager
                                         .profiles
                                         .iter_mut()
@@ -880,17 +884,11 @@ impl InteractiveFrameSimulation {
                                     profile.gameplay_config = result.profile_gameplay_config;
                                     profile.multiplayer_config = result.multiplayer_config;
                                     profile.sound_config = result.profile_sound_config;
-                                    if let Err(error) =
-                                        host.application_context().persist_player_profiles(manager)
-                                    {
-                                        tracing::error!(
-                                            "Options: failed to save profile manager: {error:#}"
-                                        );
-                                    }
                                 })
                                 .unwrap_or_else(|error| {
                                     panic!("Options profile update failed: {error}")
-                                });
+                                })
+                                .log_persistence_error("Options: failed to save profile manager");
                         }
 
                         let effects = crate::host::FrontendPreferences::new(
@@ -1438,7 +1436,12 @@ impl InteractiveFrameSimulation {
         // the tick: the engine state was just replaced with a
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
+        let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
         let tick_exit_code = runtime.run_simulation(|| {
+            if replay_idle {
+                frame.admit_simulation();
+                return None;
+            }
             if execution == FrameExecutionMode::Rewind {
                 return None;
             }

@@ -127,6 +127,17 @@ impl PersistedPlayerRuntime {
 }
 
 impl PlayerRuntime {
+    pub(crate) fn remove_entity(&mut self, id: crate::element::EntityId) {
+        for seat in &mut self.seats {
+            seat.remove_entity(id);
+        }
+        self.selection_before_user_lock.retain(|&owner| owner != id);
+        self.qa_recording_for.retain(|&owner| owner != id);
+        self.auto_queue_active.retain(|&owner| owner != id);
+        // Saved macros and historical fog observations are identities, not
+        // live selections; they remain available for their normal consumers.
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             seats: vec![SeatState::default()],

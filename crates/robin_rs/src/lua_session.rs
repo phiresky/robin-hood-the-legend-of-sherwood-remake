@@ -550,11 +550,11 @@ mod tests {
         }
     }
 
-    fn spellforge_args() -> CliArgs {
-        let mut args = CliArgs {
+    fn spellforge_args() -> crate::main_entry::MissionLaunch {
+        let mut args = crate::main_entry::MissionLaunch::from(CliArgs {
             rollback_check: false,
             ..CliArgs::default()
-        };
+        });
         args.pending_lua_mission = Some(PendingLuaMission {
             rhm_basename: "test_mission".to_owned(),
             requires_spellforge: true,

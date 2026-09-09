@@ -1352,6 +1352,23 @@ impl AiController {
         std::mem::take(&mut self.outbox.actor.orders)
     }
 
+    /// Cancel queued inputs requiring the removed live target. Provenance
+    /// (`Stimulus::owner`), perception history, and callback continuations are
+    /// not live ownership: keep those for their existing dispatch policies.
+    pub(crate) fn remove_entity(&mut self, id: crate::element::EntityId) {
+        let keep = |stimulus: &Stimulus| {
+            stimulus
+                .info
+                .live_target()
+                .is_none_or(|target| target.get() != id.index())
+        };
+        self.stimulus_queue.retain(keep);
+        self.outbox.detection.stimuli.retain(keep);
+        self.outbox.actor.orders.retain(|intent| {
+            intent.antagonist != Some(id) && intent.target_actor != Some(id.index())
+        });
+    }
+
     /// Whether the AI has produced any orders this tick.
     pub fn has_pending_orders(&self) -> bool {
         !self.outbox.actor.orders.is_empty()

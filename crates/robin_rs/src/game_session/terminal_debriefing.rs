@@ -1022,7 +1022,8 @@ pub(super) fn drive_tick_exit_modals(
         // live debriefing here would retain a stale modal across the next load
         // and try to promote the campaign or submit another run.
         if let Some(outcome) = context.tick_exit_code {
-            super::session_policy::validate_replay_terminal(outcome, context.frame.post_commands());
+            super::session_policy::validate_replay_terminal(outcome, context.frame.post_commands())
+                .expect("invalid replay terminal");
             context.game.operation.set(GameCode::LevelInProgress);
         }
         return TerminalDebriefingProgress::Inactive;

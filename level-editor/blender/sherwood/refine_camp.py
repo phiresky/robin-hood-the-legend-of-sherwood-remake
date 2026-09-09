@@ -7,12 +7,15 @@ tracing; utensils, baskets, the fabric canopy and trestle joinery remain coarse.
 
 import json
 import math
+import sys
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
 
 ROOT=Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(Path(__file__).parent))
+from paths import DATA
 SIN=math.sin(math.radians(35))
 COS=math.cos(math.radians(35))
 NAME='06 Detail pass - camp furniture supports'
@@ -21,7 +24,7 @@ if NAME in bpy.data.collections:
 collection=bpy.data.collections.new(NAME)
 bpy.context.scene.collection.children.link(collection)
 material=bpy.data.materials['Sherwood measured Day projection']
-level=json.loads((ROOT/'datadirs/fullgame_gog_hackable/Data/Levels/Sherwood.rhp.json').read_text())
+level=json.loads((DATA/'Levels/Sherwood.rhp.json').read_text())
 
 
 def beam(name,a,b,radius):

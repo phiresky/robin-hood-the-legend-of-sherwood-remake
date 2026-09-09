@@ -9,35 +9,12 @@ use robin_engine::engine::LevelAssets;
 use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
 use robin_engine::replay_rankability::InputTaintKind;
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex, OnceLock};
-
-static NEXT_MISSION_REPLAY_TAINTS: OnceLock<Mutex<BTreeSet<InputTaintKind>>> = OnceLock::new();
-
-fn next_mission_replay_taints() -> &'static Mutex<BTreeSet<InputTaintKind>> {
-    NEXT_MISSION_REPLAY_TAINTS.get_or_init(|| Mutex::new(BTreeSet::new()))
-}
-
-/// Carry a run-level taint across a mission reconstruction boundary. Restart
-/// destroys the current recorder, but the retried mission must remain
-/// ineligible even if its own command stream is otherwise clean.
-pub(super) fn carry_replay_taint_to_next_mission(kind: InputTaintKind) {
-    next_mission_replay_taints()
-        .lock()
-        .expect("next-mission replay-taint mutex poisoned")
-        .insert(kind);
-}
-
-fn take_next_mission_replay_taints() -> BTreeSet<InputTaintKind> {
-    std::mem::take(
-        &mut *next_mission_replay_taints()
-            .lock()
-            .expect("next-mission replay-taint mutex poisoned"),
-    )
-}
+use std::sync::Arc;
 
 fn mission_start_input_taints(
     headless: bool,
     mission_start_reveal_all: bool,
+    restarted: bool,
 ) -> BTreeSet<InputTaintKind> {
     let mut taints = BTreeSet::new();
     if headless {
@@ -45,6 +22,9 @@ fn mission_start_input_taints(
     }
     if mission_start_reveal_all {
         taints.insert(InputTaintKind::DebugInputInjection);
+    }
+    if restarted {
+        taints.insert(InputTaintKind::MissionRestart);
     }
     taints
 }
@@ -158,6 +138,7 @@ fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
 /// Never overwrite the terminal attempt, including an explicit --record path.
 pub(super) fn restart_recording(
     control: &crate::replay_service::ReplayRecordingControl,
+    _recording_index: &crate::mission_replays::RecordingIndex,
     header: robin_engine::replay::ReplayHeader,
 ) -> std::io::Result<ReplayRecorder> {
     let mirror = control.begin_recording();
@@ -175,7 +156,7 @@ pub(super) fn restart_recording(
             .keep()
             .map_err(|error| error.error)?;
         tracing::info!("Recording restarted replay → {}", path.display());
-        crate::mission_replays::recording_started(&path);
+        _recording_index.recording_started(&path);
         let log_path = replay_debug_log_path(path.to_str().expect("replay directory is UTF-8"));
         if let Err(error) = crate::set_replay_log_file(&log_path) {
             tracing::warn!("Failed to create restarted replay debug log: {error}");
@@ -197,7 +178,7 @@ pub(super) fn restart_recording(
 pub(super) fn init_recording(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: &LevelAssets,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     mission_id: &str,
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
     engine_rng_seed: u64,
@@ -267,7 +248,7 @@ pub(super) fn init_recording(
                     Ok(rec) => {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            crate::mission_replays::recording_started(
+                            args.global_options.recording_index().recording_started(
                                 &archive.directory().join(archive.current_chunk()),
                             );
                             if let Err(error) = crate::set_replay_log_file(
@@ -293,24 +274,14 @@ pub(super) fn init_recording(
         };
 
     if let Some(recorder) = recorder.as_mut() {
-        for kind in mission_start_input_taints(args.headless, args.mission_start_reveal_all) {
+        for kind in mission_start_input_taints(
+            args.headless,
+            args.mission_start_reveal_all,
+            args.mission_restart,
+        ) {
             recorder.record_input_taint(kind, 0);
         }
     }
-    let carried_taints = take_next_mission_replay_taints();
-    if let Some(recorder) = recorder.as_mut() {
-        for kind in carried_taints {
-            recorder.record_input_taint(kind, 0);
-        }
-    } else if !carried_taints.is_empty() && !is_playing_back {
-        // A one-shot tooling mission intentionally owns no replay. Preserve
-        // restart evidence until the next actual recorder is constructed.
-        next_mission_replay_taints()
-            .lock()
-            .expect("next-mission replay-taint mutex poisoned")
-            .extend(carried_taints);
-    }
-
     args.global_options
         .replay_recording()
         .install_capture_recorder(recorder.clone());
@@ -374,7 +345,7 @@ fn should_record_local_replay(is_playing_back: bool, mission_start_map: bool) ->
 pub(super) fn init_replay_and_rollback(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: Arc<LevelAssets>,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     _mission_idx: usize,
     mission_id: &str,
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
@@ -573,17 +544,17 @@ mod tests {
 
     #[test]
     fn headless_and_debug_mission_start_paths_are_independently_tainted() {
-        assert!(mission_start_input_taints(false, false).is_empty());
+        assert!(mission_start_input_taints(false, false, false).is_empty());
         assert_eq!(
-            mission_start_input_taints(true, false),
+            mission_start_input_taints(true, false, false),
             BTreeSet::from([InputTaintKind::HeadlessAutomation])
         );
         assert_eq!(
-            mission_start_input_taints(false, true),
+            mission_start_input_taints(false, true, false),
             BTreeSet::from([InputTaintKind::DebugInputInjection])
         );
         assert_eq!(
-            mission_start_input_taints(true, true),
+            mission_start_input_taints(true, true, false),
             BTreeSet::from([
                 InputTaintKind::HeadlessAutomation,
                 InputTaintKind::DebugInputInjection,
@@ -660,14 +631,22 @@ mod tests {
     }
 
     #[test]
-    fn restart_taint_survives_the_recorder_reconstruction_boundary() {
-        take_next_mission_replay_taints();
-        carry_replay_taint_to_next_mission(InputTaintKind::MissionRestart);
+    fn restart_evidence_is_local_to_the_run_arguments() {
+        let launch = crate::main_entry::MissionLaunch::default();
+        let mut restarting = launch.clone();
+        restarting.mission_restart = true;
+        assert!(restarting.clone().mission_restart);
         assert_eq!(
-            take_next_mission_replay_taints(),
+            mission_start_input_taints(false, false, restarting.mission_restart),
             BTreeSet::from([InputTaintKind::MissionRestart])
         );
-        assert!(take_next_mission_replay_taints().is_empty());
+        assert!(mission_start_input_taints(false, false, launch.mission_restart).is_empty());
+        assert!(!launch.mission_restart);
+        assert!(!crate::main_entry::MissionLaunch::default().mission_restart);
+        // Configuration files cannot supply internal restart evidence.
+        let decoded: crate::main_entry::MissionLaunch =
+            serde_json::from_str(r#"{"mission-restart":true}"#).unwrap();
+        assert!(!decoded.mission_restart);
     }
 
     #[test]

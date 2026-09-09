@@ -172,7 +172,7 @@ impl TerminalDecisionOrder {
 pub(super) fn validate_replay_terminal(
     outcome: robin_engine::game_operation::GameCode,
     post_commands: &[robin_engine::player_command::PlayerInput],
-) {
+) -> Result<(), String> {
     let recorded = post_commands
         .iter()
         .filter_map(|input| match input.command {
@@ -180,11 +180,12 @@ pub(super) fn validate_replay_terminal(
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        recorded,
-        vec![outcome],
-        "replay terminal must match its recorded campaign update"
-    );
+    if recorded != [outcome] {
+        return Err(format!(
+            "replay terminal {outcome:?} must match exactly one recorded campaign update, got {recorded:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -507,6 +508,29 @@ pub(super) fn validate_modal_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_terminal_requires_exactly_one_matching_campaign_update() {
+        use robin_engine::game_operation::GameCode;
+        let update = |exit_code| {
+            robin_engine::player_command::PlayerInput::from(
+                PlayerCommand::ApplyQuitMissionUpdates {
+                    exit_code,
+                    difficulty: robin_engine::player_profile::DifficultyLevel::Medium,
+                    completed_at_unix_seconds: None,
+                    campaign_run_nonce: Some(1),
+                },
+            )
+        };
+        validate_replay_terminal(GameCode::LevelFailed, &[update(GameCode::LevelFailed)]).unwrap();
+        for commands in [
+            vec![],
+            vec![update(GameCode::LevelSucceeded)],
+            vec![update(GameCode::LevelFailed), update(GameCode::LevelFailed)],
+        ] {
+            assert!(validate_replay_terminal(GameCode::LevelFailed, &commands).is_err());
+        }
+    }
 
     #[test]
     fn sparse_checkpoint_restores_captured_and_new_same_id_batches() {

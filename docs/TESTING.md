@@ -239,3 +239,36 @@ result; compare exact ordering/RNG/hash contracts before updating goldens.
 Keep existing failures separate from new regressions. CI branch-protection
 configuration must select these named jobs in repository settings; committing
 the workflow itself does not change required checks.
+
+### Complete save/reload playback in Chromium
+
+With a matching built native game, wasm package (including replay admission),
+production site, and converted Leicester demo datadir, create a short idle
+recording containing ordinals 0–75. Build the playback regression fixture and
+run it through the production shell:
+
+```sh
+python3 scripts/validation/replay_history_fixture.py <root-chunk.rhrec.jsonl> target/history.rhrec.jsonl
+target/debug/examples/replay_to_compact target/history.rhrec.jsonl target/history.rhrec
+node scripts/wasm_production_startup_chrome.mjs --chrome /usr/bin/chromium \
+  --pkg <wasm-package> --datadir <browser-datadir> --site wasm-www/dist \
+  --replay target/history.rhrec --replay-eof \
+  --seek-replay 76 --seek-replay 105 --seek-replay 0 --seek-replay 133 \
+  --query wasm-threads=0 \
+  --output target/history-browser --mbit unlimited
+```
+
+The fixture includes two hash-checked save markers, abandoned gameplay, a loss,
+a win, and three restores (including a return to the older save). The harness
+requires decoded playback, a rendered frame, complete EOF without browser
+exceptions or replay desyncs, and exact ordinal positions after each seek.
+Inspect its screenshot for lingering terminal UI and its logs for all three
+restored boundaries. Their logged restored-state hashes must match
+the native run at the same ordinals. Play the same compact fixture natively
+with `--headless --no-sound --http-server 0 --replay target/history.rhrec`.
+
+The console-generated outcomes deliberately make this fixture unranked. Normal
+leaderboard eligibility and recorded post-restore hash validation are covered by the engine
+ranked-resimulation and client archive tests. The fixture retains original
+prefix hashes only: persisted-load reconciliation can change the state, so a
+pre-save checkpoint must not be reused as a post-load expected hash.

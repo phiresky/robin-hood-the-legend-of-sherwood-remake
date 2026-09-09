@@ -705,6 +705,12 @@ A list of which additional features we have added, which ones we might still wan
   standalone JSONL and compact replay files remain supported. Browser and native
   playback consume recorded terminal updates without opening live debriefing or
   leaderboard flows, so abandoned wins/losses can be followed by another restore.
+  Timeline scrubbing addresses recording ordinals, so repeated simulation
+  frames across saves and reloads remain individually reachable. Backward seeks
+  reconstruct from the mission start; forward seeks execute every intervening
+  record. Recorded simulation gates remain authoritative during modal playback.
+  Native and wasm use fixed-width random index draws for campaign names and
+  simulation shuffles, preserving the native stream across both platforms.
   Current native save schema is 75 and replay schema is 33. Missing or invalid
   referenced history is reported explicitly; it cannot become leaderboard
   evidence. Fully verified marker restores qualify for the normal leaderboard:

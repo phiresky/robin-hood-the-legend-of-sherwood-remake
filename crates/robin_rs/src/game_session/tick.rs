@@ -187,11 +187,14 @@ pub(super) fn sync_render_camera(frontend: &mut crate::host::HostFrontend) {
 pub(super) fn post_render_engine_cleanup(
     frame: &mut super::runtime::MissionFrame,
     local_seat: robin_engine::player_command::PlayerId,
+    playing_back: bool,
 ) {
-    frame.stage_post_commands().push(PlayerInput::new(
-        local_seat,
-        PlayerCommand::ClearNpcDoubleStatusBarFlags,
-    ));
+    if !playing_back {
+        frame.stage_post_commands().push(PlayerInput::new(
+            local_seat,
+            PlayerCommand::ClearNpcDoubleStatusBarFlags,
+        ));
+    }
 }
 
 /// Process every queued `/step-forward` / `/step-back` HTTP request,
@@ -416,6 +419,62 @@ pub(super) fn drain_steps(
                 }
             }
             crate::http_server::StepKind::GoToFrame { target, .. } => {
+                if let Some(player) = timeline.playback() {
+                    let from = player.current_frame();
+                    let total = player.total_frames();
+                    if target > total {
+                        step.respond_err(RpcError::invalid_request(format!(
+                            "replay position {target} exceeds {total} records"
+                        )));
+                        continue;
+                    }
+                    let result = (|| -> Result<(), RpcError> {
+                        if target < from {
+                            timeline
+                                .rewind_replay_to_start(manager, host, game, assets)
+                                .map_err(RpcError::internal)?;
+                            if let Some(scheduler) = session_modals.as_deref_mut() {
+                                *scheduler = Default::default();
+                                scheduler.checkpoint(0, &host.effects);
+                            }
+                        }
+                        // TODO: Cache raw ordinal checkpoints for faster long seeks.
+                        // The ordinary simulation-frame cache cannot cross load-backs.
+                        let current = timeline.playback().expect("active replay").current_frame();
+                        if target > current {
+                            let (_, dismissed) = run_forward_ticks_with_session_modals(
+                                manager,
+                                host,
+                                assets,
+                                dev,
+                                game,
+                                timeline,
+                                target - current,
+                                modal_policy.as_mut().expect("seek modal policy"),
+                                session_modals.as_deref_mut(),
+                            )?;
+                            accepted_dismissals.extend(dismissed);
+                        }
+                        if timeline.playback().expect("active replay").current_frame() != target {
+                            return Err(RpcError::internal(
+                                "replay seek did not reach requested position",
+                            ));
+                        }
+                        Ok(())
+                    })();
+                    match result {
+                        Ok(()) => step.respond_ok(serde_json::json!({
+                            "direction": "go-to-frame",
+                            "from_frame": from,
+                            "frame": target,
+                            "timeline_frame": timeline.frame_number(),
+                            "modals_dismissed": accepted_dismissals.len(),
+                            "modal_dismissals": accepted_dismissals,
+                        })),
+                        Err(error) => step.respond_err(error),
+                    }
+                    continue;
+                }
                 let from = timeline.frame_number();
                 use std::cmp::Ordering;
                 let mut result: Result<&'static str, RpcError> = match target.cmp(&from) {
@@ -781,7 +840,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // raw-checkpoint transition, not the save/load projection protocol.
         timeline.begin_recording(&mut transaction, record_live_input);
         transaction.admit_inline_transaction();
-        game.run_engine_tick(
+        let tick_exit_code = game.run_engine_tick(
             &mut host.frontend,
             &mut host.audio,
             &mut host.effects,
@@ -794,6 +853,15 @@ pub(super) fn run_forward_ticks_with_session_modals(
             false,
             false,
         );
+
+        if replay_timeline_after.is_some()
+            && let Some(code) = tick_exit_code
+        {
+            super::session_policy::validate_replay_terminal(code, transaction.post_commands())
+                .map_err(RpcError::internal)?;
+            game.operation
+                .set(robin_engine::game_operation::GameCode::LevelInProgress);
+        }
 
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
         if append_history && after.number() > frame {
