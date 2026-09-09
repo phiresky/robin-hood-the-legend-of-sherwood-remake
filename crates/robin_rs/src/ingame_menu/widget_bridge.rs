@@ -629,9 +629,9 @@ fn widget_state_to_sprite(state: UiState, enabled: bool) -> usize {
     }
 }
 
-/// Extract virtual-space position and size from a widget's bbox.
-fn widget_virt_rect(widget: &Widget) -> Option<(i32, i32, i32, i32)> {
-    let rect = widget.base().bbox.0?;
+/// Extract virtual-space position and size without borrowing widget state.
+fn virtual_rect(bbox: ScreenBBox) -> Option<(i32, i32, i32, i32)> {
+    let rect = bbox.0?;
     Some((
         rect.min().x as i32,
         rect.min().y as i32,
@@ -713,7 +713,7 @@ pub fn draw_widget_button(
     widget: &Widget,
     force_hover: bool,
 ) {
-    let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
+    let Some((vx, vy, w, h)) = virtual_rect(widget.base().bbox) else {
         return;
     };
     let base = widget.base();
@@ -840,14 +840,33 @@ pub fn draw_frame_bitmap_widgets(
         match widget {
             Widget::Picture(pic) => {
                 if let Some(surface_id) = pic.alternate_picture() {
-                    draw_widget_surface_id(renderer, transform, widget, surface_id, None, true);
+                    draw_surface_in_bbox(
+                        renderer,
+                        transform,
+                        widget.base().bbox,
+                        surface_id,
+                        None,
+                        true,
+                    );
                 } else if let Some(surface) = resolve(resource_id, sub_resource) {
-                    draw_widget_surface(renderer, transform, widget, surface, true);
+                    draw_menu_surface_in_bbox(
+                        renderer,
+                        transform,
+                        widget.base().bbox,
+                        surface,
+                        true,
+                    );
                 }
             }
             Widget::MultiPicture(_) | Widget::Button(_) => {
                 if let Some(surface) = resolve(resource_id, sub_resource) {
-                    draw_widget_surface(renderer, transform, widget, surface, true);
+                    draw_menu_surface_in_bbox(
+                        renderer,
+                        transform,
+                        widget.base().bbox,
+                        surface,
+                        true,
+                    );
                 }
             }
             _ => {}
@@ -866,11 +885,10 @@ pub fn draw_picture_alternate_surface(
     transparent: bool,
 ) {
     if let Some(surface_id) = widget.alternate_picture() {
-        let temp = Widget::Picture(widget.clone());
-        draw_widget_surface_id(
+        draw_surface_in_bbox(
             renderer,
             transform,
-            &temp,
+            widget.base.bbox,
             surface_id,
             Some((0, 0, width, height)),
             transparent,
@@ -933,7 +951,7 @@ pub fn draw_frame_labels(
         if frame.is_excluded(widget.id()) || !matches!(widget, Widget::Label(_)) {
             continue;
         }
-        let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
+        let Some((vx, vy, w, h)) = virtual_rect(widget.base().bbox) else {
             continue;
         };
         super::layout::render_text_in_box_font(
@@ -950,60 +968,49 @@ pub fn draw_frame_labels(
     }
 }
 
-pub fn draw_widget_surface(
+pub fn draw_menu_surface_in_bbox(
     renderer: &mut Renderer,
     transform: MenuTransform,
-    widget: &Widget,
+    bbox: ScreenBBox,
     surface: MenuSurface,
     transparent: bool,
 ) {
-    let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
-        return;
-    };
-    draw_menu_surface_rect(
+    draw_surface_in_bbox(
         renderer,
         transform,
+        bbox,
         surface.id,
-        vx,
-        vy,
-        w,
-        h,
-        0,
-        0,
-        surface.width,
-        surface.height,
+        Some((0, 0, surface.width, surface.height)),
         transparent,
     );
 }
 
-fn draw_widget_surface_id(
+fn draw_surface_in_bbox(
     renderer: &mut Renderer,
     transform: MenuTransform,
-    widget: &Widget,
+    bbox: ScreenBBox,
     surface_id: crate::renderer::SurfaceHandle,
     source_rect: Option<(i32, i32, i32, i32)>,
     transparent: bool,
 ) {
-    let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
+    let Some((vx, vy, w, h)) = virtual_rect(bbox) else {
         return;
     };
     let (src_x, src_y, src_w, src_h) = source_rect.unwrap_or((0, 0, w, h));
-    let (sx, sy) = transform.to_screen(vx, vy);
-    let src = BBox::from_coords(
-        src_x as f32,
-        src_y as f32,
-        (src_x + src_w) as f32,
-        (src_y + src_h) as f32,
+    draw_menu_surface_rect(
+        renderer,
+        transform,
+        surface_id,
+        vx,
+        vy,
+        w,
+        h,
+        src_x,
+        src_y,
+        src_w,
+        src_h,
+        transparent,
     );
-    let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
-    let flags = if transparent {
-        crate::renderer::BLIT_SOURCE_TRANSPARENT
-    } else {
-        0
-    };
-    renderer
-        .draw_surface(surface_id, Some(&src), Some(&dst), flags)
-        .expect("live widget upload");
 }
 
 /// Render a widget as a radio-button (input field sprite + label).
@@ -1018,7 +1025,7 @@ pub fn draw_widget_radio(
     widget: &Widget,
     selected: bool,
 ) {
-    let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
+    let Some((vx, vy, w, h)) = virtual_rect(widget.base().bbox) else {
         return;
     };
     let base = widget.base();
@@ -1295,6 +1302,19 @@ pub fn play_frame_widget_noise(
 #[cfg(test)]
 mod noisy_tracker_tests {
     use super::*;
+
+    #[test]
+    fn virtual_rect_preserves_empty_and_fractional_widget_geometry() {
+        assert_eq!(virtual_rect(ScreenBBox::new()), None);
+        assert_eq!(
+            virtual_rect(ScreenBBox::from_coords(-3.75, 2.5, 10.5, 17.75)),
+            Some((-3, 2, 14, 15))
+        );
+        assert_eq!(
+            virtual_rect(ScreenBBox::from_coords(10.0, 20.0, 10.0, 20.0)),
+            Some((10, 20, 0, 0))
+        );
+    }
 
     #[test]
     fn wide_settings_buttons_preserve_edges_and_fill_the_requested_width() {

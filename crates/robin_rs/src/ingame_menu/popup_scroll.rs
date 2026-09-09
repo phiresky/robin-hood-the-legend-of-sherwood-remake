@@ -450,10 +450,10 @@ impl PopupScrollModalState {
         }
 
         if let (Some(widget), Some(picture)) = (&self.picture_widget, self.picture) {
-            widget_bridge::draw_widget_surface(
+            widget_bridge::draw_menu_surface_in_bbox(
                 renderer,
                 self.transform,
-                &crate::widget::Widget::Picture(widget.clone()),
+                widget.base.bbox,
                 picture,
                 true,
             );
