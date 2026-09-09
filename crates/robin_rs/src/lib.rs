@@ -178,6 +178,7 @@ pub mod achievement_hud;
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod app_effect;
+pub mod application;
 pub mod autosave;
 pub mod bg_cache;
 pub mod blit_to_map;

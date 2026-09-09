@@ -122,7 +122,7 @@ fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
 
 #[test]
 fn ready_context_is_not_a_deserializable_data_wrapper() {
-    let syntax = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    let syntax = syn::parse_file(include_str!("../../src/application.rs")).unwrap();
     for name in [
         "ApplicationContext",
         "ReadyApplicationContext",
@@ -153,6 +153,44 @@ fn ready_context_is_not_a_deserializable_data_wrapper() {
             }
         }
     }
+}
+
+#[test]
+fn application_composition_is_separate_from_mission_host() {
+    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    assert!(!host.items.iter().any(|item| matches!(
+        item,
+        syn::Item::Struct(item)
+            if ["ApplicationContext", "ApplicationServices", "ReadyApplicationContext"]
+                .iter().any(|name| item.ident == *name)
+    )));
+
+    struct ServiceAssemblies(usize);
+    impl<'ast> Visit<'ast> for ServiceAssemblies {
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            if matches!(item.self_ty.as_ref(), syn::Type::Path(path)
+                if path.path.is_ident("ApplicationServices"))
+            {
+                self.0 += item
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        matches!(
+                            item, syn::ImplItem::Fn(method) if method.sig.ident == "compose"
+                        )
+                    })
+                    .count();
+            }
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+    let application = syn::parse_file(include_str!("../../src/application.rs")).unwrap();
+    let mut assemblies = ServiceAssemblies(0);
+    assemblies.visit_file(&application);
+    assert_eq!(
+        assemblies.0, 1,
+        "service ownership has one composition entry point"
+    );
 }
 
 #[test]
@@ -262,6 +300,8 @@ fn replay_authority_has_no_process_singleton() {
     }
     ReplayStatics
         .visit_file(&syn::parse_file(include_str!("../../src/replay_service.rs")).unwrap());
+    ReplayStatics
+        .visit_file(&syn::parse_file(include_str!("../../src/mission_replays.rs")).unwrap());
 }
 
 #[test]
