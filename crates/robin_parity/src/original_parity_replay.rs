@@ -48,9 +48,9 @@ use fs2::FileExt as _;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::coordinates::WorldPoint3D;
 use robin_engine::element::{Command, Entity, EntityId, EntityIdKind};
-use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 #[cfg(feature = "client")]
-use robin_engine::engine::{HostDisplayState, InputState};
+use robin_engine::engine::HostDisplayState;
+use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 use robin_engine::fast_find_grid::LineIndex;
 use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]

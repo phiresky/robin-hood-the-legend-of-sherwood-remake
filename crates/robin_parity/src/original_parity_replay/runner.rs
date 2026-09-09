@@ -377,8 +377,6 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     #[cfg(feature = "client")]
     let mut display = HostDisplayState::default();
     #[cfg(feature = "client")]
-    let mut input = InputState::default();
-    #[cfg(feature = "client")]
     let mut selected_view_element = None;
     if let Some(loaded) = &loaded_save_host {
         #[cfg(feature = "client")]
@@ -394,7 +392,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             "Original loaded-save adoption must invalidate trajectory preview"
         );
         let _post_load = loaded.post_load_output();
-        // This replay host and input state were constructed afresh, so all
+        // This replay host was constructed afresh, so all
         // explicit Original post-load transient clears already hold.
     }
     #[cfg(feature = "client")]
