@@ -303,7 +303,9 @@ ridges as well as grooves, avoiding the nearly black output of the old crop.
 `before` before applying the fix and `after` afterward. Outputs are in
 `work/sherwood-refinement/bark-inspection/`. The native scene keeps a
 `sherwood-before-synthesized-bark.blend` backup. Geometry and baseline meshes
-are unchanged; existing video files predate this texture correction.
+are unchanged. The close-up side-by-side video was refreshed with all 576
+refined textured frames rerendered after this correction; unchanged baseline,
+solid and wireframe passes were reused. Older video variants predate the fix.
 
 TODO: The original `pipeline/src/volume-fill.ts` synthesizes eligible partially
 visible tiles independently, but fully hidden faces still borrow/repeat donors.
