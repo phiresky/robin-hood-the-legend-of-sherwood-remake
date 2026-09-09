@@ -110,6 +110,12 @@ impl ReplayService {
                 return;
             }
         };
+        self.export_snapshot(snapshot, complete);
+    }
+
+    /// All consumers share this admission point, including callers that freeze
+    /// the recording before constructing an asynchronous result adapter.
+    fn export_snapshot(&self, snapshot: ReplaySnapshot, complete: ExportCompletion) {
         #[cfg(not(target_arch = "wasm32"))]
         match self.native_export_worker() {
             Ok(worker) => try_enqueue_native_replay_export(worker, snapshot, complete),
@@ -157,11 +163,15 @@ impl ReplayService {
                     self.0.store(false, Ordering::Release);
                 }
             }
-            let _release = ReleaseBusy(busy);
+            let release = ReleaseBusy(busy);
             // Yield to rendering before encoding; block-wise encoding remains
             // a separate task, not a reason to change the canonical format.
             gloo_timers::future::TimeoutFuture::new(0).await;
-            complete(snapshot.compact_sync());
+            let result = snapshot.compact_sync();
+            // A completion may immediately submit another export. Encoding is
+            // finished, so release admission before notifying the consumer.
+            drop(release);
+            complete(result);
         });
     }
 }
@@ -208,6 +218,9 @@ impl ReplayRecordingControl {
     }
 }
 impl ReplayExports {
+    pub(crate) fn same_service(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
         self.0.snapshot_bytes()
     }
@@ -217,8 +230,16 @@ impl ReplayExports {
     pub(crate) fn export(&self, complete: ExportCompletion) {
         self.0.export(complete);
     }
+    /// Enqueues an already frozen generation on the same bounded scheduler as
+    /// HTTP export. Errors (including saturation) arrive through `complete`.
+    pub(crate) fn export_snapshot(&self, snapshot: ReplaySnapshot, complete: ExportCompletion) {
+        self.0.export_snapshot(snapshot, complete);
+    }
 }
 impl ReplayLaunches {
+    pub(crate) fn same_service(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
         self.0.admit_pending(replay)
     }
@@ -481,10 +502,194 @@ impl ReplaySnapshot {
     }
 }
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests {
+    use super::*;
+    use crate::leaderboard_mission_end::{ActiveMissionReplayExporter, MissionEndReplayExporter};
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn browser_consumers_share_backpressure_and_release_it_after_error() {
+        let service = Arc::new(ReplayService::default());
+        let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
+        let mut admitted = leaderboard.begin().unwrap();
+        assert!(admitted.try_take().is_none());
+        let (tx, rx) = async_channel::bounded(1);
+        service
+            .exports()
+            .export(Box::new(move |result| tx.try_send(result).unwrap()));
+        assert!(
+            rx.recv()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("already running")
+        );
+        let mut completed = false;
+        for _ in 0..100 {
+            if let Some(result) = admitted.try_take() {
+                assert!(result.unwrap_err().contains("no active replay"));
+                completed = true;
+                break;
+            }
+            gloo_timers::future::TimeoutFuture::new(1).await;
+        }
+        assert!(completed, "admitted browser export did not complete");
+        assert!(
+            !service
+                .export_busy
+                .load(std::sync::atomic::Ordering::Acquire)
+        );
+
+        // Reverse admission and re-enter from the completion callback. Encoding
+        // errors must release the scheduler before notifying either consumer.
+        let (tx, rx) = async_channel::bounded(1);
+        let exports = service.exports();
+        service.exports().export(Box::new(move |result| {
+            assert!(result.unwrap_err().contains("no active replay"));
+            exports.export(Box::new(move |result| tx.try_send(result).unwrap()));
+        }));
+        let mut rejected = leaderboard.begin().unwrap();
+        assert!(
+            rejected
+                .try_take()
+                .unwrap()
+                .unwrap_err()
+                .contains("already running")
+        );
+        assert!(
+            rx.recv()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("no active replay")
+        );
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::leaderboard_mission_end::{ActiveMissionReplayExporter, MissionEndReplayExporter};
     use std::io::Write;
+
+    fn record_export_fixture(service: &ReplayService, mission: &str) {
+        let mut recorder = engine_replay::ReplayRecorder::with_writer(
+            Box::new(service.begin_recording()),
+            mission.to_owned(),
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                mission,
+                "export-map",
+                "export-map",
+            )
+            .unwrap(),
+            17,
+            robin_engine::engine::SimConfig::default(),
+            &robin_engine::campaign::Campaign::default(),
+        )
+        .unwrap();
+        assert!(recorder.write_frame(
+            0,
+            0,
+            1,
+            robin_engine::engine::SimulationFrameInput::default(),
+            Vec::new(),
+            None,
+        ));
+    }
+
+    #[test]
+    fn http_and_leaderboard_share_admission_and_keep_the_admitted_generation() {
+        let service = Arc::new(ReplayService::default());
+        // Hold the worker queue explicitly: scheduling and replacement order do
+        // not depend on thread timing or how quickly compact encoding finishes.
+        let (sender, worker) = std::sync::mpsc::sync_channel(1);
+        assert!(service.export_worker.set(Ok(sender)).is_ok());
+        record_export_fixture(&service, "first-export");
+        let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
+        let mut first = leaderboard.begin().unwrap();
+        assert!(first.try_take().is_none());
+
+        let (http_tx, http_rx) = std::sync::mpsc::channel();
+        service
+            .exports()
+            .export(Box::new(move |result| http_tx.send(result).unwrap()));
+        assert!(
+            http_rx
+                .recv()
+                .unwrap()
+                .unwrap_err()
+                .contains("worker is busy")
+        );
+
+        record_export_fixture(&service, "replacement-export");
+        let admitted = worker.try_recv().unwrap();
+        (admitted.complete)(admitted.snapshot.compact_sync());
+        let bytes = first.try_take().unwrap().unwrap();
+        let (_, replay) =
+            robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert_eq!(replay.header().mission_id, "first-export");
+
+        // Reverse the consumer order to prove leaderboard cannot bypass HTTP's
+        // admission either. Failed admission must leave the accepted job intact.
+        let (http_tx, http_rx) = std::sync::mpsc::channel();
+        service
+            .exports()
+            .export(Box::new(move |result| http_tx.send(result).unwrap()));
+        let mut rejected = leaderboard.begin().unwrap();
+        assert!(
+            rejected
+                .try_take()
+                .unwrap()
+                .unwrap_err()
+                .contains("worker is busy")
+        );
+        service.invalidate("retired during export");
+        let admitted = worker.try_recv().unwrap();
+        (admitted.complete)(admitted.snapshot.compact_sync());
+        let compact = http_rx.recv().unwrap().unwrap();
+        let (_, replay) = robin_replay_format::decode_compact(&compact).unwrap();
+        assert_eq!(replay.header().mission_id, "replacement-export");
+    }
+
+    #[test]
+    fn native_worker_recovers_after_encoding_failure_and_dropped_consumer() {
+        let service = Arc::new(ReplayService::default());
+        let mut writer = service.begin_recording();
+        writer.write_all(b"not replay json\n").unwrap();
+        writer.flush().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        service
+            .exports()
+            .export(Box::new(move |result| tx.send(result).unwrap()));
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+                .unwrap_err()
+                .contains("parse mirrored replay")
+        );
+
+        record_export_fixture(&service, "recovered-export");
+        // Dropping a UI task must not stop the shared worker.
+        let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
+        drop(leaderboard.begin().unwrap());
+        // A callback barrier drains the single queue slot before the next job.
+        // Access to the sender here is deliberately test-only.
+        let (tx, rx) = std::sync::mpsc::channel();
+        service
+            .native_export_worker()
+            .unwrap()
+            .send(NativeReplayExportJob {
+                snapshot: service.snapshot().unwrap(),
+                complete: Box::new(move |result| tx.send(result).unwrap()),
+            })
+            .unwrap();
+        let compact = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let (_, replay) = robin_replay_format::decode_compact(&compact).unwrap();
+        assert_eq!(replay.header().mission_id, "recovered-export");
+    }
 
     #[test]
     fn injected_capabilities_share_only_their_application_lifecycle() {
