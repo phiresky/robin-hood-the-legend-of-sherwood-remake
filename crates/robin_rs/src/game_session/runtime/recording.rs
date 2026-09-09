@@ -240,7 +240,11 @@ impl ReplayLifecycle {
 
     /// Only the original, successfully persisted bootstrap boundary can open
     /// a new linear attempt after a terminal record or foreign-save load.
-    pub(super) fn reopen_after_restore(&mut self, identity: ReplaySaveIdentity) -> bool {
+    pub(super) fn reopen_after_restore(
+        &mut self,
+        identity: ReplaySaveIdentity,
+        recording_index: &crate::mission_replays::RecordingIndex,
+    ) -> bool {
         let Some(header) = self.sealed_header.as_ref() else {
             return false;
         };
@@ -249,7 +253,11 @@ impl ReplayLifecycle {
             self.invalidate("replay unavailable after post-terminal load of a non-bootstrap save");
             return false;
         };
-        match crate::game_session::replay_init::restart_recording(&self.control, header.clone()) {
+        match crate::game_session::replay_init::restart_recording(
+            &self.control,
+            recording_index,
+            header.clone(),
+        ) {
             Ok(mut recorder) => {
                 recorder.write_save_marker(0, marker);
                 self.recorder = Some(recorder);
@@ -420,8 +428,14 @@ mod tests {
         assert!(lifecycle.saved_frames.is_empty());
         assert!(lifecycle.sealed_header.is_some());
         assert!(service.exports().snapshot().is_err());
-        assert!(!lifecycle.reopen_after_restore(later));
-        assert!(lifecycle.reopen_after_restore(bootstrap));
+        assert!(
+            !lifecycle
+                .reopen_after_restore(later, &crate::mission_replays::RecordingIndex::disabled())
+        );
+        assert!(lifecycle.reopen_after_restore(
+            bootstrap,
+            &crate::mission_replays::RecordingIndex::disabled()
+        ));
         assert!(lifecycle.is_recording());
         assert_eq!(lifecycle.validity, RecordingValidity::Linear);
         assert!(lifecycle.sealed_header.is_none());

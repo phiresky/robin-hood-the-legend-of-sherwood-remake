@@ -1910,6 +1910,7 @@ impl TimelineRuntime {
     /// records a load-back to that save's frame.
     pub(super) fn note_save_load_event(
         &mut self,
+        recording_index: &crate::mission_replays::RecordingIndex,
         event: crate::main_entry::SaveLoadEvent,
         frame: &mut MissionFrame,
         engine: &Engine,
@@ -1950,7 +1951,7 @@ impl TimelineRuntime {
                 is_continue,
             } => {
                 self.state_restored = true;
-                let reopened = self.replay.reopen_after_restore(identity);
+                let reopened = self.replay.reopen_after_restore(identity, recording_index);
                 if reopened {
                     self.replay_ordinal = ReplayFrameOrdinal::ZERO;
                     // The load replaced every effect admitted before it. Keep
@@ -2890,6 +2891,7 @@ mod tests {
         frame.bind_timeline(timeline.current_frame());
         timeline.begin_recording(&mut frame, true);
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 identity,
                 is_continue: false,
@@ -2923,6 +2925,7 @@ mod tests {
             .unwrap();
         next.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 identity: bootstrap_identity,
                 is_continue: false,
@@ -3056,6 +3059,7 @@ mod tests {
             let mut frame = MissionFrame::new(0);
             frame.bind_timeline(timeline.current_frame());
             timeline.note_save_load_event(
+                &crate::mission_replays::RecordingIndex::disabled(),
                 crate::main_entry::SaveLoadEvent::LoadApplied {
                     identity,
                     is_continue: false,
@@ -3188,6 +3192,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 identity: foreign.replay_identity().unwrap(),
                 is_continue: false,
@@ -3261,6 +3266,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 identity,
                 is_continue: false,
@@ -3381,6 +3387,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(live.current_frame());
         live.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::SaveWritten { identity },
             &mut frame,
             &engine,
@@ -3419,6 +3426,7 @@ mod tests {
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(live.current_frame());
         live.note_save_load_event(
+            &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 identity,
                 is_continue: true,

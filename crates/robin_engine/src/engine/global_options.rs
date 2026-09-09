@@ -338,6 +338,48 @@ impl RankedSimulationPolicy {
     }
 }
 
+// One bidirectional mapping, shared by profile startup and exact projection
+// construction. Exhaustive destructuring makes new simulation fields require an
+// explicit choice: profile-derived rule or independent construction authority.
+macro_rules! profile_gameplay_projection {
+    ($($field:ident),+ $(,)?) => {
+        impl SimConfig {
+            pub fn apply_profile_gameplay(&mut self, gameplay: &crate::gameplay_config::GameplayConfig) {
+                $(self.$field = gameplay.$field;)+
+            }
+
+            pub fn copy_gameplay_to_profile(&self, gameplay: &mut crate::gameplay_config::GameplayConfig) {
+                let Self {
+                    $($field,)+
+                    difficulty: _, amount_of_speaking: _,
+                    script_enabled: _, highlander: _, highlander2: _, golden_eye: _,
+                    ignore_default_loose: _, bypass_fog_sprites_crash: _,
+                    synchronous_pathfinding: _,
+                } = *self;
+                $(gameplay.$field = $field;)+
+            }
+        }
+    };
+}
+
+profile_gameplay_projection! {
+    fix_hard_reaction_times,
+    enable_unbinding,
+    clean_hands_npc_kills_invalidate,
+    reusable_cloaks,
+    reversible_background_patches,
+    item_gameplay,
+    noise_distraction_feedback,
+    sherwood_trading,
+    enable_timed_missions,
+    enable_dynamic_ambience,
+    diplomacy,
+    npc_faction_wars,
+    more_combat_gestures,
+    gesture_quality_damage,
+    fog_of_war,
+}
+
 impl SimConfig {
     /// Canonical current-feature configuration for a Standard ranked board.
     /// This complete literal represents fresh profile defaults and cannot be
@@ -662,6 +704,28 @@ mod tests {
     use super::{RankedSimulationConfigField, SimConfig};
     use crate::gameplay_config::ItemGameplayConfig;
     use crate::player_profile::DifficultyLevel;
+
+    #[test]
+    fn profile_gameplay_projection_round_trips_without_touching_launch_or_ui_settings() {
+        // Flip every boolean, including normally-default-on extension rules.
+        let mut wire = serde_json::to_value(SimConfig::default()).unwrap();
+        for value in wire.as_object_mut().unwrap().values_mut() {
+            if let Some(enabled) = value.as_bool() {
+                *value = serde_json::json!(!enabled);
+            }
+        }
+        let exact: SimConfig = serde_json::from_value(wire).unwrap();
+        let mut gameplay = crate::gameplay_config::GameplayConfig::default();
+        gameplay.plan_quick_actions = false;
+        gameplay.control_tactical_units = true;
+        exact.copy_gameplay_to_profile(&mut gameplay);
+        assert!(!gameplay.plan_quick_actions);
+        assert!(gameplay.control_tactical_units);
+        let mut round_trip = exact;
+        round_trip.apply_profile_gameplay(&crate::gameplay_config::GameplayConfig::default());
+        round_trip.apply_profile_gameplay(&gameplay);
+        assert_eq!(round_trip, exact);
+    }
 
     #[test]
     fn background_reversal_is_authoritative_and_not_ranked() {

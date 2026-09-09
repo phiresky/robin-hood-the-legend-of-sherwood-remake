@@ -237,6 +237,7 @@ fn prepare_replay_mission(
     let rng_seed = data.header().rng_seed;
     let sim_config = data.header().sim_config;
     let mut replay_args = args.clone();
+    replay_args.mission_restart = false;
     replay_args.replay_data = Some(data);
     replay_args.replay = None;
     // A queued replay can supersede a live custom/multiplayer mission. Its
@@ -824,9 +825,7 @@ pub(crate) async fn run_mission_headless(
             if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
                 return outcome;
             }
-            replay_init::carry_replay_taint_to_next_mission(
-                robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-            );
+            args.mission_restart = true;
             let outcome_sim_config = outcome.sim_config;
             campaign = outcome.campaign;
             if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
@@ -1069,6 +1068,9 @@ pub(crate) async fn run_session(
             MultiplayerSetupFailurePolicy::ReturnToMenu,
         )
         .await;
+        // This evidence belongs to the just-consumed reconstruction, not the
+        // next campaign mission. Only LevelRestart below installs it again.
+        session_args.mission_restart = false;
         campaign = mission_outcome.campaign;
         authoritative_rng_seed = mission_outcome.rng_seed;
         authoritative_sim_config = mission_outcome.sim_config;
@@ -1139,9 +1141,7 @@ pub(crate) async fn run_session(
                 );
                 replay_restart = replay_for_restart;
                 session_args.mp_continue_session = session_args.server;
-                replay_init::carry_replay_taint_to_next_mission(
-                    robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-                );
+                session_args.mission_restart = true;
                 tracing::info!("Restarting mission idx={}", mission_idx);
                 continue;
             }
@@ -1568,9 +1568,7 @@ pub(crate) async fn run_mission(
             if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
                 return outcome;
             }
-            replay_init::carry_replay_taint_to_next_mission(
-                robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-            );
+            args.mission_restart = true;
             let outcome_sim_config = outcome.sim_config;
             campaign = outcome.campaign;
             pending_replay = args.global_options.replay_launches().take_pending();
@@ -2296,7 +2294,10 @@ mod required_state_tests {
     #[test]
     fn replay_preparation_restores_all_frame_zero_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let args = crate::main_entry::CliArgs::default();
+        let args = crate::main_entry::CliArgs {
+            mission_restart: true,
+            ..Default::default()
+        };
 
         let (campaign, mission_idx, location, prepared_args, seed, config) =
             prepare_replay_mission(&mut profiles, &args, data, true).unwrap();
@@ -2310,6 +2311,10 @@ mod required_state_tests {
         assert_eq!(seed, 0x2020);
         assert!(config.highlander2);
         assert!(prepared_args.start_paused);
+        assert!(
+            !prepared_args.mission_restart,
+            "an admitted replay supersedes live restart evidence"
+        );
         assert!(prepared_args.replay.is_none());
         assert_eq!(
             prepared_args.replay_data.unwrap().header().sim_config,
