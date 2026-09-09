@@ -5,6 +5,31 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn http_transport_does_not_own_replay_storage() {
+    struct StorageDeclarations;
+    impl<'ast> Visit<'ast> for StorageDeclarations {
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            assert!(
+                ![
+                    "ReplaySpool",
+                    "ReplaySpoolState",
+                    "ReplaySpoolWriter",
+                    "ReplaySnapshot",
+                    "PendingReplay",
+                ]
+                .iter()
+                .any(|name| item.ident == name),
+                "{} belongs to the replay service, not HTTP transport",
+                item.ident
+            );
+            visit::visit_item_struct(self, item);
+        }
+    }
+    StorageDeclarations
+        .visit_file(&syn::parse_file(include_str!("../../src/http_server.rs")).unwrap());
+}
+
+#[test]
 fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
     struct ExecutionSignatures {
         found_advance: bool,
