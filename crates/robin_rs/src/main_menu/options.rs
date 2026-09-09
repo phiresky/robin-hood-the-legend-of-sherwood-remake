@@ -131,7 +131,7 @@ pub(crate) async fn show_main_menu_options(
 
     if outcome.changed {
         application_context
-            .with_player_profiles_mut(|mgr| {
+            .update_and_retain_player_profiles(|mgr| {
                 let profile = mgr
                     .profiles
                     .iter_mut()
@@ -141,11 +141,9 @@ pub(crate) async fn show_main_menu_options(
                 profile.gameplay_config = gameplay;
                 profile.multiplayer_config = multiplayer;
                 profile.sound_config = sound_cfg;
-                if let Err(err) = application_context.persist_player_profiles(mgr) {
-                    tracing::error!("Main menu Options: failed to save profile manager: {err:#}");
-                }
             })
-            .unwrap_or_else(|error| panic!("Main menu Options profile update failed: {error}"));
+            .unwrap_or_else(|error| panic!("Main menu Options profile update failed: {error}"))
+            .log_persistence_error("Main menu Options: failed to save profile manager");
     }
     if outcome.key_config_changed {
         application_context

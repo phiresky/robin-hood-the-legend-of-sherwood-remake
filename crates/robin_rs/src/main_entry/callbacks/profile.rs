@@ -2,7 +2,7 @@
 //! history promotion deduplicates against persisted attempt identities.
 use super::*;
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct ProfileClockCredits {
     // TODO(profile-time): these receipts are intentionally process-local.
     // Durable exactly-once time accounting across application restarts needs
@@ -10,7 +10,7 @@ pub(super) struct ProfileClockCredits {
     receipts: Vec<ClockReceipt>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct ClockReceipt {
     profile_id: u32,
     mission_id: u32,
@@ -61,13 +61,14 @@ pub(super) fn synchronize_metrics(
     profiles: &ProfileManager,
     seconds: u32,
 ) {
+    let mut staged_credits = credits.clone();
     let result = application
-        .with_player_profiles_mut(|manager| {
+        .update_and_retain_player_profiles(|manager| {
             let profile = manager
                 .get_active_mut()
                 .expect("profile synchronization requires an active profile");
             let credit =
-                credits.credit(profile.id, current_mission_id(campaign, profiles), seconds);
+                staged_credits.credit(profile.id, current_mission_id(campaign, profiles), seconds);
             robin_engine::player_profile::synchronize_with_campaign(
                 profile, campaign, profiles, credit,
             );
@@ -76,12 +77,12 @@ pub(super) fn synchronize_metrics(
             promote_recorded_history(profile, campaign, profiles);
             // Always retry persistence, even if this invocation added no time.
             // The receipt tracks the in-memory application, not disk success.
-            application.persist_player_profiles(manager)
         })
         .unwrap_or_else(|error| {
             panic!("profile synchronization lost its ApplicationContext: {error}")
         });
-    if let Err(error) = result {
+    *credits = staged_credits;
+    if let Err(error) = result.persistence {
         tracing::error!(
             "Profile synchronization persistence failed; retained in memory and retried on the next profile save/synchronization: {error}"
         );
@@ -104,19 +105,32 @@ impl RustCallbacks {
         campaign: &Campaign,
         profiles: &ProfileManager,
     ) {
-        application.with_player_profiles_mut(|manager| {
+        let promote = |manager: &mut robin_engine::player_profile::PlayerProfileManager| {
             promote_recorded_history(
-                manager.get_active_mut().expect("terminal promotion requires an active profile"),
+                manager
+                    .get_active_mut()
+                    .expect("terminal promotion requires an active profile"),
                 campaign,
                 profiles,
             );
-            if let Err(error) = application.persist_player_profiles(manager) {
-                #[cfg(not(target_arch = "wasm32"))]
-                panic!("failed to persist campaign history: {error}");
-                #[cfg(target_arch = "wasm32")]
-                tracing::warn!("Failed to persist campaign history in browser storage; keeping it in memory for this session: {error}");
-            }
-        }).unwrap_or_else(|error| panic!("campaign profile synchronization failed: {error}"));
+        };
+        let result = if cfg!(target_arch = "wasm32") {
+            application.update_and_retain_player_profiles(promote)
+        } else {
+            application.try_persist_player_profiles(|manager| {
+                promote(manager);
+                Ok(())
+            })
+        }
+        .unwrap_or_else(|error| panic!("campaign profile synchronization failed: {error}"));
+        if let Err(error) = result.persistence {
+            #[cfg(not(target_arch = "wasm32"))]
+            panic!("failed to persist campaign history: {error}");
+            #[cfg(target_arch = "wasm32")]
+            tracing::warn!(
+                "Failed to persist campaign history in browser storage; keeping it in memory for this session: {error}"
+            );
+        }
     }
 }
 

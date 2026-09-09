@@ -868,7 +868,7 @@ impl InteractiveFrameSimulation {
                     UiTaskOutcome::OptionsAccepted(result) => {
                         if result.changed {
                             host.application_context()
-                                .with_player_profiles_mut(|manager| {
+                                .update_and_retain_player_profiles(|manager| {
                                     let profile = manager
                                         .profiles
                                         .iter_mut()
@@ -880,17 +880,11 @@ impl InteractiveFrameSimulation {
                                     profile.gameplay_config = result.profile_gameplay_config;
                                     profile.multiplayer_config = result.multiplayer_config;
                                     profile.sound_config = result.profile_sound_config;
-                                    if let Err(error) =
-                                        host.application_context().persist_player_profiles(manager)
-                                    {
-                                        tracing::error!(
-                                            "Options: failed to save profile manager: {error:#}"
-                                        );
-                                    }
                                 })
                                 .unwrap_or_else(|error| {
                                     panic!("Options profile update failed: {error}")
-                                });
+                                })
+                                .log_persistence_error("Options: failed to save profile manager");
                         }
 
                         let effects = crate::host::FrontendPreferences::new(

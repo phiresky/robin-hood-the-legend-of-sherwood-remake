@@ -71,7 +71,7 @@ pub enum RankedVerifierLoadError {
     #[error("cannot confine the mission-owned asset resolver (status {0})")]
     AssetResolverConfinement(i32),
     #[error("load official profiles: {0}")]
-    Profiles(String),
+    Profiles(#[source] crate::profile_loading::ProfileLoadError),
     #[error("validate submitted campaign: {0}")]
     Campaign(#[from] super::replay_campaign_validation::ReplayCampaignValidationError),
     #[error("load deterministic resource archive {path}: {message}")]
@@ -151,7 +151,7 @@ pub fn prepare_ranked_replay_mission(
     }
     let options = robin_engine::engine::GlobalOptions::default();
     let profiles = crate::profile_loading::load_profiles(&options, &files)
-        .map_err(|error| RankedVerifierLoadError::Profiles(error.to_string()))?;
+        .map_err(RankedVerifierLoadError::Profiles)?;
     let validated_campaign = decode_and_validate_replay_campaign(
         starting_campaign_bytes,
         mission_id,

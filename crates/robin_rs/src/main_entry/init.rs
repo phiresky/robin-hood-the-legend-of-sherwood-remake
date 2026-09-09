@@ -73,8 +73,12 @@ pub enum InitError {
         source: anyhow::Error,
     },
 
-    #[error("{message}")]
-    ContentProfilesJson { path: &'static str, message: String },
+    #[error("{source}")]
+    ContentProfilesJson {
+        path: &'static str,
+        #[source]
+        source: robin_engine::profiles::ProfileJsonLoadError,
+    },
 
     #[error("Failed to open {path}: error {status}")]
     ContentProfilesOpen { path: &'static str, status: i32 },
@@ -811,16 +815,12 @@ fn load_profiles_with_files(
         })?
     {
         tracing::info!("Profiles: loading JSON dump {json_path}");
-        // TODO(typed-errors): make `ProfileManager::load_json` return a typed
-        // error. Its current String boundary has already discarded the
-        // underlying UTF-8 / serde_json source before startup sees it.
-        let mut mgr =
-            ProfileManager::load_json_with_files(json_path, files).map_err(|message| {
-                InitError::ContentProfilesJson {
-                    path: json_path,
-                    message,
-                }
-            })?;
+        let mut mgr = ProfileManager::load_json_with_files(json_path, files).map_err(|source| {
+            InitError::ContentProfilesJson {
+                path: json_path,
+                source,
+            }
+        })?;
         mgr.import_beam_mes_with_files(level_dir, files);
         return apply_soldier_profile_patches_with_files(mgr, files);
     }
@@ -1258,10 +1258,11 @@ mod tests {
         let invalid = SbFileSystem::new(invalid_vfs);
         let options = engine_api::GlobalOptions::default();
         assert!(load_profiles_with_files(None, &options, &valid).is_ok());
-        assert!(matches!(
-            load_profiles_with_files(None, &options, &invalid),
-            Err(InitError::ContentProfilesJson { .. })
-        ));
+        let error = load_profiles_with_files(None, &options, &invalid).unwrap_err();
+        assert!(matches!(error, InitError::ContentProfilesJson { .. }));
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<robin_engine::profiles::ProfileJsonLoadError>());
+        assert!(source.source().unwrap().is::<serde_json::Error>());
         assert!(load_profiles_with_files(None, &options, &valid).is_ok());
     }
 

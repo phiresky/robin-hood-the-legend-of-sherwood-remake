@@ -152,6 +152,7 @@ fn lookup(v: &[Option<String>], position: i32) -> Option<&str> {
 pub enum LoadError {
     Io(std::io::Error),
     Profiles(String),
+    ProfileJson(robin_engine::profiles::ProfileJsonLoadError),
     MissionNotFound(String),
     Level(String),
 }
@@ -161,13 +162,22 @@ impl std::fmt::Display for LoadError {
         match self {
             LoadError::Io(e) => write!(f, "{e}"),
             LoadError::Profiles(s) => write!(f, "profiles: {s}"),
+            LoadError::ProfileJson(source) => write!(f, "profiles: {source}"),
             LoadError::MissionNotFound(m) => write!(f, "mission '{m}' not in profile.cpf"),
             LoadError::Level(s) => write!(f, "level: {s}"),
         }
     }
 }
 
-impl std::error::Error for LoadError {}
+impl std::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(source) => Some(source),
+            Self::ProfileJson(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for LoadError {
     fn from(e: std::io::Error) -> Self {
@@ -371,7 +381,7 @@ fn load_profile_manager(datadir: &Path, files: &SbFileSystem) -> Result<ProfileM
         .map_err(|e| LoadError::Profiles(format!("inspect {}: error {e}", json_path.display())))?
     {
         return ProfileManager::load_json_with_files(&json_path.to_string_lossy(), files)
-            .map_err(LoadError::Profiles);
+            .map_err(LoadError::ProfileJson);
     }
     let cpf_path = data_dir.join("Configuration").join("profile.cpf");
     let mut file = files

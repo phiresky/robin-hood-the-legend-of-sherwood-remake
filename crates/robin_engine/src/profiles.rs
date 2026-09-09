@@ -1700,25 +1700,57 @@ impl ProfileManager {
 
 // ─── JSON loading ────────────────────────────────────────────────
 
+/// Preserve the loading stage and underlying decoding error for every host.
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileJsonLoadError {
+    #[error("Failed to open {path}: error {status}")]
+    Open { path: String, status: i32 },
+    #[error("Failed to read {path}: error {status}")]
+    Read { path: String, status: i32 },
+    #[error("Failed to decode {path} as UTF-8: {source}")]
+    Utf8 {
+        path: String,
+        #[source]
+        source: std::string::FromUtf8Error,
+    },
+    #[error("Failed to parse {path}: {source}")]
+    Json {
+        path: String,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
 impl ProfileManager {
     /// Load profiles from a JSON file (produced by cpf_to_json).
-    pub fn load_json(path: &str) -> Result<Self, String> {
+    pub fn load_json(path: &str) -> Result<Self, ProfileJsonLoadError> {
         Self::load_json_with_files(path, &crate::sbfile::SbFile::snapshot_legacy_file_system())
     }
 
     pub fn load_json_with_files(
         path: &str,
         files: &crate::sbfile::SbFileSystem,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ProfileJsonLoadError> {
         let mut file = files
             .open(path, crate::sbfile::SB_FILE_READ)
-            .map_err(|e| format!("Failed to open {}: error {}", path, e))?;
+            .map_err(|status| ProfileJsonLoadError::Open {
+                path: path.into(),
+                status,
+            })?;
         let mut bytes = vec![0u8; file.get_size() as usize];
         file.serialize_bytes(&mut bytes)
-            .map_err(|e| format!("Failed to read {}: error {}", path, e))?;
-        let data = String::from_utf8(bytes)
-            .map_err(|e| format!("Failed to decode {} as UTF-8: {}", path, e))?;
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse {}: {}", path, e))
+            .map_err(|status| ProfileJsonLoadError::Read {
+                path: path.into(),
+                status,
+            })?;
+        let data = String::from_utf8(bytes).map_err(|source| ProfileJsonLoadError::Utf8 {
+            path: path.into(),
+            source,
+        })?;
+        serde_json::from_str(&data).map_err(|source| ProfileJsonLoadError::Json {
+            path: path.into(),
+            source,
+        })
     }
 }
 
@@ -1727,6 +1759,36 @@ impl ProfileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_loading_retains_stage_path_and_decode_source() {
+        use std::error::Error;
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("typed-profiles/utf8.json", vec![0xff])
+            .unwrap();
+        vfs.install_preloaded_asset("typed-profiles/syntax.json", b"{\n broken".to_vec())
+            .unwrap();
+        let files = crate::sbfile::SbFileSystem::new(vfs);
+        let error = ProfileManager::load_json_with_files("typed-profiles/missing.json", &files)
+            .unwrap_err();
+        assert!(
+            matches!(error, ProfileJsonLoadError::Open { ref path, .. } if path == "typed-profiles/missing.json")
+        );
+        let error =
+            ProfileManager::load_json_with_files("typed-profiles/utf8.json", &files).unwrap_err();
+        assert!(matches!(error, ProfileJsonLoadError::Utf8 { .. }));
+        assert!(error.source().unwrap().is::<std::string::FromUtf8Error>());
+        let error =
+            ProfileManager::load_json_with_files("typed-profiles/syntax.json", &files).unwrap_err();
+        let source = error
+            .source()
+            .unwrap()
+            .downcast_ref::<serde_json::Error>()
+            .unwrap();
+        assert_eq!(source.line(), 2);
+        assert!(source.column() > 0);
+        assert!(error.to_string().contains("typed-profiles/syntax.json"));
+    }
 
     #[allow(dead_code)]
     mod original_data {

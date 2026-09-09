@@ -2109,17 +2109,15 @@ impl HostFrontend {
             // logged after the sim has already accepted the new position.
             let context = application_context.clone();
             context
-                .with_player_profiles_mut(|mgr| {
+                .update_and_retain_player_profiles(|mgr| {
                     let profile = mgr
                         .get_active_mut()
                         .expect("ApplicationContext lost its required active player profile");
                     profile.minimap_x = top_left.x;
                     profile.minimap_y = top_left.y;
-                    if let Err(e) = context.persist_player_profiles(mgr) {
-                        tracing::warn!("failed to persist minimap position to profile: {e}");
-                    }
                 })
-                .unwrap_or_else(|error| panic!("failed to persist minimap position: {error}"));
+                .unwrap_or_else(|error| panic!("failed to persist minimap position: {error}"))
+                .log_persistence_error("failed to persist minimap position to profile");
         }
         if fx.pending_swordfight_drag_ignore && self.input.is_dragging() {
             // Selected PC left Swordfighting this tick; if a drag was

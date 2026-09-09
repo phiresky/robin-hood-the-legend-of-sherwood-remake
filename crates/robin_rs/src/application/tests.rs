@@ -191,6 +191,126 @@ fn failed_profile_transactions_do_not_publish_profiles_or_settings() {
     assert_eq!(context.sim_config(), config);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn profile_persistence_validates_before_writing_and_has_explicit_failure_policy() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().to_str().unwrap();
+    let store = crate::player_profile_store::PlayerProfileStore::for_directory(directory);
+    let profiles = store.load().unwrap();
+    let context = ApplicationContext::complete(
+        store,
+        Default::default(),
+        profiles,
+        KeyConfigStore::new(directory.into()),
+        None,
+    )
+    .unwrap();
+    let archive = root.path().join("profiles.json");
+    let original = std::fs::read(&archive).unwrap();
+    let original_config = context.sim_config();
+    for retain in [false, true] {
+        let invalidate = |profiles: &mut PlayerProfileManager| {
+            profiles.active_index = None;
+        };
+        let result = if retain {
+            context.update_and_retain_player_profiles(invalidate)
+        } else {
+            context.try_persist_player_profiles(|profiles| {
+                invalidate(profiles);
+                Ok(())
+            })
+        };
+        assert!(result.unwrap_err().contains("leave an active profile"));
+        assert_eq!(std::fs::read(&archive).unwrap(), original);
+        assert_eq!(context.sim_config(), original_config);
+    }
+    assert!(
+        context
+            .try_persist_player_profiles(|profiles| {
+                profiles.get_active_mut().unwrap().name = "Must not publish".into();
+                Err::<(), _>("rejected".into())
+            })
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&archive).unwrap(), original);
+
+    // Block replacement, without permissions/root assumptions or fault globals.
+    std::fs::rename(&archive, root.path().join("original.json")).unwrap();
+    std::fs::create_dir(&archive).unwrap();
+    let change = |profiles: &mut PlayerProfileManager| {
+        profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Hard;
+        17
+    };
+    assert!(
+        context
+            .try_persist_player_profiles(|profiles| Ok(change(profiles)))
+            .is_err()
+    );
+    assert_eq!(context.sim_config(), original_config);
+    let retained = context.update_and_retain_player_profiles(change).unwrap();
+    assert_eq!(retained.value, 17);
+    assert!(retained.persistence.is_err());
+    assert_eq!(
+        context.active_profile_snapshot().unwrap().difficulty,
+        DifficultyLevel::Hard
+    );
+    assert_eq!(context.sim_config().difficulty, DifficultyLevel::Hard);
+
+    std::fs::remove_dir(&archive).unwrap();
+    std::fs::rename(root.path().join("original.json"), &archive).unwrap();
+    context.save_player_profiles().unwrap().persistence.unwrap();
+    let reloaded = crate::player_profile_store::PlayerProfileStore::for_directory(directory)
+        .load()
+        .unwrap();
+    assert_eq!(
+        reloaded.get_active().unwrap().difficulty,
+        DifficultyLevel::Hard
+    );
+    let published = context
+        .try_persist_player_profiles(|profiles| {
+            profiles.get_active_mut().unwrap().name = "Published".into();
+            Ok(23)
+        })
+        .unwrap();
+    assert_eq!(published.value, 23);
+    published.persistence.unwrap();
+    assert_eq!(
+        crate::player_profile_store::PlayerProfileStore::for_directory(directory)
+            .load()
+            .unwrap()
+            .get_active()
+            .unwrap()
+            .name,
+        "Published"
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn profile_publication_visibility_distinguishes_durability_from_replacement_failure() {
+    use crate::desktop_persistence::{PublicationFailure, PublicationStage};
+    for stage in [
+        PublicationStage::Prepare,
+        PublicationStage::Write,
+        PublicationStage::SyncFile,
+        PublicationStage::Replace,
+        PublicationStage::SyncDirectory,
+    ] {
+        let error = std::io::Error::other(PublicationFailure {
+            stage,
+            detail: "injected".into(),
+        });
+        assert_eq!(
+            profile_publication_visible(&error),
+            stage == PublicationStage::SyncDirectory
+        );
+    }
+    assert!(!profile_publication_visible(&std::io::Error::other(
+        "unclassified"
+    )));
+}
+
 #[test]
 #[cfg(all(panic = "unwind", not(target_arch = "wasm32")))]
 #[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
@@ -217,6 +337,24 @@ fn poisoned_simulation_lock_prevents_profile_callback_and_first_launch() {
     assert!(
         context
             .with_player_profiles_mut(|_| {
+                called = true;
+            })
+            .unwrap_err()
+            .contains("sim-config lock poisoned")
+    );
+    assert!(!called);
+    assert!(
+        context
+            .try_persist_player_profiles(|_| {
+                called = true;
+                Ok(())
+            })
+            .unwrap_err()
+            .contains("sim-config lock poisoned")
+    );
+    assert!(
+        context
+            .update_and_retain_player_profiles(|_| {
                 called = true;
             })
             .unwrap_err()
@@ -381,10 +519,7 @@ fn explicit_context_store_ignores_archive_directory_metadata() {
         None,
     )
     .unwrap();
-    context
-        .with_player_profiles(|profiles| context.persist_player_profiles(profiles))
-        .unwrap()
-        .unwrap();
+    context.save_player_profiles().unwrap().persistence.unwrap();
     assert!(
         context
             .active_profile_save_directory()
@@ -694,11 +829,7 @@ fn official_projection_context_preserves_the_exact_current_sim_config() {
         ApplicationContext::complete_official_projection(options, sim_config, None).unwrap();
 
     assert_eq!(context.sim_config(), sim_config);
-    assert!(
-        context
-            .persist_player_profiles(&context.player_profiles_snapshot().unwrap())
-            .is_err()
-    );
+    assert!(context.save_player_profiles().unwrap().persistence.is_err());
     assert!(context.cache_clear_status().is_err());
     assert_eq!(
         serde_json::to_value(context.recording_index()).unwrap()["directory"],
