@@ -2108,6 +2108,18 @@ mod tests {
     }
 
     #[test]
+    fn draw_capability_serialization_cannot_reconstruct_authority() {
+        let mut host = Host::scratch(800.0, 600.0);
+        let presentation = host.presentation();
+        let encoded = serde_json::to_string(&presentation.draw()).unwrap();
+        assert_eq!(encoded, "null");
+        match serde_json::from_str::<HostDraw<'_>>(&encoded) {
+            Ok(_) => panic!("diagnostics must not reconstruct live draw authority"),
+            Err(error) => assert!(error.to_string().contains("must be borrowed")),
+        }
+    }
+
+    #[test]
     fn queue_collapse_uses_fixed_ticks_not_capture_or_refresh_count() {
         let mut animation = crate::host::QueueStripAnimation::default();
         animation.prepare_fixed_tick(3);

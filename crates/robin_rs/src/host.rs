@@ -2488,14 +2488,29 @@ impl HostPresentation<'_> {
 }
 
 /// Immutable gameplay presentation inputs; GPU command buffers remain separately
-/// mutable in the renderer. Like other borrowed capabilities, this is not a
-/// serializable owner and cannot reconstruct live frontend authority.
+/// mutable in the renderer. Serialization is diagnostic-only and cannot
+/// reconstruct borrowed frontend authority.
 pub(crate) struct HostDraw<'a> {
     pub(crate) frontend: &'a HostFrontend,
     pub(crate) sound: &'a crate::sound::SoundManager,
     pub(crate) options: &'a engine_api::GlobalOptions,
     pub(crate) local_seat: robin_engine::player_command::PlayerId,
     graphic_config: robin_engine::graphic_config::GraphicConfig,
+}
+
+impl Serialize for HostDraw<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // No live frontend, sound, options, or application state escapes.
+        serializer.serialize_unit_struct("HostDraw")
+    }
+}
+
+impl<'de> Deserialize<'de> for HostDraw<'_> {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "draw authority must be borrowed from the live presentation host",
+        ))
+    }
 }
 
 impl HostDraw<'_> {
