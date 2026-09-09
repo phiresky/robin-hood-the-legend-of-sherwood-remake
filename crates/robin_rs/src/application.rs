@@ -788,29 +788,39 @@ impl ApplicationContext {
         Ok(read(&profiles))
     }
 
+    /// Infallible in-memory update. A returned value (including a persistence
+    /// receipt) is not a transaction decision: use `try_update_player_profiles`
+    /// when callback errors must discard the staged mutation.
     pub(crate) fn with_player_profiles_mut<R>(
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let result = {
-            let mut profiles = self
-                .required_services()?
-                .player_profiles
-                .lock()
-                .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
-            let result = update(&mut profiles);
-            let active = profiles.get_active().ok_or_else(|| {
-                "ApplicationContext profile mutation must leave an active profile".to_string()
-            })?;
-            // Publish before releasing the profile lock: concurrent updates
-            // through sibling contexts must not publish snapshots out of order.
-            self.refresh_profile_derived_state(
-                active.difficulty,
-                active.sound_config.amount_of_speaking,
-                active.gameplay_config,
-            )?;
-            result
-        };
+        self.try_update_player_profiles(|profiles| Ok(update(profiles)))
+    }
+
+    /// Stage one fallible mutation and publish it with its derived simulation
+    /// settings only on success. Callbacks must not reenter profile or simulation
+    /// accessors. External side effects are not rolled back by this transaction.
+    pub(crate) fn try_update_player_profiles<R>(
+        &self,
+        update: impl FnOnce(&mut PlayerProfileManager) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let mut profiles = self
+            .required_services()?
+            .player_profiles
+            .lock()
+            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+        // Lock before invoking user code, including callbacks that persist the
+        // staged profile. A poisoned configuration must not permit disk writes.
+        let mut state = self
+            .sim_config
+            .lock()
+            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
+        let mut staged = profiles.clone();
+        let result = update(&mut staged)?;
+        let next = profile_derived_state(&staged, &state)?;
+        *profiles = staged;
+        *state = next;
         Ok(result)
     }
 
@@ -825,14 +835,14 @@ impl ApplicationContext {
     ) -> Result<u32, String> {
         let services = self.required_services()?;
         let profile_id = {
-            // Keep this lock order (profiles, then keys) consistent for the
-            // only operation that must update both services as one domain
+            // Keep this lock order (profiles, keys, trust, then simulation)
+            // consistent for the operation that updates these services as one domain
             // transition. No guard escapes this synchronous method.
-            let mut profiles = services
+            let mut profiles_guard = services
                 .player_profiles
                 .lock()
                 .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
-            let mut key_configs = services
+            let mut key_configs_guard = services
                 .key_configs
                 .lock()
                 .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
@@ -840,12 +850,20 @@ impl ApplicationContext {
                 .spellforge_trust
                 .lock()
                 .map_err(|_| "ApplicationContext Spellforge-trust lock poisoned".to_string())?;
+            let mut state = self
+                .sim_config
+                .lock()
+                .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
 
-            if !profiles.default_profiles {
+            if !profiles_guard.default_profiles {
                 return Err("first-launch profile transition was already completed".to_string());
             }
-            let profiles_before = profiles.clone();
-            let key_configs_before = key_configs.clone();
+            let profiles_before = profiles_guard.clone();
+            let key_configs_before = key_configs_guard.clone();
+            let mut staged_profiles = profiles_guard.clone();
+            let mut staged_keys = key_configs_guard.clone();
+            let profiles = &mut staged_profiles;
+            let key_configs = &mut staged_keys;
 
             if let Some((name, difficulty)) = replacement {
                 if profiles.profiles.len() != 1 || profiles.active_index != Some(0) {
@@ -889,13 +907,11 @@ impl ApplicationContext {
                 "first-launch transition did not leave an active profile".to_string()
             })?;
             let profile_id = active.id;
-            let difficulty = active.difficulty;
-            let amount_of_speaking = active.sound_config.amount_of_speaking;
-            let gameplay_config = active.gameplay_config;
+            let next = profile_derived_state(profiles, &state)?;
 
             let persistence = services
                 .profile_store
-                .save(&profiles)
+                .save(profiles)
                 .map_err(|error| format!("persist player profile: {error}"))
                 .and_then(|()| {
                     key_configs
@@ -903,15 +919,18 @@ impl ApplicationContext {
                         .map_err(|error| format!("persist key configuration: {error}"))
                 });
             if let Err(error) = persistence {
-                *profiles = profiles_before;
-                *key_configs = key_configs_before;
-                let profile_rollback = services.profile_store.save(&profiles);
-                let key_rollback = key_configs.save();
+                let profile_rollback = services.profile_store.save(&profiles_before);
+                let key_rollback = key_configs_before.save();
                 return Err(format!(
                     "failed to complete durable first-launch profile transition: {error}; rollback profile={profile_rollback:?}, keys={key_rollback:?}"
                 ));
             }
-            self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
+            // Durable profile/key writes above retain their explicit best-effort
+            // rollback contract; trust revocation and save deletion are irreversible.
+            // TODO: durable multi-file transactions need a journal, not memory rollback.
+            *profiles_guard = staged_profiles;
+            *key_configs_guard = staged_keys;
+            *state = next;
             profile_id
         };
 
@@ -1165,30 +1184,30 @@ impl ApplicationContext {
             "ApplicationContext services requested before rust initialization".to_string()
         })
     }
+}
 
-    fn refresh_profile_derived_state(
-        &self,
-        difficulty: robin_engine::player_profile::DifficultyLevel,
-        amount_of_speaking: u16,
-        gameplay_config: robin_engine::gameplay_config::GameplayConfig,
-    ) -> Result<(), String> {
-        let mut state = self
-            .sim_config
-            .lock()
-            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
-        let mut sim_config = profile_sim_config(
-            &engine_api::GlobalOptions::default(),
-            difficulty,
-            amount_of_speaking,
-            gameplay_config,
-        );
-        // This is an explicit simulation-construction setting, not a profile
-        // preference. Profile updates must not reset official/parity authority.
-        sim_config.synchronous_pathfinding = state.synchronous_pathfinding;
-        *state = sim_config;
-
-        Ok(())
-    }
+fn profile_derived_state(
+    profiles: &PlayerProfileManager,
+    previous: &engine_api::SimConfig,
+) -> Result<engine_api::SimConfig, String> {
+    let active = profiles
+        .active_index
+        .and_then(|index| profiles.profiles.get(index))
+        .ok_or_else(|| {
+            "ApplicationContext profile mutation must leave an active profile".to_string()
+        })?;
+    profiles
+        .validate_archive()
+        .map_err(|error| format!("invalid staged player profiles: {error}"))?;
+    let mut config = profile_sim_config(
+        &engine_api::GlobalOptions::default(),
+        active.difficulty,
+        active.sound_config.amount_of_speaking,
+        active.gameplay_config,
+    );
+    // Construction authority is not a profile preference.
+    config.synchronous_pathfinding = previous.synchronous_pathfinding;
+    Ok(config)
 }
 
 fn profile_sim_config(
@@ -1281,6 +1300,177 @@ mod application_context_tests {
         let index = application.recording_index().clone();
         drop(application);
         assert!(index.refresh_index().is_err());
+    }
+
+    #[test]
+    fn failed_profile_transactions_do_not_publish_profiles_or_settings() {
+        let context = context(0, DifficultyLevel::Medium, KeyCode::F2, "transaction");
+        let before = serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap();
+        let config = context.sim_config();
+        let error = context
+            .try_update_player_profiles(|profiles| {
+                profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Hard;
+                Err::<(), _>("rejected mutation".to_string())
+            })
+            .unwrap_err();
+        assert_eq!(error, "rejected mutation");
+        assert_eq!(
+            serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(context.sim_config(), config);
+        let error = context
+            .with_player_profiles_mut(|profiles| {
+                profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Hard;
+                profiles.active_index = None;
+            })
+            .unwrap_err();
+        assert!(error.contains("leave an active profile"));
+        assert_eq!(
+            serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(context.sim_config(), config);
+        assert!(
+            context
+                .with_player_profiles_mut(|profiles| {
+                    profiles.active_index = Some(profiles.profiles.len());
+                })
+                .unwrap_err()
+                .contains("leave an active profile")
+        );
+        assert!(
+            context
+                .with_player_profiles_mut(|profiles| {
+                    let mut rules = DifficultyLevel::Medium.rules();
+                    rules.enemy_fighting_percent = u16::MAX;
+                    profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Custom(rules);
+                })
+                .unwrap_err()
+                .contains("invalid staged player profiles")
+        );
+        assert_eq!(
+            serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(context.sim_config(), config);
+    }
+
+    #[test]
+    #[cfg(all(panic = "unwind", not(target_arch = "wasm32")))]
+    #[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
+    fn poisoned_simulation_lock_prevents_profile_callback_and_first_launch() {
+        let context = context(
+            0,
+            DifficultyLevel::Medium,
+            KeyCode::F2,
+            "poisoned-transaction",
+        );
+        context
+            .required_services()
+            .unwrap()
+            .player_profiles
+            .lock()
+            .unwrap()
+            .default_profiles = true;
+        let before = serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = context.sim_config.lock().unwrap();
+            panic!("poison config for regression test");
+        }));
+        let mut called = false;
+        assert!(
+            context
+                .with_player_profiles_mut(|_| {
+                    called = true;
+                })
+                .unwrap_err()
+                .contains("sim-config lock poisoned")
+        );
+        assert!(!called);
+        assert!(
+            context
+                .complete_first_launch_profile(None, (800, 600))
+                .unwrap_err()
+                .contains("sim-config lock poisoned")
+        );
+        assert_eq!(
+            serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    #[cfg(all(panic = "unwind", not(target_arch = "wasm32")))]
+    #[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
+    fn poisoned_profile_lock_prevents_callback_and_configuration_changes() {
+        let context = context(0, DifficultyLevel::Medium, KeyCode::F2, "poisoned-profile");
+        let before = context.sim_config();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = context
+                .required_services()
+                .unwrap()
+                .player_profiles
+                .lock()
+                .unwrap();
+            panic!("poison profiles for regression test");
+        }));
+        let mut called = false;
+        assert!(
+            context
+                .with_player_profiles_mut(|_| {
+                    called = true;
+                })
+                .unwrap_err()
+                .contains("player-profile lock poisoned")
+        );
+        assert!(!called);
+        assert_eq!(context.sim_config(), before);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn concurrent_profile_transactions_publish_matching_configuration() {
+        let context = context(
+            0,
+            DifficultyLevel::Medium,
+            KeyCode::F2,
+            "concurrent-transaction",
+        );
+        std::thread::scope(|scope| {
+            for speech in [2, 9] {
+                let context = &context;
+                scope.spawn(move || {
+                    for _ in 0..100 {
+                        context
+                            .with_player_profiles_mut(|profiles| {
+                                profiles
+                                    .get_active_mut()
+                                    .unwrap()
+                                    .sound_config
+                                    .amount_of_speaking = speech;
+                            })
+                            .unwrap();
+                        // Inspect the joint snapshot in the transaction's lock order.
+                        let profiles = context
+                            .required_services()
+                            .unwrap()
+                            .player_profiles
+                            .lock()
+                            .unwrap();
+                        let config = context.sim_config.lock().unwrap();
+                        assert_eq!(
+                            profiles
+                                .get_active()
+                                .unwrap()
+                                .sound_config
+                                .amount_of_speaking,
+                            config.amount_of_speaking
+                        );
+                    }
+                });
+            }
+        });
     }
 
     #[test]
@@ -1840,7 +2030,15 @@ mod application_context_tests {
             amount_of_speaking: 1,
             ..Default::default()
         };
-        live.transport.mission_sim_config = Some(sealed);
+        let (channels, _incoming, _outgoing, _, _) = crate::multiplayer::NetChannels::new();
+        live.transport.install_session(
+            channels,
+            robin_engine::player_command::PlayerId::HOST,
+            "leicester".into(),
+            42,
+            sealed,
+            None,
+        );
         let effects = FrontendPreferences::new(
             keys,
             custom_keys,
@@ -1857,7 +2055,7 @@ mod application_context_tests {
             }
         );
         assert!(!live.frontend.planning().touch_latched());
-        assert_eq!(live.transport.mission_sim_config, Some(sealed));
+        assert_eq!(live.transport.mission_sim_config(), Some(sealed));
         assert_eq!(context.sim_config().amount_of_speaking, 7);
         for frontend in [&startup.frontend, &live.frontend] {
             assert_eq!(

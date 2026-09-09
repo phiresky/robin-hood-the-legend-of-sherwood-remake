@@ -563,7 +563,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
     fn save_profiles(&mut self) {
         match self
             .application_context
-            .with_player_profiles_mut(|mgr| self.application_context.persist_player_profiles(mgr))
+            .with_player_profiles(|mgr| self.application_context.persist_player_profiles(mgr))
         {
             Ok(Ok(())) => {}
             Ok(Err(err)) => tracing::error!("save_profiles failed: {err}"),

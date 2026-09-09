@@ -122,13 +122,21 @@ impl RecordingIndex {
         {
             self.cancelled
                 .store(true, std::sync::atomic::Ordering::Relaxed);
-            let mut scan = self
-                .scan
-                .lock()
-                .map_err(|_| "recording scan lock poisoned")?;
+            // Even a poisoned owner must retire its worker instead of detaching
+            // it when the application drops. Keep the failure observable.
+            let (mut scan, poisoned) = match self.scan.lock() {
+                Ok(scan) => (scan, false),
+                Err(error) => {
+                    tracing::error!("recording scan lock poisoned during shutdown");
+                    (error.into_inner(), true)
+                }
+            };
             scan.stopped = true;
             if let Some(worker) = scan.worker.take() {
-                return join_scan(worker);
+                join_scan(worker)?;
+            }
+            if poisoned {
+                return Err("recording scan lock poisoned during shutdown".into());
             }
         }
         Ok(())
@@ -223,9 +231,13 @@ fn backfill(
         }
         let entry = entry?;
         let path = entry.path();
-        if !path.to_string_lossy().ends_with(".rhrec.jsonl")
-            || entry.metadata()?.len() > 64 * 1024 * 1024
-        {
+        if !path.to_string_lossy().ends_with(".rhrec.jsonl") {
+            continue;
+        }
+        let metadata = entry.metadata()?;
+        // Do not block application shutdown opening a named pipe or device
+        // merely because it has a recording suffix.
+        if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
             continue;
         }
         let data = match robin_engine::replay::ReplayData::from_file(

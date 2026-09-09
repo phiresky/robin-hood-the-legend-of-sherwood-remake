@@ -617,7 +617,7 @@ fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Resul
 
     // The application-owned profile store wipes
     // `<save_directory>/Profile_NNN`.
-    application_context.with_player_profiles_mut(|mgr| {
+    application_context.try_update_player_profiles(|mgr| {
         let current_idx = mgr
             .profiles
             .iter()
@@ -638,7 +638,7 @@ fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Resul
         application_context
             .persist_player_profiles(mgr)
             .map_err(|error| format!("persist player deletion: {error:#}"))
-    })??;
+    })?;
     application_context.with_key_configs_mut(|store| {
         store.configs.remove(&deleted_profile_id);
         store
@@ -1705,6 +1705,39 @@ mod tests {
             })
             .unwrap();
         assert!(context.active_key_configs().is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn failed_profile_deletion_does_not_publish_staged_profiles() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let mut profiles = PlayerProfileManager::new(root_path.clone());
+        let first = profiles.create_profile("Robin".into(), DifficultyLevel::Medium);
+        profiles.create_profile("Marian".into(), DifficultyLevel::Hard);
+        profiles.set_active(first);
+        let context = ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&root_path),
+            GlobalOptions::default(),
+            profiles,
+            KeyConfigStore::new(root_path),
+            None,
+        )
+        .unwrap();
+        let before = serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap();
+        let config = context.sim_config();
+        // Reject the profile store's atomic rename without changing permissions.
+        std::fs::create_dir(root.path().join("profiles.json")).unwrap();
+        assert!(
+            delete_profile(&context, first)
+                .unwrap_err()
+                .contains("persist player deletion")
+        );
+        assert_eq!(
+            serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(context.sim_config(), config);
     }
 
     #[test]
