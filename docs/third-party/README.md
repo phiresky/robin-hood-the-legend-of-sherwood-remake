@@ -1,8 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **167 source records** with the available original text converted to Markdown, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports.
-
-This is a broad research collection, not an exhaustive archive of the internet. Records preserve the captured source text, relevant comments, and formatting while removing site navigation, advertisements, and footer chrome. Non-English originals follow their English translations in separate sections. Editorial notes distinguish missing or truncated material from captured text. The original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Hungarian, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
+**167 source records** covering Spellbound's 2002 game and its ports. Available source text is converted to Markdown, with English translations above non-English originals. Contains spoilers. Checked: **9 September 2026**.
 
 ## Start here
 
@@ -17,18 +15,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 
 ## Conversion and coverage
 
-All 167 records now contain available source text; none is wholly missing an original. This does **not** mean every linked page, comment, attachment, or video has been archived. The catalog below identifies records and original languages; each record's coverage notes describe what was actually captured.
-
-The manual-upload and web/browser recovery passes are integrated, including:
-
-- All reported comments for five Steam guides: 78 for Kisa, 16 for languages/fonts, 71 for Naxyň's FPS fix, 55 for Polish localization, and 11 for the secret-ending guide.
-- 178 GOG user reviews; 19 Metacritic user reviews, including spoiler-hidden text; and ten recovered critic excerpts, merged with earlier excerpts into 12 retained entries.
-- Fifteen additional GRYOnline chapters, 14 map links, and 21 shared comments. The Escape and The Letter remain separate records. Sina's walkthrough now includes both pages, covering missions 1–23.
-- Both PC Games review pages, all five DxWnd flipchain discussion pages, the second DxWnd hooking page, and all nine captured WineHQ messages/events.
-
-Some originals remain incomplete: the Gamez combined-page capture ends mid-sentence, the Jeuxvideo tips record includes only three of eleven linked tip bodies, and the Grouvee capture still has review/comment gaps. Magazine references are not article scans, and video metadata is not a transcript. See [access and coverage backlog](#access-and-coverage-backlog) and the individual records.
-
-Local raw captures are preserved under `originals/`, including manual uploads in `originals/tosort/` and browser/web recoveries in `originals/recovery/`. Mapping and provenance are recorded in `originals/conversion-mapping.json`, `originals/manual-captures.json`, and `originals/recovery/manifest.json`. These raw-source directories are local, gitignored material; the Markdown records are the tracked collection.
+Recovery and conversion are complete for the available captures, not every linked page or comment. Individual records document gaps. Raw captures and mapping manifests are stored locally in the gitignored `originals/` directory.
 
 ## Walkthroughs and mechanics
 
@@ -224,51 +211,17 @@ Local raw captures are preserved under `originals/`, including manual uploads in
 
 ## Adding sources
 
-Keep one record per distinct article or guide. Repeated links, platform-specific GameFAQs mirrors, tracking parameters, and translated storefront URLs do not necessarily represent independent sources.
-
-Preserve the raw capture and map it to its record before converting. Include the full available source text rather than substituting a summary; remove site chrome but retain relevant headings, lists, tables, code, image links/captions, and comments with authors and dates. Merge pagination in source order and deduplicate repeated content.
-
-For non-English material, place a complete translation under `## English translation` above the preserved source under `## Original text`. Translate every substantive detail, not just the gist. For primarily English pages with non-English comments, identify the translated comments clearly.
-
-Record author, publication or revision date when verified, access date, source URL, capture provenance, and actual coverage. Keep editorial observations separate from source text. For inaccessible or truncated material, retain the link and a concrete coverage note; never invent missing text. Check counts, representative source passages, translations, and Markdown formatting after conversion.
+- Keep one record per distinct source; merge pagination and remove duplicates.
+- Preserve full available text, relevant formatting, image links, and attributed comments; strip site chrome.
+- Put complete translations under `## English translation`, above `## Original text`.
+- Record attribution, dates, source URL, capture provenance, and coverage. Verify the conversion; never invent missing text.
 
 ## Research notes and open questions
 
-### Scope and method
+Sources include live pages, archives, and manual captures. Conversion does not verify their claims against gameplay or engine code. Open questions include mission ordering, collectibles versus scoring, The Letter's control-loss reports, scoring arithmetic, port chronology, edition-specific compatibility, and localized names/controls.
 
-Searches covered reviews, walkthroughs, scoring, combat, collectibles, technical support, storefronts, demos, ports, print archives, and recorded play. Searches used English and localized terms including *Komplettlösung*, *Test*, *soluce*, *návod*, *poradnik*, *прохождение*, *руководство*, *guía*, *análisis*, *recensione*, and *análise*. Irrelevant films, books, board games, and other Robin Hood video games were filtered out.
+### Remaining gaps
 
-Original pages were preferred. Recovery also used saved manual captures, archived pages, web-fetch extracts, and browser-rendered pagination or embedded page data. Cached and archived sources can reflect different dates. A retrieved excerpt supports only the text it exposes; index entries do not imply that every linked chapter or video was reviewed. No installers, mods, trainers, or compatibility changes were executed. No claim in this collection has been checked against the engine or reproduced in gameplay during this task.
-
-The records now contain converted source text and bibliographic information, with editorial notes kept distinct. Conversion does not independently verify a source's factual claims. Existing material in the neighboring interview directory is linked rather than duplicated.
-
-### Questions requiring game or edition verification
-
-| Question | Sources to compare | What remains open |
-| --- | --- | --- |
-| Campaign counts and ordering | [Carter](guides/gamefaqs-swcarter.md), [scoring](guides/steam-scoring.md), [Czech guide](guides/abcgames-czech.md), [Polish guide](guides/gry-online-walkthrough.md) | Separate named story missions, conditional missions, ambush variants, and walkthrough route order. |
-| Royal objects versus ending collectibles | [English ending guide](guides/steam-secret-ending.md), [Russian relic guide](guides/square-faction-relics.md), [scoring](guides/steam-scoring.md) | Scoring and ending requirements are different predicates; verify the Silver Arrow's role in each. |
-| The Letter loses player control | [Brad](reviews/brads-tech-talk.md), [scoring](guides/steam-scoring.md) | Determine whether the reported symptoms share a cause and which game versions are affected. |
-| Scoring arithmetic | [Scoring research](guides/steam-scoring.md) | Confirm rounding, exclusions, event classification, and purported maximums. |
-| Port release chronology | [RuneSoft](history/runesoft.md), [Wikipedia](history/wikipedia.md), [PCGamingWiki](technical/pcgamingwiki.md), [PPA](reviews/ppa-morphos.md) | Distinguish original ports, regional releases, later Intel builds, and digital rereleases. |
-| Modern compatibility | [GOG](history/gog-edition.md), [Ready2Play](technical/steam-ready2play.md), [PCGamingWiki](technical/pcgamingwiki.md) | Record exact package and wrapper before applying historical workarounds. |
-| Character names and controls | [Radu Bebe](guides/gamefaqs-radu-bebe.md), [ABCgames](guides/abcgames-czech.md) | Separate author-invented enemy names and localized key labels from canonical data. |
-
-These are editorial comparison questions, not newly established facts about implementation.
-
-### Access and coverage backlog
-
-- [Gamez.ru](guides/gamez-russian.md): all eleven sections in the supplied combined page are converted, but the article ends at “Самое время найти” (“It is time to find”). Its continuation is still missing.
-- [Jeuxvideo tips](guides/jeuxvideo-french-tips.md): Les chevaliers, Sherwood, and Cheat codes are included; eight other linked tip bodies remain unavailable.
-- [Grouvee](reviews/grouvee-player-records.md): a review expansion and linked comment bodies are still missing. A matching Metacritic cross-post is a separate source, not a verified replacement.
-- [Magazine index leads](reference/magazine-indexes.md): issue references do not supply the magazine articles or cover-disc footage. The [GameStar January 2003 walkthrough](guides/gamestar-january-2003.md) is separately converted from its six-page PDF.
-- [Metacritic](reviews/metacritic.md), [MobyGames](reviews/mobygames-reception.md), and [Speedrun.com](reference/speedrun-community.md): converted listings, excerpts, and captured discussions do not imply coverage of every linked review, leaderboard tab, or run.
-- [Video walkthrough](reference/video-walkthrough.md): no transcript, captions, or viewer comments are included. Annotate edition, difficulty, mission coverage, and timestamps before using it as visual evidence.
-- [Obligement's review index](https://obligement.free.fr/testsjeux.php) lists a December 2006 Robin Hood review by David Brunet; its body has not been located in this collection.
-- [Apollo port news](history/obligement-apollo-news.md): a late-2025 schedule report is not proof of a subsequent release.
-
-Deleted or approval-hidden comments, dynamic details, and linked binary/media contents may remain unavailable even when an article body is complete. Consult the per-record notes before treating a capture as exhaustive.
-
-### Supplied link coverage
-
-Distinct supplied URLs concerning this game have records. The two GameFAQs URLs were supplied more than once and each appears as one guide. The unrelated *Conquests of the Longbow* walkthrough has been excluded.
+- [Gamez.ru](guides/gamez-russian.md) ends mid-sentence; [Jeuxvideo tips](guides/jeuxvideo-french-tips.md) lacks eight linked tips; [Grouvee](reviews/grouvee-player-records.md) has review/comment gaps.
+- [Magazine references](reference/magazine-indexes.md) are not article scans; [video metadata](reference/video-walkthrough.md) is not a transcript. David Brunet's December 2006 Obligement review remains unlocated.
+- Review indexes, leaderboards, deleted/hidden comments, and linked media may be incomplete. See each record's notes. [Apollo schedule reports](history/obligement-apollo-news.md) do not establish a release.
