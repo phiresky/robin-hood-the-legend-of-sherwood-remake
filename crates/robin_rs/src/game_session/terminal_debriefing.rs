@@ -970,6 +970,19 @@ fn settle_terminal_debriefing(
         &context.assets.profile_manager,
     );
 
+    // This cooperative flow bypasses the synchronous Game terminal handlers
+    // that supplied the win/loss jingle in the original main loop.
+    if matches!(exit_code, GameCode::LevelSucceeded | GameCode::LevelFailed)
+        && let Some(backend) = context.audio.backend.as_mut()
+    {
+        let jingle = if exit_code == GameCode::LevelSucceeded {
+            crate::sound::Jingle::MissionWon
+        } else {
+            crate::sound::Jingle::MissionLost
+        };
+        context.host.audio.sound.play_jingle(jingle, backend);
+    }
+
     let Some(popup_title) = popup_title else {
         return TerminalDebriefingProgress::Complete;
     };

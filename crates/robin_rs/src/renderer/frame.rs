@@ -62,8 +62,8 @@ fn presentation_profile(
     }
 }
 
-/// An ordered composition plan; the snapshot is taken once, immediately
-/// before the first framebuffer-alpha draw, preserving legacy accumulation.
+/// Snapshot before each contiguous alpha-overlay group. Later overlays must
+/// include sprites rendered since the preceding group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum CompositionPass {
     Draw {
@@ -74,34 +74,31 @@ enum CompositionPass {
     SnapshotFramebuffer,
 }
 
-fn composition_plan(draws: &[QueuedDraw]) -> [Option<CompositionPass>; 3] {
-    match draws
-        .iter()
-        .position(|draw| matches!(draw.operation, DrawOperation::FramebufferAlpha))
-    {
-        Some(index) => [
-            Some(CompositionPass::Draw {
-                start: 0,
+fn composition_plan(draws: &[QueuedDraw]) -> Vec<CompositionPass> {
+    let mut plan = Vec::new();
+    let mut start = 0;
+    let mut clear = true;
+    for index in 0..draws.len() {
+        let alpha = matches!(draws[index].operation, DrawOperation::FramebufferAlpha);
+        let previous_alpha =
+            index > 0 && matches!(draws[index - 1].operation, DrawOperation::FramebufferAlpha);
+        if alpha && !previous_alpha {
+            plan.push(CompositionPass::Draw {
+                start,
                 end: index,
-                clear: true,
-            }),
-            Some(CompositionPass::SnapshotFramebuffer),
-            Some(CompositionPass::Draw {
-                start: index,
-                end: draws.len(),
-                clear: false,
-            }),
-        ],
-        None => [
-            Some(CompositionPass::Draw {
-                start: 0,
-                end: draws.len(),
-                clear: true,
-            }),
-            None,
-            None,
-        ],
+                clear,
+            });
+            plan.push(CompositionPass::SnapshotFramebuffer);
+            start = index;
+            clear = false;
+        }
     }
+    plan.push(CompositionPass::Draw {
+        start,
+        end: draws.len(),
+        clear,
+    });
+    plan
 }
 
 pub(super) struct FrameState {
@@ -1180,7 +1177,7 @@ impl FrameState {
         resources: &GpuResources,
         end: usize,
     ) {
-        for operation in composition_plan(&self.queued[..end]).into_iter().flatten() {
+        for operation in composition_plan(&self.queued[..end]) {
             match operation {
                 CompositionPass::SnapshotFramebuffer => self.copy_rt_to_alpha_source(encoder),
                 CompositionPass::Draw { start, end, clear } => self.encode_pass_range_to_target(
@@ -1460,42 +1457,66 @@ mod presentation_tests {
         assert_eq!(
             composition_plan(&draws),
             [
-                Some(CompositionPass::Draw {
+                CompositionPass::Draw {
                     start: 0,
                     end: 1,
                     clear: true
-                }),
-                Some(CompositionPass::SnapshotFramebuffer),
-                Some(CompositionPass::Draw {
+                },
+                CompositionPass::SnapshotFramebuffer,
+                CompositionPass::Draw {
                     start: 1,
                     end: 3,
                     clear: false
-                }),
+                },
             ]
         );
         // An alpha effect in UI must not cause a world snapshot.
         assert_eq!(
             composition_plan(&draws[..1]),
-            [
-                Some(CompositionPass::Draw {
-                    start: 0,
-                    end: 1,
-                    clear: true
-                }),
-                None,
-                None,
-            ]
+            [CompositionPass::Draw {
+                start: 0,
+                end: 1,
+                clear: true
+            },]
         );
         assert_eq!(
             composition_plan(&[]),
-            [
-                Some(CompositionPass::Draw {
+            [CompositionPass::Draw {
+                start: 0,
+                end: 0,
+                clear: true
+            },]
+        );
+    }
+
+    #[test]
+    fn door_overlay_snapshots_sprites_after_earlier_alpha_overlays() {
+        let draws = [
+            quad(DrawOperation::FramebufferAlpha),
+            quad(DrawOperation::StencilClear),
+            quad(DrawOperation::FramebufferAlpha),
+            quad(DrawOperation::FramebufferAlpha),
+        ];
+        assert_eq!(
+            composition_plan(&draws),
+            vec![
+                CompositionPass::Draw {
                     start: 0,
                     end: 0,
                     clear: true
-                }),
-                None,
-                None,
+                },
+                CompositionPass::SnapshotFramebuffer,
+                CompositionPass::Draw {
+                    start: 0,
+                    end: 2,
+                    clear: false
+                },
+                CompositionPass::SnapshotFramebuffer,
+                CompositionPass::Draw {
+                    start: 2,
+                    end: 4,
+                    clear: false
+                },
             ]
         );
     }

@@ -14,6 +14,7 @@ pub(in crate::game_session) struct MissionEndLeaderboardTaskState {
 enum MissionEndLeaderboardTaskPhase {
     Preparing(MissionEndPreparation),
     Visible(MissionEndLeaderboardScreen),
+    Unavailable(crate::save_recovery::ErrorNotice),
     Finished,
 }
 
@@ -39,6 +40,7 @@ impl MissionEndLeaderboardTaskState {
             &self.phase,
             MissionEndLeaderboardTaskPhase::Preparing(_)
                 | MissionEndLeaderboardTaskPhase::Visible(_)
+                | MissionEndLeaderboardTaskPhase::Unavailable(_)
         )
     }
 
@@ -59,8 +61,16 @@ impl MissionEndLeaderboardTaskState {
                     Ok(bundle) => bundle,
                     Err(error) => {
                         tracing::warn!("mission-end leaderboards unavailable: {error}");
-                        self.phase = MissionEndLeaderboardTaskPhase::Finished;
-                        return MissionEndLeaderboardTaskProgress::Finished;
+                        if !preparation.preferences().show_mission_end_boards {
+                            self.phase = MissionEndLeaderboardTaskPhase::Finished;
+                            return MissionEndLeaderboardTaskProgress::Finished;
+                        }
+                        self.phase = MissionEndLeaderboardTaskPhase::Unavailable(
+                            crate::save_recovery::ErrorNotice::new(format!(
+                                "Leaderboards unavailable: {error}"
+                            )),
+                        );
+                        return MissionEndLeaderboardTaskProgress::Pending;
                     }
                 };
                 let preferences = preparation.preferences().clone();
@@ -192,6 +202,14 @@ impl MissionEndLeaderboardTaskState {
                 };
                 let controller = screen.into_controller();
                 retire_or_detach(controller)
+            }
+            MissionEndLeaderboardTaskPhase::Unavailable(notice) => {
+                if notice.tick(window, renderer, resources, cursor) {
+                    self.phase = MissionEndLeaderboardTaskPhase::Finished;
+                    MissionEndLeaderboardTaskProgress::Finished
+                } else {
+                    MissionEndLeaderboardTaskProgress::Pending
+                }
             }
             MissionEndLeaderboardTaskPhase::Finished => MissionEndLeaderboardTaskProgress::Finished,
         }

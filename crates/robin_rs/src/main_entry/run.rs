@@ -511,6 +511,39 @@ async fn run_rust_game_inner(
                 continue;
             }
             MainMenuChoice::Start => {
+                // Play resumes the latest checkpoint through the same save
+                // preflight as Load, including its saved mission and campaign.
+                let Some(callbacks) =
+                    RustCallbacks::new_for_window(application_context.clone(), window).await?
+                else {
+                    if window.close_requested {
+                        return Ok(0);
+                    }
+                    continue;
+                };
+                if let Some(index) = callbacks.save_manager.find_resume_target() {
+                    let slot = callbacks.save_manager.slot_name(index)?;
+                    let mission_id = callbacks
+                        .save_manager
+                        .slot_mission_id(index)
+                        .expect("resume slot disappeared from the loaded save index");
+                    drop(callbacks);
+                    let outcome = Box::pin(run_session(
+                        window,
+                        campaign,
+                        std::sync::Arc::make_mut(&mut profiles),
+                        &application_context,
+                        args,
+                        Some((slot, mission_id)),
+                    ))
+                    .await;
+                    campaign = outcome.campaign;
+                    if outcome.result? == SessionResult::ExitRequested {
+                        return Ok(0);
+                    }
+                    continue;
+                }
+                drop(callbacks);
                 // Reset campaign for a new game
                 campaign.reset(&profiles, application_context.sim_config().difficulty);
                 tracing::info!("Campaign reset for new game");

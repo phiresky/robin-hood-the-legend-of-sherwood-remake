@@ -13,6 +13,10 @@ A list of which additional features we have added, which ones we might still wan
   before play; verification checks the replay against those settings and independently
   reconstructs the canonical fresh campaign. Each run exposes its exact gameplay settings.
 
+- **Scrollable mission debriefings.** Narrative, achievement conditions, and
+  statistics scroll within the parchment using the scrollbar, mouse wheel,
+  arrows, Page Up/Down, or Home/End. The footer controls stay visible.
+
 - **Earlier browser replay downloads.** Admitted replay URLs prepare their exact
   mission selection once and start a bounded batch of required files before the
   normal mission loader, which reuses those requests. Five 16 Mbit/s pairs saved
