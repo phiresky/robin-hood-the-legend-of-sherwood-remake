@@ -2,7 +2,7 @@
 
 use super::drain_steps;
 use super::modal_state::ActiveModal;
-use super::multiplayer::{drain_mission_network, host_scheduled_frame_deadline_ms};
+use super::multiplayer::drain_mission_network;
 use super::runtime::{
     FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionHostPhase,
     MissionIngress, MissionMutation, MissionRuntime, TickPolicy,
@@ -223,10 +223,7 @@ impl HeadlessMission {
             && world_view.host.transport.local_seat()
                 != robin_engine::player_command::PlayerId::HOST
         {
-            host_scheduled_frame_deadline_ms(
-                self.runtime.timeline.mp_host_frame_schedule,
-                self.runtime.timeline.frame_number(),
-            )
+            self.runtime.timeline.host_frame_deadline_ms()
         } else {
             None
         };
@@ -241,21 +238,10 @@ impl HeadlessMission {
             },
             exit_code,
         );
-        if let FrameOutcome::Continue { sleep_ms } = outcome
-            && let Some((hash_frame, hash)) = self.runtime.timeline.pending_mp_state_hash
-            && let Some(net) = world_view.host.transport.net()
-            && world_view.host.transport.local_seat()
-                == robin_engine::player_command::PlayerId::HOST
-        {
-            net.publish_frame(self.runtime.timeline.frame_number());
-            if let Err(error) = net.send_state_hash(
-                hash_frame,
-                hash,
-                self.runtime.timeline.frame_number(),
-                sleep_ms,
-            ) {
-                tracing::error!(%error, "multiplayer state hash send failed");
-            }
+        if let FrameOutcome::Continue { sleep_ms } = outcome {
+            self.runtime
+                .timeline
+                .publish_multiplayer_timing(&world_view.host.transport, sleep_ms);
         }
 
         let result = HeadlessFrameResult {

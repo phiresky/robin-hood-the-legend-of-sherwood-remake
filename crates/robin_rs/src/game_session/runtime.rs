@@ -26,11 +26,13 @@ pub(super) use robin_engine::replay::{ReplayFrameOrdinal, TimelineFrame};
 mod history;
 pub(super) mod reconciliation;
 mod recording;
+mod timing;
 use history::ReconstructionHistory;
 use reconciliation::NetworkReconciliation;
 #[cfg(test)]
 use recording::RecordingValidity;
 use recording::ReplayLifecycle;
+use timing::MultiplayerTiming;
 
 /// Result of asking the timeline for the next replay-owned debugger step.
 ///
@@ -1092,12 +1094,8 @@ pub(super) struct TimelineRuntime {
     pub(super) replay_finished_logged: bool,
 
     mp_admission: MultiplayerAdmission,
-    pub(super) mp_host_frame_schedule: Option<(u32, u32)>,
+    multiplayer_timing: MultiplayerTiming,
     pub(super) last_mp_rollback: Option<MultiplayerRollbackTelemetry>,
-    pub(super) last_mp_clock_ahead_log_ms: u32,
-    pub(super) last_mp_sleep_correction_log_ms: u32,
-    pub(super) last_mp_state_hash_frame: Option<u32>,
-    pub(super) pending_mp_state_hash: Option<(u32, u64)>,
 }
 
 /// Network admission state for the deterministic mission timeline.
@@ -1143,17 +1141,91 @@ impl TimelineRuntime {
                 (true, true) => MultiplayerAdmission::HostWaitingForBegin,
                 (true, false) => MultiplayerAdmission::PeerWaitingForSnapshot,
             },
-            mp_host_frame_schedule: None,
+            multiplayer_timing: MultiplayerTiming::default(),
             last_mp_rollback: None,
-            last_mp_clock_ahead_log_ms: 0,
-            last_mp_sleep_correction_log_ms: 0,
-            last_mp_state_hash_frame: None,
-            pending_mp_state_hash: None,
         }
     }
 
     pub(super) fn initially_paused(&self) -> bool {
         self.start_paused
+    }
+
+    pub(super) fn host_schedule_frame(&self) -> Option<u32> {
+        self.multiplayer_timing.schedule_frame()
+    }
+
+    pub(super) fn host_frame_deadline_ms(&self) -> Option<i64> {
+        self.multiplayer_timing.deadline_ms(self.frame_number())
+    }
+
+    pub(super) fn accept_host_frame_schedule(&mut self, frame: u32, delay_ms: u32) {
+        let now_ms = crate::window::process_uptime_ms();
+        if !self
+            .multiplayer_timing
+            .accept_schedule(frame, delay_ms, now_ms)
+        {
+            tracing::trace!(
+                clock_frame = frame,
+                current_sample_frame = self.host_schedule_frame(),
+                "multiplayer: ignored stale host frame schedule"
+            );
+            return;
+        }
+        tracing::info!(
+            host_clock_frame = frame,
+            ms_until_next_frame = delay_ms,
+            local_frame_at_receive = self.frame_number(),
+            deadline_delta_ms_for_local_frame = self
+                .host_frame_deadline_ms()
+                .expect("schedule just installed")
+                - i64::from(now_ms),
+            "multiplayer: received host frame schedule"
+        );
+    }
+
+    pub(super) fn clock_ahead_log_due(&mut self, now_ms: u32) -> bool {
+        self.multiplayer_timing.clock_ahead_log_due(now_ms)
+    }
+
+    pub(super) fn sleep_correction_log_due(&mut self, now_ms: u32) -> bool {
+        self.multiplayer_timing.sleep_correction_log_due(now_ms)
+    }
+
+    pub(super) fn sample_host_state_hash(&mut self, compute: impl FnOnce() -> u64) {
+        self.multiplayer_timing
+            .sample_hash(self.frame_number(), compute);
+    }
+
+    /// Both graphical and headless drivers publish through this consuming
+    /// transition. A failed send is not retried: NetChannels latches worker
+    /// failure for the next ingress poll, just as before this extraction.
+    pub(super) fn publish_multiplayer_timing(
+        &mut self,
+        transport: &crate::host::HostTransport,
+        remaining_sleep_ms: u32,
+    ) {
+        let Some(net) = transport.net() else { return };
+        if transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
+            return;
+        }
+        let Some(sample) = self.multiplayer_timing.take_publication() else {
+            return;
+        };
+        net.publish_frame(self.frame_number());
+        tracing::info!(
+            hash_frame = sample.frame,
+            clock_frame = self.frame_number(),
+            remaining_sleep_ms,
+            "multiplayer: host sending state hash timing sample"
+        );
+        if let Err(error) = net.send_state_hash(
+            sample.frame,
+            sample.hash,
+            self.frame_number(),
+            remaining_sleep_ms,
+        ) {
+            tracing::error!(%error, "multiplayer state hash publication failed");
+        }
     }
 
     pub(super) fn playback(&self) -> Option<&ReplayPlayer> {
@@ -1367,8 +1439,7 @@ impl TimelineRuntime {
             snapshot_frame: self.frame_number(),
         };
         self.network.abandon_prediction();
-        self.last_mp_state_hash_frame = None;
-        self.pending_mp_state_hash = None;
+        self.multiplayer_timing.reset_for_resynchronization();
     }
 
     pub(super) fn remember_local_mp_hash(&mut self, frame: u32, hash: u64) {
@@ -1398,8 +1469,7 @@ impl TimelineRuntime {
         for event in events {
             if matches!(event, MultiplayerAdmissionEvent::HostResynchronizing { .. }) {
                 self.network.clear_hashes();
-                self.last_mp_state_hash_frame = None;
-                self.pending_mp_state_hash = None;
+                self.multiplayer_timing.reset_for_resynchronization();
             }
             if matches!(
                 event,
@@ -1587,7 +1657,7 @@ impl TimelineRuntime {
     ) -> Option<u64> {
         self.phase = MissionPhase::Input;
         self.clock.begin(now_ms);
-        self.pending_mp_state_hash = None;
+        self.multiplayer_timing.begin_host_frame();
         let current_frame = self.frame_number();
         self.history
             .buffer
@@ -3548,6 +3618,30 @@ mod tests {
         );
         assert!(timeline.multiplayer_admission_paused(1_999));
         assert!(!timeline.multiplayer_admission_paused(2_000));
+    }
+
+    #[test]
+    fn both_driver_contracts_rearm_hash_publication_after_resynchronization() {
+        for contract in [FrameContract::Graphical, FrameContract::Headless] {
+            for from_network in [false, true] {
+                let mut timeline = timeline_for_trace_test(contract);
+                timeline.mp_admission = MultiplayerAdmission::Running;
+                timeline.adopt_frame(TimelineFrame::from_wire(25));
+                timeline.sample_host_state_hash(|| 1);
+                if from_network {
+                    timeline.apply_multiplayer_admission_events(&[
+                        MultiplayerAdmissionEvent::HostResynchronizing { frame: 25 },
+                    ]);
+                } else {
+                    timeline.begin_synchronized_step_resync();
+                }
+                assert!(timeline.multiplayer_timing.take_publication().is_none());
+                timeline.sample_host_state_hash(|| 2);
+                let sample = timeline.multiplayer_timing.take_publication().unwrap();
+                assert_eq!((sample.frame, sample.hash), (25, 2));
+                assert!(timeline.multiplayer_timing.take_publication().is_none());
+            }
+        }
     }
 
     #[test]
