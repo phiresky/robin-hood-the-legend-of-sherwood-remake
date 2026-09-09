@@ -698,13 +698,14 @@ pub(super) struct MissionRuntime {
 
 impl MissionRuntime {
     pub(super) fn new(
+        http: crate::http_server::SessionIngress,
         world: MissionWorld,
         timeline: TimelineRuntime,
         control: MissionControl,
         leaderboard: Option<super::leaderboard_runtime::MissionLeaderboardRuntime>,
     ) -> Self {
         Self {
-            http: crate::http_server::SessionIngress::attach(),
+            http,
             world,
             timeline,
             control,

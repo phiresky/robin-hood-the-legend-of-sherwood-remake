@@ -451,7 +451,13 @@ impl MissionBootstrap {
         };
         let control =
             MissionControl::new(timeline.initially_paused(), visual_shadow, visual_ambiance);
+        let http = self
+            .host
+            .application_context()
+            .attach_http_ingress()
+            .expect("mission RPC requires initialized application transport");
         MissionRuntime::new(
+            http,
             MissionWorld::new(self.host, self.game, manager, assets, self.loaded.dev),
             timeline,
             control,

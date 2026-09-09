@@ -5,6 +5,52 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let frame = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "MissionFrame" => Some(item),
+            _ => None,
+        })
+        .expect("live frame transaction");
+    for attribute in &frame.attrs {
+        if attribute.path().is_ident("derive") {
+            let derives = attribute
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                )
+                .unwrap();
+            for derive in derives {
+                assert!(
+                    !derive
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "Clone" || segment.ident == "Deserialize"),
+                    "derive data traits on the frame snapshot, not its live transaction authority"
+                );
+            }
+        }
+    }
+    for item in &syntax.items {
+        if let syn::Item::Impl(item) = item
+            && let syn::Type::Path(ty) = item.self_ty.as_ref()
+            && ty.path.is_ident("MissionFrame")
+            && let Some((_, trait_path, _)) = &item.trait_
+        {
+            assert!(
+                !trait_path
+                    .segments
+                    .iter()
+                    .any(|segment| segment.ident == "Clone"),
+                "applied cursors and recorder tokens must not be duplicated"
+            );
+        }
+    }
+}
+
+#[test]
 fn mission_journals_and_sprite_publication_are_private() {
     for (source, owner_name, fields) in [
         (

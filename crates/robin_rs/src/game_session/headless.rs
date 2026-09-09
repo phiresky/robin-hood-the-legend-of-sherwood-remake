@@ -456,6 +456,7 @@ mod tests {
             manager.engine.weather().ambiance,
         );
         let runtime = MissionRuntime::new(
+            crate::http_server::SessionIngress::detached_for_test(),
             MissionWorld::new(
                 host,
                 Game::default(),
@@ -532,6 +533,7 @@ mod tests {
             manager.engine.weather().ambiance,
         );
         let runtime = MissionRuntime::new(
+            crate::http_server::SessionIngress::detached_for_test(),
             MissionWorld::new(
                 host,
                 Game::default(),
