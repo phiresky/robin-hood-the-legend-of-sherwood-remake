@@ -859,8 +859,10 @@ fn read_fx_filename(data: &[u8], pos: &mut usize) -> Result<String, String> {
     let raw = &data[*pos..*pos + name_len];
     *pos += name_len;
     let mut name = String::from_utf8_lossy(raw).into_owned();
-    // Ensure .wav extension
-    if name_len > 4 && !name[name_len - 4..].starts_with('.') {
+    // Preserve the legacy byte-based extension rule, including short names.
+    // Lossy UTF-8 decoding can change byte lengths; never index the decoded
+    // string using the source length or assume that offset is a char boundary.
+    if name_len > 4 && raw[name_len - 4] != b'.' {
         name.push_str(".wav");
     }
     Ok(name)
@@ -1815,6 +1817,31 @@ mod tests {
         assert_eq!(elements.len(), 1);
         assert_eq!(elements[0].element_id, 42);
         assert_eq!(elements[0].file_name.as_deref(), Some("boom.wav"));
+    }
+
+    #[test]
+    fn fx_filenames_use_source_bytes_for_extension_detection() {
+        for (raw, expected) in [
+            (b"".as_slice(), ""),
+            (b"abc".as_slice(), "abc"),
+            (b"abcd".as_slice(), "abcd"),
+            (b"sound".as_slice(), "sound.wav"),
+            (b"sound.ogg".as_slice(), "sound.ogg"),
+            ("éabc".as_bytes(), "éabc.wav"),
+            ("é.wav".as_bytes(), "é.wav"),
+            (b"\xffa.wav".as_slice(), "�a.wav"),
+            (b"\xffabcd".as_slice(), "�abcd.wav"),
+        ] {
+            let mut data = (raw.len() as u16).to_le_bytes().to_vec();
+            data.extend_from_slice(raw);
+            data.extend_from_slice(&42u32.to_le_bytes());
+            let mut pos = 0;
+            assert_eq!(read_fx_filename(&data, &mut pos).unwrap(), expected);
+            assert_eq!(pos, raw.len() + 2);
+            assert_eq!(read_u32_le(&data, &mut pos).unwrap(), 42);
+        }
+        let mut pos = 0;
+        assert!(read_fx_filename(&[5, 0, b'a'], &mut pos).is_err());
     }
 
     #[test]
