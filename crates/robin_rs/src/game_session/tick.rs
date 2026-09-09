@@ -249,7 +249,9 @@ pub(super) fn drain_steps(
             }
             crate::http_server::StepKind::SetPaused { .. } => None,
         };
-        if let Err(error) = validate_multiplayer_step_request(host, timeline.mp_admission, &kind) {
+        if let Err(error) =
+            validate_multiplayer_step_request(host, timeline.multiplayer_admission(), &kind)
+        {
             step.respond_err(error);
             continue;
         }
@@ -681,11 +683,11 @@ pub(super) fn run_forward_ticks_with_session_modals(
             }
         }
         let frame = timeline.frame_number();
-        let buffered_frame = if frame < timeline.rewind_buffer.next_record_frame() {
-            let Some(recorded) = timeline.rewind_buffer.frame_for(frame).cloned() else {
+        let buffered_frame = if frame < timeline.retained_history().next_record_frame() {
+            let Some(recorded) = timeline.retained_history().frame_for(frame).cloned() else {
                 return Err(format!(
                     "cannot step frame {frame}: rewind command history starts at frame {}",
-                    timeline.rewind_buffer.oldest_cmd_frame()
+                    timeline.retained_history().oldest_cmd_frame()
                 ));
             };
             Some(recorded)
@@ -755,7 +757,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
                 .is(robin_engine::game_operation::GameCode::LevelInProgress),
             false,
         );
-        timeline.rewind_buffer.begin_frame(frame, engine, assets);
+        timeline.begin_history_frame(frame, engine, assets);
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
@@ -784,10 +786,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         host.frontend.engine_display = display;
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
         if append_history && after.number() > frame {
-            timeline.rewind_buffer.end_frame_input(simulation_frame);
-            if let Some(checker) = timeline.rollback_checker.as_mut() {
-                checker.check_after_commit(host, &timeline.rewind_buffer, engine);
-            }
+            timeline.commit_history_frame(simulation_frame, host, engine);
         }
         advanced += after
             .number()
@@ -903,7 +902,7 @@ pub(super) fn rewind_to_frame(
     timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
 ) -> Result<u32, String> {
-    let Some(oldest) = timeline.rewind_buffer.oldest_reachable_frame() else {
+    let Some(oldest) = timeline.retained_history().oldest_reachable_frame() else {
         return Err("rewind buffer empty".into());
     };
     if target < oldest {
@@ -912,13 +911,13 @@ pub(super) fn rewind_to_frame(
         ));
     }
     let from = timeline.frame_number();
-    timeline.rewind_buffer.begin_session();
+    timeline.begin_rewind_session();
     let restored = timeline.restore_retained_frame(
         manager,
         assets,
         super::runtime::TimelineFrame::from_wire(target),
     );
-    timeline.rewind_buffer.end_session();
+    timeline.end_rewind_session();
     if !restored {
         return Err("rewind_to failed (no matching snapshot)".into());
     }
@@ -1298,7 +1297,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(timeline.frame_number(), 5);
-        assert_eq!(timeline.rewind_buffer.next_record_frame(), 5);
+        assert_eq!(timeline.retained_history().next_record_frame(), 5);
         let expected = state_hash(&manager.engine);
         // Existing backwards controls remain available during recording.
         // Replaying the retained future must not append old timeline frames
@@ -1366,7 +1365,7 @@ mod tests {
             );
             assert_eq!(
                 serde_json::to_value(&frame.input).unwrap(),
-                serde_json::to_value(timeline.rewind_buffer.frame_for(tick).unwrap()).unwrap()
+                serde_json::to_value(timeline.retained_history().frame_for(tick).unwrap()).unwrap()
             );
         }
 
@@ -1646,9 +1645,15 @@ mod tests {
         .unwrap();
         assert_eq!(result.0, 1);
         assert_eq!(timeline.frame_number(), 1);
-        assert_eq!(timeline.rewind_buffer.next_record_frame(), 1);
+        assert_eq!(timeline.retained_history().next_record_frame(), 1);
         assert_eq!(timeline.replay_player.as_ref().unwrap().current_frame(), 2);
-        assert!(timeline.rewind_buffer.frame_for(0).unwrap().run_hourglass);
+        assert!(
+            timeline
+                .retained_history()
+                .frame_for(0)
+                .unwrap()
+                .run_hourglass
+        );
     }
 
     #[test]
@@ -1673,7 +1678,7 @@ mod tests {
         assert!(dismissed.is_empty());
         assert_eq!(timeline.frame_number(), 1);
         let input = timeline
-            .rewind_buffer
+            .retained_history()
             .frame_for(0)
             .expect("live step recorded in rewind history");
         assert!(input.run_post_initialize);
@@ -1918,7 +1923,7 @@ mod tests {
         assert_eq!(advanced, 1);
         assert!(
             !timeline
-                .rewind_buffer
+                .retained_history()
                 .frame_for(0)
                 .expect("recorded replay input")
                 .run_post_initialize,
@@ -1942,8 +1947,8 @@ mod tests {
             "cannot step replay at timeline frame 1: replay is finished at ordinal 1 of 1"
         );
         assert_eq!(timeline.frame_number(), 1);
-        assert_eq!(timeline.rewind_buffer.next_record_frame(), 1);
-        assert!(timeline.rewind_buffer.frame_for(1).is_none());
+        assert_eq!(timeline.retained_history().next_record_frame(), 1);
+        assert!(timeline.retained_history().frame_for(1).is_none());
         let player = timeline
             .replay_player
             .as_ref()
@@ -2009,6 +2014,6 @@ mod tests {
 
         assert_eq!(advanced, 1);
         assert_eq!(timeline.frame_number(), 251);
-        assert_eq!(timeline.rewind_buffer.next_record_frame(), 426);
+        assert_eq!(timeline.retained_history().next_record_frame(), 426);
     }
 }

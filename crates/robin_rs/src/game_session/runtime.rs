@@ -9,7 +9,6 @@ use super::replay_init::ReplayAndRollback;
 use crate::game::Game;
 use crate::host::Host;
 use crate::rewind::RewindBuffer;
-use crate::rollback_checker::RollbackChecker;
 use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::engine_manager::EngineManager;
@@ -21,6 +20,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub(super) use robin_engine::replay::{ReplayFrameOrdinal, TimelineFrame};
+
+mod history;
+pub(super) mod reconciliation;
+use history::ReconstructionHistory;
+use reconciliation::NetworkReconciliation;
 
 /// Result of asking the timeline for the next replay-owned debugger step.
 ///
@@ -955,9 +959,7 @@ pub(super) struct TimelineRuntime {
     current_frame: TimelineFrame,
     /// Dense host-record position, separate from the lockstep cursor.
     replay_ordinal: ReplayFrameOrdinal,
-    /// Network inputs admitted for authoritative frames not reached yet.
-    pub(super) pending_inputs:
-        BTreeMap<TimelineFrame, Vec<robin_engine::player_command::PlayerInput>>,
+    network: NetworkReconciliation,
     contract: FrameContract,
     phase: MissionPhase,
     clock: FrameClock,
@@ -969,8 +971,7 @@ pub(super) struct TimelineRuntime {
     recording_validity: RecordingValidity,
     bootstrap_save: Option<(ReplaySaveIdentity, robin_engine::replay::ReplaySaveMarker)>,
     pub(super) replay_player: Option<ReplayPlayer>,
-    pub(super) rollback_checker: Option<RollbackChecker>,
-    pub(super) rewind_buffer: RewindBuffer,
+    history: ReconstructionHistory,
     pub(super) start_paused: bool,
     pub(super) replay_finished_logged: bool,
     /// Recording side: complete save-payload identity → recorder frame, for every
@@ -985,11 +986,7 @@ pub(super) struct TimelineRuntime {
     /// as a live save load.
     pub(super) playback_pinned_saves: BTreeMap<u32, GameRuntimeSnapshot>,
 
-    pub(super) peer_hashes: BTreeMap<u32, u64>,
-    /// Pre-tick hashes of this prediction generation, retained for delayed
-    /// authoritative comparisons. Rollback invalidates every derived future.
-    local_mp_hashes: BTreeMap<u32, u64>,
-    pub(super) mp_admission: MultiplayerAdmission,
+    mp_admission: MultiplayerAdmission,
     pub(super) mp_host_frame_schedule: Option<(u32, u32)>,
     pub(super) last_mp_rollback: Option<MultiplayerRollbackTelemetry>,
     pub(super) last_mp_clock_ahead_log_ms: u32,
@@ -1026,7 +1023,7 @@ impl TimelineRuntime {
             state_restored: false,
             current_frame: TimelineFrame::ZERO,
             replay_ordinal: ReplayFrameOrdinal::ZERO,
-            pending_inputs: BTreeMap::new(),
+            network: NetworkReconciliation::default(),
             contract,
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
@@ -1037,14 +1034,11 @@ impl TimelineRuntime {
             recording_validity: RecordingValidity::Linear,
             bootstrap_save: None,
             replay_player: replay.player,
-            rollback_checker: replay.rollback_checker,
-            rewind_buffer: replay.rewind_buffer,
+            history: ReconstructionHistory::new(replay.rewind_buffer, replay.rollback_checker),
             start_paused: replay.start_paused,
             replay_finished_logged: false,
             recorded_save_frames_by_identity: BTreeMap::new(),
             playback_pinned_saves: BTreeMap::new(),
-            peer_hashes: BTreeMap::new(),
-            local_mp_hashes: BTreeMap::new(),
             mp_admission: match (wait_for_multiplayer_start, local_is_host) {
                 (false, _) => MultiplayerAdmission::NotRequired,
                 (true, true) => MultiplayerAdmission::HostWaitingForBegin,
@@ -1061,6 +1055,107 @@ impl TimelineRuntime {
 
     pub(super) fn initially_paused(&self) -> bool {
         self.start_paused
+    }
+
+    pub(super) fn multiplayer_admission(&self) -> MultiplayerAdmission {
+        self.mp_admission
+    }
+
+    pub(super) fn retained_history(&self) -> &RewindBuffer {
+        &self.history.buffer
+    }
+
+    pub(super) fn pending_input_frame_count(&self) -> usize {
+        self.network.pending_frame_count()
+    }
+
+    pub(super) fn reset_rollback_checker(&mut self) {
+        self.history.reset_checker();
+    }
+
+    pub(super) fn begin_rewind_session(&mut self) {
+        self.history.buffer.begin_session();
+    }
+
+    pub(super) fn end_rewind_session(&mut self) {
+        self.history.buffer.end_session();
+    }
+
+    pub(super) fn begin_history_frame(
+        &mut self,
+        frame: u32,
+        engine: &Engine,
+        assets: &LevelAssets,
+    ) {
+        assert_eq!(
+            frame,
+            self.frame_number(),
+            "history capture must use the authoritative timeline frame"
+        );
+        self.history.buffer.begin_frame(frame, engine, assets);
+    }
+
+    pub(super) fn commit_history_frame(
+        &mut self,
+        input: robin_engine::engine::SimulationFrameInput,
+        host: &mut Host,
+        engine: &Engine,
+    ) {
+        self.history.commit(input, host, engine);
+    }
+
+    pub(super) fn branch_history_at(&mut self, frame: u32) {
+        self.history.buffer.truncate_future(frame);
+        self.history.reset_checker();
+        self.network.invalidate_after(frame);
+    }
+
+    pub(super) fn checkpoint_history(&mut self, engine: &Engine) {
+        self.history
+            .buffer
+            .checkpoint_recent(self.frame_number(), engine);
+    }
+
+    pub(super) fn drain_network_inputs(
+        &mut self,
+        host: &mut Host,
+        manager: &mut EngineManager,
+        assets: &mut Arc<LevelAssets>,
+    ) -> super::multiplayer::NetDrainResult {
+        let result = super::multiplayer::drain_net_inputs(
+            host,
+            manager,
+            self.frame_number(),
+            &mut self.network,
+            assets,
+            &mut self.history.buffer,
+        );
+        if result.rewrote_sim_state {
+            self.history.reset_checker();
+        }
+        result
+    }
+
+    #[cfg(test)]
+    pub(super) fn append_history_fixture(
+        &mut self,
+        input: robin_engine::engine::SimulationFrameInput,
+    ) {
+        self.history.buffer.end_frame_input(input);
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_recent_history_fixture(&mut self) {
+        self.history.buffer.clear_recent_checkpoints();
+    }
+
+    #[cfg(test)]
+    pub(super) fn reconstruct_history_fixture(
+        &mut self,
+        assets: &LevelAssets,
+        frame: u32,
+    ) -> Option<Engine> {
+        self.history.buffer.rewind_to(assets, frame)
     }
 
     pub(super) const fn current_frame(&self) -> TimelineFrame {
@@ -1083,7 +1178,7 @@ impl TimelineRuntime {
     /// state at precisely this pre-transaction boundary.
     pub(super) fn adopt_frame(&mut self, frame: TimelineFrame) {
         self.current_frame = frame;
-        self.pending_inputs.retain(|&queued, _| queued >= frame);
+        self.network.discard_inputs_before(frame);
     }
 
     /// Restore the engine and every cursor/history consumer to a retained
@@ -1095,7 +1190,7 @@ impl TimelineRuntime {
         assets: &LevelAssets,
         target: TimelineFrame,
     ) -> bool {
-        let Some(engine) = self.rewind_buffer.rewind_to(assets, target.number()) else {
+        let Some(engine) = self.history.buffer.rewind_to(assets, target.number()) else {
             return false;
         };
         let mapped_ordinal = if let Some(player) = self.replay_player.as_mut() {
@@ -1111,10 +1206,7 @@ impl TimelineRuntime {
         if let Some(ordinal) = mapped_ordinal {
             self.replay_ordinal = ordinal;
         }
-        if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.reset();
-        }
-        self.rewind_buffer.truncate_recent_after(target.number());
+        self.history.finish_restore(target.number());
         true
     }
 
@@ -1132,21 +1224,7 @@ impl TimelineRuntime {
         assets: &LevelAssets,
     ) {
         self.adopt_frame(target);
-        self.rewind_buffer = RewindBuffer::new();
-        self.rewind_buffer
-            .seed_initial_anchor(target.number(), engine);
-        if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.reset();
-        }
-
-        // Save/load processing and normal replay injection both happen after
-        // `open_frame`. Replacing history discards that old-state pending
-        // capture, so reopen the same pre-tick frame against the adopted
-        // state. The Original likewise loads before this loop iteration's
-        // the original game's simulation update.
-        let current_frame = self.frame_number();
-        self.rewind_buffer
-            .begin_frame(current_frame, engine, assets);
+        self.history.adopt_snapshot(target.number(), engine, assets);
     }
 
     /// Called by the host operation that publishes a replacement snapshot and
@@ -1164,47 +1242,29 @@ impl TimelineRuntime {
         self.mp_admission = MultiplayerAdmission::HostWaitingForResyncBegin {
             snapshot_frame: self.frame_number(),
         };
-        self.pending_inputs.clear();
-        self.local_mp_hashes.clear();
-        self.peer_hashes.clear();
+        self.network.abandon_prediction();
         self.last_mp_state_hash_frame = None;
         self.pending_mp_state_hash = None;
     }
 
     pub(super) fn remember_local_mp_hash(&mut self, frame: u32, hash: u64) {
-        // Like the host publisher, retain the first pre-tick sample at this
-        // boundary. Paused presentations must not replace it with later state.
-        self.local_mp_hashes.entry(frame).or_insert(hash);
-        // Bounded independently of wall-clock speed and remote delivery.
-        while self.local_mp_hashes.len() > 256 {
-            self.local_mp_hashes.pop_first();
-        }
+        self.network.remember_local_hash(frame, hash);
     }
 
     pub(super) fn has_local_mp_hash(&self, frame: u32) -> bool {
-        self.local_mp_hashes.contains_key(&frame)
+        self.network.has_local_hash(frame)
     }
 
     pub(super) fn invalidate_local_mp_hashes_after(&mut self, frame: u32) {
-        // Input at frame F changes post-F state, not the pre-F hash.
-        self.local_mp_hashes.retain(|&f, _| f <= frame);
+        self.network.invalidate_after(frame);
     }
 
     pub(super) fn clear_local_mp_hashes(&mut self) {
-        self.local_mp_hashes.clear();
+        self.network.clear_local_hashes();
     }
 
     pub(super) fn take_due_mp_hash_comparisons(&mut self) -> Vec<(u32, u64, Option<u64>)> {
-        let mut comparisons = Vec::new();
-        while self
-            .peer_hashes
-            .first_key_value()
-            .is_some_and(|(&frame, _)| frame <= self.frame_number())
-        {
-            let (frame, remote) = self.peer_hashes.pop_first().expect("due hash exists");
-            comparisons.push((frame, remote, self.local_mp_hashes.get(&frame).copied()));
-        }
-        comparisons
+        self.network.take_due_comparisons(self.current_frame)
     }
 
     pub(super) fn apply_multiplayer_admission_events(
@@ -1213,8 +1273,7 @@ impl TimelineRuntime {
     ) {
         for event in events {
             if matches!(event, MultiplayerAdmissionEvent::HostResynchronizing { .. }) {
-                self.local_mp_hashes.clear();
-                self.peer_hashes.clear();
+                self.network.clear_hashes();
                 self.last_mp_state_hash_frame = None;
                 self.pending_mp_state_hash = None;
             }
@@ -1223,7 +1282,7 @@ impl TimelineRuntime {
                 MultiplayerAdmissionEvent::Disconnected
                     | MultiplayerAdmissionEvent::InitialSnapshotAdopted { .. }
             ) {
-                self.local_mp_hashes.clear();
+                self.network.clear_local_hashes();
             }
             self.mp_admission = match (self.mp_admission, *event) {
                 (
@@ -1369,7 +1428,8 @@ impl TimelineRuntime {
             frame.timeline_after.is_none(),
             "cannot reopen an already committed frame"
         );
-        self.rewind_buffer
+        self.history
+            .buffer
             .begin_frame(self.frame_number(), engine, assets);
         // Recording samples the final pre-command state, not the speculative
         // state captured before the late input arrived. Do not call open_frame:
@@ -1405,7 +1465,8 @@ impl TimelineRuntime {
         self.clock.begin(now_ms);
         self.pending_mp_state_hash = None;
         let current_frame = self.frame_number();
-        self.rewind_buffer
+        self.history
+            .buffer
             .begin_frame(current_frame, engine, assets);
 
         let recorder_hash = self.replay_recorder.as_ref().and_then(|_| {
@@ -1483,11 +1544,8 @@ impl TimelineRuntime {
             "simulation commit requested outside bookkeeping/presentation phase"
         );
         if policy.store_rewind_commands {
-            self.rewind_buffer
-                .end_frame_input(frame.authoritative_input());
-            if let Some(checker) = self.rollback_checker.as_mut() {
-                checker.check_after_commit(host, &self.rewind_buffer, &manager.engine);
-            }
+            self.history
+                .commit(frame.authoritative_input(), host, &manager.engine);
         }
     }
 
@@ -1766,7 +1824,7 @@ impl TimelineRuntime {
             player,
             self.current_frame,
             &mut self.playback_pinned_saves,
-            &mut self.rewind_buffer,
+            &mut self.history.buffer,
             host,
             game,
             manager,
@@ -1864,7 +1922,7 @@ impl TimelineRuntime {
         if controls.is_empty()
             || self.replay_recorder.is_none()
             || self.replay_player.is_some()
-            || self.frame_number() < self.rewind_buffer.next_record_frame()
+            || self.frame_number() < self.history.buffer.next_record_frame()
         {
             return;
         }
@@ -3199,12 +3257,12 @@ mod tests {
         );
 
         assert_eq!(
-            timeline.rewind_buffer.next_record_frame(),
+            timeline.retained_history().next_record_frame(),
             crate::rewind::SNAPSHOT_INTERVAL + 1
         );
         assert!(
             timeline
-                .rewind_buffer
+                .retained_history()
                 .commands_for(crate::rewind::SNAPSHOT_INTERVAL)
                 .is_some()
         );
@@ -3233,31 +3291,30 @@ mod tests {
     #[test]
     fn authoritative_frame_adoption_drops_only_stale_typed_inputs() {
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
-        timeline.pending_inputs.insert(
+        timeline.network.queue_input(
             TimelineFrame::from_wire(3),
-            vec![robin_engine::player_command::PlayerInput::host(
-                PlayerCommand::QuitMissionRequested,
-            )],
+            robin_engine::player_command::PlayerInput::host(PlayerCommand::QuitMissionRequested),
         );
-        timeline.pending_inputs.insert(
+        timeline.network.queue_input(
             TimelineFrame::from_wire(7),
-            vec![robin_engine::player_command::PlayerInput::host(
-                PlayerCommand::QuitMissionRequested,
-            )],
+            robin_engine::player_command::PlayerInput::host(PlayerCommand::QuitMissionRequested),
         );
 
         timeline.adopt_frame(TimelineFrame::from_wire(5));
 
         assert_eq!(timeline.frame_number(), 5);
         assert!(
-            !timeline
-                .pending_inputs
-                .contains_key(&TimelineFrame::from_wire(3))
-        );
-        assert!(
             timeline
-                .pending_inputs
-                .contains_key(&TimelineFrame::from_wire(7))
+                .network
+                .take_inputs(TimelineFrame::from_wire(3))
+                .is_empty()
+        );
+        assert_eq!(
+            timeline
+                .network
+                .take_inputs(TimelineFrame::from_wire(7))
+                .len(),
+            1
         );
     }
 
@@ -3313,10 +3370,10 @@ mod tests {
         timeline.mp_admission = MultiplayerAdmission::Running;
         timeline.adopt_frame(TimelineFrame::from_wire(35));
         timeline.remember_local_mp_hash(25, 7);
-        timeline.peer_hashes.insert(25, 7);
+        timeline.network.admit_remote_hash(25, 7);
         timeline.begin_synchronized_step_resync();
-        assert!(timeline.local_mp_hashes.is_empty());
-        assert!(timeline.peer_hashes.is_empty());
+        assert!(!timeline.has_local_mp_hash(25));
+        assert!(timeline.take_due_mp_hash_comparisons().is_empty());
         assert!(timeline.multiplayer_admission_paused(99));
         timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
             frame: 35,
@@ -3355,17 +3412,21 @@ mod tests {
         let mut timeline = multiplayer_timeline(false);
         timeline.remember_local_mp_hash(25, 10);
         timeline.remember_local_mp_hash(50, 20);
-        timeline.peer_hashes.insert(25, 10);
-        timeline.peer_hashes.insert(50, 30);
-        timeline.peer_hashes.insert(100, 40);
+        timeline.network.admit_remote_hash(25, 10);
+        timeline.network.admit_remote_hash(50, 30);
+        timeline.network.admit_remote_hash(100, 40);
         timeline.adopt_frame(TimelineFrame::from_wire(75));
         timeline.invalidate_local_mp_hashes_after(25);
         assert_eq!(
             timeline.take_due_mp_hash_comparisons(),
             vec![(25, 10, Some(10)), (50, 30, None)]
         );
-        assert_eq!(timeline.peer_hashes.get(&100), Some(&40));
         assert!(timeline.take_due_mp_hash_comparisons().is_empty());
+        timeline.adopt_frame(TimelineFrame::from_wire(100));
+        assert_eq!(
+            timeline.take_due_mp_hash_comparisons(),
+            vec![(100, 40, None)]
+        );
     }
 
     #[test]
@@ -3374,10 +3435,10 @@ mod tests {
         for frame in 0..300 {
             timeline.remember_local_mp_hash(frame, u64::from(frame));
         }
-        assert_eq!(timeline.local_mp_hashes.len(), 256);
-        assert!(!timeline.local_mp_hashes.contains_key(&0));
+        assert!(!timeline.has_local_mp_hash(43));
+        assert!(timeline.has_local_mp_hash(44));
         timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected]);
-        assert!(timeline.local_mp_hashes.is_empty());
+        assert!((0..300).all(|frame| !timeline.has_local_mp_hash(frame)));
     }
 
     #[test]
@@ -3385,7 +3446,7 @@ mod tests {
         let mut timeline = multiplayer_timeline(false);
         timeline.remember_local_mp_hash(25, 123);
         timeline.remember_local_mp_hash(25, 999); // repeated paused boundary
-        timeline.peer_hashes.insert(25, 456);
+        timeline.network.admit_remote_hash(25, 456);
         timeline.adopt_frame(TimelineFrame::from_wire(99));
         assert_eq!(
             timeline.take_due_mp_hash_comparisons(),

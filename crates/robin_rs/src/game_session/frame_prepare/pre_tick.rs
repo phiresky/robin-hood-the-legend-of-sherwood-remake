@@ -119,7 +119,7 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
                 local = format!("{local_hash:016x}"),
                 host = format!("{host_hash:016x}"),
                 host_schedule_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
-                pending_input_frames = runtime.pending_inputs.len(),
+                pending_input_frames = runtime.pending_input_frame_count(),
                 last_rollback_path,
                 last_rollback_earliest,
                 last_rollback_target,
@@ -201,12 +201,12 @@ fn prepare_pre_tick_timeline(
 
     let mut consumed_buffered = false;
     let current_frame = runtime.frame_number();
-    if !rewind_active && !paused && current_frame < runtime.rewind_buffer.next_record_frame() {
-        let Some(recorded) = runtime.rewind_buffer.frame_for(current_frame).cloned() else {
+    if !rewind_active && !paused && current_frame < runtime.retained_history().next_record_frame() {
+        let Some(recorded) = runtime.retained_history().frame_for(current_frame).cloned() else {
             return Err(format!(
                 "cannot replay frame {}: rewind command history starts at frame {}",
                 current_frame,
-                runtime.rewind_buffer.oldest_cmd_frame()
+                runtime.retained_history().oldest_cmd_frame()
             ));
         };
         if runtime.replay_player.is_some() && frame.external_actions.is_empty() {
@@ -222,7 +222,7 @@ fn prepare_pre_tick_timeline(
                 "Auto-replay interrupted by live input; truncating buffer at {}",
                 current_frame
             );
-            runtime.rewind_buffer.truncate_future(current_frame);
+            runtime.branch_history_at(current_frame);
         }
     }
     Ok(PreTickTimelineOutput {
@@ -554,9 +554,7 @@ mod tests {
         // Commit two ordinary historical frames before opening this host
         // iteration, exactly as the graphical driver does before local UI.
         for number in 0..2 {
-            timeline
-                .rewind_buffer
-                .begin_frame(number, &manager.engine, &assets);
+            timeline.begin_history_frame(number, &manager.engine, &assets);
             let input = SimulationFrameInput::default()
                 .with_hourglass(false)
                 .with_post_initialize(false);
@@ -564,11 +562,11 @@ mod tests {
                 .engine
                 .advance_frame(&assets, input.clone())
                 .unwrap();
-            timeline.rewind_buffer.end_frame_input(input);
+            timeline.append_history_fixture(input);
             timeline.advance_frame();
         }
         if !use_recent_history {
-            timeline.rewind_buffer.clear_recent_checkpoints();
+            timeline.clear_recent_history_fixture();
         }
         let (channels, incoming, _outgoing, _, _) = NetChannels::new();
         let mut host = Host::scratch(640.0, 480.0);
@@ -649,11 +647,14 @@ mod tests {
                 store_rewind_commands: true,
             },
         );
-        assert_eq!(timeline.rewind_buffer.next_record_frame(), 3);
+        assert_eq!(timeline.retained_history().next_record_frame(), 3);
         assert_eq!(frame.recorder_hash, Some(corrected_pre_tick_hash));
-        assert_eq!(timeline.rewind_buffer.commands_for(2).unwrap().len(), 2);
+        assert_eq!(
+            timeline.retained_history().commands_for(2).unwrap().len(),
+            2
+        );
         let checkpoint = timeline
-            .rewind_buffer
+            .retained_history()
             .restore_recent(2, robin_engine::sim_timeline::RestorePolicy::Exact)
             .unwrap();
         assert_eq!(state_hash(&checkpoint.engine), corrected_pre_tick_hash);
