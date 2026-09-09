@@ -5,6 +5,74 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
+    struct ExecutionSignatures {
+        found_advance: bool,
+        found_rpc: bool,
+    }
+    impl<'ast> Visit<'ast> for ExecutionSignatures {
+        fn visit_signature(&mut self, signature: &'ast syn::Signature) {
+            let advance = signature.ident == "advance_timeline";
+            let rpc = signature.ident == "drain_post_tick_rpc";
+            if advance || rpc {
+                self.found_advance |= advance;
+                self.found_rpc |= rpc;
+                struct Arguments {
+                    advance: bool,
+                    mode: bool,
+                }
+                impl<'ast> Visit<'ast> for Arguments {
+                    fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+                        for segment in &ty.path.segments {
+                            assert!(
+                                segment.ident != "EngineManager",
+                                "frame execution must not replace snapshots"
+                            );
+                            if self.advance {
+                                assert!(
+                                    segment.ident != "bool",
+                                    "use the admitted execution mode, not independent flags"
+                                );
+                                self.mode |= segment.ident == "FrameExecutionMode";
+                            } else {
+                                assert!(
+                                    segment.ident != "Game",
+                                    "RPC execution must not own mission flow"
+                                );
+                            }
+                        }
+                        visit::visit_type_path(self, ty);
+                    }
+                }
+                let mut arguments = Arguments {
+                    advance,
+                    mode: false,
+                };
+                for input in &signature.inputs {
+                    arguments.visit_fn_arg(input);
+                }
+                assert!(
+                    !advance || arguments.mode,
+                    "timeline needs an explicit execution mode"
+                );
+            }
+            visit::visit_signature(self, signature);
+        }
+    }
+    let mut signatures = ExecutionSignatures {
+        found_advance: false,
+        found_rpc: false,
+    };
+    for source in [
+        include_str!("../../src/game_session/frame_simulate.rs"),
+        include_str!("../../src/game_session/runtime.rs"),
+    ] {
+        signatures.visit_file(&syn::parse_file(source).unwrap());
+    }
+    assert!(signatures.found_advance && signatures.found_rpc);
+}
+
+#[test]
 fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
     let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
     let owner = runtime
