@@ -1875,7 +1875,7 @@ pub(crate) fn render_selection_outlines_gpu(
             continue;
         }
 
-        let is_selected_tactical = host.frontend.control_tactical_units
+        let is_selected_tactical = host.frontend.preferences().control_tactical_units()
             && engine
                 .tactical_selection(host.local_seat)
                 .contains(&entity_id);

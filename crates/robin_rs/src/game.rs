@@ -591,7 +591,9 @@ impl Game {
         // `pending_fps_cheat_promote` for us to apply here where both
         // halves are in scope.
         if host.effects.take_signal(HostSignal::PromoteFpsCheat) {
-            host.frontend.info_displayed = dev.debug.fps_display;
+            host.frontend
+                .diagnostics_mut()
+                .set_info_displayed(dev.debug.fps_display);
             dev.debug.fps_display = false;
         }
 

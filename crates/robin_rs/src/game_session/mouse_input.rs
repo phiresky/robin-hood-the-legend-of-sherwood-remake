@@ -190,7 +190,7 @@ pub(super) fn handle_mouse_input(
 /// In particular this must not box-select, perform a sword gesture, center the
 /// minimap, or dispatch a world click when a second finger takes over.
 fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
-    if host.frontend.pointer_capture.minimap_drag_active()
+    if host.frontend.pointer_capture().minimap_drag_active()
         || host.frontend.engine_display.minimap().drag_start()
     {
         dispatch_local_command(
@@ -199,7 +199,7 @@ fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
             &PlayerCommand::MinimapMouseUp { on_minimap: false },
         );
     }
-    host.frontend.pointer_capture.end_minimap_drag();
+    host.frontend.pointer_capture_mut().end_minimap_drag();
     host.frontend.input.cancel_left_pointer();
     host.frontend.mouse_way.clear();
 }
@@ -245,7 +245,7 @@ fn on_left_mouse_down(
             // Commands are queued until the simulation tick. Capture locally
             // so a move in this same event batch cannot hit the world.
             host.frontend
-                .pointer_capture
+                .pointer_capture_mut()
                 .begin_minimap_drag(center.is_some());
             if let Some(point) = center {
                 host.frontend.viewport.center_on_point(point);
@@ -345,7 +345,9 @@ fn on_right_mouse_down(
     let local_seat = host.transport.local_seat();
     {
         host.frontend.input.right_mouse_down = true;
-        host.frontend.pointer_capture.right_button_down(clicks);
+        host.frontend
+            .pointer_capture_mut()
+            .right_button_down(clicks);
 
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
@@ -392,7 +394,7 @@ fn on_mouse_move(
         // `left_mouse_down`) so a portrait re-arm on a
         // double-click stops the append path.
         if host.frontend.input.is_dragging()
-            && !host.frontend.pointer_capture.minimap_drag_active()
+            && !host.frontend.pointer_capture().minimap_drag_active()
             && !engine.is_alt_effective(&host.frontend.input)
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
             && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
@@ -412,7 +414,7 @@ fn on_mouse_move(
         dispatch_local_command(&host.transport, frame_cmds, &cmd);
 
         if host.frontend.input.left_mouse_down()
-            && host.frontend.pointer_capture.minimap_camera_drag_active()
+            && host.frontend.pointer_capture().minimap_camera_drag_active()
             && let Some(point) = host.frontend.engine_display.resolve_minimap_center(
                 mouse_pt,
                 true,
@@ -428,7 +430,7 @@ fn on_mouse_move(
         // started (guarded at MouseDown), so nothing to
         // update either way; keep the guard for safety.
         if host.frontend.input.left_mouse_down()
-            && !host.frontend.pointer_capture.minimap_drag_active()
+            && !host.frontend.pointer_capture().minimap_drag_active()
             && !host.frontend.engine_display.minimap().drag_start()
             && host.frontend.input.multi_selection_active()
             && !host.frontend.input.ignore_next_drag()
@@ -456,7 +458,7 @@ fn on_mouse_move(
         // cycle.
         if !planning_held
             && host.frontend.input.left_mouse_down()
-            && !host.frontend.pointer_capture.minimap_drag_active()
+            && !host.frontend.pointer_capture().minimap_drag_active()
             && !host.frontend.engine_display.minimap().drag_start()
             && !host.frontend.input.ignore_next_drag()
             && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
@@ -512,9 +514,9 @@ fn on_left_mouse_up(
             .minimap()
             .is_over_widget(click_pt);
         let minimap_handled = on_minimap
-            || host.frontend.pointer_capture.minimap_drag_active()
+            || host.frontend.pointer_capture().minimap_drag_active()
             || host.frontend.engine_display.minimap().drag_start();
-        host.frontend.pointer_capture.end_minimap_drag();
+        host.frontend.pointer_capture_mut().end_minimap_drag();
         if minimap_handled {
             let center_on = host.frontend.engine_display.resolve_minimap_center(
                 click_pt,
@@ -553,7 +555,7 @@ fn on_left_mouse_up(
                 shift: shift_held,
             };
             dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            if host.frontend.control_tactical_units {
+            if host.frontend.preferences().control_tactical_units() {
                 let tactical_cmd = PlayerCommand::BoxSelectTacticalUnits {
                     pt1: host.frontend.input.multi_selection_pt1(),
                     pt2: host.frontend.input.multi_selection_pt2(),
@@ -1189,7 +1191,10 @@ fn on_right_mouse_up(
     planning_held: bool,
 ) {
     let local_seat = host.transport.local_seat();
-    let right_double_click = host.frontend.pointer_capture.take_right_double_click();
+    let right_double_click = host
+        .frontend
+        .pointer_capture_mut()
+        .take_right_double_click();
     {
         host.frontend.input.right_mouse_down = false;
 
@@ -1200,7 +1205,7 @@ fn on_right_mouse_up(
             host.frontend.input.accept_mouse_event(true, true);
             host.frontend.input.finish_click_dispatch();
             host.frontend.input.cancel_selection_gestures();
-            host.frontend.planning.cancel_touch();
+            host.frontend.cancel_touch_planning();
             return;
         }
 
@@ -1562,8 +1567,8 @@ pub(super) fn handle_pause_menu_events(
                     profile.multiplayer_config,
                     sound_config,
                     profile_sound_config,
-                    host.frontend.key_config.clone(),
-                    host.frontend.custom_key_config.clone(),
+                    host.frontend.preferences().key_config().clone(),
+                    host.frontend.preferences().custom_key_config().clone(),
                     host.audio.sound.can_3d_sound(),
                     host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                 )));

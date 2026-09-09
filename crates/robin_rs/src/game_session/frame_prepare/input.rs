@@ -455,7 +455,7 @@ pub(super) async fn collect_input_and_menus(
         ui.console_overlay.is_visible()
             || ui.pause_menu.is_some()
             || pause_closed_this_frame
-            || !host.frontend.touch_camera_gestures,
+            || !host.frontend.preferences().touch_camera_gestures(),
     );
 
     // ── Skip all sim-affecting input during replay / rewind ──

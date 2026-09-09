@@ -390,10 +390,14 @@ pub(super) async fn drive_live_gameplay_input(
         match action {
             GameAction::DisplayConsole => {}
             GameAction::DisplayInfo => {
-                context.host.frontend.info_displayed = !context.host.frontend.info_displayed;
+                context
+                    .host
+                    .frontend
+                    .diagnostics_mut()
+                    .toggle_info_displayed();
                 tracing::debug!(
                     "DisplayInfo toggled: {}",
-                    context.host.frontend.info_displayed
+                    context.host.frontend.diagnostics().info_displayed()
                 );
             }
             GameAction::DisplayMenu => {

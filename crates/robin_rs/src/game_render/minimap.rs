@@ -130,7 +130,7 @@ pub(crate) fn render_minimap(
             Some(i) => i,
             None => continue,
         };
-        if !host.frontend.diplomacy_visuals {
+        if !host.frontend.preferences().diplomacy_visuals() {
             info.camp = info.legacy_camp;
         }
         if !info.is_active {

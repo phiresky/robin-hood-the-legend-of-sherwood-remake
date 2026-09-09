@@ -206,6 +206,7 @@ pub mod distributed_mod_policy;
 pub mod draw_manager;
 pub mod focus_manager;
 pub mod font;
+pub mod frontend_diagnostics;
 pub mod frontend_input;
 pub mod frontend_preview;
 pub mod frontend_targeting;

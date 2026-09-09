@@ -69,7 +69,7 @@ pub fn resolve_left_click_with_planning(
     // the original PC selection so scripts and hero action bars retain their
     // five-PC assumptions. A direct click still feels like ordinary unit
     // selection and may coexist with heroes when Shift is held.
-    if host.frontend.control_tactical_units
+    if host.frontend.preferences().control_tactical_units()
         && let Some(soldier) =
             engine.find_tactically_controllable_unit(assets, &host.frontend.draw_order.ids, map_pt)
     {
@@ -201,7 +201,7 @@ pub fn resolve_left_click_with_planning(
             });
             return commands;
         }
-        if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+        if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.frontend.draw_order.ids,
@@ -382,7 +382,8 @@ pub fn resolve_left_click_with_planning(
             // discard the soldiers' half of that mixed selection, making the
             // gallery troops appear unable to run whenever Robin was boxed
             // with them.
-            if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+            if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty()
+            {
                 commands.push(PlayerCommand::MoveTacticalUnits {
                     formation: selected_tactical_formation(engine, &tactical_selected),
                     soldiers: tactical_selected.clone(),
@@ -444,7 +445,7 @@ pub fn resolve_left_click_with_planning(
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
         }];
-        if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+        if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
             commands.push(PlayerCommand::MoveTacticalUnits {
                 formation: selected_tactical_formation(engine, &tactical_selected),
                 soldiers: tactical_selected.clone(),
@@ -492,7 +493,7 @@ pub fn resolve_left_click_with_planning(
         recorded_gate_routes: Vec::new(),
         recorded_failed_gate_routes: Vec::new(),
     }];
-    if host.frontend.control_tactical_units && !tactical_selected.is_empty() {
+    if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
         commands.push(PlayerCommand::MoveTacticalUnits {
             formation: selected_tactical_formation(engine, &tactical_selected),
             soldiers: tactical_selected.clone(),
@@ -1793,7 +1794,11 @@ pub fn resolve_swordfight(
             host.frontend.mouse_way.len(),
         );
 
-        if host.frontend.gameplay_config.combat_gesture_coach
+        if host
+            .frontend
+            .preferences()
+            .gameplay_config()
+            .combat_gesture_coach
             && !feedback_recorded
             && !matches!(pattern, MouseWayPattern::None)
             && let Some(bounds) = host.frontend.mouse_way.bounds()
@@ -2959,7 +2964,17 @@ mod tests {
     #[test]
     fn double_click_ground_runs_allies_in_mixed_selection() {
         let (mut engine, assets, mut host) = fixture();
-        host.frontend.control_tactical_units = true;
+        let preferences = host.frontend.preferences();
+        crate::host::FrontendPreferences::new(
+            preferences.key_config().clone(),
+            preferences.custom_key_config().clone(),
+            robin_engine::gameplay_config::GameplayConfig {
+                control_tactical_units: true,
+                ..preferences.gameplay_config()
+            },
+            &robin_engine::graphic_config::GraphicConfig::default(),
+        )
+        .apply(&mut host.frontend);
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         let ally = add_allied_soldier(&mut engine, 20.0, 20.0);
         select(&mut engine, &assets, pc);

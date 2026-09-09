@@ -23,7 +23,12 @@ pub fn render(
     fonts: Option<&HudFonts>,
 ) {
     let swordfighting = crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
-    if swordfighting && frontend.gameplay_config.show_combat_gesture_guide {
+    if swordfighting
+        && frontend
+            .preferences()
+            .gameplay_config()
+            .show_combat_gesture_guide
+    {
         let facing = first_selected_swordfighter_direction(engine, local_seat)
             .unwrap_or(ScreenVec::new(0.0, -1.0));
         render_guide(
@@ -34,14 +39,21 @@ pub fn render(
         );
     }
 
-    if frontend.gameplay_config.combat_gesture_coach {
+    if frontend
+        .preferences()
+        .gameplay_config()
+        .combat_gesture_coach
+    {
         render_coach(frontend, renderer, fonts);
     }
 }
 
 /// Retire live feedback explicitly; screenshots only filter expired feedback.
 pub(crate) fn prepare_feedback(frontend: &mut HostFrontend, now: u32) {
-    if !frontend.gameplay_config.combat_gesture_coach
+    if !frontend
+        .preferences()
+        .gameplay_config()
+        .combat_gesture_coach
         || frontend
             .gesture_coach_feedback
             .is_some_and(|feedback| now.wrapping_sub(feedback.created_at_ms) > 1_800)

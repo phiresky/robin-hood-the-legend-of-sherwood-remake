@@ -181,7 +181,7 @@ fn apply_frame_resizes(
     let h = new_h as f32;
     host.frontend.viewport.set_screen_size(w, h);
     game.set_resolution(new_w as u16, new_h as u16);
-    input.resize(new_w, new_h, &host.frontend.key_config);
+    input.resize(new_w, new_h, host.frontend.preferences().key_config());
     if host.frontend.mission_surfaces.corner_size().x > 0.0 {
         let cmd = PlayerCommand::MinimapResize {
             base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
@@ -280,12 +280,11 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     let screen_width = presentation.renderer.screen_width();
     events.retain(|event| {
         use crate::frontend_input::TouchPlanRoute;
-        match host.frontend.pointer_capture.route_touch_plan_event(
-            &mut host.frontend.planning,
-            event,
-            admit_touch,
-            |x, y| crate::touch_plan_hud::hit_test(screen_width, x, y),
-        ) {
+        match host
+            .frontend
+            .route_touch_plan_event(event, admit_touch, |x, y| {
+                crate::touch_plan_hud::hit_test(screen_width, x, y)
+            }) {
             TouchPlanRoute::Forward => true,
             TouchPlanRoute::Captured => false,
             TouchPlanRoute::Toggled { cancel_planned } => {
@@ -307,8 +306,8 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
             input
                 .translator
                 .is_binding_held(crate::input_translator::GameKey::PlanQuickActions, keys),
-            host.frontend.planning.touch_latched(),
-            host.frontend.planning.enabled(),
+            host.frontend.planning().touch_latched(),
+            host.frontend.planning().enabled(),
         )
         .plan
     };
@@ -320,7 +319,11 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     // Widgets own the complete press/release gesture. Keeping their raw
     // events in this batch also dispatched world actions behind the HUD.
     events.retain(|event| {
-        if host.frontend.pointer_capture.route_hud_event(event, false) {
+        if host
+            .frontend
+            .pointer_capture_mut()
+            .route_hud_event(event, false)
+        {
             return false;
         }
         if input_suppressed {
@@ -342,7 +345,9 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         if button != 1 && button != 3 {
             return true;
         }
-        host.frontend.pointer_capture.route_hud_event(event, true);
+        host.frontend
+            .pointer_capture_mut()
+            .route_hud_event(event, true);
         if button == 1 {
             if let Some(button) = hud.zoom_layout.hit_test(mx, my, zoom_enable) {
                 let factor = match button {
@@ -458,8 +463,8 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         input
             .translator
             .is_binding_held(crate::input_translator::GameKey::PlanQuickActions, keys),
-        host.frontend.planning.touch_latched(),
-        host.frontend.planning.enabled(),
+        host.frontend.planning().touch_latched(),
+        host.frontend.planning().enabled(),
     );
     host.frontend.input.is_alt = modifiers.alt;
 

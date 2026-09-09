@@ -46,7 +46,6 @@ use crate::spellforge_trust::{
 };
 
 const PANNEL_HEIGHT: f32 = engine_api::PANNEL_HEIGHT;
-const DISPLAY_INFO_SAMPLES: usize = 16;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueueStripAnimation {
@@ -185,8 +184,8 @@ struct HostContextSnapshot {
 
 /// A presentation-only projection of profile preferences. Applying it never
 /// writes the running engine's sealed replay/multiplayer simulation config.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct FrontendPreferences {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FrontendPreferences {
     key_config: KeyConfig,
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
@@ -229,20 +228,39 @@ impl FrontendPreferences {
     }
 
     pub(crate) fn apply(self, frontend: &mut HostFrontend) -> FrontendPreferenceEffects {
-        frontend.key_config = self.key_config;
-        frontend.custom_key_config = self.custom_key_config;
-        frontend.control_tactical_units = self.control_tactical_units;
         frontend.planning.update_preference(self.plan_quick_actions);
-        frontend.touch_camera_gestures = self.touch_camera_gestures;
-        frontend.gameplay_config = self.gameplay_config;
-        frontend.native_refresh_presentation = self.native_refresh_presentation;
-        frontend.quick_action_cursor_pulse = self.quick_action_cursor_pulse;
-        frontend.diplomacy_visuals = self.diplomacy_visuals;
-        FrontendPreferenceEffects {
+        let effects = FrontendPreferenceEffects {
             cancel_planned_action: !frontend.planning.enabled(),
             native_refresh_presentation: self.native_refresh_presentation,
             release_tactical_control: !self.control_tactical_units,
-        }
+        };
+        frontend.preferences = self;
+        effects
+    }
+
+    pub fn key_config(&self) -> &KeyConfig {
+        &self.key_config
+    }
+    pub fn custom_key_config(&self) -> &KeyConfig {
+        &self.custom_key_config
+    }
+    pub fn gameplay_config(&self) -> robin_engine::gameplay_config::GameplayConfig {
+        self.gameplay_config
+    }
+    pub fn control_tactical_units(&self) -> bool {
+        self.control_tactical_units
+    }
+    pub fn touch_camera_gestures(&self) -> bool {
+        self.touch_camera_gestures
+    }
+    pub fn native_refresh_presentation(&self) -> bool {
+        self.native_refresh_presentation
+    }
+    pub fn quick_action_cursor_pulse(&self) -> bool {
+        self.quick_action_cursor_pulse
+    }
+    pub fn diplomacy_visuals(&self) -> bool {
+        self.diplomacy_visuals
     }
 }
 
@@ -1515,6 +1533,22 @@ impl Default for ViewportState {
 /// Local rendering and interaction state. Kept behind the small [`Host`]
 /// facade so it can be borrowed independently from transport, audio, and
 /// ordered post-tick work.
+///
+/// Profile settings are an immutable projection, not independent cached knobs:
+/// ```compile_fail,E0616
+/// let mut frontend = robin_rs::host::HostFrontend::default();
+/// frontend.preferences().control_tactical_units = true;
+/// ```
+/// Session planning policy cannot be replaced by an input consumer:
+/// ```compile_fail,E0616
+/// let mut frontend = robin_rs::host::HostFrontend::default();
+/// frontend.planning = Default::default();
+/// ```
+/// Draw-side diagnostics do not grant a sampling clock:
+/// ```compile_fail,E0596
+/// let frontend = robin_rs::host::HostFrontend::default();
+/// frontend.diagnostics().record_frame(100, 0);
+/// ```
 #[derive(Default)]
 pub struct HostFrontend {
     // ── Rendering / GPU surfaces ─────────────────────────────────
@@ -1526,47 +1560,24 @@ pub struct HostFrontend {
     pub input: InputState,
 
     /// Paired pointer-event ownership, retired together at interaction resets.
-    pub pointer_capture: crate::frontend_input::FrontendPointerCapture,
+    pointer_capture: crate::frontend_input::FrontendPointerCapture,
 
-    /// Active profile's opt-in tactical-unit control setting. Host-local
-    /// because resolved player commands, rather than UI preferences, cross
-    /// replay and multiplayer boundaries.
-    pub control_tactical_units: bool,
+    /// Atomic host-local profile projection. Resolved commands, not preferences,
+    /// cross replay and multiplayer boundaries.
+    preferences: FrontendPreferences,
 
     /// Planning preference, sticky touch mode and non-overridable session policy.
-    pub planning: crate::frontend_input::FrontendPlanning,
+    planning: crate::frontend_input::FrontendPlanning,
 
     /// Per-portrait cosmetic easing for the independent automatic queue strip.
     pub queue_strip_animations: HashMap<EntityId, QueueStripAnimation>,
 
-    /// Active profile's local relationship colour/legend preference.
-    pub diplomacy_visuals: bool,
-
-    /// Host-local presentation settings copied from the active profile.
-    /// Deterministic settings are separately mirrored into `SimConfig`.
-    pub gameplay_config: robin_engine::gameplay_config::GameplayConfig,
-
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_targeting: crate::frontend_targeting::TacticalTargeting,
 
-    /// Active profile's touch-camera gesture setting. Host-local because
-    /// camera pan/zoom/inertia never enters deterministic simulation state.
-    pub touch_camera_gestures: bool,
-
-    /// Opt-in display-rate re-presentation. Host-local and intentionally
-    /// absent from deterministic save/replay state.
-    pub native_refresh_presentation: bool,
-
-    /// Show the original cursor-shadow recording pulse while the manual
-    /// quick-action recorder is active. Cached from the profile so high-rate
-    /// presentation samples never clone or lock the full profile history.
-    pub quick_action_cursor_pulse: bool,
-
-    /// Last positive duration of a display-rate presentation sample, in
-    /// microseconds. The fixed-step presentation scheduler uses this host-only
-    /// observation to avoid beginning a vsync wait that would cross the
-    /// simulation deadline. Zero means no blocking sample has been observed.
-    pub native_refresh_present_cost_us: u64,
+    /// Live frame observations and deferred diagnostic output. Drawing borrows
+    /// these immutably; explicit update operations own sampling and consumption.
+    diagnostics: crate::frontend_diagnostics::FrontendDiagnostics,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -1620,17 +1631,6 @@ pub struct HostFrontend {
     /// the resource manager can resolve relative lookups.
     pub shipping: Option<Arc<ShippingDatadir>>,
 
-    /// Active key bindings for the current player profile. Host-only because
-    /// physical `winit` key codes and local input policy do not belong in the
-    /// deterministic, platform-neutral engine `PlayerProfile`.
-    pub key_config: KeyConfig,
-
-    /// User's custom key bindings (the "User Defined" slot in the
-    /// shortcuts menu). The active set is whatever the user picked
-    /// last (preset or custom), while this slot preserves their
-    /// personal bindings so the User Defined button can restore them.
-    pub custom_key_config: KeyConfig,
-
     /// Physical key bound to the `DisplayMap` shortcut.  The game loop
     /// reads this on each frame and emits a minimap-toggle command on
     /// key release.  `None` means no accelerator bound.  Lives host-side
@@ -1670,17 +1670,6 @@ pub struct HostFrontend {
     /// applies the historical 3x3 median filter to the captured frame.
     pub pending_print_screen: Option<PrintScreenRequest>,
 
-    /// Debug-info overlay toggle. Toggled by the bound `RequestInfo`
-    /// / `DisplayInfo` key (typically `Home`); read by the per-frame
-    /// debug-overlay renderer.  Not serialized — debug state, not sim
-    /// state.
-    pub info_displayed: bool,
-    /// Rolling frame-duration samples used by the DisplayInfo overlay.
-    pub display_info_frame_samples: [u32; DISPLAY_INFO_SAMPLES],
-    pub display_info_sample_cursor: usize,
-    pub display_info_last_tick_ms: u32,
-    pub display_info_max_pending_sounds: usize,
-
     /// Slow-motion pacing toggle. Toggled by `MSG_SLOW_MOTION` (the
     /// bound SlowMotion key — Pause by default).  Consumed by the
     /// frame pacing block at the bottom of `run_mission`: when set
@@ -1695,12 +1684,6 @@ pub struct HostFrontend {
     /// currently only tracks the flag for future consumers.  Not sim
     /// state — purely transient per-frame input gating.
     pub ui_focus: bool,
-
-    /// Deferred console-overlay output lines produced by host-side work
-    /// that can't reach the overlay directly. Drained by the overlay
-    /// at the start of each frame via
-    /// [`crate::console_overlay::ConsoleOverlay::drain_pending_host_output`].
-    pub pending_console_output: Vec<String>,
 
     // ── Persistent background decals ─
     /// Per-FX-entity persistent background decals replacing the legacy
@@ -1731,6 +1714,49 @@ pub enum InteractionReset {
 }
 
 impl HostFrontend {
+    /// Profile settings can only be replaced as one projection. Callers cannot
+    /// update a cached scalar independently from the selected profile.
+    pub fn preferences(&self) -> &FrontendPreferences {
+        &self.preferences
+    }
+    pub fn diagnostics(&self) -> &crate::frontend_diagnostics::FrontendDiagnostics {
+        &self.diagnostics
+    }
+    pub fn diagnostics_mut(&mut self) -> &mut crate::frontend_diagnostics::FrontendDiagnostics {
+        &mut self.diagnostics
+    }
+    pub fn planning(&self) -> &crate::frontend_input::FrontendPlanning {
+        &self.planning
+    }
+    pub fn force_planning_off_for_session(&mut self) {
+        self.planning.force_off_for_session();
+    }
+    pub fn cancel_touch_planning(&mut self) {
+        self.planning.cancel_touch();
+    }
+    pub fn pointer_capture(&self) -> &crate::frontend_input::FrontendPointerCapture {
+        &self.pointer_capture
+    }
+    pub fn pointer_capture_mut(&mut self) -> &mut crate::frontend_input::FrontendPointerCapture {
+        &mut self.pointer_capture
+    }
+    /// Route a paired touch gesture against the current session planning policy.
+    /// Keeping both owners borrowed here prevents a caller replacing that policy
+    /// while preserving stale capture metadata.
+    pub fn route_touch_plan_event(
+        &mut self,
+        event: &crate::gfx_types::GameEvent,
+        admit_touch: bool,
+        hit_test: impl FnOnce(i32, i32) -> bool,
+    ) -> crate::frontend_input::TouchPlanRoute {
+        self.pointer_capture.route_touch_plan_event(
+            &mut self.planning,
+            event,
+            admit_touch,
+            hit_test,
+        )
+    }
+
     pub fn reset_interaction(&mut self, reason: InteractionReset) {
         self.reset_pointer_sequence();
         self.reset_targeting_preview();
@@ -2697,7 +2723,7 @@ impl Host {
         // load.  They live host-side now — accumulated from per-tick
         // `SideEffects.pending_*` by `Host::apply_side_effects`.
         self.effects.clear();
-        self.frontend.pending_console_output.clear();
+        self.frontend.diagnostics_mut().clear_console_output();
         self.frontend.pending_print_screen = None;
     }
 
@@ -3575,7 +3601,8 @@ mod application_context_tests {
         assert_eq!(
             easy_host
                 .frontend
-                .key_config
+                .preferences()
+                .key_config()
                 .get_binding("ZoomIn")
                 .unwrap()
                 .primary_key,
@@ -3584,7 +3611,8 @@ mod application_context_tests {
         assert_eq!(
             hard_host
                 .frontend
-                .key_config
+                .preferences()
+                .key_config()
                 .get_binding("ZoomIn")
                 .unwrap()
                 .primary_key,
@@ -3874,20 +3902,20 @@ mod application_context_tests {
         for frontend in [&startup.frontend, &live.frontend] {
             assert_eq!(
                 serde_json::to_value(FrontendPreferences::new(
-                    frontend.key_config.clone(),
-                    frontend.custom_key_config.clone(),
-                    frontend.gameplay_config,
+                    frontend.preferences().key_config().clone(),
+                    frontend.preferences().custom_key_config().clone(),
+                    frontend.preferences().gameplay_config(),
                     &profile.graphic_config,
                 ))
                 .unwrap(),
                 serde_json::to_value(context.host_snapshot().unwrap().preferences).unwrap(),
             );
-            assert!(!frontend.control_tactical_units);
+            assert!(!frontend.preferences().control_tactical_units());
             assert!(!frontend.planning.enabled());
-            assert!(!frontend.touch_camera_gestures);
-            assert!(frontend.native_refresh_presentation);
-            assert!(!frontend.quick_action_cursor_pulse);
-            assert!(frontend.diplomacy_visuals);
+            assert!(!frontend.preferences().touch_camera_gestures());
+            assert!(frontend.preferences().native_refresh_presentation());
+            assert!(!frontend.preferences().quick_action_cursor_pulse());
+            assert!(frontend.preferences().diplomacy_visuals());
         }
     }
 
@@ -4028,9 +4056,12 @@ mod application_context_tests {
             .unwrap();
 
         let host = Host::new(context.clone().try_into().unwrap(), 1280.0, 720.0).unwrap();
-        assert_eq!(host.frontend.key_config.key_type, active_keys.key_type);
         assert_eq!(
-            host.frontend.custom_key_config.key_type,
+            host.frontend.preferences().key_config().key_type,
+            active_keys.key_type
+        );
+        assert_eq!(
+            host.frontend.preferences().custom_key_config().key_type,
             custom_keys.key_type
         );
 
