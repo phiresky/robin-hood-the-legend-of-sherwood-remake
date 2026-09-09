@@ -2,6 +2,7 @@
 
 Load with __name__='hq', then call setup() once and render_batch(side, mode,
 start, count). Linked scene geometry preserves the original/refined comparison.
+Set SIDE_BY_SIDE=True in the execution scope for matched full 960x1080 panels.
 Native time remapping evaluates camera, atlas drivers and wind at subframes;
 this does not duplicate or interpolate already-rendered video frames.
 """
@@ -9,8 +10,10 @@ import json
 from pathlib import Path
 import bpy
 
-OUT = Path(bpy.data.filepath).parent/'turntable-hq'
-NAMES = {'refined':'Sherwood HQ Turntable', 'original':'Sherwood HQ Original'}
+SIDE_BY_SIDE = globals().get('SIDE_BY_SIDE', False)
+OUT = Path(bpy.data.filepath).parent/('turntable-side-by-side' if SIDE_BY_SIDE else 'turntable-hq')
+NAMES = ({'refined':'Sherwood Side by Side Refined', 'original':'Sherwood Side by Side Original'}
+         if SIDE_BY_SIDE else {'refined':'Sherwood HQ Turntable', 'original':'Sherwood HQ Original'})
 FRAMES = range(5,1445)
 
 
@@ -56,15 +59,17 @@ def setup():
             camera.rotation_euler = rotation
             camera.keyframe_insert('location',frame=frame)
             camera.keyframe_insert('rotation_euler',frame=frame)
-        scene.render.resolution_x = 1920
-        scene.render.resolution_y = 1280
+        scene.render.resolution_x = 960 if SIDE_BY_SIDE else 1920
+        scene.render.resolution_y = 1080 if SIDE_BY_SIDE else 1280
+        if SIDE_BY_SIDE:
+            camera.data.ortho_scale = 2200
         scene.render.resolution_percentage = 100
         scene.render.fps = 60
         scene.render.frame_map_old = 5
         scene.render.frame_map_new = 24
         scene.render.image_settings.compression = 15
-        scene.eevee.taa_render_samples = 16
-        scene.display.render_aa = '16'
+        scene.eevee.taa_render_samples = 8 if SIDE_BY_SIDE else 16
+        scene.display.render_aa = 'FXAA' if SIDE_BY_SIDE else '16'
         scene.frame_start, scene.frame_end = 5,1444
         scene.frame_step = 1
         scene['animation_notes'] = '24 seconds / 60 fps; native 25 Hz timeline slowed 2x, evaluated at fractional frames. Camera Euler winding unwrapped.'
@@ -81,7 +86,8 @@ def setup():
         bpy.data.scenes[NAMES[side]].frame_set(5)
     source.frame_set(1)
     bpy.ops.wm.save_as_mainfile(filepath=bpy.data.filepath)
-    return {'scenes':NAMES,'frames':len(FRAMES),'fps':60,'seconds':24,'resolution':[1920,1280]}
+    return {'scenes':NAMES,'frames':len(FRAMES),'fps':60,'seconds':24,
+            'resolution':[1920,1080] if SIDE_BY_SIDE else [1920,1280]}
 
 
 def render_batch(side, mode, start, count=24):
@@ -93,9 +99,9 @@ def render_batch(side, mode, start, count=24):
     if not frames or frames!=list(range(frames[0],frames[-1]+1)):
         raise ValueError('Batch must contain a consecutive valid mode interval')
     scene.render.engine = 'BLENDER_WORKBENCH' if mode=='solid' else 'BLENDER_EEVEE'
-    # The other half is discarded by the fixed split; retain full-size RGBA
-    # output coordinates while avoiding shading pixels that cannot be shown.
-    scene.render.use_border = True
+    # Only the older center-split layout discards half of each camera view.
+    # Side-by-side renders retain the complete, independently framed panel.
+    scene.render.use_border = not SIDE_BY_SIDE
     scene.render.use_crop_to_border = False
     scene.render.border_min_x = .5 if side=='refined' else 0.
     scene.render.border_max_x = 1. if side=='refined' else .5
@@ -137,6 +143,8 @@ def finish():
                                             for r in range(4) for c in range(4)))
     if camera_error > 1e-5:
         raise RuntimeError(f'Comparison cameras do not match: {camera_error}')
+    if abs(before.camera.data.ortho_scale-after.camera.data.ortho_scale) > 1e-5:
+        raise RuntimeError('Comparison camera zoom does not match')
     wind = next(o for o in after.objects if o.name.startswith('Wind pivot '))
     wind_values = []
     bpy.context.window.scene = after
@@ -161,6 +169,8 @@ def finish():
     bpy.ops.file.pack_all()
     bpy.ops.wm.save_as_mainfile(filepath=bpy.data.filepath)
     report = {'rendered_pass_frames':count,'camera_matrix_error':camera_error,
+              'side_by_side':SIDE_BY_SIDE,'ortho_scale':after.camera.data.ortho_scale,
+              'panel_resolution':[after.render.resolution_x,after.render.resolution_y],
               'wind_rotations':wind_values,'native_scene_saved':bpy.data.filepath}
     (OUT/'scene-validation.json').write_text(json.dumps(report,indent=2))
     return report

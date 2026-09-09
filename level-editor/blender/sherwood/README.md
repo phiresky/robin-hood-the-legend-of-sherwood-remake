@@ -130,6 +130,22 @@ Load the HQ module with `__name__='hq'`, call `setup()` once, then
 Call `finish()` through MCP after rendering to check pass completeness, matched
 cameras and advancing wind, then restore the textured preview and save the scene.
 
+The newer `turntable-side-by-side/sherwood-before-after.mp4` shows the same
+camera view twice instead of cutting a single view into original/refined halves.
+Its overall canvas is 1920 × 1080 (16:9), with two complete 960 × 1080 panels,
+the same 60 fps / 24-second rotation, and synchronized material swipes.
+Both cameras use orthographic scale 2200: panel width covers about 1956 world
+units, making features about 20% larger than fitting the earlier full camera
+view to a 960-pixel panel. Some edge cropping is intentional. The render uses
+8 EEVEE samples and Workbench FXAA to keep the new full-panel render practical.
+
+For this layout, load `render_hq_turntable.py` through MCP with
+`SIDE_BY_SIDE=True` and `__name__='hq'`, then use `setup()`, `render_batch()`
+and `finish()` as above. It creates separate **Sherwood Side by Side Original**
+and **Sherwood Side by Side Refined** scenes, with render borders disabled.
+Compose with `compose_turntable.py --hq --side-by-side`. The older split-screen
+scenes and outputs remain available.
+
 ## Ground texture reprojection
 
 The terrain originally retained the pipeline's old filled texture, leaving
