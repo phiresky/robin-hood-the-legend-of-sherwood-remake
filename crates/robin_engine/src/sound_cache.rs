@@ -634,6 +634,7 @@ pub fn parse_fx_bank(data: &[u8]) -> Result<Vec<FxBankElement>, String> {
     let mut pos = 12;
 
     let count = read_u32_le(data, &mut pos)?;
+    checked_record_count(data, pos, count, 12, "FX elements")?;
     let mut elements = Vec::new();
     let mut i = 0u32;
 
@@ -654,7 +655,8 @@ pub fn parse_fx_bank(data: &[u8]) -> Result<Vec<FxBankElement>, String> {
                 let gaps_count = read_u16_le(data, &mut pos)?;
                 let grp_count = read_u32_le(data, &mut pos)?;
 
-                let mut sub_elements = Vec::with_capacity(grp_count as usize);
+                let capacity = checked_record_count(data, pos, grp_count, 12, "FX group elements")?;
+                let mut sub_elements = Vec::with_capacity(capacity);
                 for _ in 0..grp_count {
                     let sub_type = read_u32_le(data, &mut pos)?;
                     let sub_id = read_u32_le(data, &mut pos)?;
@@ -710,6 +712,7 @@ pub fn parse_menu_bank(data: &[u8]) -> Result<Vec<(u32, String)>, String> {
     }
     let mut pos = 12;
     let count = read_u32_le(data, &mut pos)?;
+    checked_record_count(data, pos, count, 12, "menu elements")?;
     let mut results = Vec::new();
 
     let mut i = 0u32;
@@ -724,6 +727,8 @@ pub fn parse_menu_bank(data: &[u8]) -> Result<Vec<(u32, String)>, String> {
 
         let _gaps_count = read_u16_le(data, &mut pos)?;
         let grp_count = read_u32_le(data, &mut pos)?;
+
+        checked_record_count(data, pos, grp_count, 12, "menu group elements")?;
 
         // Only read WIDGET_NOISY_EVENT_COUNT elements; skip the rest
         let to_read = grp_count.min(WIDGET_NOISY_EVENT_COUNT);
@@ -783,13 +788,15 @@ pub fn parse_exclamation_file(
     let table_id = read_u32_le(data, &mut pos)?;
     let num_exclamations = read_u32_le(data, &mut pos)?;
 
-    let mut results = Vec::with_capacity(num_exclamations as usize);
+    let capacity = checked_record_count(data, pos, num_exclamations, 4, "exclamations")?;
+    let mut results = Vec::with_capacity(capacity);
 
     for excl_idx in 0..num_exclamations {
         let num_variants = read_u32_le(data, &mut pos)?;
         let action_id = prefix_id | (excl_idx & 0xFFFF);
 
-        let mut variant_indices = Vec::with_capacity(num_variants as usize);
+        let capacity = checked_record_count(data, pos, num_variants, 4, "exclamation variants")?;
+        let mut variant_indices = Vec::with_capacity(capacity);
         for _ in 0..num_variants {
             let variant_index = read_u32_le(data, &mut pos)?;
             variant_indices.push(variant_index);
@@ -802,6 +809,29 @@ pub fn parse_exclamation_file(
 }
 
 // Binary reading helpers
+
+/// Bound counts by the minimum bytes their records need before reserving memory.
+/// Variable-length filenames and nested records are checked again while parsing.
+fn checked_record_count(
+    data: &[u8],
+    pos: usize,
+    count: u32,
+    minimum_size: usize,
+    field: &str,
+) -> Result<usize, String> {
+    let count =
+        usize::try_from(count).map_err(|_| format!("{field} count exceeds address space"))?;
+    let remaining = data
+        .get(pos..)
+        .ok_or_else(|| format!("{field}: cursor past end of data"))?
+        .len();
+    if count > remaining / minimum_size {
+        return Err(format!(
+            "{field} count {count} exceeds remaining data ({remaining} bytes)"
+        ));
+    }
+    Ok(count)
+}
 
 fn read_u32_le(data: &[u8], pos: &mut usize) -> Result<u32, String> {
     if *pos + 4 > data.len() {
@@ -1791,6 +1821,94 @@ mod tests {
     fn parse_fx_bank_invalid_magic() {
         let data = b"NOPE0000000000000000";
         assert!(parse_fx_bank(data).is_err());
+    }
+
+    #[test]
+    fn sound_bank_counts_are_bounded_before_allocation() {
+        fn header(magic: &[u8; 4], count: u32) -> Vec<u8> {
+            let mut bytes = magic.to_vec();
+            for value in [1u32, 1, count] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes
+        }
+        let huge_fx = header(b"FXBK", u32::MAX);
+        assert!(
+            parse_fx_bank(&huge_fx)
+                .unwrap_err()
+                .contains("FX elements count")
+        );
+        assert!(
+            parse_menu_bank(&huge_fx)
+                .unwrap_err()
+                .contains("menu elements count")
+        );
+        let huge_speech = header(b"NEUF", u32::MAX);
+        assert!(
+            parse_exclamation_file(&huge_speech, 0)
+                .unwrap_err()
+                .contains("exclamations count")
+        );
+
+        let mut nested = header(b"NEUF", 1);
+        nested.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            parse_exclamation_file(&nested, 0)
+                .unwrap_err()
+                .contains("exclamation variants count")
+        );
+
+        let mut group = header(b"FXBK", 1);
+        group.extend_from_slice(&(SoundGroupType::MaterialGroup as u32).to_le_bytes());
+        group.extend_from_slice(&7u32.to_le_bytes());
+        group.extend_from_slice(&100u16.to_le_bytes());
+        group.extend_from_slice(&0u16.to_le_bytes());
+        group.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            parse_fx_bank(&group)
+                .unwrap_err()
+                .contains("FX group elements count")
+        );
+        assert!(
+            parse_menu_bank(&group)
+                .unwrap_err()
+                .contains("menu group elements count")
+        );
+
+        // One group plus one empty-filename member: 16 + 12 bytes.
+        group[12..16].copy_from_slice(&2u32.to_le_bytes());
+        group[28..32].copy_from_slice(&1u32.to_le_bytes());
+        for value in [SoundGroupType::Fx as u32, 8] {
+            group.extend_from_slice(&value.to_le_bytes());
+        }
+        group.extend_from_slice(&100u16.to_le_bytes());
+        group.extend_from_slice(&0u16.to_le_bytes());
+        let parsed = parse_fx_bank(&group).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].sub_elements.len(), 1);
+        assert_eq!(
+            parse_menu_bank(&group).unwrap(),
+            vec![(7 << 16, "Menu/".to_owned())]
+        );
+        for end in 16..group.len() {
+            assert!(
+                parse_fx_bank(&group[..end]).is_err(),
+                "FX truncation at {end}"
+            );
+            assert!(
+                parse_menu_bank(&group[..end]).is_err(),
+                "menu truncation at {end}"
+            );
+        }
+
+        assert!(parse_fx_bank(&header(b"FXBK", 0)).unwrap().is_empty());
+        assert!(parse_menu_bank(&header(b"FXBK", 0)).unwrap().is_empty());
+        assert!(
+            parse_exclamation_file(&header(b"NEUF", 0), 0)
+                .unwrap()
+                .1
+                .is_empty()
+        );
     }
 
     #[test]
