@@ -677,10 +677,15 @@ impl MissionRuntime {
 
     /// Drain host RPC requests at the shared post-tick boundary.
     pub(super) fn drain_host_rpc(&mut self, frame: &mut MissionFrame) {
+        let application_context = self.world.host.application_context().clone();
         drain_post_tick_rpc(
             &mut self.http,
             &mut self.timeline,
-            &mut self.world.host,
+            &mut self.world.host.frontend,
+            &mut self.world.host.audio,
+            &mut self.world.host.effects,
+            &application_context,
+            &self.world.host.transport,
             &mut self.world.manager.engine,
             &self.world.assets,
             &mut self.world.dev,
@@ -719,14 +724,18 @@ impl MissionRuntime {
 }
 
 /// Shared post-tick effect/RPC boundary. Neither driver grants access to Game,
-/// EngineManager (snapshot replacement), or mission UI here. Host remains the
-/// existing adapter for applying engine-produced presentation/audio effects.
+/// EngineManager (snapshot replacement), or the aggregate Host here. Only
+/// presentation/audio effect domains and read-only transport identity are admitted.
 /// Recorded effects must precede new requests; taints and applied actions must
 /// enter this same frame before its timeline or recording is committed.
 pub(super) fn drain_post_tick_rpc(
     http: &mut crate::http_server::SessionIngress,
     timeline: &mut TimelineRuntime,
-    host: &mut Host,
+    frontend: &mut crate::host::HostFrontend,
+    audio: &mut crate::host::HostAudio,
+    effects: &mut crate::host::HostEffectBatches,
+    application_context: &crate::host::ApplicationContext,
+    transport: &crate::host::HostTransport,
     engine: &mut Engine,
     assets: &LevelAssets,
     dev: &mut DevState,
@@ -734,23 +743,24 @@ pub(super) fn drain_post_tick_rpc(
 ) {
     let pending_actions = frame.unapplied_post_external_actions().to_vec();
     if !pending_actions.is_empty() {
-        let mut display = std::mem::take(&mut host.frontend.engine_display);
         crate::sim_timeline::run_post_external_action_stage(
-            host,
-            &mut display,
+            frontend,
+            audio,
+            effects,
+            application_context,
+            transport.local_seat(),
             assets,
             engine,
             dev,
             &pending_actions,
         );
-        host.frontend.engine_display = display;
         frame.mark_post_external_actions_applied();
     }
     let actions = http.drain(
         engine,
-        &mut host.frontend,
-        host.transport.local_seat(),
-        host.transport.net(),
+        frontend,
+        transport.local_seat(),
+        transport.net(),
         assets,
         &mut frame.post_commands,
     );
@@ -2067,6 +2077,105 @@ fn transition_phase(phase: &mut MissionPhase, expected: MissionPhase, next: Miss
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn post_tick_effects_preserve_recorded_order_and_are_not_reapplied() {
+        use robin_engine::engine::{ExternalAction, SimulationFrameInput};
+
+        let mut assets = LevelAssets::new();
+        let mut engine = Engine::new_for_test_with_level_size(
+            1024.0,
+            768.0,
+            Default::default(),
+            &mut assets,
+            4096.0,
+            4096.0,
+        )
+        .unwrap();
+        let mut host = Host::default();
+        let application_context = host.application_context().clone();
+        let mut dev = DevState::default();
+        let mut http = crate::http_server::SessionIngress::detached_for_test();
+        let mut timeline = TimelineRuntime::new(
+            super::super::replay_init::ReplayAndRollback {
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Graphical,
+            false,
+            true,
+        );
+        let mut frame = MissionFrame::new(0);
+        let replace_campaign = |ares| ExternalAction::ReplaceCampaign {
+            campaign: robin_engine::campaign::Campaign {
+                ares,
+                ..Default::default()
+            },
+        };
+        frame.post_external_actions = vec![replace_campaign(3), replace_campaign(7)];
+        drain_post_tick_rpc(
+            &mut http,
+            &mut timeline,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            &host.transport,
+            &mut engine,
+            &assets,
+            &mut dev,
+            &mut frame,
+        );
+        assert_eq!(
+            engine.campaign().ares,
+            7,
+            "recorded actions retain FIFO order"
+        );
+        assert_eq!(
+            dev.noise_display_start_radius, 14,
+            "both effect batches run, even when empty"
+        );
+        assert!(frame.unapplied_post_external_actions().is_empty());
+        assert_eq!(
+            frame.post_external_actions.len(),
+            2,
+            "journal keeps each recorded action once"
+        );
+
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass()
+                    .with_post_external_actions(vec![replace_campaign(9)]),
+            )
+            .unwrap();
+        drain_post_tick_rpc(
+            &mut http,
+            &mut timeline,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            &host.transport,
+            &mut engine,
+            &assets,
+            &mut dev,
+            &mut frame,
+        );
+        assert_eq!(
+            engine.campaign().ares,
+            9,
+            "a second drain cannot replay old actions"
+        );
+        assert_eq!(
+            dev.noise_display_start_radius, 14,
+            "a second drain cannot replay old effects"
+        );
+        assert_eq!(frame.post_external_actions.len(), 2);
+    }
 
     #[test]
     fn input_and_presentation_capabilities_preserve_simulation_until_command_admission() {

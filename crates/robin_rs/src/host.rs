@@ -2969,16 +2969,43 @@ impl Host {
         self.frontend.pending_print_screen = None;
     }
 
+    /// Apply engine outputs using only the frontend, audio and effect queues.
+    pub fn apply_side_effects(&mut self, fx: SideEffects) -> GameCode {
+        self.frontend.apply_side_effects(
+            fx,
+            &mut self.audio,
+            &mut self.effects,
+            &self.application_context,
+            self.transport.local_seat(),
+        )
+    }
+
+    pub fn sync_sound_listener(&mut self) {
+        self.audio.sound.set_listen_point(
+            self.frontend.viewport.sound_listen_point(),
+            self.frontend.viewport.zoom_factor,
+        );
+    }
+}
+
+impl HostFrontend {
     /// Apply the engine-local outputs of a tick.  Consumes the
     /// [`SideEffects`] struct by value so owned sub-vectors
     /// can be moved directly into host accumulators without clones.
     /// Returns the tick's game-state code.
-    pub fn apply_side_effects(&mut self, fx: SideEffects) -> GameCode {
+    pub(crate) fn apply_side_effects(
+        &mut self,
+        fx: SideEffects,
+        audio: &mut HostAudio,
+        effects: &mut HostEffectBatches,
+        application_context: &ApplicationContext,
+        local_seat: engine_player_command::PlayerId,
+    ) -> GameCode {
         if let Some(fade) = fx.fade_to_black {
-            self.frontend.fade_to_black = fade;
+            self.fade_to_black = fade;
         }
         if let Some(show) = fx.set_draw_hidden {
-            self.frontend.input.draw_hidden = show;
+            self.input.draw_hidden = show;
         }
         if fx.invalidate_trajectory_preview {
             // `SelectAction` trajectory cleanup: clear the jumper and
@@ -2988,7 +3015,7 @@ impl Host {
             // into the single host-side preview since there is only
             // ever one visible arc; clearing them together here is an
             // immediate wipe before the next mouse-update frame.
-            self.frontend.interaction.invalidate_action();
+            self.interaction.invalidate_action();
         }
         if fx.reset_input {
             // MSG_RESET_INPUT clears the rubber-band selection flags
@@ -2997,7 +3024,7 @@ impl Host {
             // input state armed.  Also zeroes the per-frame modifier
             // cache and the swordfight mouse-way polyline (modifier
             // keys, drag, UI focus, info overlay, mouse-way).
-            self.frontend.input.reset_modal_input();
+            self.reset_modal_input();
             // Reset does the swap `info_displayed = fps_cheat;
             // fps_cheat = false`: the FPS-cheat flag is consumed and
             // promoted into `info_displayed`, so toggling the FPS
@@ -3006,27 +3033,22 @@ impl Host {
             // `DevState::debug.fps_display`, which is not reachable
             // from here — hand off via a typed host signal for
             // the game-loop site that owns `&mut DevState` to apply.
-            self.effects.request_signal(HostSignal::PromoteFpsCheat);
-            self.frontend.ui_focus = false;
-            self.frontend.clear_gesture();
+            effects.request_signal(HostSignal::PromoteFpsCheat);
             // Zero the no-mouse-move accumulator so the
             // hover-trajectory gate (`TIME_TRAJECTORY_DISPLAY`)
             // doesn't re-arm immediately after a modal dialog or task
             // switch.
-            self.frontend
-                .interaction
-                .trajectory_preview
-                .interrupt_hover();
+            self.interaction.trajectory_preview.interrupt_hover();
         }
         if fx.cancel_multi_selection {
-            self.frontend.input.cancel_selection_gestures();
+            self.input.cancel_selection_gestures();
         }
         if let Some(top_left) = fx.pending_minimap_position {
             // Write the new minimap top-left back to the active player
             // profile on every accepted move. Persist through this host's
             // explicit application context and save to disk; failures are
             // logged after the sim has already accepted the new position.
-            let context = self.application_context.clone();
+            let context = application_context.clone();
             context
                 .with_player_profiles_mut(|mgr| {
                     let profile = mgr
@@ -3040,14 +3062,14 @@ impl Host {
                 })
                 .unwrap_or_else(|error| panic!("failed to persist minimap position: {error}"));
         }
-        if fx.pending_swordfight_drag_ignore && self.frontend.input.is_dragging() {
+        if fx.pending_swordfight_drag_ignore && self.input.is_dragging() {
             // Selected PC left Swordfighting this tick; if a drag was
             // in flight, raise `IgnoreMouseEvent(true, true, true)` so
             // the drag doesn't bleed into a click-release or a
             // subsequent double-click.
-            self.frontend.input.ignore_mouse_event(true, true, true);
+            self.input.ignore_mouse_event(true, true, true);
         }
-        self.frontend.skip_render = fx.skip_render;
+        self.skip_render = fx.skip_render;
         // Dispatch sim-emitted sound commands onto the SoundManager.
         // Most variants queue into `SoundManager::pending_sounds` and
         // are played out by `SoundManager::hourglass`; the two that
@@ -3057,7 +3079,7 @@ impl Host {
         for cmd in fx.sounds {
             match cmd {
                 SoundCommand::StopExclamation { actor_id } => {
-                    self.audio
+                    audio
                         .deferred
                         .push(DeferredAudioRequest::StopExclamation(actor_id.index()));
                 }
@@ -3070,22 +3092,22 @@ impl Host {
                     actor_id,
                 } => {
                     if let Some(actor_id) = actor_id {
-                        let had_deferred_stop = self.audio.deferred.iter().any(|request| {
+                        let had_deferred_stop = audio.deferred.iter().any(|request| {
                             *request == DeferredAudioRequest::StopExclamation(actor_id.index())
                         });
                         if had_deferred_stop {
-                            self.audio.deferred.retain(|request| {
+                            audio.deferred.retain(|request| {
                                 *request != DeferredAudioRequest::StopExclamation(actor_id.index())
                             });
-                            self.audio.sound.drop_pending_exclamations(actor_id.index());
-                            self.audio
+                            audio.sound.drop_pending_exclamations(actor_id.index());
+                            audio
                                 .deferred
                                 .push(DeferredAudioRequest::StopExclamationChannel(
                                     actor_id.index(),
                                 ));
                         }
                     }
-                    self.audio.sound.play_exclamation(
+                    audio.sound.play_exclamation(
                         group,
                         profile_id,
                         exclamation_id,
@@ -3099,7 +3121,7 @@ impl Host {
                     position,
                     material,
                 } => {
-                    self.audio.sound.queue_fx(fx_id, position, material);
+                    audio.sound.queue_fx(fx_id, position, material);
                 }
                 SoundCommand::StrikeFx {
                     strike_kind,
@@ -3107,7 +3129,7 @@ impl Host {
                     weapon2,
                     position,
                 } => {
-                    self.audio
+                    audio
                         .sound
                         .queue_strike_fx(strike_kind, weapon1, weapon2, position);
                 }
@@ -3117,47 +3139,43 @@ impl Host {
                     armor,
                     position,
                 } => {
-                    self.audio
+                    audio
                         .sound
                         .queue_impact_fx(impact_kind, weapon, armor, position);
                 }
                 SoundCommand::Jingle(jingle) => {
-                    self.audio.sound.queue_jingle(jingle);
+                    audio.sound.queue_jingle(jingle);
                 }
                 SoundCommand::SetMusicMode(mode) => {
-                    self.audio.sound.set_music_mode(mode);
+                    audio.sound.set_music_mode(mode);
                 }
                 SoundCommand::ForceMusicMode(mode) => {
-                    self.audio.sound.force_music_mode(mode);
+                    audio.sound.force_music_mode(mode);
                 }
                 SoundCommand::PlayDelayedSource(idx) => {
-                    self.audio
+                    audio
                         .deferred
                         .push(DeferredAudioRequest::PlayDelayedSource(idx));
                 }
                 SoundCommand::ResumeAllSources { .. } => {
-                    if !self
-                        .audio
+                    if !audio
                         .deferred
                         .contains(&DeferredAudioRequest::ResumeAllSources)
                     {
-                        self.audio
-                            .deferred
-                            .push(DeferredAudioRequest::ResumeAllSources);
+                        audio.deferred.push(DeferredAudioRequest::ResumeAllSources);
                     }
                 }
                 SoundCommand::ActivateSource(idx) => {
-                    self.audio
+                    audio
                         .deferred
                         .push(DeferredAudioRequest::ActivateSource(idx));
                 }
                 SoundCommand::RefreshAmbienceSources => {
-                    if !self
-                        .audio
+                    if !audio
                         .deferred
                         .contains(&DeferredAudioRequest::RefreshAmbienceSources)
                     {
-                        self.audio
+                        audio
                             .deferred
                             .push(DeferredAudioRequest::RefreshAmbienceSources);
                     }
@@ -3166,14 +3184,14 @@ impl Host {
         }
         // Accumulate UI-request queues — the host drives the widgets
         // asynchronously so signals outlive a single tick.
-        self.effects.extend_dialogues(fx.pending_dialogues);
-        self.effects.extend_popup_texts(fx.pending_popup_texts);
-        self.effects.extend_debriefings(fx.pending_debriefings);
+        effects.extend_dialogues(fx.pending_dialogues);
+        effects.extend_popup_texts(fx.pending_popup_texts);
+        effects.extend_debriefings(fx.pending_debriefings);
         if fx.pending_sherwood_report {
-            self.effects.request_sherwood_report();
+            effects.request_sherwood_report();
         }
-        if self.transport.local_seat == engine_player_command::PlayerId::HOST {
-            self.effects.extend_trade_receipts(fx.trade_receipts);
+        if local_seat == engine_player_command::PlayerId::HOST {
+            effects.extend_trade_receipts(fx.trade_receipts);
         } else if !fx.trade_receipts.is_empty() {
             tracing::trace!(
                 count = fx.trade_receipts.len(),
@@ -3181,43 +3199,31 @@ impl Host {
             );
         }
         if fx.pending_show_console {
-            self.effects.request_signal(HostSignal::ShowConsole);
+            effects.request_signal(HostSignal::ShowConsole);
         }
         if fx.pending_silent_win_widget_swap {
-            self.effects.request_signal(HostSignal::SilentWinWidgetSwap);
+            effects.request_signal(HostSignal::SilentWinWidgetSwap);
         }
         if fx.pending_mission_state_notice {
-            self.effects.request_signal(HostSignal::MissionStateNotice);
-            self.effects.request_signal(HostSignal::MissionStatePopup);
+            effects.request_signal(HostSignal::MissionStateNotice);
+            effects.request_signal(HostSignal::MissionStatePopup);
         }
         if fx.pending_reset_input {
-            self.effects.request_signal(HostSignal::ResetInput);
+            effects.request_signal(HostSignal::ResetInput);
         }
-        self.frontend.ui_focus |= fx.ui_has_focus;
+        self.ui_focus |= fx.ui_has_focus;
         // Per-frame mark requests from sim-side Mark() calls (currently
         // scripted mission-team insertion → `EngineCommand::MarkPc`).
         // Accumulates with host-side mark sources (requirements-bar
         // hover, portrait guard hover); the render loop drains the
         // buffer right after the outline pass.
-        self.frontend
-            .input
-            .marked_pc_ids
-            .extend(fx.pending_mark_pc_ids);
+        self.input.marked_pc_ids.extend(fx.pending_mark_pc_ids);
         // Patch-effect background decal changes are accumulated across
         // frames until the next render pass drains them.
-        self.effects.background_blits.extend(fx.bg_blits);
+        effects.background_blits.extend(fx.bg_blits);
         fx.code
     }
 
-    pub fn sync_sound_listener(&mut self) {
-        self.audio.sound.set_listen_point(
-            self.frontend.viewport.sound_listen_point(),
-            self.frontend.viewport.zoom_factor,
-        );
-    }
-}
-
-impl HostFrontend {
     /// Mutable access to the frame holder before its opacity view is published.
     /// Post-publication mutations must use
     /// [`Self::rebind_frame_holder_shadow_color`] so the engine and renderer

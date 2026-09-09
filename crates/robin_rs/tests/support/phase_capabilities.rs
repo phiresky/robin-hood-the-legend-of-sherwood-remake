@@ -185,7 +185,7 @@ fn frontend_policy_and_observation_owners_remain_private() {
         "preferences",
         "diagnostics",
         "planning",
-        "pointer_capture",
+        "pointer_sequence",
         "queue_strip_animations",
         "interaction",
     ] {
