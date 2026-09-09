@@ -1831,7 +1831,7 @@ mod tests {
         host2
             .frontend
             .apply_trajectory_preview(robin_engine::engine::input::TrajectoryPreview::HitNoArc);
-        host2.frontend.input.controls.has_focus = false;
+        host2.frontend.input.controls.has_focus = true;
         host2.frontend.input.controls.is_alt = true;
         host2.frontend.input.gestures.portrait_action_countdown = 5;
         host2.frontend.input.feedback.mouse_shadow_color = 42;
@@ -1851,7 +1851,9 @@ mod tests {
         assert!(!host2.frontend.input.multi_selection_active());
         assert!(!host2.frontend.input.left_mouse_down());
         assert!(host2.frontend.input.feedback.focused_entity_id.is_none());
-        assert!(host2.frontend.input.controls.has_focus);
+        // Snapshot restoration has always used InputState::default(), not
+        // focused(): loading must not fabricate a fresh platform focus sample.
+        assert!(!host2.frontend.input.controls.has_focus);
         assert!(!host2.frontend.input.controls.is_alt);
         assert_eq!(host2.frontend.input.gestures.portrait_action_countdown, 0);
         assert_eq!(host2.frontend.input.feedback.mouse_shadow_color, 0);

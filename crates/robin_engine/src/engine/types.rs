@@ -3090,7 +3090,8 @@ pub struct CursorFeedback {
 }
 
 /// Host-local input domains. The engine's serialized authoritative state does
-/// not contain this state; snapshot restoration creates a fresh focused input.
+/// not contain this state; snapshot restoration resets every domain to its
+/// unfocused default. Fresh host construction explicitly uses `focused()`.
 #[derive(Debug, Clone, Default)]
 pub struct InputState {
     pub controls: SampledControls,
