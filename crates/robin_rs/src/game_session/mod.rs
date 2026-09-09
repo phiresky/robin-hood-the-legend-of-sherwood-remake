@@ -149,7 +149,7 @@ fn sherwood_trading_access(
     profiles: &engine_profiles::ProfileManager,
 ) -> crate::host::SherwoodTradingAccess {
     crate::host::SherwoodTradingAccess {
-        local_is_host: host.transport.local_seat == engine_player_command::PlayerId::HOST,
+        local_is_host: host.transport.local_seat() == engine_player_command::PlayerId::HOST,
         enabled: engine.sim_config().sherwood_trading,
         in_sherwood: engine.is_sherwood(profiles),
     }
