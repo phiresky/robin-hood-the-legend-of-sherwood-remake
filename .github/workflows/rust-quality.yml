@@ -142,6 +142,13 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: scripts/release/package-lock.json
+      - name: Install release script type-checking dependencies
+        run: npm ci --prefix scripts/release
       - name: Install test prerequisites
         run: sudo apt-get update && sudo apt-get install -y zstd rsync
       - name: Test orchestration

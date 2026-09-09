@@ -181,12 +181,20 @@ jobs:
           dotnet tool install --global vpk --version "${VPK_VERSION}"
           vpk --help
 
+      - name: Resolve original run timestamp
+        id: timestamp
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            return await require('./scripts/release/publish_native_release.ts').packageTimestamp({ core, context, github })
+
       - name: Resolve package version
         id: version
         shell: bash
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
-          GH_TOKEN: ${{ github.token }}
+          RUN_TIMESTAMP: ${{ steps.timestamp.outputs.timestamp }}
         run: |
           if [[ -n "${REQUESTED_VERSION}" ]]; then
             version="${REQUESTED_VERSION}"
@@ -194,7 +202,7 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == schedule || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
             base_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "robin_rs") | .version')"
-            timestamp="$(PYTHONPATH=scripts/release python3 -c 'import os; from publish_native_release import run_timestamp; print(run_timestamp(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]))')"
+            timestamp="${RUN_TIMESTAMP}"
             version="${base_version}-nightly.${timestamp}+${GITHUB_SHA:0:12}"
           else
             echo "Unsupported release event: ${GITHUB_EVENT_NAME}" >&2
@@ -306,6 +314,7 @@ jobs:
           path: release-assets
 
       - name: Verify and promote recoverable release candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/release/publish_native_release.py release-assets
+        uses: actions/github-script@v9
+        with:
+          script: |
+            return await require('./scripts/release/publish_native_release.ts').main({ core, context, github })

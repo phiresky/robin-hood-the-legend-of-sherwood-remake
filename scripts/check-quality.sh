@@ -84,8 +84,7 @@ case "$1" in
         # capture real game sessions or operate a deployed service.
         python3 scripts/test_quality_suites.py
         python3 scripts/release/test_author_leaderboard_release.py
-        test -f scripts/release/test_publish_native_release.py
-        python3 -m unittest discover -s scripts/release -p test_publish_native_release.py
+        npm --prefix scripts/release run verify
         test -f scripts/test_portable_linker.py
         python3 -m unittest discover -s scripts -p test_portable_linker.py
         test -f scripts/validation/save_load_live_test.py
