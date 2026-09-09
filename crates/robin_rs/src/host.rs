@@ -1772,11 +1772,10 @@ pub struct HostFrontend {
     pub engine_display: engine_api::HostDisplayState,
 
     // ── Input ────────────────────────────────────────────────────
-    /// Sampled input and cursor/selection presentation shared with the engine.
+    /// Independently owned controls, gestures, spatial hits, and cursor feedback.
     /// Pointer lifecycle changes belong to the named frontend operations below,
     /// which also retire capture and gesture state.
-    // TODO: separate the remaining sampled-input and cursor-feedback domains;
-    // hiding these behind unrestricted mutable getters would not enforce that boundary.
+    /// Spatial queries publish whole snapshots; readers cannot mutate hit fields.
     pub input: InputState,
 
     /// Paired pointer-event ownership, retired together at interaction resets.
@@ -2180,8 +2179,8 @@ impl HostFrontend {
 
     fn reset_pointer_sequence(&mut self) {
         self.pointer_sequence.reset(&mut self.input);
-        self.input.portrait_action_countdown = 0;
-        self.input.portrait_action_pc = None;
+        self.input.gestures.portrait_action_countdown = 0;
+        self.input.gestures.portrait_action_pc = None;
         self.viewport.cancel_touch_motion();
         self.ui_focus = false;
     }
@@ -2910,7 +2909,7 @@ pub struct HostScripting {
 /// ```compile_fail,E0609
 /// use robin_rs::host::Host;
 /// let mut host = Host::scratch(1024.0, 768.0);
-/// host.input.has_focus = false;
+/// host.input.controls.has_focus = false;
 /// ```
 ///
 /// ```compile_fail,E0308
@@ -3162,7 +3161,7 @@ impl HostFrontend {
             self.fade_to_black = fade;
         }
         if let Some(show) = fx.set_draw_hidden {
-            self.input.draw_hidden = show;
+            self.input.feedback.draw_hidden = show;
         }
         if fx.invalidate_trajectory_preview {
             // `SelectAction` trajectory cleanup: clear the jumper and
@@ -3374,7 +3373,10 @@ impl HostFrontend {
         // Accumulates with host-side mark sources (requirements-bar
         // hover, portrait guard hover); the render loop drains the
         // buffer right after the outline pass.
-        self.input.marked_pc_ids.extend(fx.pending_mark_pc_ids);
+        self.input
+            .feedback
+            .marked_pc_ids
+            .extend(fx.pending_mark_pc_ids);
         // Patch-effect background decal changes are accumulated across
         // frames until the next render pass drains them.
         effects.background_blits.extend(fx.bg_blits);
@@ -3747,7 +3749,7 @@ mod interaction_reset_tests {
         frontend.route_hud_event(&crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1), true);
         frontend.lose_pointer_focus();
         assert!(!frontend.input.left_mouse_down());
-        assert!(!frontend.input.right_mouse_down);
+        assert!(!frontend.input.controls.right_mouse_down);
         assert!(!frontend.release_left_pointer());
         assert!(!frontend.release_right_pointer());
         assert!(!frontend.pointer_capture().minimap_drag_active());
@@ -3763,11 +3765,11 @@ mod interaction_reset_tests {
         frontend.begin_right_pointer(2);
         frontend.begin_minimap_drag(true);
         frontend.add_gesture_point(Default::default());
-        frontend.input.is_alt = true;
+        frontend.input.controls.is_alt = true;
         frontend.reset_modal_input();
         assert!(frontend.input.left_mouse_down());
         assert!(!frontend.input.is_dragging());
-        assert!(!frontend.input.is_alt);
+        assert!(!frontend.input.controls.is_alt);
         assert!(!frontend.pointer_capture().minimap_drag_active());
         assert!(!frontend.release_right_pointer());
         assert!(frontend.mouse_way().is_empty());

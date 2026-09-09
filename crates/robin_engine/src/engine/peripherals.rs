@@ -141,8 +141,8 @@ impl HostDisplayState {
     pub fn apply_host_event(&mut self, input: &mut super::InputState, event: super::HostEvent) {
         use super::{HostEvent, MacroUiHostEvent, MinimapHostEvent};
         match event {
-            HostEvent::SetRightMouseDown { down } => input.right_mouse_down = down,
-            HostEvent::ClearInputFocus => input.has_focus = false,
+            HostEvent::SetRightMouseDown { down } => input.controls.right_mouse_down = down,
+            HostEvent::ClearInputFocus => input.controls.has_focus = false,
             HostEvent::CancelMultiSelection {
                 suppress_next_double,
             } => {

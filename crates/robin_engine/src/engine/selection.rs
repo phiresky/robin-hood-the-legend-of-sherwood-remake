@@ -1326,7 +1326,7 @@ impl EngineInner {
     /// Sherwood gating and the actual mark application are left to the
     /// caller: the host-side UI decides when to invoke this (on
     /// requirements-bar hover), and writes the results into
-    /// `InputState::marked_pc_ids` so the outline pass can read them.
+    /// `CursorFeedback::marked_pc_ids` so the outline pass can read them.
     pub fn collect_pcs_with_action(
         &self,
         assets: &LevelAssets,

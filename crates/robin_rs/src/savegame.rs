@@ -3206,7 +3206,7 @@ mod tests {
         let mut manager = SaveGameManager::new(blocked_root.to_string_lossy().into_owned());
         let (mut engine, assets, profiles, mut host) = fresh_save_session("Session Restart");
         let mut game = game_for_save(&profiles, 17);
-        host.frontend.input.draw_hidden = true;
+        host.frontend.input.feedback.draw_hidden = true;
         game.persistent.campaign_map_displayed = true;
         engine.test_set_frame_counter(42);
         manager
@@ -3252,7 +3252,7 @@ mod tests {
         );
 
         engine.test_set_frame_counter(99);
-        host.frontend.input.draw_hidden = false;
+        host.frontend.input.feedback.draw_hidden = false;
         game.persistent.campaign_map_displayed = false;
         let mut disk_engine = engine.clone();
         let mut disk_host = Host::scratch(800.0, 600.0);
@@ -3263,7 +3263,7 @@ mod tests {
             .clone()
             .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
             .unwrap();
-        assert!(host.frontend.input.draw_hidden);
+        assert!(host.frontend.input.feedback.draw_hidden);
         assert!(game.persistent.campaign_map_displayed);
         assert_eq!(
             crate::save_file::GameRuntimeSnapshot::identity_of_live(&engine, &host, &game).unwrap(),

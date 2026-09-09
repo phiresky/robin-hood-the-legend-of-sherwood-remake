@@ -498,7 +498,9 @@ impl TitbitRenderer {
                 if !elem.active {
                     continue;
                 }
-                if !host.frontend.input.draw_hidden && (elem.blipped || elem.hidden_in_building) {
+                if !host.frontend.input.feedback.draw_hidden
+                    && (elem.blipped || elem.hidden_in_building)
+                {
                     continue;
                 }
             }

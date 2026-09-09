@@ -175,7 +175,7 @@ impl InteractiveMission {
             // cursor out of its top-left map pixel. Viewport captures retain
             // the ordinary cursor/HUD composition.
             if !args.mission_start_viewport_capture {
-                host.frontend.input.mouse_opacity = 0;
+                host.frontend.input.feedback.mouse_opacity = 0;
             }
             let display_snapshot = host.frontend.engine_display.clone();
             let capture_result = {
@@ -596,7 +596,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // Presentation transients advance once per fixed tick after every
         // physical-display sample has consumed the same state.
         if fixed_tick_presented {
-            if host.frontend.input.increment_cursor_animation {
+            if host.frontend.input.feedback.increment_cursor_animation {
                 presentation.sprites.cursor_renderer.advance_animation();
             }
             if host.frontend.input.is_dragging()
@@ -606,7 +606,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             {
                 host.frontend.advance_gesture_trail(trail);
             }
-            host.frontend.input.marked_pc_ids.clear();
+            host.frontend.input.feedback.marked_pc_ids.clear();
             if let Some(mut fade) = host.frontend.fade_to_black {
                 host.frontend.fade_to_black = fade.advance_presented_frame().then_some(fade);
             }

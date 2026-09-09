@@ -427,15 +427,20 @@ pub(crate) fn render_door_overlays(
     }
 
     // ── 4. Hovered-door branch ──
-    let selected_grid_idx = host.frontend.input.selected_sector_idx.map(usize::from);
+    let selected_grid_idx = host
+        .frontend
+        .input
+        .spatial_hit()
+        .selected_sector_idx
+        .map(usize::from);
     let selected_sector = selected_grid_idx.and_then(|i| engine.fast_grid().level.sectors.get(i));
     let selected_sector_num = selected_sector.map(|s| i16::from(s.sector_number));
     let selected_sector_active = selected_grid_idx
         .map(|i| engine.fast_grid().is_sector_active(i as u32))
         .unwrap_or(false);
 
-    if host.frontend.input.display_door
-        && let Some(door_idx) = host.frontend.input.hovered_door_idx
+    if host.frontend.input.feedback.display_door
+        && let Some(door_idx) = host.frontend.input.spatial_hit().hovered_door_idx
         && let Some(door) = engine.doors().get(door_idx as usize)
     {
         match door.door_type {
@@ -459,7 +464,7 @@ pub(crate) fn render_door_overlays(
     }
 
     if let Some((sector_index, sector)) = selected_grid_idx.zip(selected_sector) {
-        if host.frontend.input.display_door
+        if host.frontend.input.feedback.display_door
             && sector.sector_type.is_door()
             && let Some(door_idx) = sector.door_index
             && let Some(door) = engine.doors().get(door_idx as usize)
@@ -529,7 +534,7 @@ pub(crate) fn render_door_overlays(
                         pc_id,
                         sector_index as u32,
                         pc_pos,
-                        host.frontend.input.selected_map_point,
+                        host.frontend.input.spatial_hit().selected_map_point,
                         /* test_posture */ false,
                         None,
                     )
@@ -548,6 +553,7 @@ pub(crate) fn render_door_overlays(
     if let Some(patch) = host
         .frontend
         .input
+        .spatial_hit()
         .selected_patch_idx
         .and_then(|index| engine.patches().get(index as usize))
     {
@@ -1419,7 +1425,7 @@ pub(crate) fn render_entities_gpu(
             let kind = entity.kind();
             let actor_layer = elem.layer();
             let is_flying_human = elem.posture() == Posture::Flying;
-            let hidden_outline_rgb = if host.frontend.input.draw_hidden {
+            let hidden_outline_rgb = if host.frontend.input.feedback.draw_hidden {
                 // Ground objects always use Hidden; actors retain their active
                 // targeting/parrying outline just like the original path.
                 let color_565 = if matches!(
@@ -1867,8 +1873,13 @@ pub(crate) fn render_selection_outlines_gpu(
         // Mark contributions are prepared between the entity and outline
         // passes. Borrow this phase's completed selection through immutable
         // Host access, rather than snapshotting last frame's marks early.
-        let is_focused = host.frontend.input.focused_entity_id == Some(entity_id);
-        let is_action_marked = host.frontend.input.marked_pc_ids.contains(&entity_id);
+        let is_focused = host.frontend.input.feedback.focused_entity_id == Some(entity_id);
+        let is_action_marked = host
+            .frontend
+            .input
+            .feedback
+            .marked_pc_ids
+            .contains(&entity_id);
         let hulk_running = entity.human_data().is_some_and(|h| h.running_hulk > 0);
 
         if !is_focused && !is_action_marked && !hulk_running {

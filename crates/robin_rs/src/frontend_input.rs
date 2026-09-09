@@ -50,11 +50,11 @@ impl FrontendPointerSequence {
         input.release_left_pointer()
     }
     pub(crate) fn begin_right(&mut self, input: &mut robin_engine::engine::InputState, clicks: u8) {
-        input.right_mouse_down = true;
+        input.controls.right_mouse_down = true;
         self.capture.right_button_down(clicks);
     }
     pub(crate) fn release_right(&mut self, input: &mut robin_engine::engine::InputState) -> bool {
-        input.right_mouse_down = false;
+        input.controls.right_mouse_down = false;
         self.capture.take_right_double_click()
     }
     pub(crate) fn cancel_left(&mut self, input: &mut robin_engine::engine::InputState) {
@@ -295,7 +295,7 @@ mod tests {
         assert!(!sequence.capture().minimap_drag_active());
         assert!(sequence.mouse_way().is_empty());
         assert!(!sequence.release_left(&mut input));
-        assert!(input.right_mouse_down);
+        assert!(input.controls.right_mouse_down);
         assert!(sequence.release_right(&mut input));
         assert!(!sequence.release_right(&mut input));
     }

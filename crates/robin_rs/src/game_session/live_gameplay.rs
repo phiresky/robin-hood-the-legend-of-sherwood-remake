@@ -146,7 +146,7 @@ fn dispatch_gameplay_action(
     match action {
         GameAction::SlowMotion => host.frontend.slow_motion = !host.frontend.slow_motion,
         GameAction::SwitchMaskedDisplay => {
-            host.frontend.input.draw_hidden = !host.frontend.input.draw_hidden
+            host.frontend.input.feedback.draw_hidden = !host.frontend.input.feedback.draw_hidden
         }
         // Host-only view actions have already run in the preceding phase.
         GameAction::ScrollUp

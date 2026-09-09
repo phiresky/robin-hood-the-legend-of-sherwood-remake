@@ -3313,7 +3313,7 @@ mod tests {
         .expect("fixture engine");
         let mut host = Host::scratch(1024.0, 768.0);
         let mut game = Game::default();
-        host.frontend.input.draw_hidden = true;
+        host.frontend.input.feedback.draw_hidden = true;
         game.persistent.campaign_map_displayed = true;
         game.persistent.campaign_map_active = false;
         engine
@@ -3407,7 +3407,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("speech command admission");
-        host.frontend.input.draw_hidden = false;
+        host.frontend.input.feedback.draw_hidden = false;
         game.persistent.campaign_map_displayed = false;
         save.apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
             .expect("restore live save");
@@ -3468,7 +3468,7 @@ mod tests {
         );
         let mut manager = robin_engine::engine_manager::EngineManager::new(marker_engine);
         let mut playback_host = Host::scratch(1024.0, 768.0);
-        playback_host.frontend.input.draw_hidden = true;
+        playback_host.frontend.input.feedback.draw_hidden = true;
         let mut playback_game = Game::default();
         playback_game.persistent.campaign_map_displayed = true;
         playback
@@ -3501,7 +3501,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("speech command admission");
-        playback_host.frontend.input.draw_hidden = false;
+        playback_host.frontend.input.feedback.draw_hidden = false;
         playback_game.persistent.campaign_map_displayed = false;
         playback_game.persistent.campaign_map_active = false;
         assert_ne!(
@@ -3521,7 +3521,7 @@ mod tests {
             restored_hash
         );
         assert!(!manager.engine.is_fast_forward());
-        assert!(playback_host.frontend.input.draw_hidden);
+        assert!(playback_host.frontend.input.feedback.draw_hidden);
         assert!(playback_game.persistent.campaign_map_displayed);
         assert!(playback_game.persistent.campaign_map_active);
         assert!(playback_game.continue_requested);
