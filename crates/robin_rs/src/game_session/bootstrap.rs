@@ -380,7 +380,9 @@ impl MissionBootstrap {
             .application_context()
             .active_profile_snapshot()
             .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-            .unwrap_or(true);
+            .unwrap_or_else(|error| {
+                panic!("mission visual setup requires an active profile: {error}")
+            });
         let visual_ambiance = if dynamic_visuals {
             manager.engine.weather().ambiance
         } else {
@@ -745,7 +747,8 @@ impl InteractiveLoadStage {
             &mut host,
             &game,
             args.replay.is_none() && args.replay_data.is_none(),
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
         Ok(InteractiveLoadStart::Ready(Self {
             loading,
             host,
@@ -922,7 +925,9 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
             &bootstrap.host,
             &bootstrap.game,
         )?;
-        let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref())?;
+        let short_briefings = process
+            .resolve_short_briefings(level_descriptors.as_ref())
+            .map_err(|error| error.to_string())?;
 
         let mut timer = super::setup::PhaseTimer::new("frontend assembly");
         let (renderer_config, prepared_renderer) = loading.close_before_renderer();
@@ -1100,7 +1105,7 @@ impl HeadlessLoadStage {
         );
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
-        let resources = MissionEngineResources::load(&host)?;
+        let resources = MissionEngineResources::load(&host).map_err(|error| error.to_string())?;
         Ok(Self {
             host,
             game,
