@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **133 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **138 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -91,6 +91,10 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [GameFAQs — A Great Strategy game!](reviews/gamefaqs-rios-always.md) | English | Review text inspected; PC URL used to avoid platform-mirror ambiguity. |
 | [Sector — Painkiller’s player review](reviews/sector-painkiller.md) | Slovak | No |
 | [Sector — agent1’s player review](reviews/sector-agent1.md) | Slovak | No |
+| [DualShock Podcast — Blady’s retrospective](reviews/dualshock-blady.md) | Polish | No |
+| [Ziemia Jałowa — Krzywol’s retrospective](reviews/ziemia-jalowa-krzywol.md) | Polish | No |
+| [PatientGamers — returning player’s combat and AI impressions](reviews/patientgamers-spiderousmenace.md) | English | No |
+| [Old-Games.RU — Virgil’s catalogue review](reviews/old-games-virgil.md) | Russian | No |
 
 ## Compatibility and configuration
 
@@ -157,6 +161,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Sector — original website announcement](history/sector-website-announcement.md) | Slovak | No |
 | [Sector — October 2002 demo impressions](history/sector-demo-impressions.md) | Slovak | No |
 | [Sector — February 2002 announcement](history/sector-february-announcement.md) | Slovak | No |
+| [Gram.pl — Spellbound studio retrospective](history/gram-spellbound-retrospective.md) | Polish | No |
 
 ## Indexes, media, and sources awaiting access
 
@@ -308,3 +313,9 @@ The Obligement review body still could not be retrieved. The Macworld magazine s
 Added six non-Steam records, bringing the collection to 133: two Sector player reviews, three early news items, and a GOG production discussion. The [demo impressions](history/sector-demo-impressions.md) identify observed visibility and self-defense behavior without establishing an exact build. The [February announcement](history/sector-february-announcement.md) records an early advertised mission count; the [website announcement](history/sector-website-announcement.md) supplies an archival lead for promotional assets.
 
 The [GOG reply](guides/gog-production-parchment.md) distinguishes production from what the parchment displays, but remains an unconfirmed player explanation. The two player reviews were inspected through indexed text because direct retrieval failed. No separate research-notes file was created.
+
+#### Further Polish, Russian, and English retrospectives
+
+Added five non-Steam records, bringing the collection to 138: four reviews and a studio retrospective. [Virgil’s catalogue review](reviews/old-games-virgil.md) is distinct from the existing redwings article; its dated comments add camp-management and combat observations. The [PatientGamers review](reviews/patientgamers-spiderousmenace.md) describes guard coordination alongside frustrations with combat and repeated missions. These player observations remain unverified mechanics claims.
+
+The [Krzywol retrospective](reviews/ziemia-jalowa-krzywol.md) was recovered through substantial indexed passages. [Blady’s article](reviews/dualshock-blady.md) and the [Gram.pl studio history](history/gram-spellbound-retrospective.md) were directly readable. The latter’s explanation of why Spellbound received the Gothic project is conjecture. A GameStar reader-review index also surfaced “Taktik im Sherwood Forest” (7 April 2008), but its substantive review body remains unrecovered and is not counted.
