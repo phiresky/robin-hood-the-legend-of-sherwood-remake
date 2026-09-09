@@ -121,3 +121,5 @@ pub mod short_briefings;
 pub mod sound_geometry;
 pub mod sound_source;
 pub mod water_zones;
+
+pub mod audio_durations;

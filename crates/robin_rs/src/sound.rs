@@ -2486,6 +2486,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn localized_voice_channel_is_not_cut_off_by_pending_expiry() {
+        let mut manager = SoundManager::new();
+        let mut backend = MockBackend::new();
+        let channel = backend.play_sound("french.wav", false).unwrap();
+        manager.runtime.pending_sounds.push(PendingSoundInfo {
+            settings: SoundSettings {
+                sound_type: SoundType::Exclamation,
+                position: MapPoint::default(),
+                identifier: 1,
+                source: SoundSettingsSource::Position { material: 0 },
+            },
+            channel: PendingChannel::Assigned(channel),
+            start_time_ms: 0,
+            length_ms: 1000,
+            actor_id: Some(1),
+            source_index: None,
+            speech_variant: None,
+            resolved_entry: None,
+        });
+        backend.ticks = 1001;
+        manager.process_pending_sounds(
+            &mut backend,
+            &|_| panic!("already loaded"),
+            &mut |_| 0,
+            &SoundSourceManager::new(),
+        );
+        assert!(manager.runtime.pending_sounds.is_empty());
+        assert!(
+            backend.is_channel_playing(channel),
+            "only the mixer or an explicit stop ends localized playback"
+        );
+    }
+
     /// Minimal mock audio backend for testing.
     struct MockBackend {
         channels_playing: Vec<bool>,

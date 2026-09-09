@@ -340,7 +340,7 @@ fn content_receipts(
                 closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
                 projection_schema_version: 2,
                 resource_locale_root: locale.clone(),
-                speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
+                speech_timing: SimulationSpeechTimingSourceV1::CoreAudioDurationsV1,
                 components,
             };
             content_manifest.validate()?;

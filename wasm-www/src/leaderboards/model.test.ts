@@ -921,6 +921,13 @@ test('build and content manifests are recursively strict and content-addressed',
     assert.equal((await parseAndVerifyContentManifest(contentManifest, contentDigest)).components.length, 8);
     assert.equal(parseContentManifest(contentManifest).name, 'Leicester Demo');
     assert.equal(parseContentManifest(contentManifest).resourceLocaleRoot, '1033');
+    assert.deepEqual(parseContentManifest({
+        ...contentManifest, speech_timing: { kind: 'core_audio_durations_v1' },
+    }).speechTiming, { kind: 'core_audio_durations_v1' });
+    assert.throws(() => parseContentManifest({
+        ...contentManifest, speech_timing: { kind: 'core_audio_durations_v1', canonical_locale: 'fr-FR' },
+    }));
+
     assert.throws(() => parseContentManifest({
         ...contentManifest,
         components: contentManifest.components.slice(1),

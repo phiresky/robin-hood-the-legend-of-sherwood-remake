@@ -119,16 +119,9 @@ pub(super) fn tick_audio(
                         resolved.actor_id, resolved.identifier, resolved.exclamation_id
                     )
                 });
-            let duration_frames = assets
-                .audio.exclamation_durations()
-                .get(&(pending.group, pending.profile_id, pending.exclamation_id))
-                .copied()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "authoritative speech duration missing for {:?} profile {} exclamation {}",
-                        pending.group, pending.profile_id, pending.exclamation_id
-                    )
-                });
+            let duration_frames = robin_engine::audio_durations::speech_duration_frames(
+                assets.audio.speech_timing_catalog(), resolved.identifier, pending.variant,
+            ).unwrap_or_else(|error| panic!("{error}"));
             robin_engine::sound::ResolvedExclamation {
                 actor_id: resolved.actor_id,
                 identifier: resolved.identifier,
