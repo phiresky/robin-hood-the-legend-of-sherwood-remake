@@ -155,4 +155,4 @@ Displayed karma: +1 vote.
 
 ## Coverage limitation
 
-The source page links to a second comments page (“Next”; page 2 of 2), but `technical__moddb-gravitr.html` and `technical__moddb-gravitr.txt` contain only page 1. The two comments on page 2 therefore cannot be reproduced here.
+The archived second comments page was checked on 2026-09-09 (`originals/recovery/gravitr-archive-p2.browser.html`). Its four visible comment bodies are already present in the original first-page capture and reproduced above; pagination does not establish two additional missing comments. One comment body remains hidden behind an approval-status notice.

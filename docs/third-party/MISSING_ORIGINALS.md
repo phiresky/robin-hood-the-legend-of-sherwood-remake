@@ -20,37 +20,46 @@ The mappings were checked against `fetch_originals.sh`, canonical URLs in the ma
 | [DxWnd flipchain investigation](technical/dxwnd-flipchain-investigation.md) | Page 3 of 5, with 25 posts and attachment links. |
 | [ModDB cinematic enhancement](technical/moddb-cinematic-enhancement.md) | Mod description, installation instructions, file listing and metadata. |
 
-## Available text with material coverage limits
+## Recovered by web fetch and Playwright — pending conversion
 
-These files have usable original text, but further captures would fill the following gaps.
+A recovery pass on 2026-09-09 saved the following additional originals in `originals/recovery/`. **These new captures have not yet been incorporated into the article Markdown or translated.** They are no longer missing source text. Browser result logs retain requested/final URLs and status; web extracts retain source URLs and crawl metadata. Archived and cached pages may reflect different dates from the initial captures.
 
-- [Grouvee player records](reviews/grouvee-player-records.md): Luitenant_Gruber’s review is truncated behind “Read more”; neither review card’s linked comment body is captured.
-- [Patient Gamers — SpiderousMenace](reviews/patientgamers-spiderousmenace.md): the post reports 25 comments, but only 23 comment nodes are captured.
-- [Patient Gamers — zehnpae](reviews/patientgamers-zehnpae.md): all thirteen comment nodes are captured, but one deleted/moderator-removed comment has no recoverable body.
-- [CodeWeavers CrossOver](technical/codeweavers-crossover.md): per-version submitted-rank details and additional “Show More” entries are dynamically loaded and absent from the capture; the linked tutorial is not included.
-- [DxWnd flipchain investigation](technical/dxwnd-flipchain-investigation.md): only page 3 of 5 is captured (`?page=2` is zero-indexed); pages 1–2 and 4–5 are absent. Attachment links are preserved, not the binary/media contents.
-- [ModDB cinematic enhancement](technical/moddb-cinematic-enhancement.md): the captured file-list excerpt is truncated; the linked download page and video contents are not included.
-- [Toronto Computes — Talbot](reviews/toronto-computes-talbot.md): the article is legible, but the screenshot does not show the issue date or page number; the existing May 2003/page 51 citation is retained as editorial provenance.
+| Markdown file(s) | Newly available source coverage | Capture names in `originals/recovery/` |
+| --- | --- | --- |
+| [Kisa Windows](technical/steam-kisa-windows.md), [fonts](technical/steam-language-fonts.md), [Naxyň FPS](technical/steam-naxyn-fps.md), [Polish localization](technical/steam-polish-localization.md), [secret ending](guides/steam-secret-ending.md) | All reported comment sets: 78, 16, 71, 55 and 11 respectively; 231 unique comment IDs across the five guides, including existing first-page captures. | `steam-kisa*`, `steam-fonts*`, `steam-naxyn*`; Polish pages 1–2 plus `steam-polish-retry-p3` through `p6`; existing secret-ending original plus `steam-secret-retry-p2.browser.html`. |
+| [GOG edition](history/gog-edition.md) | 36 review pages, 178 distinct review cards. | `gog-reviews.browser.html` and `gog-reviews-p2` through `p36.browser.html`. |
+| [WineHQ mouse-jitter bug](technical/wine-mouse-jitter-57031.md) | Initial message and eight replies/events, including Bugzilla Comment #1. | `wine-thread.browser.html`. |
+| [Sina/Yicai walkthrough](guides/sina-yicai-chinese.md) | Previously missing first article page. | `sina-p1.browser.html`. |
+| [GRYOnline walkthrough](guides/gry-online-walkthrough.md) | Fifteen additional chapter bodies; the other two chapters already have separate Markdown files. | Fifteen `gry-<chapter>.browser.html` files, excluding `gry-index.browser.html`. |
+| [DxWnd flipchain](technical/dxwnd-flipchain-investigation.md) | Pages 1, 2, 4 and 5, complementing the manual page 3. | `dxwnd-flipchain-p1.web.txt`, `p2.web.txt`, `p4.web.txt`, `p5.web.txt`. |
+| [DxWnd hooking](technical/dxwnd-hooking-discussion.md) | Missing second discussion page. | `dxwnd-hooking-p2.web.txt`. |
+| [PC Games review](reviews/pcgames.md) | Second article page, including verdict and rating, from Wayback. The apparent third page redirects to an image gallery. | `pcgames-archive-p2.browser.html`; `pcgames-archive-p3.browser.html` is a gallery capture, not another article page. |
+| [Metacritic](reviews/metacritic.md) | Embedded page data contains 19 user-review records with full quotes, including two spoiler-hidden reviews, and ten critic excerpt records. This does not establish coverage of every review counted by the site. | `metacritic-expanded.browser.html`, `metacritic-critics.browser.html`; extract the `__NUXT_DATA__` records, not only visible text. |
+| [Jeuxvideo tips](guides/jeuxvideo-french-tips.md) | Three of eleven linked tips: Les chevaliers, Sherwood, and Cheat codes. | `jv-tip-6.web.txt`, `jv-tip-11.web.txt`, `jv-tip-12.web.txt`. |
+| [Speedrun community](reference/speedrun-community.md) | Resources list and three linked forum discussions: missing secret Attack on Lincoln level, blocking hotkeys, and missing an ambush. | `speedrun-10.web.txt`, `speedrun-87.web.txt`, `speedrun-88.web.txt`, `speedrun-90.web.txt`. |
 
-- [Gamez.ru walkthrough](guides/gamez-russian.md): page 1 of 3 is captured; pages 2–3 are absent.
-- [Sina/Yicai walkthrough](guides/sina-yicai-chinese.md): the captured second page covers missions 9–23; the preceding page with missions 1–8 is absent.
-- [GRYOnline walkthrough index](guides/gry-online-walkthrough.md) and [Jeuxvideo tips index](guides/jeuxvideo-french-tips.md): the captured pages contain indexes; linked chapter/tip bodies are not part of those originals. The separately captured GRYOnline chapters have their own Markdown files.
-- [PC Games review](reviews/pcgames.md): only the first article page is captured.
-- [DxWnd hooking discussion](technical/dxwnd-hooking-discussion.md): page 1 contains 25 posts; page 2 is absent.
-- [Mod by Gravitr](technical/moddb-gravitr.md): ten of twelve comments are captured; the second comment page is absent.
-- [Metacritic](reviews/metacritic.md): the capture exposes seven critic excerpts and seven user-review entries, not every review counted by the site; hidden spoiler text is unavailable.
-- [GOG edition](history/gog-edition.md): includes the five user reviews exposed by the captured product page, not all reviews on GOG.
-- [Magazine references](reference/magazine-indexes.md): the capture has issue references and a game/video record, not the magazine articles themselves.
-- [Speedrun community](reference/speedrun-community.md): includes the captured leaderboard and community index, not unprovided tabs or linked forum discussions.
-- [Video walkthrough](reference/video-walkthrough.md): title, metadata, and description are available; no transcript, captions, or viewer comments were captured.
-- [Steam secret-ending guide](guides/steam-secret-ending.md): ten comment entries are captured although the page reports eleven; some instructions are supplied only as linked images.
-- [Kisa Windows guide](technical/steam-kisa-windows.md): the full guide is captured, but only ten of 78 comments are present.
-- [Language and fonts guide](technical/steam-language-fonts.md): the full guide is captured, but only ten of sixteen comments are present.
-- [Naxyň FPS guide](technical/steam-naxyn-fps.md): the full guide is captured, but only ten of 71 comments are present.
-- [Polish localization guide](technical/steam-polish-localization.md): the full guide is captured, but only ten of 55 comments are present.
-- [ModDB performance fix](technical/moddb-performance-fix-history.md): captured comments include approval-status notices whose underlying comment text is unavailable.
-- [WineHQ mouse-jitter bug](technical/wine-mouse-jitter-57031.md): the first message is captured, but reply bodies are absent from the supplied HTML/TXT. Earlier research notes about replies and Bugzilla Comment #1 are retained separately as unverified editorial notes.
+Failed captures are preserved for diagnostics, **not usable originals**. In particular, the non-retry Polish pages 3–6, non-retry secret-ending pages, direct PC Games pages, browser DxWnd pages, and all Jeuxvideo tip extracts except 6/11/12 are error responses. The recovery manifest lists only selected usable captures.
 
-Other per-file notes identify comments that were counted or linked by a site but not present in the saved page. No missing comments, linked articles, hidden text, or video transcripts were reconstructed from summaries.
+The archived second [Mod by Gravitr](technical/moddb-gravitr.md) comment page was also checked: its four visible comment bodies are already in the existing capture and Markdown. The prior “two missing comments” claim was incorrect; the remaining gap is an approval-hidden comment body.
+
+## Still unavailable or incomplete after the recovery pass
+
+- [Grouvee player records](reviews/grouvee-player-records.md): full Luitenant_Gruber review and linked comment bodies remain blocked by site verification. A Metacritic LT_Gruber review has matching opening text and date and supplies a possible complete cross-post, but is not verified as the exact Grouvee continuation.
+- [Patient Gamers — SpiderousMenace](reviews/patientgamers-spiderousmenace.md): 23 captured comment nodes versus 25 reported; live browser access returned 403.
+- [Patient Gamers — zehnpae](reviews/patientgamers-zehnpae.md): one deleted/moderator-removed body remains unavailable; live browser access returned 403.
+- [CodeWeavers CrossOver](technical/codeweavers-crossover.md): dynamic per-version submitted-rank details, additional “Show More” entries and linked tutorial remain uncaptured. Browser access was blocked; the web-fetch snapshot was older than the supplied manual capture.
+- [ModDB cinematic enhancement](technical/moddb-cinematic-enhancement.md): full linked file-description text remains unavailable after browser/web-fetch failures. Video contents are not transcribed.
+- [Toronto Computes — Talbot](reviews/toronto-computes-talbot.md): article text is complete, but the screenshot still does not verify its issue/page citation. The issue listing supports May 2003; page 51 was not independently verified.
+- [Gamez.ru walkthrough](guides/gamez-russian.md): pages 2–3 remain unavailable after direct, full-page and archive attempts.
+- [Jeuxvideo tips](guides/jeuxvideo-french-tips.md): eight of eleven linked tip bodies remain unavailable; three recovered above.
+- [Metacritic](reviews/metacritic.md): additional reviews beyond the recovered 19 user records and ten critic excerpts may exist; critic excerpts are not the linked full reviews.
+- [Magazine references](reference/magazine-indexes.md): issue references are available, not the magazine articles themselves.
+- [Speedrun community](reference/speedrun-community.md): additional leaderboard tabs, run metadata and other linked discussions remain uncaptured; some web-fetch requests failed.
+- [Video walkthrough](reference/video-walkthrough.md): browser capture and description expansion did not expose a transcript, captions or viewer comments.
+- [Steam secret-ending guide](guides/steam-secret-ending.md): comment pagination is recovered, but image-only instructions remain linked rather than transcribed.
+- [Mod by Gravitr](technical/moddb-gravitr.md) and [ModDB performance fix](technical/moddb-performance-fix-history.md): approval-hidden comment bodies are not publicly available in the captures.
+- Discussion attachments, linked videos and remaining PC Games gallery images have not been downloaded or transcribed.
+
+No missing text was reconstructed from summaries. Saved HTML contains site chrome; the subsequent Markdown conversion still needs to remove it and add English translations above non-English originals.
 
 Checked: 2026-09-09.
