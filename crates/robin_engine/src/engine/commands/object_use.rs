@@ -24,7 +24,7 @@ impl EngineInner {
             // The original game's ale input handling gives the constructed
             // Seek→DropAle sequence to quick-action assignment, sends
             // STOP_RECORDING_MACRO, and does not launch it live. The
-            // shared recording hook above has already retained the
+            // parent dispatcher's shared recording hook has already retained the
             // complete resolved route and installed its titbit.
             self.stop_recording_macro();
             return;
@@ -685,7 +685,7 @@ pub fn object_pickup_command(
 }
 
 /// Determine which Use command to launch on a target entity.
-/// Public so apply_enter_swordfight can call it.
+/// Shared by swordfight fallback and quick-action replay.
 pub(super) fn determine_use_command(
     engine: &EngineInner,
     assets: &LevelAssets,
