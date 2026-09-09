@@ -319,7 +319,7 @@ impl TitbitRenderer {
         next_sim_display_order: f32,
         display_order_max: f32,
     ) -> bool {
-        let Some(preview) = host.frontend.host_titbit_preview else {
+        let Some(preview) = host.frontend.host_titbit_preview() else {
             return false;
         };
         if self.host_preview_rendered {

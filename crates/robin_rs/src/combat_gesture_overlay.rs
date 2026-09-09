@@ -55,10 +55,10 @@ pub(crate) fn prepare_feedback(frontend: &mut HostFrontend, now: u32) {
         .gameplay_config()
         .combat_gesture_coach
         || frontend
-            .gesture_coach_feedback
+            .gesture_coach_feedback()
             .is_some_and(|feedback| now.wrapping_sub(feedback.created_at_ms) > 1_800)
     {
-        frontend.gesture_coach_feedback = None;
+        frontend.set_gesture_coach_feedback(None);
     }
 }
 
@@ -140,7 +140,7 @@ fn render_guide(
 }
 
 fn render_coach(frontend: &HostFrontend, renderer: &mut Renderer, fonts: Option<&HudFonts>) {
-    let Some(feedback) = frontend.gesture_coach_feedback else {
+    let Some(feedback) = frontend.gesture_coach_feedback() else {
         return;
     };
     let now = crate::window::process_uptime_ms();

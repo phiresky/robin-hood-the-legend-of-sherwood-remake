@@ -1830,8 +1830,7 @@ mod tests {
             .press_left_pointer(Default::default(), 1);
         host2
             .frontend
-            .trajectory_preview
-            .apply(robin_engine::engine::input::TrajectoryPreview::HitNoArc);
+            .apply_trajectory_preview(robin_engine::engine::input::TrajectoryPreview::HitNoArc);
 
         save.apply_to(&mut engine3, &mut host2, &assets3)
             .expect("apply save");
@@ -1839,7 +1838,7 @@ mod tests {
         assert!(!host2.frontend.input.multi_selection_active());
         assert!(!host2.frontend.input.left_mouse_down());
         assert!(host2.frontend.input.focused_entity_id.is_none());
-        assert!(!host2.frontend.trajectory_preview.is_valid());
+        assert!(!host2.frontend.trajectory_preview().is_valid());
     }
 
     #[test]

@@ -708,9 +708,7 @@ fn on_portrait_click(
                     .first()
                     .and_then(|id| engine.tactical_order(*id))
                     .map_or(TacticalFormation::Line, |order| order.formation);
-                host.frontend
-                    .tactical_targeting
-                    .arm_patrol(members, formation);
+                host.frontend.arm_tactical_patrol(members, formation);
             }
             PortraitHitArea::AlliedAction(2) => {
                 let formation = members
@@ -1147,7 +1145,7 @@ fn on_world_click(
             .viewport
             .screen_to_map(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
     {
-        if let Some(cmd) = host.frontend.tactical_targeting.resolve_world_click(map_pt) {
+        if let Some(cmd) = host.frontend.resolve_tactical_target(map_pt) {
             dispatch_local_command(&host.transport, frame_cmds, &cmd);
             return;
         }
@@ -1209,7 +1207,7 @@ fn on_right_mouse_up(
             return;
         }
 
-        if host.frontend.tactical_targeting.cancel() {
+        if host.frontend.cancel_tactical_target() {
             host.frontend.input.cancel_multi_unselection();
             return;
         }
@@ -1262,7 +1260,7 @@ fn on_right_mouse_up(
                 let cmd = PlayerCommand::SetLockAlt(false);
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
             } else {
-                host.frontend.selected_view_element = None;
+                host.frontend.set_selected_view_element(None);
             }
             host.frontend.input.cancel_multi_unselection();
         } else {
@@ -1712,7 +1710,7 @@ pub(super) fn dispatch_corner_button_right_click(
             dispatch_local_command(&host.transport, frame_cmds, &unlock);
             // `selected_view_element` is host-side UI state — clear
             // locally, no PlayerCommand needed.
-            host.frontend.selected_view_element = None;
+            host.frontend.set_selected_view_element(None);
         }
     }
 }

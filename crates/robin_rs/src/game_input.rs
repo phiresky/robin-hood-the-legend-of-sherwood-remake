@@ -685,7 +685,7 @@ fn resolve_action_left_click(
     };
     let is_recording = engine.is_recording_macro();
     let is_deferred = is_recording || is_planning;
-    let valid_trajectory = host.frontend.trajectory_preview.is_valid();
+    let valid_trajectory = host.frontend.trajectory_preview().is_valid();
     let selected_layer = host.frontend.input.selected_layer;
 
     // 2D → 3D projection of the mouse-map point onto the topmost
@@ -1302,7 +1302,7 @@ pub fn resolve_action_drag(
         return vec![];
     };
     let is_recording = engine.is_recording_macro();
-    let valid_trajectory = host.frontend.trajectory_preview.is_valid();
+    let valid_trajectory = host.frontend.trajectory_preview().is_valid();
 
     // Apple / Stone gate on a valid arc.
     if matches!(selected_action, Action::Apple | Action::Stone)
@@ -1813,16 +1813,17 @@ pub fn resolve_swordfight(
             } else {
                 pattern
             };
-            host.frontend.gesture_coach_feedback = Some(GestureCoachFeedback {
-                pattern: feedback_pattern,
-                quality: evaluation.quality,
-                bounds,
-                template_rotation: crate::mouse_way::display_template_rotation(
-                    feedback_pattern,
-                    facing_dir,
-                ),
-                created_at_ms: crate::window::process_uptime_ms(),
-            });
+            host.frontend
+                .set_gesture_coach_feedback(Some(GestureCoachFeedback {
+                    pattern: feedback_pattern,
+                    quality: evaluation.quality,
+                    bounds,
+                    template_rotation: crate::mouse_way::display_template_rotation(
+                        feedback_pattern,
+                        facing_dir,
+                    ),
+                    created_at_ms: crate::window::process_uptime_ms(),
+                }));
             feedback_recorded = true;
         }
 
@@ -3150,7 +3151,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Purse);
-        host.frontend.trajectory_preview.reject_hit();
+        host.frontend.reject_trajectory_hit();
 
         let cmds = resolve_left_click(
             &mut host,
@@ -3171,7 +3172,7 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Net);
-        host.frontend.trajectory_preview.reject_hit();
+        host.frontend.reject_trajectory_hit();
 
         let cmds = resolve_left_click(
             &mut host,
