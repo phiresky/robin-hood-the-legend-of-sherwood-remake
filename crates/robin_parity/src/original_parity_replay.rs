@@ -5016,6 +5016,7 @@ fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
 
 #[cfg(feature = "client")]
 fn drain_headless_http(
+    http: &mut robin_rs::http_server::SessionIngress,
     engine: &mut Engine,
     display: &mut HostDisplayState,
     assets: &LevelAssets,
@@ -5024,14 +5025,8 @@ fn drain_headless_http(
     manual_pause: &mut bool,
     active_step: &mut Option<ActiveHttpStep>,
 ) -> robin_engine::player_command::FrameCommands {
-    let commands = robin_rs::http_server::drain_global_headless(
-        engine,
-        display,
-        assets,
-        input,
-        selected_view_element,
-    );
-    for request in robin_rs::http_server::take_pending_steps() {
+    let commands = http.drain_headless(engine, display, assets, input, selected_view_element);
+    for request in http.take_pending_steps() {
         match request.kind {
             robin_rs::http_server::StepKind::Forward { n, .. } => {
                 if n == 0 {
@@ -5099,6 +5094,7 @@ fn drain_headless_http(
 
 #[cfg(feature = "client")]
 fn serve_halted_http(
+    http: &mut robin_rs::http_server::SessionIngress,
     engine: &mut Engine,
     display: &mut HostDisplayState,
     assets: &LevelAssets,
@@ -5106,14 +5102,8 @@ fn serve_halted_http(
     selected_view_element: &mut Option<EntityId>,
 ) -> ! {
     loop {
-        let _ = robin_rs::http_server::drain_global_headless(
-            engine,
-            display,
-            assets,
-            input,
-            selected_view_element,
-        );
-        for request in robin_rs::http_server::take_pending_steps() {
+        let _ = http.drain_headless(engine, display, assets, input, selected_view_element);
+        for request in http.take_pending_steps() {
             request.respond_err(format!(
                 "parity replay is halted at divergent frame {}",
                 engine.frame_counter()

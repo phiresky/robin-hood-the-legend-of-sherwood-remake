@@ -448,6 +448,9 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         );
     }
 
+    #[cfg(feature = "client")]
+    let mut http_ingress = robin_rs::http_server::SessionIngress::attach();
+
     // Original retains path events across the full boundary between frame
     // writes. PostInitialize, sound callbacks, and resolved input can enqueue
     // movement before the next simulation tick, so this capture deliberately
@@ -509,6 +512,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         if http_server.is_some() {
             loop {
                 let drained = drain_headless_http(
+                    &mut http_ingress,
                     &mut engine,
                     &mut display,
                     &assets,
@@ -1293,6 +1297,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                     engine.frame_counter()
                 );
                 serve_halted_http(
+                    &mut http_ingress,
                     &mut engine,
                     &mut display,
                     &assets,

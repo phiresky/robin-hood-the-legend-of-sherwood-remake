@@ -101,6 +101,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             timeline,
             control,
             leaderboard,
+            ..
         } = runtime;
         let services = self.services;
         let input = match input::collect_input_and_menus(

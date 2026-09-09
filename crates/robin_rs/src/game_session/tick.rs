@@ -212,12 +212,13 @@ pub(super) fn post_render_engine_cleanup(
 /// answers. An unanswered modal blocks without mutating its queue. Replies
 /// include every accepted typed outcome.
 ///
-/// Called once per frame from the main loop, after `drain_global`
+/// Called once per frame from the main loop, after the session RPC drain
 /// (which enqueues the requests) and after the normal tick block (so
 /// any tick that just ran gets committed to the rewind buffer before
 /// we append more frames to it).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_steps(
+    steps: Vec<crate::http_server::PendingStep>,
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
@@ -232,7 +233,6 @@ pub(super) fn drain_steps(
     mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
     mut resolve_local_ui: impl FnMut(&crate::http_server::StepModalPolicy) -> Result<(), String>,
 ) {
-    let steps = crate::http_server::take_pending_steps();
     if steps.is_empty() {
         return;
     }

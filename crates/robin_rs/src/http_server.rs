@@ -34,14 +34,13 @@
 //! A dedicated listener thread runs `tiny_http`'s blocking accept loop.
 //! Each request is decoded into a [`HttpRequest`] and pushed onto a
 //! shared FIFO with a one-shot `SyncSender` for the reply. The game
-//! loop drains the queue once per tick (see
-//! `game_session::drain_http_queue`), executes each request inline, and
+//! mission owner drains its queue once per tick, executes each request inline, and
 //! sends the reply back. The listener serialises it to JSON (or raw
 //! image/png bytes for `/screenshot`).
 //!
-//! Pause / level-loading / replay rewind / modal dialogs all suspend
-//! the per-tick drain, so a request issued during those windows blocks
-//! until the game resumes — bounded by a 60 s recv timeout on the
+//! Requests requiring an engine fail immediately between missions. A busy
+//! active mission can defer execution until its next RPC boundary, bounded
+//! by a 60 s recv timeout on the
 //! listener side.  Clients that want to fail fast instead of waiting
 //! out a blocked main loop should pass a shorter HTTP timeout
 //! themselves (e.g. `curl --max-time 2`).
@@ -51,11 +50,11 @@
 //! `/screenshot` is special because it needs a rendered frame, not the
 //! post-tick engine state.  The game loop:
 //!
-//! 1. [`drain_global`] moves screenshot requests from the request
-//!    queue into a module-local pending list.  **No mutation** of the
+//! 1. [`SessionIngress::drain`] moves screenshot requests from the request
+//!    queue into its mission-owned pending list.  **No mutation** of the
 //!    live `Engine`, `DevState`, or any host state happens here.
 //! 2. Before the live frame is rendered, the main loop calls
-//!    [`take_pending_screenshots`] and renders one throwaway frame
+//!    [`SessionIngress::take_pending_screenshots`] and renders one throwaway frame
 //!    per request into the offscreen target.  Each uses its own
 //!    cloned `DevState` with flags applied via
 //!    [`apply_screenshot_flags`] — the live `dev` is untouched.
@@ -74,7 +73,6 @@ use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
-use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::natives as engine_natives;
 use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
 use robin_engine::position_interface as engine_position_interface;
@@ -334,7 +332,11 @@ impl Responder {
     }
 }
 
-pub type Queue = Arc<Mutex<VecDeque<HttpRequest>>>;
+mod ingress;
+use ingress::RequestRouter;
+pub use ingress::SessionIngress;
+
+pub type Queue = Arc<Mutex<RequestRouter>>;
 
 pub struct HttpServer {
     pub queue: Queue,
@@ -343,12 +345,6 @@ pub struct HttpServer {
 }
 
 static GLOBAL: OnceLock<HttpServer> = OnceLock::new();
-static PENDING_REPLAY_TAINTS: OnceLock<Mutex<BTreeSet<InputTaintKind>>> = OnceLock::new();
-
-fn pending_replay_taints() -> &'static Mutex<BTreeSet<InputTaintKind>> {
-    PENDING_REPLAY_TAINTS.get_or_init(|| Mutex::new(BTreeSet::new()))
-}
-
 fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     match payload {
         HttpPayload::Native { .. } | HttpPayload::Batch(_) => {
@@ -372,28 +368,8 @@ fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     }
 }
 
-fn observe_ranked_input_taint(payload: &HttpPayload) {
-    if let Some(kind) = ranked_input_taint(payload) {
-        pending_replay_taints()
-            .lock()
-            .expect("HTTP replay-taint mutex poisoned")
-            .insert(kind);
-    }
-}
-
-/// Drain input-source evidence observed by HTTP ingress since the previous
-/// mission-frame boundary.
-pub fn take_pending_replay_taints() -> BTreeSet<InputTaintKind> {
-    std::mem::take(
-        &mut *pending_replay_taints()
-            .lock()
-            .expect("HTTP replay-taint mutex poisoned"),
-    )
-}
-
-/// Bring up the script-RPC transport and stash the queue in a
-/// process-global so the per-tick drain can reach it without threading
-/// the queue through every signature.  Re-calls are silently ignored.
+/// Bring up the process-scoped script-RPC listener. Mission execution queues
+/// are owned by [`SessionIngress`], not by the listener. Re-calls are ignored.
 ///
 /// Native: binds a loopback HTTP listener on `port` (0 disables).
 /// Wasm: ignores `port`; just installs the empty queue so `rh_rpc`
@@ -406,7 +382,7 @@ pub fn start_global(port: u16) -> Result<(), String> {
             return Ok(());
         }
         let _ = GLOBAL.set(HttpServer {
-            queue: Arc::new(Mutex::new(VecDeque::new())),
+            queue: Arc::new(Mutex::new(RequestRouter::default())),
         });
         tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
         Ok(())
@@ -441,7 +417,7 @@ fn start(port: u16) -> Result<HttpServer, String> {
         .ok_or_else(|| "script HTTP server bound to non-IP address".to_string())?;
     tracing::info!("script HTTP server listening on http://{bind_addr}");
 
-    let queue: Queue = Arc::new(Mutex::new(VecDeque::new()));
+    let queue: Queue = Arc::new(Mutex::new(RequestRouter::default()));
     let queue_for_thread = queue.clone();
     thread::Builder::new()
         .name("robin-http-server".into())
@@ -898,12 +874,12 @@ fn list_natives_json() -> serde_json::Value {
 /// isn't running.
 /// Drain the RPC queue without an engine — for use during the
 /// `--wait-for-command` idle phase, where replay import/export does not need
-/// engine state. Replies `503` to requests that do.
+/// engine state. The router rejects mission requests while no session is active.
 pub fn drain_pre_engine() {
     let Some(server) = GLOBAL.get() else { return };
     let pending: Vec<HttpRequest> = {
         let mut q = server.queue.lock().expect("queue mutex poisoned");
-        q.drain(..).collect()
+        q.take_idle()
     };
     for req in pending {
         match req.payload {
@@ -944,218 +920,102 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
     })))
 }
 
-pub fn drain_global(
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut crate::host::Host,
-    assets: &LevelAssets,
-    post_commands: &mut FrameCommands,
-) -> Vec<engine_api::ExternalAction> {
-    let mut external_actions = Vec::new();
-    let engine = &mut manager.engine;
-    let Some(server) = GLOBAL.get() else {
-        return external_actions;
-    };
-    let pending: Vec<HttpRequest> = {
-        let mut q = server.queue.lock().expect("queue mutex poisoned");
-        q.drain(..).collect()
-    };
-    for req in pending {
-        observe_ranked_input_taint(&req.payload);
-        // `/screenshot` doesn't reply on the tick — it's deferred until
-        // the frame is rendered.  Route to the pending-screenshot list
-        // so the main loop's `screenshot_pre_render` / `…_capture_and_send`
-        // pair can fulfil it; all other payloads dispatch synchronously
-        // here and reply immediately.
-        match req.payload {
-            HttpPayload::Screenshot(request) => {
-                pending_screenshots()
-                    .lock()
-                    .expect("screenshot queue poisoned")
-                    .push(PendingScreenshot {
-                        response_tx: req.response_tx,
-                        request,
-                    });
-            }
-            HttpPayload::StepForward { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Forward {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::StepBack { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Back {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::GoToFrame {
-                target,
-                modal_policy,
-            } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame {
-                            target,
-                            modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::SetPaused { paused } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::SetPaused { paused },
-                    });
-            }
-            HttpPayload::HostDebug => {
-                req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
-                    engine, host, assets,
-                ))));
-            }
-            HttpPayload::GetReplay => start_replay_export(req.response_tx),
-            other => {
-                let reply = dispatch_in_engine(
-                    other,
-                    engine,
-                    &mut host.frontend.engine_display,
-                    assets,
-                    &mut host.frontend.input,
-                    &mut host.frontend.selected_view_element,
-                    host.transport.net(),
-                    post_commands,
-                    &mut external_actions,
-                );
-                req.response_tx.send(reply);
+impl SessionIngress {
+    pub fn drain(
+        &mut self,
+        engine: &mut Engine,
+        frontend: &mut crate::host::HostFrontend,
+        local_seat: robin_engine::player_command::PlayerId,
+        net: Option<&crate::multiplayer::NetChannels>,
+        assets: &LevelAssets,
+        post_commands: &mut FrameCommands,
+    ) -> Vec<engine_api::ExternalAction> {
+        let mut external_actions = Vec::new();
+        for req in self.take_requests() {
+            self.observe_ranked_input_taint(&req.payload);
+            let Some(req) = self.defer(req, true) else {
+                continue;
+            };
+            match req.payload {
+                HttpPayload::HostDebug => {
+                    req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
+                        engine, frontend, local_seat, assets,
+                    ))));
+                }
+                HttpPayload::GetReplay => start_replay_export(req.response_tx),
+                other => {
+                    let reply = dispatch_in_engine(
+                        other,
+                        self.replay_status(),
+                        engine,
+                        &mut frontend.engine_display,
+                        assets,
+                        &mut frontend.input,
+                        &mut frontend.selected_view_element,
+                        net,
+                        post_commands,
+                        &mut external_actions,
+                    );
+                    req.response_tx.send(reply);
+                }
             }
         }
+        external_actions
     }
-    external_actions
-}
 
-/// Drain requests for a headless tool that owns an [`Engine`] directly.
-///
-/// This is the small counterpart to [`drain_global`] used by deterministic
-/// replay/debug runners. Requests which need the renderer or live host UI are
-/// rejected, while engine inspection, script/native calls, player commands,
-/// and the pause/step queue remain available.
-pub fn drain_global_headless(
-    engine: &mut Engine,
-    display: &mut engine_api::HostDisplayState,
-    assets: &LevelAssets,
-    input: &mut engine_api::InputState,
-    selected_view_element: &mut Option<engine_element::EntityId>,
-) -> FrameCommands {
-    let mut commands = FrameCommands::new();
-    let mut external_actions = Vec::new();
-    let Some(server) = GLOBAL.get() else {
-        return commands;
-    };
-    let pending: Vec<HttpRequest> = {
-        let mut queue = server.queue.lock().expect("queue mutex poisoned");
-        queue.drain(..).collect()
-    };
-    for req in pending {
-        observe_ranked_input_taint(&req.payload);
-        match req.payload {
-            HttpPayload::StepForward { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Forward {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::StepBack { request } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::Back {
-                            n: request.n,
-                            modal_policy: request.modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::GoToFrame {
-                target,
-                modal_policy,
-            } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame {
-                            target,
-                            modal_policy,
-                        },
-                    });
-            }
-            HttpPayload::SetPaused { paused } => {
-                pending_steps()
-                    .lock()
-                    .expect("step queue poisoned")
-                    .push(PendingStep {
-                        response_tx: req.response_tx,
-                        kind: StepKind::SetPaused { paused },
-                    });
-            }
-            HttpPayload::Screenshot(_) => {
-                req.response_tx.send(Err(
-                    "screenshots are unavailable in a headless runner".into()
-                ));
-            }
-            HttpPayload::HostDebug => {
-                req.response_tx
-                    .send(Err("host-debug is unavailable in a headless runner".into()));
-            }
-            HttpPayload::EngineDump => {
-                let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
-                let reply = engine_dump_json(&diagnostic)
-                    .map(ReplyBody::Json)
-                    .map_err(|e| format!("engine serialize: {e}"));
-                req.response_tx.send(reply);
-            }
-            HttpPayload::GetReplay => start_replay_export(req.response_tx),
-            other => {
-                let reply = dispatch_in_engine(
-                    other,
-                    engine,
-                    display,
-                    assets,
-                    input,
-                    selected_view_element,
-                    None,
-                    &mut commands,
-                    &mut external_actions,
-                );
-                req.response_tx.send(reply);
+    /// Drain requests for a headless tool that owns an [`Engine`] directly.
+    ///
+    /// This is the small counterpart to [`SessionIngress::drain`] used by deterministic
+    /// replay/debug runners. Requests which need the renderer or live host UI are
+    /// rejected, while engine inspection, script/native calls, player commands,
+    /// and the pause/step queue remain available.
+    pub fn drain_headless(
+        &mut self,
+        engine: &mut Engine,
+        display: &mut engine_api::HostDisplayState,
+        assets: &LevelAssets,
+        input: &mut engine_api::InputState,
+        selected_view_element: &mut Option<engine_element::EntityId>,
+    ) -> FrameCommands {
+        let mut commands = FrameCommands::new();
+        let mut external_actions = Vec::new();
+        for req in self.take_requests() {
+            self.observe_ranked_input_taint(&req.payload);
+            let Some(req) = self.defer(req, false) else {
+                continue;
+            };
+            match req.payload {
+                HttpPayload::HostDebug => {
+                    req.response_tx
+                        .send(Err("host-debug is unavailable in a headless runner".into()));
+                }
+                HttpPayload::EngineDump => {
+                    let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
+                    let reply = engine_dump_json(&diagnostic)
+                        .map(ReplyBody::Json)
+                        .map_err(|e| format!("engine serialize: {e}"));
+                    req.response_tx.send(reply);
+                }
+                HttpPayload::GetReplay => start_replay_export(req.response_tx),
+                other => {
+                    let reply = dispatch_in_engine(
+                        other,
+                        self.replay_status(),
+                        engine,
+                        display,
+                        assets,
+                        input,
+                        selected_view_element,
+                        None,
+                        &mut commands,
+                        &mut external_actions,
+                    );
+                    req.response_tx.send(reply);
+                }
             }
         }
+        commands
     }
-    commands
 }
 
 fn admit_external_actions(
@@ -1179,6 +1039,7 @@ fn admit_external_actions(
 
 fn dispatch_in_engine(
     payload: HttpPayload,
+    replay: Option<ReplayStatus>,
     engine: &mut Engine,
     display: &mut engine_api::HostDisplayState,
     assets: &LevelAssets,
@@ -1283,8 +1144,8 @@ fn dispatch_in_engine(
             }
             Ok(ReplyBody::Json(serde_json::json!({"ok": true})))
         }
-        HttpPayload::State => Ok(ReplyBody::Json(snapshot_state(engine))),
-        HttpPayload::HostDebug => Err("host-debug must be routed via drain_global".into()),
+        HttpPayload::State => Ok(ReplyBody::Json(snapshot_state(engine, replay))),
+        HttpPayload::HostDebug => Err("host-debug must be routed via SessionIngress::drain".into()),
         HttpPayload::EngineDump => engine_dump_json(engine)
             .map(ReplyBody::Json)
             .map_err(|e| format!("engine serialize: {e}")),
@@ -1295,13 +1156,17 @@ fn dispatch_in_engine(
         HttpPayload::Decompile { class } => {
             Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
         }
-        // Routed through `drain_global`'s per-kind arm — should never
+        // Routed through `SessionIngress::drain`'s per-kind arm — should never
         // reach this generic dispatch path.
-        HttpPayload::Screenshot(_) => Err("screenshot must be routed via drain_global".into()),
+        HttpPayload::Screenshot(_) => {
+            Err("screenshot must be routed via SessionIngress::drain".into())
+        }
         HttpPayload::StepForward { .. }
         | HttpPayload::StepBack { .. }
         | HttpPayload::GoToFrame { .. }
-        | HttpPayload::SetPaused { .. } => Err("step must be routed via drain_global".into()),
+        | HttpPayload::SetPaused { .. } => {
+            Err("step must be routed via SessionIngress::drain".into())
+        }
         HttpPayload::GetReplay => {
             Err("get-replay must be routed to the replay export worker".into())
         }
@@ -1309,8 +1174,8 @@ fn dispatch_in_engine(
     }
 }
 
-fn snapshot_state(engine: &Engine) -> serde_json::Value {
-    let replay = replay_status().map(|s| {
+fn snapshot_state(engine: &Engine, replay: Option<ReplayStatus>) -> serde_json::Value {
+    let replay = replay.map(|s| {
         serde_json::json!({
             "frame": s.frame,
             "total": s.total,
@@ -1326,14 +1191,12 @@ fn snapshot_state(engine: &Engine) -> serde_json::Value {
 
 fn snapshot_host_debug(
     engine: &Engine,
-    host: &crate::host::Host,
+    frontend: &crate::host::HostFrontend,
+    local_seat: robin_engine::player_command::PlayerId,
     assets: &LevelAssets,
 ) -> serde_json::Value {
-    let selected_action = engine.selected_action_for_seat(host.transport.local_seat());
-    let selected_pc = engine
-        .hero_selection(host.transport.local_seat())
-        .first()
-        .copied();
+    let selected_action = engine.selected_action_for_seat(local_seat);
+    let selected_pc = engine.hero_selection(local_seat).first().copied();
     let selected_pc_state = selected_pc.and_then(|id| {
         engine.get_entity(id).map(|entity| {
             serde_json::json!({
@@ -1348,21 +1211,16 @@ fn snapshot_host_debug(
             })
         })
     });
-    let last_preview_point = host
-        .frontend
-        .trajectory_preview
-        .points()
-        .last()
-        .map(|point| {
-            serde_json::json!({
-                "position": point.position,
-                "time": point.time,
-            })
-        });
+    let last_preview_point = frontend.trajectory_preview.points().last().map(|point| {
+        serde_json::json!({
+            "position": point.position,
+            "time": point.time,
+        })
+    });
     let bow_hover = match (
         selected_action,
         selected_pc,
-        host.frontend.input.focused_entity_id,
+        frontend.input.focused_entity_id,
     ) {
         (engine_profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
             let (target_status, shoot_mode) =
@@ -1380,33 +1238,33 @@ fn snapshot_host_debug(
     serde_json::json!({
         "frame": engine.frame_counter(),
         "selected_action": selected_action,
-        "selection": engine.hero_selection(host.transport.local_seat()),
+        "selection": engine.hero_selection(local_seat),
         "selected_pc": selected_pc_state,
-        "valid_trajectory": host.frontend.trajectory_preview.is_valid(),
-        "trajectory_preview_points_len": host.frontend.trajectory_preview.points().len(),
-        "trajectory_preview_start": host.frontend.trajectory_preview.start(),
+        "valid_trajectory": frontend.trajectory_preview.is_valid(),
+        "trajectory_preview_points_len": frontend.trajectory_preview.points().len(),
+        "trajectory_preview_start": frontend.trajectory_preview.start(),
         "trajectory_preview_last": last_preview_point,
-        "trajectory_preview_layer": host.frontend.trajectory_preview.layer(),
-        "net_crumpled": host.frontend.trajectory_preview.crumpled(),
-        "time_no_mouse_move": host.frontend.trajectory_preview.hover_ticks(),
-        "mouse_map_prev": host.frontend.trajectory_preview.previous_mouse(),
-        "trajectory_mark_count": host.frontend.trajectory_preview.mark_count(),
+        "trajectory_preview_layer": frontend.trajectory_preview.layer(),
+        "net_crumpled": frontend.trajectory_preview.crumpled(),
+        "time_no_mouse_move": frontend.trajectory_preview.hover_ticks(),
+        "mouse_map_prev": frontend.trajectory_preview.previous_mouse(),
+        "trajectory_mark_count": frontend.trajectory_preview.mark_count(),
         "bow_hover": bow_hover,
         "input": {
-            "focused_entity_id": host.frontend.input.focused_entity_id,
-            "target_drag": host.frontend.input.target_drag,
-            "double_status_bar_entity_id": host.frontend.input.double_status_bar_entity_id,
-            "selected_layer": host.frontend.input.selected_layer,
-            "selected_sector_idx": host.frontend.input.selected_sector_idx,
-            "selected_patch_idx": host.frontend.input.selected_patch_idx,
-            "hovered_door_idx": host.frontend.input.hovered_door_idx,
-            "valid_position_for_move": host.frontend.input.valid_position_for_move,
-            "mouse_opacity": host.frontend.input.mouse_opacity,
-            "mouse_shadow_color": host.frontend.input.mouse_shadow_color,
-            "left_mouse_down": host.frontend.input.left_mouse_down(),
-            "right_mouse_down": host.frontend.input.right_mouse_down,
-            "is_dragging": host.frontend.input.is_dragging(),
-            "is_alt": host.frontend.input.is_alt,
+            "focused_entity_id": frontend.input.focused_entity_id,
+            "target_drag": frontend.input.target_drag,
+            "double_status_bar_entity_id": frontend.input.double_status_bar_entity_id,
+            "selected_layer": frontend.input.selected_layer,
+            "selected_sector_idx": frontend.input.selected_sector_idx,
+            "selected_patch_idx": frontend.input.selected_patch_idx,
+            "hovered_door_idx": frontend.input.hovered_door_idx,
+            "valid_position_for_move": frontend.input.valid_position_for_move,
+            "mouse_opacity": frontend.input.mouse_opacity,
+            "mouse_shadow_color": frontend.input.mouse_shadow_color,
+            "left_mouse_down": frontend.input.left_mouse_down(),
+            "right_mouse_down": frontend.input.right_mouse_down,
+            "is_dragging": frontend.input.is_dragging(),
+            "is_alt": frontend.input.is_alt,
         },
     })
 }
@@ -2300,31 +2158,12 @@ fn enqueue_browser_replay_export(snapshot: ReplaySnapshot, response_tx: Responde
 /// Per-frame replay-playback status surfaced to the script-RPC
 /// `state` endpoint so JS timeline UIs can render a playhead without
 /// polling a dedicated endpoint.  `None` when no replay is playing
-/// (live gameplay).  Updated once per frame by
-/// [`crate::game_session::publish_replay_status`].
-#[derive(Clone, Copy, Debug)]
+/// (live gameplay). Updated on the owning mission's manual-step boundary.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReplayStatus {
     pub frame: u32,
     pub total: u32,
     pub paused: bool,
-}
-
-fn replay_status_slot() -> &'static Mutex<Option<ReplayStatus>> {
-    static SLOT: OnceLock<Mutex<Option<ReplayStatus>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-/// Publish (or clear, with `None`) the live replay-playback status.
-/// Called from the game loop; cleared on mission end / when live
-/// gameplay resumes.
-pub fn set_replay_status(s: Option<ReplayStatus>) {
-    *replay_status_slot().lock().expect("replay status poisoned") = s;
-}
-
-/// Most-recent [`ReplayStatus`] published by the game loop, or `None`
-/// if no replay is currently playing.
-pub fn replay_status() -> Option<ReplayStatus> {
-    *replay_status_slot().lock().expect("replay status poisoned")
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -2369,11 +2208,6 @@ impl PendingScreenshot {
     }
 }
 
-fn pending_screenshots() -> &'static Mutex<Vec<PendingScreenshot>> {
-    static SLOT: OnceLock<Mutex<Vec<PendingScreenshot>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(Vec::new()))
-}
-
 // ──────────────────────────────────────────────────────────────────
 // Step-forward / step-back pipeline
 // ──────────────────────────────────────────────────────────────────
@@ -2404,7 +2238,7 @@ pub enum StepKind {
 
 /// A step-forward / step-back request waiting for the main loop to
 /// drive the engine.  The main loop is expected to
-/// [`take_pending_steps`] once per frame and, for each request, either:
+/// [`SessionIngress::take_pending_steps`] once per frame and, for each request, either:
 ///
 /// - run `n` full frame-equivalent ticks (`Forward`), or
 /// - rewind `n` frames through the rewind buffer (`Back`),
@@ -2426,73 +2260,6 @@ impl PendingStep {
     pub fn respond_err(self, msg: impl Into<String>) {
         self.response_tx.send(Err(msg.into()));
     }
-}
-
-fn pending_steps() -> &'static Mutex<Vec<PendingStep>> {
-    static SLOT: OnceLock<Mutex<Vec<PendingStep>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// Drain every step request queued since the last call.  The main
-/// loop calls this once per frame immediately before the tick gate,
-/// runs each step synchronously with the full rollback / rewind /
-/// replay bookkeeping, and replies via the `PendingStep` handle.
-pub fn take_pending_steps() -> Vec<PendingStep> {
-    std::mem::take(&mut *pending_steps().lock().expect("step queue poisoned"))
-}
-
-/// Whether the mission loop has an automation step waiting to run.
-///
-/// Cooperative local UI tasks use this non-consuming probe to cancel back to
-/// their owning pause surface before [`crate::game_session`] drains the step.
-pub fn has_pending_steps() -> bool {
-    !pending_steps()
-        .lock()
-        .expect("step queue poisoned")
-        .is_empty()
-}
-
-/// Drain every screenshot request queued since the last call.  Safe to
-/// call from the main render loop once per frame — returns an empty
-/// `Vec` when nothing is pending.
-pub fn take_pending_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
-    let mut queue = pending_screenshots()
-        .lock()
-        .expect("screenshot queue poisoned");
-    let requests = std::mem::take(&mut *queue);
-    let (ready, waiting) = requests
-        .into_iter()
-        .partition(|pending| pending.request.frame.is_none_or(|frame| sim_frame >= frame));
-    *queue = waiting;
-    ready
-}
-
-/// Drain ready screenshots which can faithfully use the already-presented UI
-/// framebuffer. Requests that need a scene-only/full-map/debug override stay
-/// queued for the normal dedicated render path.
-pub fn take_pending_ui_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
-    take_pending_screenshots_matching(sim_frame, can_capture_presented_ui)
-}
-
-/// Drain ready screenshots that require a dedicated scene render while a
-/// cooperative UI surface owns normal presentation.
-pub fn take_pending_scene_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
-    take_pending_screenshots_matching(sim_frame, |request| !can_capture_presented_ui(request))
-}
-
-fn take_pending_screenshots_matching(
-    sim_frame: u32,
-    predicate: impl Fn(&ScreenshotRequest) -> bool,
-) -> Vec<PendingScreenshot> {
-    let mut queue = pending_screenshots()
-        .lock()
-        .expect("screenshot queue poisoned");
-    let requests = std::mem::take(&mut *queue);
-    let (ready, waiting) = requests.into_iter().partition(|pending| {
-        pending.request.frame.is_none_or(|frame| sim_frame >= frame) && predicate(&pending.request)
-    });
-    *queue = waiting;
-    ready
 }
 
 fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
@@ -2876,13 +2643,13 @@ mod tests {
                 InputTaintKind::ReplayPlayback,
             ),
         ];
-        take_pending_replay_taints();
+        let mut ingress = SessionIngress::attach();
         for (payload, expected) in &cases {
             assert_eq!(ranked_input_taint(payload), Some(*expected));
-            observe_ranked_input_taint(payload);
+            ingress.observe_ranked_input_taint(payload);
         }
         assert_eq!(
-            take_pending_replay_taints(),
+            ingress.take_pending_replay_taints(),
             BTreeSet::from([
                 InputTaintKind::HttpPlayerCommand,
                 InputTaintKind::HttpSimulationStep,
