@@ -60,6 +60,25 @@ fn queue_peer_message(
     }
 }
 
+/// Re-send cached lifecycle state to a provisional/reconnected peer. Writer
+/// closure is recoverable through generation-safe teardown and the next
+/// handshake; unlike initial handshake queuing it must not fail the host.
+pub(super) fn queue_cached_begin(
+    sender: &UnboundedSender<NetMsg>,
+    frame: u32,
+    start_epoch_ms: u64,
+) {
+    queue_peer_message(
+        sender,
+        NetMsg::BeginSim {
+            frame,
+            start_epoch_ms,
+        },
+        Delivery::ReconnectRecoverable,
+    )
+    .expect("reconnect-recoverable delivery cannot fail the host");
+}
+
 /// Take locally-produced messages from the game loop, stamp them with
 /// seat 0 + a target frame, fan them out to every peer's writer
 /// queue, AND echo them back into `incoming_tx` so the local game
@@ -700,5 +719,22 @@ mod tests {
         assert!(queue_peer_message(&sender, message(), Delivery::Required).is_err());
         assert!(queue_peer_message(&sender, message(), Delivery::ReconnectRecoverable).is_ok());
         assert!(queue_peer_message(&sender, message(), Delivery::Diagnostic).is_ok());
+    }
+
+    #[test]
+    fn cached_begin_preserves_payload_and_allows_disconnected_peer_recovery() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        queue_cached_begin(&sender, 41, 73);
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            NetMsg::BeginSim {
+                frame: 41,
+                start_epoch_ms: 73
+            }
+        ));
+        drop(receiver);
+        // Cached BeginSim is reconstructible at the next admission, unlike
+        // a live-session irreversible control. It must not stop the host.
+        queue_cached_begin(&sender, 42, 74);
     }
 }

@@ -390,7 +390,12 @@ async fn run_client_io(
         }
         HandshakePrelude::Content(session, offer) => {
             *content_offer_slot.borrow_mut() = Some(offer.clone());
-            let _ = incoming_tx.send(NetEvent::ContentOffer(offer.clone()));
+            if super::client_gameplay::deliver(&incoming_tx, NetEvent::ContentOffer(offer.clone()))
+                .is_err()
+            {
+                endpoint.close().await;
+                return;
+            }
             match complete_content_admission(
                 session,
                 &offer,
@@ -460,13 +465,23 @@ async fn run_client_io(
     }
     ranked_state.welcomed_seat.set(Some(your_seat));
     *session_metadata.borrow_mut() = Some(admitted_session);
-    let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
-    let _ = incoming_tx.send(NetEvent::MissionConfig {
-        mission_id: mission_id.clone(),
-        rng_seed: mission_seed,
-        sim_config,
-        speech_timing_locale: speech_timing_locale.clone(),
-    });
+    if super::client_gameplay::deliver_lifecycle(
+        &incoming_tx,
+        [
+            NetEvent::AssignedLocalSeat(your_seat),
+            NetEvent::MissionConfig {
+                mission_id: mission_id.clone(),
+                rng_seed: mission_seed,
+                sim_config,
+                speech_timing_locale: speech_timing_locale.clone(),
+            },
+        ],
+    )
+    .is_err()
+    {
+        endpoint.close().await;
+        return;
+    }
 
     let leaderboard_cosign_state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
     let mut backoff_ms = 500_u32;
@@ -506,10 +521,20 @@ async fn run_client_io(
                     discarded,
                     "browser multiplayer session ended; reconnecting through iroh relay"
                 );
-                let _ = incoming_tx.send(NetEvent::Note(format!(
-                    "iroh relay disconnected: {reason}; reconnecting..."
-                )));
-                let _ = incoming_tx.send(NetEvent::Disconnected);
+                if super::client_gameplay::deliver_lifecycle(
+                    &incoming_tx,
+                    [
+                        NetEvent::Note(format!(
+                            "iroh relay disconnected: {reason}; reconnecting..."
+                        )),
+                        NetEvent::Disconnected,
+                    ],
+                )
+                .is_err()
+                {
+                    endpoint.close().await;
+                    return;
+                }
             }
             SessionEnd::Fatal(error) => {
                 let _ = incoming_tx.send(NetEvent::Fatal(error));
@@ -572,14 +597,24 @@ async fn run_client_io(
                         }
                         // The validated reconnect keeps the published session identity.
                         ranked_state.welcomed_seat.set(Some(next_seat));
-                        let _ = incoming_tx.send(NetEvent::Reconnected);
-                        let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(next_seat));
-                        let _ = incoming_tx.send(NetEvent::MissionConfig {
-                            mission_id: next_mission,
-                            rng_seed: next_seed,
-                            sim_config: next_config,
-                            speech_timing_locale: next_speech_timing_locale,
-                        });
+                        if super::client_gameplay::deliver_lifecycle(
+                            &incoming_tx,
+                            [
+                                NetEvent::Reconnected,
+                                NetEvent::AssignedLocalSeat(next_seat),
+                                NetEvent::MissionConfig {
+                                    mission_id: next_mission,
+                                    rng_seed: next_seed,
+                                    sim_config: next_config,
+                                    speech_timing_locale: next_speech_timing_locale,
+                                },
+                            ],
+                        )
+                        .is_err()
+                        {
+                            endpoint.close().await;
+                            return;
+                        }
                         backoff_ms = 500;
                         break next;
                     }
@@ -929,12 +964,15 @@ async fn complete_content_admission(
                 offer.encoded_bytes
             ));
         }
-        let _ = incoming_tx.send(NetEvent::ContentChunk {
-            full_mod_sha256,
-            offset,
-            total_bytes,
-            bytes,
-        });
+        super::client_gameplay::deliver(
+            incoming_tx,
+            NetEvent::ContentChunk {
+                full_mod_sha256,
+                offset,
+                total_bytes,
+                bytes,
+            },
+        )?;
         received = end;
     }
 
@@ -1451,10 +1489,13 @@ fn handle_client_wire_msg(
                         .to_string(),
                 );
             }
-            let _ = incoming_tx.send(NetEvent::BeginSim {
-                frame,
-                start_epoch_ms,
-            });
+            super::client_gameplay::deliver(
+                incoming_tx,
+                NetEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                },
+            )?;
         }
         NetMsg::ReconnectRequired { reason } => {
             return Err(format!("host requires a full-snapshot reconnect: {reason}"));
@@ -1917,6 +1958,41 @@ async fn mark_invitation_redeemed(session_id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn begin_sim_requires_admission_and_a_live_local_receiver() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cosign = std::sync::Arc::new(Default::default());
+        let lifecycle = std::sync::Arc::new(std::sync::Mutex::new(
+            super::RankedSessionLifecycle::awaiting_prepared_inputs(),
+        ));
+        let ranked = super::BrowserRankedTransportState::default();
+        let begin = || super::NetMsg::BeginSim {
+            frame: 9,
+            start_epoch_ms: 12,
+        };
+        assert!(
+            super::handle_client_wire_msg(&tx, &cosign, &lifecycle, &ranked, begin())
+                .unwrap_err()
+                .contains("before ranked admission")
+        );
+        assert!(rx.try_recv().is_err());
+        ranked.host_admission_resolved.set(true);
+        super::handle_client_wire_msg(&tx, &cosign, &lifecycle, &ranked, begin()).unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            super::NetEvent::BeginSim {
+                frame: 9,
+                start_epoch_ms: 12
+            }
+        ));
+        drop(rx);
+        assert!(
+            super::handle_client_wire_msg(&tx, &cosign, &lifecycle, &ranked, begin())
+                .unwrap_err()
+                .contains("channel is closed")
+        );
+    }
+
     use super::{
         BrowserRankedTransportState, SharedClientLeaderboardCoSignState, handle_client_wire_msg,
         validate_reconnect_state,
