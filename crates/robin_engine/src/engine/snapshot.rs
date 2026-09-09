@@ -204,12 +204,22 @@ impl FlatEngineSnapshot {
     }
 }
 
+pub(super) fn serialize_engine_inner<S: Serializer>(
+    inner: &EngineInner,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    PersistedEngineState::serialize_runtime(inner, serializer)
+}
+
+// Low-level fixtures test codecs directly. Production read-only projections
+// deliberately cannot serialize themselves into a restorable Engine snapshot.
+#[cfg(test)]
 impl Serialize for EngineInner {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        PersistedEngineState::serialize_runtime(self, serializer)
+        serialize_engine_inner(self, serializer)
     }
 }
 

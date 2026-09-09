@@ -193,14 +193,14 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// This type is public only because [`Engine`](rollback_safe::Engine) exposes
 /// it as a borrowed, read-only `Deref` target. Its fields, constructors, and
 /// mutators are crate-private, and production builds deliberately do not
-/// implement `Clone`, Serde `Deserialize`, or native bitcode codecs for it.
+/// implement `Clone`, Serde `Serialize`/`Deserialize`, or native bitcode codecs for it.
 /// Whole-state ownership and snapshot encoding/decoding belong to the `Engine`
 /// facade.
 ///
-/// `Serialize` and `StateHash` follow the current nested ownership layout.
+/// The owner's `Serialize` and this projection's `StateHash` follow the current nested ownership layout.
 /// Multiplayer peers, rollback, and current-format replays therefore observe
 /// the same deterministic state boundaries. Unit tests retain test-only
-/// `Clone` implementations for low-level engine fixtures.
+/// `Clone` and Serde implementations for low-level engine fixtures.
 #[cfg_attr(test, derive(Clone))]
 #[derive(robin_state_hash_derive::StateHash)]
 pub struct EngineInner {

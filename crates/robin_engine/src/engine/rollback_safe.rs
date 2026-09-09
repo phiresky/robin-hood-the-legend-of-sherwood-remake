@@ -229,14 +229,22 @@ pub enum SnapshotRestoreError {
     not(feature = "original-parity"),
     doc = "Ordinary builds cannot acquire Original reconstruction authority:\n```compile_fail,E0599\nuse robin_engine::engine::Engine;\nlet _ = Engine::parity_replay_setup;\n```"
 )]
-#[derive(serde::Serialize)]
-#[serde(transparent)]
 pub struct Engine {
     inner: EngineInner,
     /// Process-local, single-use authority minted only by fresh construction.
     /// It is deliberately absent from snapshots and the simulation hash.
-    #[serde(skip)]
     bootstrap_open: bool,
+}
+
+impl serde::Serialize for Engine {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Preserve the historical transparent wire shape without granting the
+        // read-only EngineInner projection the power to encode snapshots.
+        super::snapshot::serialize_engine_inner(&self.inner, serializer)
+    }
 }
 
 // Preserve the historical transparent facade hash exactly. Deriving StateHash
@@ -332,6 +340,13 @@ impl Engine {
 /// ```compile_fail,E0308
 /// use robin_engine::engine::{EngineInner, PresentationEngine};
 /// fn forbidden(view: &mut PresentationEngine) -> &mut EngineInner { view.view() }
+/// ```
+/// Read-only presentation state cannot be laundered through a serde snapshot:
+/// ```compile_fail,E0277
+/// use robin_engine::engine::PresentationEngine;
+/// fn forbidden(view: &PresentationEngine) {
+///     let _ = serde_json::to_value(view.view());
+/// }
 /// ```
 pub struct PresentationEngine {
     presentation: EngineInner,
@@ -5002,6 +5017,23 @@ impl Deref for Engine {
 mod tests {
     use super::*;
     use crate::engine::SimCommand;
+
+    #[test]
+    fn engine_serde_facade_preserves_exact_wire_shape_and_roundtrip_hash() {
+        let (engine, assets) = frame_api_fixture();
+        let historical_bytes = serde_json::to_vec(&engine.inner).expect("historical inner codec");
+        let bytes = serde_json::to_vec(&engine).expect("authoritative facade codec");
+        assert_eq!(bytes, historical_bytes);
+        let decoded: Engine = serde_json::from_slice(&bytes).expect("decode facade snapshot");
+        assert!(!decoded.bootstrap_open);
+        let restored = Engine::adopt_authoritative_snapshot(decoded, &assets)
+            .expect("attach decoded snapshot resources");
+        assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+        assert_eq!(
+            crate::replay::state_hash(&restored),
+            crate::replay::state_hash(&engine)
+        );
+    }
 
     #[test]
     fn bootstrap_authority_is_not_snapshot_state() {
