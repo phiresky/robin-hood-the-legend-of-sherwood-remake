@@ -52,7 +52,7 @@ fn run_android(app: AndroidApp) -> anyhow::Result<i32> {
         .map_err(|_| anyhow::anyhow!("Android asset manager was already installed"))?;
     install_android_paths(&app);
 
-    let mut args = crate::main_entry::parse_cli();
+    let mut args = crate::main_entry::MissionLaunch::from(crate::main_entry::parse_cli());
     // The bundled demo would otherwise auto-launch its mission. Keep the full
     // menu available on Android while preserving all other parsed options.
     args.force_main_menu = true;

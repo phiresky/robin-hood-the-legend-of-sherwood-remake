@@ -1206,7 +1206,7 @@ impl MissionLoadError {
 
 #[cfg(test)]
 fn initial_rng_seed(
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     multiplayer_seed: Option<u64>,
 ) -> Result<u64, String> {
     if let Some(data) = args.replay_data.as_ref() {
@@ -1222,7 +1222,7 @@ fn initial_rng_seed(
     }
 }
 
-pub(crate) fn initial_sim_config(args: &crate::main_entry::CliArgs) -> engine_api::SimConfig {
+pub(crate) fn initial_sim_config(args: &crate::main_entry::MissionLaunch) -> engine_api::SimConfig {
     let mut sim_config = args.global_options.sim_config();
     sim_config.golden_eye |= args.goldeneye;
     if args.mission_start_map_output.is_some() {
@@ -1242,7 +1242,7 @@ pub(crate) fn initial_sim_config(args: &crate::main_entry::CliArgs) -> engine_ap
 
 #[cfg(test)]
 fn construct_with_initial_rng_seed<T>(
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     multiplayer_seed: Option<u64>,
     construct: impl FnOnce(u64) -> Result<T, String>,
 ) -> Result<(T, u64), String> {
@@ -1362,7 +1362,7 @@ pub(super) fn prepare_mission(
     campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     text_res: &mut ResourceManager,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     interface: MissionInterfaceSetup,
     launch: MissionLaunchSetup,
 ) -> Result<PreparedMission, MissionLoadError> {
@@ -1974,7 +1974,7 @@ pub(super) fn prepare_mission(
 impl PreparedMission {
     pub(super) fn construct_engine(
         self,
-        args: &crate::main_entry::CliArgs,
+        args: &crate::main_entry::MissionLaunch,
         feedback: &mut MissionLoadFeedback<'_>,
     ) -> Result<ConstructedMission, MissionLoadError> {
         let Self {
@@ -2115,7 +2115,7 @@ impl ConstructedMission {
     pub(super) fn attach_presentation(
         self,
         host: &mut Host,
-        args: &crate::main_entry::CliArgs,
+        args: &crate::main_entry::MissionLaunch,
         feedback: &mut MissionLoadFeedback<'_>,
         terrain_join: TerrainJoinPoint,
     ) -> Result<LoadedMissionCore, MissionLoadError> {
@@ -2278,7 +2278,7 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
     engine: &mut Engine,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
 ) {
     // Clients adopt the server snapshot (which already includes seat 0) and
     // receive their own ConnectSeat through the server-ordered input stream.
@@ -2326,7 +2326,7 @@ pub(super) fn setup_input_and_camera(
     engine: &mut Engine,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     window_width: u32,
     window_height: u32,
     mission_idx: usize,
@@ -2546,8 +2546,11 @@ mod tests {
         ] {
             let prepared = prepared_stage_fixture();
             let campaign_before = serde_json::to_value(&prepared.campaign).unwrap();
-            let args = crate::main_entry::CliArgs {
-                view_cones: true,
+            let args = crate::main_entry::MissionLaunch {
+                config: crate::main_entry::CliArgs {
+                    view_cones: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             let mut loading_screen = None;
@@ -2890,7 +2893,7 @@ mod tests {
         file
     }
 
-    fn assert_engine_construction_not_reached(args: &crate::main_entry::CliArgs) -> String {
+    fn assert_engine_construction_not_reached(args: &crate::main_entry::MissionLaunch) -> String {
         let constructed = Cell::new(false);
         let result = construct_with_initial_rng_seed(args, Some(0xfeed), |seed| {
             constructed.set(true);
@@ -2904,8 +2907,11 @@ mod tests {
     fn missing_requested_replay_fails_before_engine_construction() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("missing.rhrec.jsonl");
-        let args = crate::main_entry::CliArgs {
-            replay: Some(missing.to_string_lossy().into_owned()),
+        let args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                replay: Some(missing.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2921,8 +2927,11 @@ mod tests {
     #[test]
     fn malformed_replay_header_fails_before_engine_construction() {
         let file = replay_file("not a replay header\n");
-        let args = crate::main_entry::CliArgs {
-            replay: Some(file.path().to_string_lossy().into_owned()),
+        let args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                replay: Some(file.path().to_string_lossy().into_owned()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2940,8 +2949,11 @@ mod tests {
             r#"{"mission_id":"Dem_Lei_MP","rng_seed":42,"version":999,"total_frames":0,"campaign":null}
 "#,
         );
-        let args = crate::main_entry::CliArgs {
-            replay: Some(file.path().to_string_lossy().into_owned()),
+        let args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                replay: Some(file.path().to_string_lossy().into_owned()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2952,8 +2964,11 @@ mod tests {
 
     #[test]
     fn explicit_replay_data_reaches_engine_construction_with_header_seed() {
-        let args = crate::main_entry::CliArgs {
-            replay: Some("this path must not be loaded".into()),
+        let args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                replay: Some("this path must not be loaded".into()),
+                ..Default::default()
+            },
             replay_data: Some(replay_data(0xdead_beef)),
             ..Default::default()
         };
@@ -2973,16 +2988,16 @@ mod tests {
 
     #[test]
     fn missions_and_map_exports_default_unfogged_and_allow_explicit_opt_in() {
-        let ordinary = crate::main_entry::CliArgs::default();
+        let ordinary = crate::main_entry::MissionLaunch::default();
         assert!(!initial_sim_config(&ordinary).fog_of_war);
 
-        let unfogged_export = crate::main_entry::CliArgs {
+        let unfogged_export = crate::main_entry::MissionLaunch {
             mission_start_map_output: Some("map.png".into()),
             ..Default::default()
         };
         assert!(!initial_sim_config(&unfogged_export).fog_of_war);
 
-        let fogged_export = crate::main_entry::CliArgs {
+        let fogged_export = crate::main_entry::MissionLaunch {
             mission_start_fog_of_war: true,
             ..unfogged_export
         };

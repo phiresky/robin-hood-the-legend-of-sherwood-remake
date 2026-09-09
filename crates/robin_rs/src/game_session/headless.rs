@@ -66,7 +66,7 @@ impl HeadlessMission {
     /// input-device, menu, or native-audio shims.
     pub(super) async fn run(
         &mut self,
-        args: &crate::main_entry::CliArgs,
+        args: &crate::main_entry::MissionLaunch,
     ) -> HeadlessMissionOutcome {
         loop {
             let frame_result = self.run_frame(args);
@@ -98,7 +98,10 @@ impl HeadlessMission {
     /// contract. Modal automation and replay-completion remain explicit
     /// policy here; consuming campaign return and async host pacing remain in
     /// the outer driver.
-    pub(super) fn run_frame(&mut self, args: &crate::main_entry::CliArgs) -> HeadlessFrameResult {
+    pub(super) fn run_frame(
+        &mut self,
+        args: &crate::main_entry::MissionLaunch,
+    ) -> HeadlessFrameResult {
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
         let frame_started_at_ms = crate::window::process_uptime_ms();
@@ -460,7 +463,7 @@ mod tests {
             policy: HeadlessPolicy::replay_runner(),
         };
 
-        mission.run_frame(&crate::main_entry::CliArgs::default());
+        mission.run_frame(&crate::main_entry::MissionLaunch::default());
         assert!(
             !mission
                 .runtime
