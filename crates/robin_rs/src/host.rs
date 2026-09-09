@@ -1662,7 +1662,7 @@ pub struct HostFrontend {
     /// lives in `robin_assets`, which depends on `robin_engine` — so
     /// engine's `LevelAssets` can't carry it. Shared via `Arc` so
     /// `Engine::clone` stays cheap.
-    pub frame_holder: Arc<FrameHolder>,
+    frame_holder: Arc<FrameHolder>,
 
     /// Engine-side opacity view of [`Self::frame_holder`]. Installed only after
     /// variant generation and the initial Arno-law bind are complete. Runtime
@@ -3224,11 +3224,37 @@ impl HostFrontend {
         fx.code
     }
 
-    /// Mutable access to the frame holder before its opacity view is published.
+    /// Current immutable rendering generation. Retaining a clone preserves that
+    /// generation, but cannot replace either the renderer or opacity publisher.
+    ///
+    /// ```compile_fail,E0616
+    /// use robin_rs::host::HostFrontend;
+    /// fn replace(frontend: &mut HostFrontend) {
+    ///     frontend.frame_holder = Default::default();
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0596
+    /// use robin_rs::host::HostFrontend;
+    /// fn mutate(frontend: &mut HostFrontend) {
+    ///     frontend.frame_holder().apply_arno_law(0);
+    /// }
+    /// ```
+    pub fn frame_holder(&self) -> &Arc<FrameHolder> {
+        &self.frame_holder
+    }
+
+    /// Install a prepared sprite bank during loading, before any live opacity
+    /// readers exist. Runtime replacement must use synchronized rebinding.
+    pub fn install_frame_holder_before_publication(&mut self, holder: FrameHolder) {
+        *self.frame_holder_before_publication_mut() = holder;
+    }
+
+    /// Mutable loading access before the opacity view is published.
     /// Post-publication mutations must use
     /// [`Self::rebind_frame_holder_shadow_color`] so the engine and renderer
     /// switch generations together.
-    pub fn frame_holder_mut(&mut self) -> &mut FrameHolder {
+    pub fn frame_holder_before_publication_mut(&mut self) -> &mut FrameHolder {
         assert!(
             self.frame_holder_opacity.is_none(),
             "published frame holder cannot be mutated without synchronizing pixel opacity"
@@ -3239,7 +3265,17 @@ impl HostFrontend {
     /// Publish the fully initialized frame-holder generation for engine hit
     /// testing. This is a one-way loading boundary: subsequent dictionary
     /// changes must go through [`Self::rebind_frame_holder_shadow_color`].
-    pub fn publish_frame_holder_opacity(&mut self) -> Arc<PublishedFrameHolder> {
+    /// The returned reader deliberately hides the publisher: consumers must not
+    /// replace the engine generation independently of the renderer.
+    ///
+    /// ```compile_fail,E0599
+    /// use robin_rs::host::HostFrontend;
+    /// fn replace_opacity(frontend: &mut HostFrontend) {
+    ///     let reader = frontend.publish_frame_holder_opacity();
+    ///     reader.publish(frontend.frame_holder().clone());
+    /// }
+    /// ```
+    pub fn publish_frame_holder_opacity(&mut self) -> Arc<dyn engine_api::PixelOpacityLookup> {
         assert!(
             self.frame_holder_opacity.is_none(),
             "frame-holder opacity was already published"
@@ -4696,11 +4732,15 @@ mod application_context_tests {
         const REBOUND_NIGHT_COLOR: u16 = 0x0841;
 
         let mut host = Host::scratch(1024.0, 768.0);
-        host.frontend.frame_holder = Arc::new(dictionary_frame_holder(INITIAL_NIGHT_COLOR));
-        let published = host.frontend.publish_frame_holder_opacity();
+        host.frontend
+            .install_frame_holder_before_publication(dictionary_frame_holder(INITIAL_NIGHT_COLOR));
+        let reader = host.frontend.publish_frame_holder_opacity();
+        let published = host.frontend.frame_holder_opacity.as_ref().unwrap().clone();
+        let old_renderer = Arc::clone(host.frontend.frame_holder());
+        let old_opacity_snapshot = published.snapshot();
 
         let mut assets = engine_api::LevelAssets::new();
-        assets.attachments.pixel_opacity = Some(published.clone());
+        assets.attachments.pixel_opacity = Some(reader);
         let engine =
             engine_api::Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
                 .expect("construct sprite-hit-test engine");
@@ -4729,6 +4769,19 @@ mod application_context_tests {
         host.frontend
             .rebind_frame_holder_shadow_color(REBOUND_NIGHT_COLOR);
 
+        // Retained readers are immutable snapshots. Live engine handles follow
+        // publication, while an old render generation stays byte-for-byte old.
+        assert!(Arc::ptr_eq(&old_renderer, &old_opacity_snapshot));
+        assert!(!Arc::ptr_eq(&old_renderer, host.frontend.frame_holder()));
+        assert_eq!(
+            old_renderer.dictionaries()[0].shadow_color(),
+            INITIAL_NIGHT_COLOR
+        );
+        assert_eq!(
+            host.frontend.frame_holder().dictionaries()[0].shadow_color(),
+            REBOUND_NIGHT_COLOR
+        );
+
         assert!(Arc::ptr_eq(
             &host.frontend.frame_holder,
             &published.snapshot()
@@ -4756,5 +4809,71 @@ mod application_context_tests {
         ));
         assert!(engine.is_point_on_sprite(&assets, &entity, solid_point, false));
         assert!(engine.is_point_on_sprite(&cloned_assets, &entity, solid_point, false));
+    }
+
+    #[test]
+    #[should_panic(expected = "published frame holder cannot be mutated")]
+    fn published_sprite_bank_cannot_reopen_loading_mutation() {
+        let mut frontend = HostFrontend::default();
+        frontend.publish_frame_holder_opacity();
+        frontend.frame_holder_before_publication_mut();
+    }
+
+    #[test]
+    #[should_panic(expected = "frame-holder opacity was already published")]
+    fn sprite_publication_cannot_replace_the_live_reader() {
+        let mut frontend = HostFrontend::default();
+        frontend.publish_frame_holder_opacity();
+        frontend.publish_frame_holder_opacity();
+    }
+
+    #[test]
+    #[should_panic(expected = "published frame holder cannot be mutated")]
+    fn sprite_bank_installation_cannot_replace_a_published_generation() {
+        let mut frontend = HostFrontend::default();
+        frontend.publish_frame_holder_opacity();
+        frontend.install_frame_holder_before_publication(FrameHolder::new());
+    }
+
+    #[test]
+    fn ambiance_variant_rebind_publishes_one_new_generation_and_keeps_old_snapshot() {
+        let mut frontend = HostFrontend::default();
+        frontend.install_frame_holder_before_publication(dictionary_frame_holder(0x0040));
+        frontend.publish_frame_holder_opacity();
+        let old_renderer = Arc::clone(frontend.frame_holder());
+        let published = frontend.frame_holder_opacity.as_ref().unwrap().clone();
+
+        frontend.rebind_frame_holder_ambiance(engine_api::Ambiance::Fog, false, 0x1234);
+
+        assert!(!Arc::ptr_eq(&old_renderer, frontend.frame_holder()));
+        assert!(Arc::ptr_eq(frontend.frame_holder(), &published.snapshot()));
+        assert!(
+            !old_renderer
+                .variant_dictionaries(SpriteVariant::Night)
+                .is_empty()
+        );
+        assert!(
+            old_renderer
+                .variant_dictionaries(SpriteVariant::Fog)
+                .is_empty()
+        );
+        assert!(
+            frontend
+                .frame_holder()
+                .variant_dictionaries(SpriteVariant::Night)
+                .is_empty()
+        );
+        assert!(
+            !frontend
+                .frame_holder()
+                .variant_dictionaries(SpriteVariant::Fog)
+                .is_empty()
+        );
+        assert_eq!(frontend.frame_holder().global_shadow(), 10);
+        assert_eq!(old_renderer.dictionaries()[0].shadow_color(), 0x0040);
+        assert_eq!(
+            published.snapshot().dictionaries()[0].shadow_color(),
+            0x1234
+        );
     }
 }
