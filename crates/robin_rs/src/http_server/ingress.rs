@@ -6,6 +6,10 @@ use std::sync::Weak;
 
 type Requests = Arc<Mutex<VecDeque<HttpRequest>>>;
 
+/// Each capture owns a GPU readback buffer until completion or cancellation.
+/// Keep both allocation pressure and per-turn PNG completion work bounded.
+const MAX_IN_FLIGHT_CAPTURES: usize = 2;
+
 /// Deserializing diagnostics never restores live request authority.
 #[derive(Serialize, Deserialize)]
 pub struct RequestRouter {
@@ -102,6 +106,8 @@ pub struct SessionIngress {
     steps: Vec<PendingStep>,
     #[serde(skip)]
     screenshots: Vec<PendingScreenshot>,
+    #[serde(skip)]
+    captures: Vec<(PendingScreenshot, crate::renderer::PendingCapture)>,
     taints: BTreeSet<InputTaintKind>,
     replay: Option<ReplayStatus>,
 }
@@ -165,6 +171,7 @@ impl SessionIngress {
             requests,
             steps: Vec::new(),
             screenshots: Vec::new(),
+            captures: Vec::new(),
             taints: BTreeSet::new(),
             replay: None,
         }
@@ -172,6 +179,7 @@ impl SessionIngress {
 
     pub(super) fn take_requests(&mut self) -> Vec<HttpRequest> {
         self.cancel_stopped_work();
+        self.poll_captures();
         self.requests
             .lock()
             .expect("session RPC queue poisoned")
@@ -259,12 +267,21 @@ impl SessionIngress {
         predicate: impl Fn(&ScreenshotRequest) -> bool,
     ) -> Vec<PendingScreenshot> {
         self.cancel_stopped_work();
+        self.poll_captures();
+        // Reserve before rendering/allocating GPU buffers. Leave excess work
+        // cancellable in ingress, preserving its original requested frame gate.
+        let mut available = MAX_IN_FLIGHT_CAPTURES.saturating_sub(self.captures.len());
         let (ready, waiting) = std::mem::take(&mut self.screenshots)
             .into_iter()
             .filter(|pending| pending.response_tx.eligible())
             .partition(|pending| {
-                pending.request.frame.is_none_or(|frame| sim_frame >= frame)
-                    && predicate(&pending.request)
+                let ready = available > 0
+                    && pending.request.frame.is_none_or(|frame| sim_frame >= frame)
+                    && predicate(&pending.request);
+                if ready {
+                    available -= 1;
+                }
+                ready
             });
         self.screenshots = waiting;
         let ready: Vec<PendingScreenshot> = ready;
@@ -272,6 +289,34 @@ impl SessionIngress {
             .into_iter()
             .filter(|pending| pending.response_tx.admit())
             .collect()
+    }
+
+    pub(crate) fn submit_screenshot(
+        &mut self,
+        request: PendingScreenshot,
+        capture: crate::renderer::PendingCapture,
+    ) {
+        assert!(
+            self.captures.len() < MAX_IN_FLIGHT_CAPTURES,
+            "screenshot admission exceeded capture quota"
+        );
+        self.captures.push((request, capture));
+    }
+
+    fn poll_captures(&mut self) {
+        use futures::FutureExt;
+        let mut pending = Vec::new();
+        for (request, mut capture) in self.captures.drain(..) {
+            if request.response_tx.consumer_gone() {
+                continue;
+            }
+            match capture.as_mut().now_or_never() {
+                None => pending.push((request, capture)),
+                Some(Ok((width, height, rgba))) => request.respond(width, height, &rgba),
+                Some(Err(error)) => request.respond_err(RpcError::internal(error.to_string())),
+            }
+        }
+        self.captures = pending;
     }
 
     fn cancel_stopped_work(&mut self) {
@@ -286,6 +331,9 @@ impl SessionIngress {
             for screenshot in self.screenshots.drain(..) {
                 screenshot.respond_err(RpcError::retired("HTTP transport stopped"));
             }
+            for (screenshot, _) in self.captures.drain(..) {
+                screenshot.respond_err(RpcError::retired("HTTP transport stopped"));
+            }
         }
     }
 }
@@ -298,6 +346,9 @@ impl Drop for SessionIngress {
             router.lock().expect("RPC router poisoned").active = Weak::new();
         }
         let message = "mission ended before RPC request completed";
+        for (screenshot, _) in self.captures.drain(..) {
+            screenshot.respond_err(RpcError::retired(message));
+        }
         for request in self.take_requests() {
             request.response_tx.send(Err(RpcError::retired(message)));
         }
@@ -338,6 +389,149 @@ mod tests {
 
     fn router() -> Queue {
         Arc::new(Mutex::new(RequestRouter::default()))
+    }
+
+    fn queued_screenshot(session: &mut SessionIngress) -> ReplyReceiver {
+        let (shot, reply) = request(HttpPayload::Screenshot(ScreenshotRequest::default()));
+        session.defer(shot, true);
+        reply
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn capture_quota_keeps_excess_requests_queued_until_owned_readback_completes() {
+        let mut session = SessionIngress::detached_for_test();
+        let first = queued_screenshot(&mut session);
+        let second = queued_screenshot(&mut session);
+        let third = queued_screenshot(&mut session);
+        let mut ready = session.take_pending_screenshots(0).into_iter();
+        let (complete, receive) = futures::channel::oneshot::channel();
+        session.submit_screenshot(
+            ready.next().unwrap(),
+            Box::pin(async move { receive.await.expect("test completion owner retained") }),
+        );
+        session.submit_screenshot(ready.next().unwrap(), Box::pin(std::future::pending()));
+        assert!(ready.next().is_none());
+        assert!(session.take_pending_screenshots(1).is_empty());
+        assert!(first.try_recv().is_err());
+        // The submitted pixels belong to the earlier frame even though the
+        // simulation has advanced before the map callback arrives.
+        complete.send(Ok((1, 1, vec![12, 34, 56, 255]))).unwrap();
+        let next = session.take_pending_screenshots(20);
+        assert_eq!(next.len(), 1);
+        let Ok(ReplyBody::Binary {
+            content_type: "image/png",
+            data,
+        }) = first.try_recv().unwrap()
+        else {
+            panic!("completed screenshot must return PNG");
+        };
+        let mut png = png::Decoder::new(std::io::Cursor::new(data))
+            .read_info()
+            .unwrap();
+        let mut pixels = vec![0; png.output_buffer_size().unwrap()];
+        let info = png.next_frame(&mut pixels).unwrap();
+        assert_eq!((info.width, info.height), (1, 1));
+        assert_eq!(&pixels[..info.buffer_size()], &[12, 34, 56, 255]);
+        assert!(second.try_recv().is_err());
+        next.into_iter()
+            .next()
+            .unwrap()
+            .respond_err(RpcError::internal("test third"));
+        assert!(third.try_recv().unwrap().is_err());
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn disconnected_capture_releases_buffer_owner_and_quota() {
+        let mut session = SessionIngress::detached_for_test();
+        let reply = queued_screenshot(&mut session);
+        let shot = session.take_pending_screenshots(0).pop().unwrap();
+        let owner = std::rc::Rc::new(());
+        let pending_owner = owner.clone();
+        session.submit_screenshot(
+            shot,
+            Box::pin(async move {
+                let _owner = pending_owner;
+                std::future::pending().await
+            }),
+        );
+        assert_eq!(std::rc::Rc::strong_count(&owner), 2);
+        drop(reply);
+        session.poll_captures();
+        assert!(session.captures.is_empty());
+        assert_eq!(std::rc::Rc::strong_count(&owner), 1);
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn capture_failure_and_session_exit_complete_replies() {
+        let mut session = SessionIngress::detached_for_test();
+        let failed = queued_screenshot(&mut session);
+        let stopped = queued_screenshot(&mut session);
+        let mut ready = session.take_pending_screenshots(0).into_iter();
+        session.submit_screenshot(
+            ready.next().unwrap(),
+            Box::pin(async {
+                Err(crate::renderer::CaptureError::Map(
+                    "synthetic mapping failure".into(),
+                ))
+            }),
+        );
+        session.submit_screenshot(ready.next().unwrap(), Box::pin(std::future::pending()));
+        session.poll_captures();
+        assert!(
+            matches!(failed.try_recv().unwrap(), Err(error) if error.message.contains("synthetic mapping failure"))
+        );
+        drop(session);
+        assert_cancelled(stopped);
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn transport_retirement_releases_admitted_capture() {
+        let router = router();
+        let mut session = SessionIngress::with_router(Some(router.clone()));
+        let reply = queued_screenshot(&mut session);
+        let shot = session.take_pending_screenshots(0).pop().unwrap();
+        session.submit_screenshot(shot, Box::pin(std::future::pending()));
+        router.lock().unwrap().retire();
+        session.take_requests();
+        assert!(session.captures.is_empty());
+        assert!(
+            matches!(reply.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::Retired)
+        );
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn browser_capture_survives_an_event_loop_turn() {
+        let mut session = SessionIngress::detached_for_test();
+        let reply = queued_screenshot(&mut session);
+        let shot = session.take_pending_screenshots(0).pop().unwrap();
+        session.submit_screenshot(
+            shot,
+            Box::pin(async {
+                gloo_timers::future::TimeoutFuture::new(1).await;
+                Ok((1, 1, vec![1, 2, 3, 255]))
+            }),
+        );
+        session.poll_captures();
+        assert!(reply.try_recv().is_err());
+        for _ in 0..100 {
+            gloo_timers::future::TimeoutFuture::new(1).await;
+            session.poll_captures();
+            if session.captures.is_empty() {
+                break;
+            }
+        }
+        assert!(matches!(
+            reply.try_recv().unwrap(),
+            Ok(ReplyBody::Binary {
+                content_type: "image/png",
+                ..
+            })
+        ));
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

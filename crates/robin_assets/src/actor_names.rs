@@ -192,19 +192,53 @@ impl From<std::io::Error> for LoadError {
 /// bare name ("Dem_Lei_MP") — the corresponding proto-level is looked up
 /// in the campaign's mission profiles.
 pub fn load_from_datadir(datadir: &Path, mission_filename: &str) -> Result<ActorNames, LoadError> {
+    // Tools inherit the legacy lookup configuration, not its mutable VFS.
+    // Install decoded shipping data into this call's private snapshot so one
+    // disassembly cannot publish a mission into another caller's authority.
+    let files = SbFile::snapshot_legacy_file_system();
     let data_dir = datadir.join("Data");
-    let shipping = crate::shipping_datadir::try_load(&data_dir)
+    #[cfg(not(target_arch = "wasm32"))]
+    let (decoded, files) = {
+        // Instance VFS paths are virtual, never absolute host paths. Mount the
+        // requested directory and decode at its root, so split mission paths
+        // stay relative to that same directory rather than the process CWD.
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        if data_dir.try_exists()? {
+            vfs.mount_directory(&data_dir)
+                .map_err(|error| LoadError::Level(format!("shipping mount: {error:#}")))?;
+        }
+        let decoded = crate::shipping_datadir::try_load_from(&vfs, Path::new(""))
+            .map_err(|error| LoadError::Level(format!("shipping datadir: {error:#}")))?;
+        let files = if decoded.is_some() {
+            files.with_asset_vfs(vfs)
+        } else {
+            files
+        };
+        (decoded, files)
+    };
+    #[cfg(target_arch = "wasm32")]
+    let decoded = crate::shipping_datadir::try_load_from(files.asset_vfs(), &data_dir)
         .map_err(|error| LoadError::Level(format!("shipping datadir: {error:#}")))?;
+    let shipping = decoded
+        .map(|decoded| {
+            crate::shipping_datadir::ShippingAssets::install(
+                Arc::new(decoded),
+                files.asset_vfs().clone(),
+            )
+        })
+        .transpose()
+        .map_err(|error| LoadError::Level(format!("install shipping datadir: {error:#}")))?;
     if let Some(shipping) = &shipping {
         shipping
+            .datadir()
             .load_mission_from_source(mission_filename)
             .map_err(|error| LoadError::Level(format!("shipping mission: {error:#}")))?;
     }
     load_from_datadir_with_files(
         datadir,
         mission_filename,
-        shipping.as_ref(),
-        Arc::new(SbFile::snapshot_legacy_file_system()),
+        shipping.as_ref().map(|shipping| &**shipping.datadir()),
+        Arc::new(files.snapshot()),
     )
 }
 
@@ -664,6 +698,66 @@ fn sanitize_class_name(class: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shipping_datadir_helper_installs_decoded_mission_in_private_vfs() {
+        use crate::shipping_datadir::{
+            ShippingDatadir, ShippingMission, ShippingMissionRef, encode_mission_native,
+            encode_native, zstd_max_compress,
+        };
+        use robin_engine::profiles::MissionProfile;
+
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("Data");
+        std::fs::create_dir(&data).unwrap();
+        let marker = format!(
+            "actor-names-{}",
+            root.path().file_name().unwrap().to_string_lossy()
+        );
+        let mut decoded = ShippingDatadir::default();
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            mission_filename: "Fixture".into(),
+            proto_level_filename: "FixtureProto".into(),
+            ..Default::default()
+        });
+        decoded.profiles = Some(profiles);
+        decoded.raw.insert(marker.clone(), vec![42]);
+        decoded.missions.insert(
+            "Fixture".into(),
+            ShippingMissionRef {
+                forest_level: false,
+                files: vec!["fixture.rhmission.zst".into()],
+            },
+        );
+        let mut mission = ShippingMission::default();
+        mission.levels.insert(
+            "Fixture".into(),
+            LoadedLevel::hackable_from_json(
+                br#"{"map_filename":"test", "spawn":[5,5],
+                "walkable_polygon":[[0,0],[100,0],[100,100],[0,100]]}"#,
+            )
+            .unwrap(),
+        );
+        std::fs::write(
+            data.join("datadir.bin"),
+            zstd_max_compress(&encode_native(&decoded)).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            data.join("fixture.rhmission.zst"),
+            zstd_max_compress(&encode_mission_native(&mission)).unwrap(),
+        )
+        .unwrap();
+
+        // Exercise the public tool entry point, including decoding, installation,
+        // mission publication, and prepared text/resource lookup. Repeated calls
+        // must not collide with an earlier process-global shipping installation.
+        for _ in 0..2 {
+            load_from_datadir(root.path(), "Fixture").unwrap();
+            assert!(robin_util::asset_fs::global().read(&marker).is_err());
+        }
+    }
 
     #[test]
     fn sanitize_strips_8hex_suffix() {

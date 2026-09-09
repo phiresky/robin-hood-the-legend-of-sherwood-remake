@@ -392,13 +392,6 @@ where
     let mut files = dependencies.files;
     prioritize_mission_downloads(&mut files);
     let exclamation_ids = dependencies.exclamation_ids;
-    // Fresh install epoch: drops the previous mission's late-grid cells and
-    // invalidates any still-running background sprite-streaming driver.
-    // Deliberately after the loaded-mission early return above — a restart
-    // of the same mission keeps its (possibly still-filling) cells.
-    let install_epoch = robin_assets::late_sprites::begin_epoch();
-    #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
-    let _ = install_epoch;
     // Only the browser/audio closure mutates its captured pause guard.
     #[cfg_attr(not(all(target_arch = "wasm32", feature = "audio")), allow(unused_mut))]
     let mut downloads_finished = || {
@@ -483,7 +476,10 @@ where
     datadir.set_active_exclamation_ids(exclamation_ids);
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
     if let Some(tail) = deferred_tail {
-        spawn_deferred_sprite_tail(mission.to_owned(), install_epoch, tail);
+        let payload = datadir.loaded_mission(mission).ok_or_else(|| {
+            anyhow!("shipping mission {mission} disappeared before sprite streaming")
+        })?;
+        spawn_deferred_sprite_tail(mission.to_owned(), payload.sprite_streaming(), tail);
     }
     let payload = datadir
         .loaded_mission(mission)
@@ -1495,8 +1491,11 @@ where
 /// errors, stuck dependencies, and a superseding mission install all
 /// degrade to a warn/debug log plus permanently-skipped sprites.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteTail) {
-    use robin_assets::late_sprites;
+fn spawn_deferred_sprite_tail(
+    mission: String,
+    streaming: &robin_assets::late_sprites::SpriteStreaming,
+    tail: DeferredSpriteTail,
+) {
     use robin_assets::shipping_datadir::VqDecodeScheduler;
 
     let DeferredSpriteTail {
@@ -1506,7 +1505,7 @@ fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteT
     } = tail;
     let total_chunks = chunks.len();
     let total_blob: u64 = chunks.iter().map(|chunk| chunk.blob.len() as u64).sum();
-    late_sprites::set_tail_work(epoch, total_chunks, total_blob);
+    let publisher = streaming.publisher(total_chunks, total_blob);
     tracing::info!(
         mission,
         chunks = total_chunks,
@@ -1521,6 +1520,10 @@ fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteT
         let mut decoded_chunks = 0usize;
         let mut decoded_sprites = 0usize;
         loop {
+            if publisher.is_retired() {
+                tracing::debug!(mission, "mission sprite streaming retired");
+                return;
+            }
             // Strict readiness: the full mission payload is merged, so a
             // missing base row is a manifest error, not "not yet".
             if let Err(error) = scheduler.dispatch_ready(&bank, &mut pending, &rhs_files, true) {
@@ -1529,7 +1532,7 @@ fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteT
                     "background sprite streaming aborted (affected sprites stay skipped): \
                      {error:#}"
                 );
-                late_sprites::fail_tail(epoch);
+                publisher.fail_tail();
                 return;
             }
             match scheduler.next_decoded().await {
@@ -1537,6 +1540,7 @@ fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteT
                     // One chunk lost; its sprites keep safe-skipping. Other
                     // in-flight decodes are still worth draining.
                     tracing::warn!(mission, "background sprite chunk decode failed: {error:#}");
+                    publisher.fail_tail();
                 }
                 Ok(None) => break,
                 Ok(Some((chunk, grids))) => {
@@ -1544,7 +1548,7 @@ fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteT
                         .into_iter()
                         .map(|(sprite_id, grid)| (sprite_id, Arc::new(grid)))
                         .collect();
-                    if !late_sprites::publish_chunk(epoch, chunk.blob.len() as u64, &grids) {
+                    if !publisher.publish_chunk(chunk.blob.len() as u64, &grids) {
                         tracing::debug!(
                             mission,
                             "another mission install superseded the sprite streaming tail"
@@ -1583,14 +1587,24 @@ fn spawn_deferred_sprite_tail(mission: String, epoch: u64, tail: DeferredSpriteT
                  (affected sprites stay skipped): {}",
                 stuck.join(", ")
             );
-            late_sprites::fail_tail(epoch);
+            publisher.fail_tail();
+            return;
+        }
+        if decoded_chunks != total_chunks {
+            publisher.fail_tail();
+            tracing::warn!(
+                mission,
+                decoded_chunks,
+                total_chunks,
+                "sprite streaming finished with failed chunks; affected sprites stay skipped"
+            );
             return;
         }
         tracing::info!(
             mission,
             chunks = decoded_chunks,
             sprites = decoded_sprites,
-            skipped_draws = late_sprites::skipped_draws(),
+            skipped_draws = ?publisher.skipped_draws(),
             elapsed_ms = js_sys::Date::now() - started,
             "background sprite streaming complete"
         );

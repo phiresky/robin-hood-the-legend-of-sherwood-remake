@@ -38,11 +38,12 @@ pub struct SbFileSystem {
     working_directory: Option<PathBuf>,
     assets: Arc<robin_util::asset_fs::AssetVfs>,
     alternate_paths: Mutex<Vec<String>>,
-    /// The selected locale root and its fallback root. Keeping the pair behind
+    /// The selected locale root, fallback root, and presentation language.
+    /// Keeping them behind
     /// one mutex makes a runtime language switch atomic: readers can observe
     /// either the old pair or the new pair, never a selected locale from one
     /// configuration and a fallback from another.
-    locale_paths: Mutex<(Option<String>, Option<String>)>,
+    locale_paths: Mutex<LocaleLookup>,
     overlay_paths: Mutex<Vec<OverlayRoot>>,
     primary_path: Mutex<Option<PathBuf>>,
     /// Irreversible one-job verifier confinement. When set, every legacy
@@ -53,6 +54,15 @@ pub struct SbFileSystem {
     /// One-way closed lookup mode used only by the private official exporter.
     /// Direct host-CWD and unrooted alternate fallthrough are forbidden.
     official_projection_strict: AtomicBool,
+}
+
+/// Presentation language identity travels with its lookup roots, including in
+/// prepared readers. A numeric/empty shipping root is not a language tag.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct LocaleLookup {
+    selected: Option<String>,
+    fallback: Option<String>,
+    language: Option<String>,
 }
 
 /// Read-only proof of every process-global filesystem/VFS authority that can
@@ -106,7 +116,7 @@ impl SbFileSystem {
             working_directory: None,
             assets,
             alternate_paths: Mutex::new(Vec::new()),
-            locale_paths: Mutex::new((None, None)),
+            locale_paths: Mutex::new(LocaleLookup::default()),
             overlay_paths: Mutex::new(Vec::new()),
             primary_path: Mutex::new(None),
             ranked_verifier_primary_path: Mutex::new(None),
@@ -1455,6 +1465,7 @@ impl SbFileSystem {
         if !snapshot.alternate_paths.is_empty()
             || snapshot.selected_locale.is_some()
             || snapshot.fallback_locale.is_some()
+            || self.presentation_locale().is_some()
             || !snapshot.overlay_paths.is_empty()
             || snapshot.primary_path.is_some()
             || !snapshot.asset_vfs.is_empty()
@@ -1468,7 +1479,10 @@ impl SbFileSystem {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "official projection lookup mode was already configured".to_owned())?;
         *self.primary_path.lock().unwrap() = Some(source_root);
-        *self.locale_paths.lock().unwrap() = (Some(resource_locale_root.to_owned()), None);
+        *self.locale_paths.lock().unwrap() = LocaleLookup {
+            selected: Some(resource_locale_root.to_owned()),
+            ..LocaleLookup::default()
+        };
         self.overlay_paths
             .lock()
             .unwrap()
@@ -1633,8 +1647,22 @@ impl SbFileSystem {
 
     /// Atomically replace both locale roots without disturbing generic
     /// alternate paths. Invalid roots reject the entire update, leaving the
-    /// previous pair intact.
+    /// previous state intact. Raw root configuration clears any previous
+    /// presentation language; applications use `set_presentation_locale`.
     pub fn set_locale_paths(&self, selected: Option<&str>, fallback: Option<&str>) -> i32 {
+        self.set_presentation_locale(selected, fallback, None)
+    }
+
+    /// Install the application-selected BCP-47 language and its resource roots
+    /// together. Language-only changes invalidate presentation caches, even
+    /// when roots are unchanged (for example embedded shipping packs).
+    /// Like other mount updates, call at the application's preparation boundary.
+    pub fn set_presentation_locale(
+        &self,
+        selected: Option<&str>,
+        fallback: Option<&str>,
+        language: Option<&str>,
+    ) -> i32 {
         if self.ranked_verifier_primary_path.lock().unwrap().is_some() {
             return SBFILE_ERROR_READ;
         }
@@ -1651,13 +1679,23 @@ impl SbFileSystem {
             Err(error) => return error,
         };
         let mut locale_paths = self.locale_paths.lock().unwrap();
-        *locale_paths = (selected, fallback);
+        *locale_paths = LocaleLookup {
+            selected,
+            fallback,
+            language: language.map(str::to_owned),
+        };
         self.assets.invalidate_content(true);
         SBFILE_NO_ERROR
     }
 
     pub fn locale_paths(&self) -> (Option<String>, Option<String>) {
-        self.locale_paths.lock().unwrap().clone()
+        let locale = self.locale_paths.lock().unwrap();
+        (locale.selected.clone(), locale.fallback.clone())
+    }
+
+    /// Language of this reader's presentation resources, not process state.
+    pub fn presentation_locale(&self) -> Option<String> {
+        self.locale_paths.lock().unwrap().language.clone()
     }
 
     fn ranked_confined_candidates(&self, root: &Path, normalised: &str) -> Vec<PathBuf> {
@@ -1945,8 +1983,8 @@ impl SbFileSystem {
         if let Some(existing) = locked.as_ref() {
             let locale = self.locale_paths.lock().unwrap();
             return if existing == &canonical
-                && locale.0.as_deref() == resource_locale_root
-                && locale.1.is_none()
+                && locale.selected.as_deref() == resource_locale_root
+                && locale.fallback.is_none()
             {
                 SBFILE_NO_ERROR
             } else {
@@ -1955,7 +1993,7 @@ impl SbFileSystem {
         }
         let locale_is_empty = {
             let locale = self.locale_paths.lock().unwrap();
-            locale.0.is_none() && locale.1.is_none()
+            locale.selected.is_none() && locale.fallback.is_none() && locale.language.is_none()
         };
         if !self.overlay_paths.lock().unwrap().is_empty()
             || !self.alternate_paths.lock().unwrap().is_empty()
@@ -1967,7 +2005,10 @@ impl SbFileSystem {
             return SBFILE_ERROR_READ;
         }
         *self.primary_path.lock().unwrap() = Some(canonical.clone());
-        *self.locale_paths.lock().unwrap() = (resource_locale_root.map(str::to_owned), None);
+        *self.locale_paths.lock().unwrap() = LocaleLookup {
+            selected: resource_locale_root.map(str::to_owned),
+            ..LocaleLookup::default()
+        };
         *locked = Some(canonical);
         SBFILE_NO_ERROR
     }
@@ -2820,6 +2861,41 @@ mod tests {
                 .unwrap()
                 .into_bytes(),
             b"base-profile"
+        );
+    }
+
+    #[test]
+    fn presentation_language_is_owned_snapshotted_and_invalidates_localized_content() {
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let other = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.set_presentation_locale(None, None, Some("ja-JP")),
+            SBFILE_NO_ERROR
+        );
+        let prepared = files.snapshot();
+        let before = files.selection_snapshot();
+        assert_eq!(
+            files.set_presentation_locale(None, None, Some("en-US")),
+            SBFILE_NO_ERROR
+        );
+        let after = files.selection_snapshot();
+        assert_ne!(before.generation, after.generation);
+        assert_eq!(before.content_generation, after.content_generation);
+        assert_eq!(before.mission_generation, after.mission_generation);
+        assert_eq!(prepared.presentation_locale().as_deref(), Some("ja-JP"));
+        assert_eq!(files.presentation_locale().as_deref(), Some("en-US"));
+        assert_eq!(other.presentation_locale(), None);
+        assert_ne!(
+            files.set_presentation_locale(Some("../escape"), None, Some("ru-RU")),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(files.presentation_locale().as_deref(), Some("en-US"));
+        assert_eq!(files.selection_snapshot().generation, after.generation);
+        assert_eq!(files.set_locale_paths(None, None), SBFILE_NO_ERROR);
+        assert_eq!(
+            files.presentation_locale(),
+            None,
+            "raw mounts must not retain stale language policy"
         );
     }
 

@@ -210,7 +210,7 @@ impl InteractiveMission {
                 )
             };
 
-            capture_result.map_err(|err| {
+            capture_result.await.map_err(|err| {
                 format!(
                     "failed to render mission-start map to {}: {err}",
                     output_path.display()
@@ -382,8 +382,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
             // Pending `/screenshot` requests: each renders a dedicated
             // throwaway frame with its own overridden dev flags into
-            // the offscreen target, reads the pixels back, and clears
-            // the target for the next render.  Runs BEFORE the live
+            // the offscreen target and submits owned asynchronous readback.
+            // Submission clears recording for the next render. Runs BEFORE the live
             // frame so `present()` still blits the real frame last.
             let display_snapshot = host.frontend.presentation.engine_display.clone();
             drain_screenshots(
@@ -406,7 +406,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     assets,
                     dev,
                     &mut render_ctx,
-                ) {
+                )
+                .await
+                {
                     host.frontend
                         .request_print_screen(PrintScreenRequest::Plain);
                 }
@@ -452,7 +454,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             // `<save-root>/screen%03u.png`, picking the first free
             // slot in `000..1000`.
             if let Some(request) = host.frontend.take_print_screen() {
-                drain_print_screen_request(render_ctx.renderer, request);
+                drain_print_screen_request(render_ctx.renderer, request).await;
             }
 
             let presented = render_ctx.present();

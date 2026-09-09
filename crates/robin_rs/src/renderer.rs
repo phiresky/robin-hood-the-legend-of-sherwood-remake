@@ -2747,6 +2747,7 @@ impl Renderer {
     /// next live render starts fresh; the swapchain is untouched.
     /// Used by the `/screenshot` HTTP endpoint, the `PrintScreen`
     /// hotkey path, and the savegame thumbnail.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn capture_frame_rgba(&mut self) -> Option<(u32, u32, Vec<u8>)> {
         self.try_capture_frame_rgba()
             .map_err(|error| tracing::warn!(%error, "capture frame failed"))
@@ -2754,16 +2755,19 @@ impl Renderer {
     }
 
     /// Read the composited logical framebuffer left by the latest `present`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn capture_presented_frame_rgba(&self) -> Option<(u32, u32, Vec<u8>)> {
         self.try_capture_presented_frame_rgba()
             .map_err(|error| tracing::warn!(%error, "capture presented frame failed"))
             .ok()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn try_capture_frame_rgba(&mut self) -> Result<CapturedFrame, CaptureError> {
         readback::capture_frame_rgba(&self.gpu, &self.pipelines, &self.resources, &mut self.frame)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn try_capture_presented_frame_rgba(&self) -> Result<CapturedFrame, CaptureError> {
         readback::capture_presented_frame_rgba(&self.gpu, &self.frame)
     }
@@ -2777,6 +2781,11 @@ impl Renderer {
             &self.resources,
             &mut self.frame,
         )
+    }
+
+    /// Submit the already-presented logical target without borrowing it while mapping.
+    pub fn begin_capture_presented_frame_rgba(&self) -> PendingCapture {
+        readback::begin_capture_presented_frame_rgba(&self.gpu, &self.frame)
     }
 
     pub async fn capture_frame_rgba_async(&mut self) -> Result<CapturedFrame, CaptureError> {

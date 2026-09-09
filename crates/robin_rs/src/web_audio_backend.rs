@@ -1476,25 +1476,23 @@ mod browser_lifecycle_tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     fn session() -> BrowserAudioSession {
-        BrowserAudioSession::new(
-            Arc::new(SbFileSystem::new(Arc::new(
-                robin_util::asset_fs::AssetVfs::new(),
-            ))),
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let installed = robin_assets::shipping_datadir::ShippingAssets::install(
             Arc::new(ShippingDatadir::default()),
+            vfs.clone(),
+        )
+        .unwrap();
+        BrowserAudioSession::new(
+            Arc::new(SbFileSystem::new(vfs)),
+            installed.datadir().clone(),
         )
         .unwrap()
     }
 
     #[wasm_bindgen_test]
     fn mission_transition_rejects_paused_completion_without_affecting_other_session() {
+        let other = session();
         let session = session();
-        let other = BrowserAudioSession::new(
-            Arc::new(SbFileSystem::new(Arc::new(
-                robin_util::asset_fs::AssetVfs::new(),
-            ))),
-            Arc::new(ShippingDatadir::default()),
-        )
-        .unwrap();
         let backend = KiraAudioBackend::new_with_session("", 2, session.clone()).unwrap();
         let other_backend = KiraAudioBackend::new_with_session("", 2, other.clone()).unwrap();
         let (index, id, generation) = backend

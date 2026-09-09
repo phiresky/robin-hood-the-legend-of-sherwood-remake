@@ -493,13 +493,14 @@ pub(super) fn drain_screenshots(
     ctx: &mut RenderContext<'_>,
 ) {
     let pending = http.take_pending_screenshots(sim_frame);
-    drain_screenshot_requests(pending, engine, display, host, assets, dev, ctx);
+    drain_screenshot_requests(http, pending, engine, display, host, assets, dev, ctx);
 }
 
-/// Render an already-partitioned set of screenshot requests. Cooperative UI
+/// Submit an already-partitioned set of screenshot requests. Cooperative UI
 /// tasks use this for full-map, scene-only, and debug-override captures before
 /// fulfilling ordinary screenshots from the presented UI framebuffer.
 pub(super) fn drain_screenshot_requests(
+    http: &mut crate::http_server::SessionIngress,
     pending: Vec<crate::http_server::PendingScreenshot>,
     engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
@@ -512,8 +513,8 @@ pub(super) fn drain_screenshot_requests(
         return;
     }
     for ss in pending {
-        match render_screenshot_rgba(engine, display, host, assets, dev, ss.request(), ctx) {
-            Ok((w, h, rgba)) => ss.respond(w, h, &rgba),
+        match begin_screenshot_rgba(engine, display, host, assets, dev, ss.request(), ctx) {
+            Ok(capture) => http.submit_screenshot(ss, capture),
             Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err)),
         }
 
@@ -523,7 +524,7 @@ pub(super) fn drain_screenshot_requests(
     }
 }
 
-/// Fulfil ordinary viewport screenshots from the already-presented topmost
+/// Submit ordinary viewport screenshots from the already-presented topmost
 /// pause-side UI. Specialized requests remain queued for `drain_screenshots`.
 pub(super) fn drain_presented_ui_screenshots(
     http: &mut crate::http_server::SessionIngress,
@@ -534,25 +535,14 @@ pub(super) fn drain_presented_ui_screenshots(
     if pending.is_empty() {
         return;
     }
-    match renderer.try_capture_presented_frame_rgba() {
-        Ok((width, height, rgba)) => {
-            for screenshot in pending {
-                screenshot.respond(width, height, &rgba);
-            }
-        }
-        Err(error) => {
-            for screenshot in pending {
-                screenshot.respond_err(crate::http_server::RpcError::internal(format!(
-                    "failed to read the presented pause UI framebuffer: {error}"
-                )));
-            }
-        }
+    for screenshot in pending {
+        http.submit_screenshot(screenshot, renderer.begin_capture_presented_frame_rgba());
     }
 }
 
 /// Render either the current viewport or the complete level according to the
 /// same request used by the HTTP screenshot endpoint.
-fn render_screenshot_rgba(
+fn begin_screenshot_rgba(
     engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
@@ -560,12 +550,12 @@ fn render_screenshot_rgba(
     dev: &engine_api::DevState,
     request: &crate::http_server::ScreenshotRequest,
     ctx: &mut RenderContext<'_>,
-) -> Result<(u32, u32, Vec<u8>), String> {
+) -> Result<crate::renderer::PendingCapture, String> {
     let mut scratch_dev = dev.clone();
     crate::http_server::apply_screenshot_flags(&mut scratch_dev.debug, &request.flags);
 
     if request.full_map {
-        capture_wide_map_rgba(
+        begin_wide_map_rgba(
             engine,
             display,
             host,
@@ -584,9 +574,7 @@ fn render_screenshot_rgba(
             !request.hide_ui,
             ctx,
         );
-        ctx.renderer
-            .try_capture_frame_rgba()
-            .map_err(|error| error.to_string())
+        Ok(ctx.renderer.begin_capture_frame_rgba())
     }
 }
 
@@ -596,9 +584,9 @@ pub(crate) type PendingThumbnail =
 /// Render a dedicated throwaway frame for a save-slot thumbnail and
 /// return it downsampled to the configured thumbnail dimensions.
 ///
-/// This mirrors the HTTP screenshot path: render intentionally, read
-/// back immediately, then clear the renderer queue so the live frame
-/// later in the loop starts clean.
+/// This mirrors the HTTP screenshot path: render intentionally and submit
+/// readback, clearing commands immediately so the live frame starts clean.
+/// The returned future owns completion independently of the renderer.
 pub(super) fn begin_save_thumbnail(
     engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
@@ -640,40 +628,32 @@ pub(super) fn begin_save_thumbnail(
 /// Walks `screen000..screen999` and writes to the first free slot.
 /// We use PNG instead of the original TGA format so screenshots share the
 /// same encoder path as HTTP screenshots.
-pub(super) fn drain_print_screen(renderer: &mut crate::renderer::Renderer) {
-    let (w, h, rgba) = match renderer.try_capture_frame_rgba() {
-        Ok(frame) => frame,
-        Err(error) => {
-            tracing::warn!(%error, "PrintScreen capture failed");
-            return;
-        }
-    };
-    write_print_screen_png(w, h, rgba);
-}
-
 pub(super) fn drain_print_screen_request(
     renderer: &mut crate::renderer::Renderer,
     request: PrintScreenRequest,
-) {
-    match request {
-        PrintScreenRequest::Plain => drain_print_screen(renderer),
-        PrintScreenRequest::Median3x3 => {
-            let (w, h, rgba) = match renderer.try_capture_frame_rgba() {
-                Ok(frame) => frame,
-                Err(error) => {
-                    tracing::warn!(%error, "PrintScreen capture failed");
-                    return;
-                }
-            };
-            write_print_screen_png(w, h, median_filter_rgba_3x3(w, h, &rgba));
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
+    let capture = renderer.begin_capture_frame_rgba();
+    Box::pin(async move {
+        let (w, h, rgba) = match capture.await {
+            Ok(frame) => frame,
+            Err(error) => {
+                tracing::warn!(%error, "PrintScreen capture failed");
+                return;
+            }
+        };
+        match request {
+            PrintScreenRequest::Plain => write_print_screen_png(w, h, rgba),
+            PrintScreenRequest::Median3x3 => {
+                write_print_screen_png(w, h, median_filter_rgba_3x3(w, h, &rgba))
+            }
+            PrintScreenRequest::WideSnapshot => {
+                tracing::warn!(
+                    "PrintScreen Ctrl wide snapshot reached viewport drain; saving current viewport"
+                );
+                write_print_screen_png(w, h, rgba);
+            }
         }
-        PrintScreenRequest::WideSnapshot => {
-            tracing::warn!(
-                "PrintScreen Ctrl wide snapshot reached viewport drain; saving current viewport"
-            );
-            drain_print_screen(renderer);
-        }
-    }
+    })
 }
 
 pub(super) fn print_screen_request_from_modifiers(
@@ -741,17 +721,24 @@ pub(super) fn drain_wide_print_screen(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
-) -> bool {
-    match capture_wide_map_rgba(engine, display, host, assets, dev, ctx.draw_hud, ctx) {
-        Ok((w, h, rgba)) => {
-            write_print_screen_png(w, h, rgba);
-            true
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool>>> {
+    let capture = begin_wide_map_rgba(engine, display, host, assets, dev, ctx.draw_hud, ctx);
+    Box::pin(async move {
+        let captured = match capture {
+            Ok(capture) => capture.await.map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        };
+        match captured {
+            Ok((w, h, rgba)) => {
+                write_print_screen_png(w, h, rgba);
+                true
+            }
+            Err(err) => {
+                tracing::warn!("PrintScreen Ctrl wide snapshot: {err}");
+                false
+            }
         }
-        Err(err) => {
-            tracing::warn!("PrintScreen Ctrl wide snapshot: {err}");
-            false
-        }
-    }
+    })
 }
 
 /// Render a screenshot request and write its full-resolution pixels to `path`.
@@ -768,12 +755,16 @@ pub(super) fn capture_screenshot_to_path(
     ctx: &mut RenderContext<'_>,
     request: &crate::http_server::ScreenshotRequest,
     path: &std::path::Path,
-) -> Result<(), String> {
-    let (w, h, rgba) = render_screenshot_rgba(engine, display, host, assets, dev, request, ctx)?;
-    write_rgba_png(path, w, h, &rgba)
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>>>> {
+    let capture = begin_screenshot_rgba(engine, display, host, assets, dev, request, ctx);
+    let path = path.to_owned();
+    Box::pin(async move {
+        let (w, h, rgba) = capture?.await.map_err(|error| error.to_string())?;
+        write_rgba_png(&path, w, h, &rgba)
+    })
 }
 
-fn capture_wide_map_rgba(
+fn begin_wide_map_rgba(
     engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
@@ -781,7 +772,7 @@ fn capture_wide_map_rgba(
     dev: &engine_api::DevState,
     draw_hud: bool,
     ctx: &mut RenderContext<'_>,
-) -> Result<(u32, u32, Vec<u8>), String> {
+) -> Result<crate::renderer::PendingCapture, String> {
     let (viewport, level_w, level_h) = wide_map_viewport(&host.frontend.viewport)?;
     let render_h = viewport.screen_size.y as u32;
     let gpu_limit = ctx.renderer.gpu.device.limits().max_texture_dimension_2d;
@@ -830,18 +821,17 @@ fn capture_wide_map_rgba(
         dev,
         &mut capture_ctx,
     );
-    let captured = target.try_capture_frame_rgba();
+    let captured = target.begin_capture_frame_rgba();
+    Ok(Box::pin(async move {
+        let (w, h, rgba) = captured.await?;
+        if w != level_w || h < level_h {
+            return Err(crate::renderer::CaptureError::InvalidLayout);
+        }
 
-    let (w, h, rgba) = captured.map_err(|error| error.to_string())?;
-    if w != level_w || h < level_h {
-        return Err(format!(
-            "captured unexpected frame {w}x{h}, expected at least {level_w}x{level_h}"
-        ));
-    }
-
-    let row_bytes = w as usize * 4;
-    let crop_bytes = level_h as usize * row_bytes;
-    Ok((level_w, level_h, rgba[..crop_bytes].to_vec()))
+        let row_bytes = w as usize * 4;
+        let crop_bytes = level_h as usize * row_bytes;
+        Ok((level_w, level_h, rgba[..crop_bytes].to_vec()))
+    }))
 }
 
 fn wide_map_viewport(
@@ -1945,6 +1935,10 @@ fn render_frame_with_hud(
     // ── GPU phase: HUD text ──
     if let Some(fonts) = hud_fonts {
         crate::hud_text::render_hud_text(
+            host.frontend
+                .resources
+                .frame_holder()
+                .sprite_streaming_status(),
             engine,
             local_seat,
             host.viewport(),
