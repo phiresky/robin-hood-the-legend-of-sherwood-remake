@@ -288,3 +288,24 @@ TODOs for further art work:
   lighting where useful.
 - Map multipart meshes deliberately to editor obstacle nodes before exporting
   a replacement GLB. The native Blender scene is the deliverable of these passes.
+
+## Synthesized trunk bark
+
+Run `python3 level-editor/blender/sherwood/synthesize_bark.py`, then execute
+`refine_bark.py` through Blender MCP on the refined native scene. This replaces
+the repeated small bark crop on 118 trunk/root/limb meshes with a 128×512
+texture-synthesis tile, using integer circumference wraps and continuous
+height coordinates. A smooth vertex weight blends into the original Day
+projection on source-facing surfaces. The wider audited donor includes bark
+ridges as well as grooves, avoiding the nearly black output of the old crop.
+
+`inspect_bark.py` renders four matched central-oak angles; set `LABEL` to
+`before` before applying the fix and `after` afterward. Outputs are in
+`work/sherwood-refinement/bark-inspection/`. The native scene keeps a
+`sherwood-before-synthesized-bark.blend` backup. Geometry and baseline meshes
+are unchanged; existing video files predate this texture correction.
+
+TODO: The original `pipeline/src/volume-fill.ts` synthesizes eligible partially
+visible tiles independently, but fully hidden faces still borrow/repeat donors.
+A general exporter fix needs synthesis for those faces and continuity across
+adjacent face boundaries; this Blender correction does not change that pipeline.
