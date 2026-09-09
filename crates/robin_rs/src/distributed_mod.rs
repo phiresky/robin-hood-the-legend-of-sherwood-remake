@@ -356,14 +356,13 @@ pub(crate) fn validate_mission_archives(
     if let Some(bytes) = shared_library_archive {
         let _ = validate_zip("shared library", bytes)?;
     }
-    let (strip_prefix, prepend_prefix) = detect_zip_layout_for_mission(
-        &mission_entries.keys().cloned().collect::<Vec<_>>(),
-        mission_rhm_entry,
-    )
-    .map_err(|message| DistributedModError::Archive {
-        archive: "mission",
-        message,
-    })?;
+    let (strip_prefix, prepend_prefix) =
+        detect_zip_layout_for_mission(mission_entries.keys(), mission_rhm_entry).map_err(
+            |message| DistributedModError::Archive {
+                archive: "mission",
+                message,
+            },
+        )?;
     let selected = canonical_archive_path(mission_rhm_entry)?;
     let relative =
         selected

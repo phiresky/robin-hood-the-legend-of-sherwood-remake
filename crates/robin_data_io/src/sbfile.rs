@@ -437,7 +437,7 @@ pub fn detect_zip_layout(entries: &[String]) -> (String, String) {
 /// contents of `Data/Levels/`. The selected entry must be an exact safe path
 /// advertised by the archive.
 pub fn detect_zip_layout_for_mission(
-    entries: &[String],
+    entries: impl IntoIterator<Item = impl AsRef<str>>,
     selected_rhm_entry: &str,
 ) -> Result<(String, String), String> {
     if selected_rhm_entry.is_empty()
@@ -455,8 +455,8 @@ pub fn detect_zip_layout_for_mission(
 
     let selected = selected_rhm_entry.to_ascii_lowercase();
     if !entries
-        .iter()
-        .any(|entry| entry.replace('\\', "/").to_ascii_lowercase() == selected)
+        .into_iter()
+        .any(|entry| entry.as_ref().replace('\\', "/").to_ascii_lowercase() == selected)
     {
         return Err(format!(
             "selected mission entry `{selected_rhm_entry}` is absent from the archive"
@@ -3246,6 +3246,44 @@ mod tests {
             SBFILE_NO_ERROR
         );
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn selected_mission_layout_accepts_borrowed_single_pass_entries() {
+        let entries = std::collections::BTreeMap::from([
+            ("French/DATA/Levels/map.rhm".to_owned(), 1),
+            ("English/DATA/Levels/map.rhm".to_owned(), 2),
+        ]);
+        assert_eq!(
+            detect_zip_layout_for_mission(entries.keys(), "ENGLISH/data/levels/MAP.RHM").unwrap(),
+            ("english/".to_owned(), String::new())
+        );
+        assert_eq!(
+            detect_zip_layout_for_mission(["wrapper\\map.rhm"].into_iter(), "wrapper/map.rhm")
+                .unwrap(),
+            ("wrapper/".to_owned(), "data/levels/".to_owned())
+        );
+        for selected in [
+            "",
+            "/map.rhm",
+            "../map.rhm",
+            "a//map.rhm",
+            "a/./map.rhm",
+            "a\\map.rhm",
+            "map.txt",
+        ] {
+            let error = detect_zip_layout_for_mission([selected], selected).unwrap_err();
+            assert!(
+                error.contains("not a safe .rhm path"),
+                "{selected}: {error}"
+            );
+        }
+        assert!(
+            detect_zip_layout_for_mission(entries.keys(), "missing.rhm")
+                .unwrap_err()
+                .contains("absent from the archive")
+        );
+        assert!(detect_zip_layout_for_mission(std::iter::empty::<&str>(), "map.rhm").is_err());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
