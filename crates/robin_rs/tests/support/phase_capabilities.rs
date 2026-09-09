@@ -5,6 +5,40 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn rendering_entrypoint_requires_the_explicit_presentation_view() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
+    let render = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(item) if item.sig.ident == "render_frame" => Some(item),
+            _ => None,
+        })
+        .expect("production render entrypoint");
+    struct ViewArgument {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for ViewArgument {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            for segment in &path.path.segments {
+                assert!(
+                    segment.ident != "Engine" && segment.ident != "EngineInner",
+                    "render pass must not receive the general simulation read API"
+                );
+                self.found |= segment.ident == "PresentationView";
+            }
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut argument = ViewArgument { found: false };
+    argument.visit_signature(&render.sig);
+    assert!(
+        argument.found,
+        "render pass must consume the explicit read view"
+    );
+}
+
+#[test]
 fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
     let syntax = syn::parse_file(include_str!("../../src/game_session/interactive.rs")).unwrap();
     let owner = syntax

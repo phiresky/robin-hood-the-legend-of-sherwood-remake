@@ -37,7 +37,9 @@ use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker};
 use robin_assets::res_descr::LevelDescriptors;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates::ScreenBBox;
-use robin_engine::engine::{Engine, EngineInner, PresentationEngine, SpatialPresentationSnapshot};
+use robin_engine::engine::{
+    Engine, PresentationEngine, PresentationView, SpatialPresentationSnapshot,
+};
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::sound_cache::SampleLoader;
@@ -405,7 +407,7 @@ impl NativeRefreshInterpolation {
         ))
     }
 
-    pub(super) fn engine(&self) -> Option<&EngineInner> {
+    pub(super) fn engine(&self) -> Option<PresentationView<'_>> {
         self.working.as_ref().map(PresentationEngine::view)
     }
 
@@ -803,7 +805,7 @@ impl MissionPresentation {
         input: &MissionInput,
     ) {
         super::render::prepare_zoom_presentation(
-            engine,
+            &engine.presentation_view(),
             &host.frontend.presentation.engine_display,
             host,
             &mut self.renderer,

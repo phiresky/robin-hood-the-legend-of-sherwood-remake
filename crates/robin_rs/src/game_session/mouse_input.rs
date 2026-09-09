@@ -294,8 +294,10 @@ fn on_left_mouse_down(
             } else {
                 engine.selected_action_for_seat(local_seat)
             };
-            let is_swordfighting =
-                crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
+            let is_swordfighting = crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            );
             match selected_action {
                 Action::HelpToClimb => {
                     let posture_ok = engine
@@ -361,7 +363,10 @@ fn on_right_mouse_down(
         let cancelling_planned_action =
             planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
         let guard_ok = !cancelling_planned_action
-            && !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+            && !crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            )
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !engine.is_alt_effective(&host.frontend.input)
             && !engine.view_locked()
@@ -403,7 +408,10 @@ fn on_mouse_move(
             && !host.frontend.pointer_capture().minimap_drag_active()
             && !engine.is_alt_effective(&host.frontend.input)
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
-            && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+            && crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            )
         {
             host.frontend.add_gesture_point(mouse_pt);
         }
@@ -603,9 +611,10 @@ fn on_left_mouse_up(
             // If a swordfight gesture drag was being recorded, the LMB-up
             // commits that gesture — skip portrait hit-testing so a release
             // over a portrait doesn't accidentally select that PC.
-            let swordfight_drag =
-                crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
-                    && !host.frontend.mouse_way().is_empty();
+            let swordfight_drag = crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            ) && !host.frontend.mouse_way().is_empty();
 
             // Check portrait panel first (detailed sub-area hit-test).
             let portrait_hit = if swordfight_drag {

@@ -810,7 +810,7 @@ impl InteractiveFrameSimulation {
                 );
                 drain_screenshot_requests(
                     scene_screenshots,
-                    &manager.engine,
+                    &manager.engine.presentation_view(),
                     &display_snapshot,
                     &mut host.presentation(),
                     assets.as_ref(),

@@ -311,9 +311,11 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         )
         .plan
     };
-    let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
-    let zoom_enable =
-        ZoomButtonEnable::from_engine(&manager.engine, &host.frontend.presentation.engine_display);
+    let corner_enable = CornerButtonEnable::from_engine(&manager.engine.presentation_view());
+    let zoom_enable = ZoomButtonEnable::from_engine(
+        &manager.engine.presentation_view(),
+        &host.frontend.presentation.engine_display,
+    );
     let stature = manager.engine.retrieve_stature(None);
     game.stature_focus.maybe_clear(stature);
     let stature_enable = StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);

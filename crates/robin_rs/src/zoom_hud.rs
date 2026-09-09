@@ -76,7 +76,7 @@ impl ZoomButtonEnable {
     /// that's active so its widget stays visually "pressed" for the
     /// duration.
     pub fn from_engine(
-        engine: &engine_api::EngineInner,
+        engine: &engine_api::PresentationView<'_>,
         display: &engine_api::HostDisplayState,
     ) -> Self {
         let gated = engine.is_zoom_possible(display);
@@ -516,7 +516,7 @@ mod tests {
         let display = HostDisplayState::default();
 
         // Idle state: both directions available at zoom_factor = 1.0.
-        let mask = ZoomButtonEnable::from_engine(&engine, &display);
+        let mask = ZoomButtonEnable::from_engine(&engine.presentation_view(), &display);
         assert!(mask.zoom_up);
         assert!(mask.zoom_down);
         assert!(!mask.selected_up);
@@ -534,7 +534,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("zoom command admission");
-        let mask = ZoomButtonEnable::from_engine(&engine, &display);
+        let mask = ZoomButtonEnable::from_engine(&engine.presentation_view(), &display);
         assert!(mask.zoom_up);
         assert!(mask.selected_up);
         assert!(!mask.zoom_down);

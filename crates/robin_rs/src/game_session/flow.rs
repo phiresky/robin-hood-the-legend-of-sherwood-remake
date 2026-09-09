@@ -199,7 +199,7 @@ impl InteractiveMission {
                     ..Default::default()
                 };
                 capture_screenshot_to_path(
-                    engine,
+                    &engine.presentation_view(),
                     &display_snapshot,
                     host,
                     assets,
@@ -352,7 +352,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let mut fixed_tick_presented = false;
         if should_draw {
             super::render::prepare_fixed_tick_hud(
-                engine,
+                &engine.presentation_view(),
                 host,
                 assets,
                 game,
@@ -389,7 +389,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             drain_screenshots(
                 http,
                 runtime.frame_number(),
-                engine,
+                &engine.presentation_view(),
                 &display_snapshot,
                 host,
                 assets,
@@ -400,7 +400,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             if host.frontend.take_wide_snapshot_request() {
                 let display_snapshot = host.frontend.presentation.engine_display.clone();
                 if !drain_wide_print_screen(
-                    engine,
+                    &engine.presentation_view(),
                     &display_snapshot,
                     host,
                     assets,
@@ -429,14 +429,16 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 .sample(crate::window::process_uptime_ms())
                 .unwrap_or(saved_camera);
             sampled_camera.apply(host.frontend);
-            let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
+            let render_engine = native_refresh_interpolation
+                .engine()
+                .unwrap_or_else(|| engine.presentation_view());
             host.frontend.presentation.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
             if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
                 super::render::prepare_display_info(host, crate::window::process_uptime_ms());
             }
             render_frame(
-                render_engine,
+                &render_engine,
                 &display_snapshot,
                 &host.draw(),
                 assets,
@@ -578,7 +580,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 super::render::prepare_display_info(host, now_ms);
             }
             render_frame(
-                render_engine,
+                &render_engine,
                 &display_snapshot,
                 &host.draw(),
                 assets,
@@ -600,7 +602,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 presentation.sprites.cursor_renderer.advance_animation();
             }
             if host.frontend.input.is_dragging()
-                && crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat)
+                && crate::game_input::is_selected_unit_swordfighting(
+                    &engine.presentation_view(),
+                    host.local_seat,
+                )
                 && !host.frontend.mouse_way().is_empty()
                 && let Some(trail) = presentation.sprites.mouse_trail_renderer.as_ref()
             {

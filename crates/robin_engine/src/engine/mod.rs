@@ -42,6 +42,8 @@ mod nets;
 mod patch_effects;
 pub mod peripherals;
 mod posture_transitions;
+mod presentation_view;
+pub use presentation_view::PresentationView;
 mod purse;
 mod refresh_seek;
 mod reinforcement;

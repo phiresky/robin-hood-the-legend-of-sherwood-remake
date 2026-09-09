@@ -202,7 +202,7 @@ pub(super) async fn process_operation_and_save(
             },
         );
         let thumbnail = crate::game_session::render::begin_save_thumbnail(
-            &manager.engine,
+            &manager.engine.presentation_view(),
             &display_snapshot,
             &mut host.presentation(),
             assets,

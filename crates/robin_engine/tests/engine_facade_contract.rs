@@ -976,3 +976,63 @@ fn host_crate_targets_use_engine_facade_instead_of_engine_inner() {
         "host code may use EngineInner only through shared read-only projections; owned/mutable/constructor uses found in {offenders:?}"
     );
 }
+
+#[test]
+fn presentation_view_cannot_project_general_engine_authority() {
+    let syntax = parse_rust("src/engine/presentation_view.rs");
+    let mut methods = 0;
+    for item in &syntax.items {
+        match item {
+            Item::Struct(item) if item.ident == "PresentationView" => {
+                assert!(
+                    item.fields
+                        .iter()
+                        .all(|field| matches!(field.vis, Visibility::Inherited)),
+                    "read-view backing state must remain private"
+                );
+            }
+            Item::Impl(item) if path_ends_with(&item.self_ty, "PresentationView") => {
+                if let Some((path, _)) = &item.trait_ {
+                    let name = path.segments.last().unwrap().ident.to_string();
+                    assert!(
+                        matches!(name.as_str(), "Serialize" | "Deserialize"),
+                        "unexpected read-view trait projection: {name}"
+                    );
+                }
+                for member in &item.items {
+                    let syn::ImplItem::Fn(method) = member else {
+                        continue;
+                    };
+                    if !matches!(method.vis, Visibility::Public(_)) {
+                        continue;
+                    }
+                    methods += 1;
+                    for argument in &method.sig.inputs {
+                        match argument {
+                            syn::FnArg::Receiver(receiver) => assert!(
+                                matches!(receiver.kind, syn::ReceiverKind::Reference(_, _, None)),
+                                "presentation query must only borrow itself"
+                            ),
+                            syn::FnArg::Typed(argument) => {
+                                assert!(
+                                    !type_mentions_ident(&argument.ty, "EngineInner")
+                                        && !type_mentions_ident(&argument.ty, "Engine"),
+                                    "query may not accept general engine authority"
+                                );
+                            }
+                        }
+                    }
+                    if let ReturnType::Type(_, ty) = &method.sig.output {
+                        assert!(
+                            !type_mentions_ident(ty, "EngineInner")
+                                && !type_mentions_ident(ty, "Engine"),
+                            "query may not expose general engine authority"
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(methods > 0, "presentation query surface must exist");
+}

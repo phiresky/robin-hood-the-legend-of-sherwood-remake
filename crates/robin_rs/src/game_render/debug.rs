@@ -9,7 +9,7 @@ use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
 use robin_engine::element::{Entity, GameMaterial};
 use robin_engine::engine as engine_api;
-use robin_engine::engine::{EngineInner, LevelAssets};
+use robin_engine::engine::{LevelAssets, PresentationView};
 use robin_engine::pathfinder as engine_pathfinder;
 
 /// Render the developer shadow-polygon sphere debug overlay when the
@@ -22,7 +22,7 @@ use robin_engine::pathfinder as engine_pathfinder;
 /// cue.
 pub(crate) fn render_shadow_polygon_sphere_debug(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     selected_view_element: Option<engine_element::EntityId>,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -61,7 +61,7 @@ pub(crate) fn render_shadow_polygon_sphere_debug(
 /// out).
 pub(crate) fn render_debug_doors(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
@@ -70,7 +70,7 @@ pub(crate) fn render_debug_doors(
     if !dev.debug.door_display {
         return;
     }
-    if engine.mission_script().is_none() {
+    if !engine.has_mission_geometry() {
         return;
     }
 
@@ -160,7 +160,7 @@ pub(crate) fn render_debug_doors(
 /// `(point - view_rect.top_left) * zoom`.
 pub(crate) fn render_debug_motion_graph(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -199,9 +199,7 @@ pub(crate) fn render_debug_motion_graph(
         (sx, sy)
     };
 
-    let pathfinder = engine.pathfinder();
-
-    pathfinder.draw_graph(
+    engine.draw_navigation_graph(
         assets.navigation.pathfinder_graph.as_ref(),
         view_rect,
         half_diagonal_idx,
@@ -213,7 +211,7 @@ pub(crate) fn render_debug_motion_graph(
         },
     );
 
-    pathfinder.draw_nodes(
+    engine.draw_navigation_nodes(
         assets.navigation.pathfinder_graph.as_ref(),
         view_rect,
         half_diagonal_idx,
@@ -325,7 +323,7 @@ fn fill_polygon_map(
 /// using the canonical `PathGraph::find_area_at_point` lookup.
 fn selected_surface(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     graph: &engine_pathfinder::PathGraph,
 ) -> Option<(usize, usize)> {
     let pc_id = engine.hero_selection(host.local_seat).first().copied()?;
@@ -344,7 +342,7 @@ fn selected_surface(
 /// sprite pass so the sprite art reads cleanly.
 pub(crate) fn render_debug_surfaces_fill(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -381,7 +379,7 @@ pub(crate) fn render_debug_surfaces_fill(
 /// sit on top of the world and remain readable.
 pub(crate) fn render_debug_surfaces_outline(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -536,7 +534,7 @@ pub(crate) fn render_debug_surfaces_outline(
 ///    radius — the "can't hear inside this circle" envelope.
 pub(crate) fn render_noise_display(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
     fonts: Option<&HudFonts>,
@@ -690,7 +688,7 @@ pub(crate) fn render_noise_display(
 
 pub(crate) fn render_debug_animation_lines(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
@@ -733,7 +731,7 @@ pub(crate) fn render_debug_animation_lines(
 /// are skipped.
 pub(crate) fn render_debug_whatsup_overlay(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
     let enabled = host.options.whatsup;
