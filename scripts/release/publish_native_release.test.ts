@@ -107,7 +107,7 @@ function api() {
 test('nightly tags preserve commit hash; stable tags require v prefix', () => {
   for (const event of ['schedule', 'workflow_dispatch']) {
     assert.deepEqual(releaseTag(event, 'main', '202609072359', 'd01eb1295003abcdef'),
-      { tag: 'nightly-202609072359-d01eb1295003', prerelease: true });
+      { tag: 'nightly-2026-09-07-2359-d01eb1295003', prerelease: true });
   }
   assert.deepEqual(releaseTag('push', 'v1.2.3', '', 'commit'), { tag: 'v1.2.3', prerelease: false });
   assert.throws(() => releaseTag('push', 'main', '', 'commit'), /version tag/);

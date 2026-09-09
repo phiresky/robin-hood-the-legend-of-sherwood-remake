@@ -62,7 +62,9 @@ export async function inventory(root: string): Promise<Assets> {
 
 export function releaseTag(event: string, ref: string, timestamp: string, commit: string) {
   if (event === 'schedule' || event === 'workflow_dispatch') {
-    return { tag: `nightly-${timestamp}-${commit.slice(0, 12)}`, prerelease: true };
+    // Keep the numeric timestamp for SemVer packages; format the release tag for readability.
+    const date = timestamp.replace(/^(\d{4})(\d{2})(\d{2})(\d{4})$/, '$1-$2-$3-$4');
+    return { tag: `nightly-${date}-${commit.slice(0, 12)}`, prerelease: true };
   }
   if (!ref.startsWith('v')) throw new Error('stable releases require a version tag');
   return { tag: ref, prerelease: false };
