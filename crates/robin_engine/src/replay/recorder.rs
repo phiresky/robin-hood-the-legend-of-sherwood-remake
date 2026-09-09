@@ -5,10 +5,10 @@ use std::io::Write;
 /// streaming each frame
 /// to a JSONL file as it completes.
 ///
-/// Line 1 (the header) is written on construction.  Each subsequent
-/// `end_frame` appends exactly one input line for every admitted frame.
-/// No explicit close is needed — the file is always valid up to the
-/// last completed frame.
+/// Line 1 (the header) is written on construction. Each subsequent
+/// `write_frame` appends exactly one input line for every admitted frame.
+/// Any I/O failure invalidates recording; `flush` retains that failure so
+/// callers cannot publish a save link to an incomplete history.
 pub struct ReplayRecorder {
     writer: std::io::BufWriter<Box<dyn std::io::Write + Send>>,
     initial_header: ReplayHeader,
@@ -16,6 +16,8 @@ pub struct ReplayRecorder {
     next_expected_ordinal: u32,
     boundary_metadata_pending: bool,
     observed_taints: BTreeSet<InputTaintKind>,
+    // A later successful flush cannot repair a partially written JSONL record.
+    failure: Option<std::io::Error>,
 }
 
 impl ReplayRecorder {
@@ -43,7 +45,13 @@ impl ReplayRecorder {
     /// Save publication must observe a failed recording write. Frame recording
     /// can log errors, but must never publish a save pointing at missing bytes.
     pub fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
+        if self.failure.is_none() {
+            self.failure = self.writer.flush().err();
+        }
+        match &self.failure {
+            Some(error) => Err(std::io::Error::new(error.kind(), error.to_string())),
+            None => Ok(()),
+        }
     }
 
     /// Create a recorder that streams to `path`.  Writes the header
@@ -177,6 +185,7 @@ impl ReplayRecorder {
             next_expected_ordinal: 0,
             boundary_metadata_pending: false,
             observed_taints: BTreeSet::new(),
+            failure: None,
         })
     }
 
@@ -188,6 +197,8 @@ impl ReplayRecorder {
 
     /// Finalize the current frame with its complete authoritative input and
     /// advance the recorder cursor.
+    /// The return value reports timeline admission, not persistence. Call
+    /// `flush` before publishing references to recorded frames.
     pub fn write_frame(
         &mut self,
         ordinal: u32,
@@ -340,12 +351,127 @@ impl ReplayRecorder {
     }
 
     fn write_record(&mut self, rec: &FrameRecord) {
-        if let Err(e) = serde_json::to_writer(&mut self.writer, rec) {
-            tracing::error!("Replay write error: {e}");
-        } else if let Err(e) = writeln!(self.writer) {
-            tracing::error!("Replay write error: {e}");
-        } else {
-            let _ = self.writer.flush();
+        if self.failure.is_some() {
+            return;
         }
+        let result = (|| {
+            serde_json::to_writer(&mut self.writer, rec).map_err(std::io::Error::other)?;
+            writeln!(self.writer)?;
+            self.writer.flush()
+        })();
+        if let Err(error) = result {
+            tracing::error!("Replay recording invalidated: {error}");
+            self.failure = Some(error);
+        }
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    struct FaultState {
+        bytes: Vec<u8>,
+        remaining: Option<usize>,
+        fail_flush: bool,
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct IntermittentWriter {
+        #[serde(skip)]
+        state: Arc<Mutex<FaultState>>,
+    }
+    impl Write for IntermittentWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let mut state = self.state.lock().unwrap();
+            if state.remaining == Some(0) {
+                state.remaining = None; // Only the first attempt fails.
+                return Err(std::io::Error::other("injected partial write"));
+            }
+            let count = state.remaining.map_or(bytes.len(), |n| n.min(bytes.len()));
+            state.bytes.extend_from_slice(&bytes[..count]);
+            if let Some(remaining) = &mut state.remaining {
+                *remaining -= count;
+            }
+            Ok(count)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            let mut state = self.state.lock().unwrap();
+            if std::mem::take(&mut state.fail_flush) {
+                return Err(std::io::Error::other("injected flush failure"));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn recording_failures_survive_recovery_and_stop_subsequent_records() {
+        // Partial buffered writes, underlying flush failures, and a large
+        // record failing during serialization must all poison publication.
+        for (partial, large) in [(true, false), (false, false), (true, true)] {
+            let state = Arc::new(Mutex::new(FaultState::default()));
+            let mut recorder = ReplayRecorder::with_writer(
+                Box::new(IntermittentWriter {
+                    state: state.clone(),
+                }),
+                "fault".into(),
+                crate::mission_assets::MissionAssetDescriptor::built_in("fault", "fault", "fault")
+                    .unwrap(),
+                0,
+                Default::default(),
+                &Default::default(),
+            )
+            .unwrap();
+            {
+                let mut fault = state.lock().unwrap();
+                if partial {
+                    fault.remaining = Some(5);
+                } else {
+                    fault.fail_flush = true;
+                }
+            }
+            if large {
+                recorder.write_load_snapshot(0, vec![42; 32 * 1024], 0, false);
+            } else {
+                recorder.write_save_marker(
+                    0,
+                    ReplaySaveMarker {
+                        state_hash: 1,
+                        timeline_frame: 0,
+                    },
+                );
+            }
+            let first = recorder.flush().unwrap_err().to_string();
+            let written = state.lock().unwrap().bytes.clone();
+            // The underlying writer has recovered, but missing bytes cannot
+            // be reconstructed by a later successful flush or frame.
+            assert_eq!(recorder.flush().unwrap_err().to_string(), first);
+            recorder.write_frame(0, 0, 1, Default::default(), Vec::new(), None);
+            assert_eq!(recorder.flush().unwrap_err().to_string(), first);
+            assert_eq!(state.lock().unwrap().bytes, written);
+        }
+    }
+
+    #[test]
+    fn explicit_flush_failure_is_also_sticky() {
+        let state = Arc::new(Mutex::new(FaultState::default()));
+        let mut recorder = ReplayRecorder::with_writer(
+            Box::new(IntermittentWriter {
+                state: state.clone(),
+            }),
+            "fault".into(),
+            crate::mission_assets::MissionAssetDescriptor::built_in("fault", "fault", "fault")
+                .unwrap(),
+            0,
+            Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        state.lock().unwrap().fail_flush = true;
+        assert!(recorder.flush().is_err());
+        assert!(!state.lock().unwrap().fail_flush);
+        assert!(recorder.flush().is_err());
     }
 }

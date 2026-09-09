@@ -76,6 +76,7 @@ struct CachedFile {
 struct Session {
     db: Rc<Rexie>,
     files: BTreeMap<PathBuf, CachedFile>,
+    leases: BTreeMap<PathBuf, usize>,
     journal: Journal,
     next_sequence: u64,
     committing: bool,
@@ -305,6 +306,7 @@ pub async fn initialize() -> Result<()> {
         *s.borrow_mut() = Some(Session {
             db,
             files: BTreeMap::new(),
+            leases: BTreeMap::new(),
             journal: Journal {
                 version: 1,
                 writer: hex::encode(nonce),
@@ -590,10 +592,14 @@ pub(super) fn open_chunk_writer(path: &Path) -> Result<Box<dyn Write + Send>> {
         ensure!(s.files.contains_key(path), "missing replay chunk");
         Ok(())
     })?;
-    Ok(Box::new(BrowserChunk(path.into())))
+    let directory = path.parent().context("replay chunk has no directory")?;
+    Ok(Box::new(BrowserChunk(
+        path.into(),
+        pin_directory(directory)?,
+    )))
 }
 #[derive(Serialize)]
-struct BrowserChunk(PathBuf);
+struct BrowserChunk(PathBuf, DirectoryLease);
 impl<'de> Deserialize<'de> for BrowserChunk {
     fn deserialize<D: serde::Deserializer<'de>>(_: D) -> std::result::Result<Self, D::Error> {
         Err(serde::de::Error::custom(
@@ -732,24 +738,102 @@ fn retire_legacy(key: &str, imported: &str) -> Result<()> {
     Ok(())
 }
 
-/// Prepare only the selected archive, never every historical recording.
-pub async fn prepare_directory(directory: &Path) -> Result<()> {
-    load_file(&directory.join(MANIFEST), true).await?;
-    let manifest = super::read_manifest(directory)?;
-    for chunk in manifest.chunks {
-        load_file(&directory.join(chunk.file), true).await?;
+/// Archive and writer owners keep their complete history resident, including
+/// clean prefix chunks that synchronous save validation may still need.
+#[derive(Serialize)]
+pub(super) struct DirectoryLease {
+    directory: PathBuf,
+    writer: String,
+}
+impl<'de> Deserialize<'de> for DirectoryLease {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> std::result::Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "replay cache leases require live ownership",
+        ))
     }
-    load_file(&directory.join("ranked.json"), false).await?;
-    flush_pending().await
+}
+pub(super) fn pin_directory(directory: &Path) -> Result<DirectoryLease> {
+    with_session(|s| {
+        *s.leases.entry(directory.into()).or_default() += 1;
+        Ok(DirectoryLease {
+            directory: directory.into(),
+            writer: s.journal.writer.clone(),
+        })
+    })
+}
+impl Drop for DirectoryLease {
+    fn drop(&mut self) {
+        SESSION.with(|slot| {
+            if let Some(s) = slot.borrow_mut().as_mut()
+                && s.journal.writer == self.writer
+            {
+                let count = s
+                    .leases
+                    .get_mut(&self.directory)
+                    .expect("live replay cache lease");
+                *count -= 1;
+                if *count == 0 {
+                    s.leases.remove(&self.directory);
+                }
+            }
+        });
+    }
 }
 
-/// Called only after the mission and its recording owners have retired.
-pub async fn retire_mission() -> Result<()> {
-    flush_pending().await?;
+/// Evict only durable, unowned histories. Keep entire directories with pending
+/// writes, not just dirty files: journal retirement and synchronous archive
+/// validation still need the associated metadata and prefix.
+fn release_unreferenced(keep: Option<&Path>) -> Result<()> {
     with_session(|s| {
-        s.files.clear();
+        let mut retained: std::collections::BTreeSet<PathBuf> = s.leases.keys().cloned().collect();
+        retained.extend(keep.map(Path::to_path_buf));
+        for (path, file) in &s.files {
+            if file.dirty.is_some()
+                && let Some(directory) = path.parent()
+            {
+                retained.insert(directory.into());
+            }
+        }
+        for patch in s.journal.batches.iter().flat_map(|batch| &batch.patches) {
+            if let Some(directory) = Path::new(&patch.path).parent() {
+                retained.insert(directory.into());
+            }
+        }
+        s.files
+            .retain(|path, _| path.parent().is_some_and(|dir| retained.contains(dir)));
         Ok(())
     })
+}
+
+/// Prepare only the selected archive, never every historical recording.
+pub async fn prepare_directory(directory: &Path) -> Result<()> {
+    // A temporary lease also keeps concurrent preparation from evicting this
+    // history while IndexedDB reads yield. Drop it before failure cleanup.
+    release_unreferenced(Some(directory))?;
+    let lease = pin_directory(directory)?;
+    let result = async {
+        load_file(&directory.join(MANIFEST), true).await?;
+        let manifest = super::read_manifest(directory)?;
+        for chunk in manifest.chunks {
+            load_file(&directory.join(chunk.file), true).await?;
+        }
+        load_file(&directory.join("ranked.json"), false).await?;
+        flush_pending().await
+    }
+    .await;
+    drop(lease);
+    if result.is_err() {
+        release_unreferenced(None)?;
+    }
+    result
+}
+
+/// The mission loop has retired, but the application save-capture service may
+/// still own its recorder until the next mission installs a replacement.
+/// Honor those leases instead of invalidating a live writer's backing cache.
+pub async fn retire_mission() -> Result<()> {
+    flush_pending().await?;
+    release_unreferenced(None)
 }
 
 #[cfg(test)]
@@ -928,6 +1012,85 @@ mod tests {
         );
         restart().await;
         exercise_archive_save_and_cold_continuation().await;
+        exercise_cache_lifetimes().await;
+    }
+
+    async fn exercise_cache_lifetimes() {
+        use crate::replay_archive::MissionArchive;
+        let active_dir = PathBuf::from(next_directory().unwrap());
+        let active = MissionArchive::create(&active_dir).unwrap();
+        let active_path = active_dir.join(active.current_chunk());
+        let mut writer = open_chunk_writer(&active_path).unwrap();
+        writer.write_all(b"active").unwrap();
+        flush_pending().await.unwrap();
+        // The application capture service can retain the recorder across the
+        // mission-loop return. Retirement must honor that still-live owner.
+        retire_mission().await.unwrap();
+        assert_eq!(read_bounded(&active_path, MAX_BYTES).unwrap(), b"active");
+
+        // Repeated same-mission selections must not accumulate unrelated
+        // clean histories, while a live archive keeps its complete prefix.
+        let mut previous: Option<PathBuf> = None;
+        for _ in 0..8 {
+            let directory = PathBuf::from(next_directory().unwrap());
+            let archive = MissionArchive::create(&directory).unwrap();
+            flush_pending().await.unwrap();
+            drop(archive);
+            prepare_directory(&directory).await.unwrap();
+            with_session(|s| {
+                assert!(s.files.contains_key(&active_path));
+                if let Some(previous) = &previous {
+                    assert!(!s.files.keys().any(|p| p.starts_with(previous)));
+                }
+                assert!(
+                    s.files
+                        .keys()
+                        .all(|p| p.starts_with(&active_dir) || p.starts_with(&directory))
+                );
+                Ok(())
+            })
+            .unwrap();
+            previous = Some(directory);
+        }
+
+        // A writer may outlive its archive handle; its prefix stays resident.
+        drop(active);
+        release_unreferenced(None).unwrap();
+        assert_eq!(read_bounded(&active_path, MAX_BYTES).unwrap(), b"active");
+        writer.write_all(b"-pending").unwrap();
+        drop(writer);
+        release_unreferenced(None).unwrap(); // Dirty bytes retain the history.
+        assert!(read_bounded(&active_path, MAX_BYTES).is_ok());
+        checkpoint().unwrap();
+        release_unreferenced(None).unwrap(); // Journaled but uncommitted too.
+        assert!(read_bounded(&active_path, MAX_BYTES).is_ok());
+        flush_pending().await.unwrap();
+        release_unreferenced(None).unwrap();
+        assert!(with_session(|s| Ok(s.files.is_empty())).unwrap());
+        load_file(&active_path, true).await.unwrap();
+        assert_eq!(
+            read_bounded(&active_path, MAX_BYTES).unwrap(),
+            b"active-pending"
+        );
+
+        // A valid manifest with a missing chunk must not leave its partially
+        // loaded history behind, or evict an unrelated live archive.
+        let active = MissionArchive::open(&active_dir);
+        assert!(active.is_err()); // Only the chunk, not its manifest, is loaded.
+        prepare_directory(&active_dir).await.unwrap();
+        let active = MissionArchive::open(&active_dir).unwrap();
+        let broken_dir = PathBuf::from(next_directory().unwrap());
+        write(&broken_dir.join(MANIFEST), br#"{"version":1,"chunks":[{"file":"00000000.rhrec.jsonl","first_ordinal":0,"previous":null,"loaded_save":null}]}"#).unwrap();
+        flush_pending().await.unwrap();
+        assert!(prepare_directory(&broken_dir).await.is_err());
+        with_session(|s| {
+            assert!(s.files.contains_key(&active_path));
+            assert!(!s.files.keys().any(|p| p.starts_with(&broken_dir)));
+            Ok(())
+        })
+        .unwrap();
+        drop(active);
+        retire_mission().await.unwrap();
     }
 
     async fn exercise_archive_save_and_cold_continuation() {

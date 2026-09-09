@@ -276,59 +276,9 @@ pub(super) async fn process_operation_and_save(
                 .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
         );
         tracing::info!("Game exited with: {:?}", exit_code);
-        // Flush any pending save before returning (e.g. the
-        // quit-time continue save).
-        suppress_load_requests_during_playback(runtime, callbacks);
-        #[cfg(target_arch = "wasm32")]
-        callbacks.prepare_browser_replay_load().await;
-        let mut save_load = perform_pending_save_load(
-            host,
-            game,
-            callbacks,
-            &mut manager.engine,
-            assets.as_ref(),
-            profiles,
-            pending_thumbnail.clone(),
-        );
-        if save_load.processed() {
-            runtime.reset_rollback_checker();
-        }
-        runtime.synchronize_save_boundary(&mut frame, &manager.engine);
-        if let Some(event) = save_load.event.take() {
-            runtime.note_save_load_event(
-                host.application_context().recording_index(),
-                event,
-                &mut frame,
-                &manager.engine,
-                assets.as_ref(),
-            );
-        }
-        if let Some(transition) = save_load.take_transition() {
-            *campaign_transition = Some(transition);
-            game.operation.set(GameCode::LevelLoad);
-            runtime.trace(FrameContractStage::Exit);
-            return Ok(ControlFlow::Break(FrameControl::exit(GameCode::LevelLoad)));
-        }
-        if save_load.restart_requested() {
-            game.operation.set(GameCode::LevelRestart);
-            runtime.trace(FrameContractStage::Exit);
-            return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
-                GameCode::LevelRestart,
-            ))));
-        }
-        if let Some(sync) = save_load.restore() {
-            runtime.note_state_restored();
-            game.apply_post_load_sync(sync.is_continue);
-            game.post_load_resolution_resync();
-        }
-        runtime.trace(FrameContractStage::Exit);
-        return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
-            exit_code,
-        ))));
     }
+
     suppress_load_requests_during_playback(runtime, callbacks);
-    #[cfg(target_arch = "wasm32")]
-    callbacks.prepare_browser_replay_load().await;
     let mut save_load = perform_pending_save_load(
         host,
         game,
@@ -337,7 +287,8 @@ pub(super) async fn process_operation_and_save(
         assets.as_ref(),
         profiles,
         pending_thumbnail,
-    );
+    )
+    .await;
     if save_load.processed() {
         runtime.reset_rollback_checker();
     }
@@ -390,6 +341,13 @@ pub(super) async fn process_operation_and_save(
         runtime.note_state_restored();
         game.apply_post_load_sync(sync.is_continue);
         game.post_load_resolution_resync();
+    }
+
+    if let Some(exit_code) = exit_code {
+        runtime.trace(FrameContractStage::Exit);
+        return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+            exit_code,
+        ))));
     }
 
     apply_post_save_ui_state(

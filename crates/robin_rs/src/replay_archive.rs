@@ -55,6 +55,8 @@ pub(crate) struct MissionArchive {
     manifest: Manifest,
     #[cfg(not(target_arch = "wasm32"))]
     _lock: std::fs::File,
+    #[cfg(target_arch = "wasm32")]
+    _cache_lease: browser::DirectoryLease,
 }
 
 impl MissionArchive {
@@ -101,6 +103,8 @@ impl MissionArchive {
         let mut archive = Self {
             #[cfg(not(target_arch = "wasm32"))]
             _lock: lock_directory(&directory)?,
+            #[cfg(target_arch = "wasm32")]
+            _cache_lease: browser::pin_directory(&directory)?,
             directory,
             manifest: Manifest {
                 version: 1,
@@ -117,6 +121,8 @@ impl MissionArchive {
         let lock = lock_directory(&directory)?;
         let manifest = read_manifest(&directory)?;
         Ok(Self {
+            #[cfg(target_arch = "wasm32")]
+            _cache_lease: browser::pin_directory(&directory)?,
             directory,
             manifest,
             #[cfg(not(target_arch = "wasm32"))]

@@ -229,7 +229,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let mut outcome = crate::main_entry::perform_pending_save_load(
+        let mut outcome = pollster::block_on(crate::main_entry::perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -237,7 +237,7 @@ mod tests {
             &assets,
             &profiles,
             None,
-        );
+        ));
         assert!(outcome.event.is_none() && outcome.restore().is_none());
         let transition = outcome
             .take_transition()

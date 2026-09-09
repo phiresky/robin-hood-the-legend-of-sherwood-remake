@@ -299,53 +299,6 @@ impl OperationOutcome {
 }
 
 impl RustCallbacks {
-    /// Resolve browser history before the synchronous load transaction mutates
-    /// the engine. The existing load boundary still owns admission and reports
-    /// unavailable history by invalidating recording, not by losing the save.
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) async fn prepare_browser_replay_load(&mut self) {
-        let result: anyhow::Result<()> = async {
-            let load = match self.pending_request() {
-                Some(SaveLoadRequest::Load { slot, .. }) => {
-                    PreparedLoad::preflight(&self.save_manager, slot.clone())?
-                }
-                Some(SaveLoadRequest::ApplyLoad(load)) => Some(load.clone()),
-                Some(SaveLoadRequest::LoadRestart) => PreparedLoad::restart(&self.save_manager)?,
-                Some(SaveLoadRequest::QuickLoad { use_backup }) => {
-                    let name = if *use_backup {
-                        special_slots::EX_QUICK
-                    } else {
-                        special_slots::QUICK
-                    };
-                    match self.save_manager.find_by_filename(name) {
-                        Some(index) => PreparedLoad::preflight(
-                            &self.save_manager,
-                            Some(self.save_manager.slot_handle(index)?),
-                        )?,
-                        None => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(load) = load
-                && let Some(link) = &load.save().header.replay
-            {
-                crate::replay_archive::prepare_browser_directory(std::path::Path::new(
-                    &link.mission_directory,
-                ))
-                .await?;
-            }
-            Ok(())
-        }
-        .await;
-        if let Err(error) = result {
-            tracing::error!("Browser replay load preflight failed: {error:#}");
-            // Keep the original request: its payload is self-contained. The
-            // existing executor/replay boundary reports any failed admission
-            // or unavailable history after applying the valid save.
-        }
-    }
-
     /// A host iteration has one operation slot. The last request before the
     /// flush replaces an earlier request, preserving the existing UI/script
     /// precedence; these are choices, not a FIFO of disk writes.
@@ -894,7 +847,7 @@ fn begin_multiplayer_snapshot_transition(
     Ok(true)
 }
 
-pub(crate) fn perform_pending_save_load(
+pub(crate) async fn perform_pending_save_load(
     host: &mut crate::host::Host,
     game: &mut crate::game::Game,
     callbacks: &mut RustCallbacks,
@@ -928,6 +881,7 @@ pub(crate) fn perform_pending_save_load(
         profiles,
         thumbnail.as_ref(),
     )
+    .await
 }
 
 // ─── Resource helpers ───────────────────────────────────────────────
@@ -1364,7 +1318,7 @@ mod operation_outcome_tests {
 
         let frame = engine.frame_counter();
         callbacks.queue_operation(SaveLoadRequest::LoadRestart);
-        let rejected = perform_pending_save_load(
+        let rejected = pollster::block_on(perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -1372,7 +1326,7 @@ mod operation_outcome_tests {
             &assets,
             &profiles,
             None,
-        );
+        ));
         assert!(rejected.processed());
         assert_eq!(rejected.banner, Some(SaveBannerKind::SaveFailed));
         assert!(
@@ -1383,7 +1337,7 @@ mod operation_outcome_tests {
         assert!(!rejected.restart_requested() && !rejected.reset_input());
         assert_eq!(engine.frame_counter(), frame);
         assert!(callbacks.pending_request().is_none());
-        let idle = perform_pending_save_load(
+        let idle = pollster::block_on(perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -1391,7 +1345,7 @@ mod operation_outcome_tests {
             &assets,
             &profiles,
             None,
-        );
+        ));
         assert!(!idle.processed());
         assert!(idle.banner.is_none());
     }
@@ -1410,7 +1364,7 @@ mod operation_outcome_tests {
             let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
                 diagnostic_callback_fixture(directory.path());
             callbacks.queue_operation(request);
-            let outcome = perform_pending_save_load(
+            let outcome = pollster::block_on(perform_pending_save_load(
                 &mut host,
                 &mut game,
                 &mut callbacks,
@@ -1418,7 +1372,7 @@ mod operation_outcome_tests {
                 &assets,
                 &profiles,
                 None,
-            );
+            ));
             assert!(outcome.processed());
             assert_eq!(outcome.banner, Some(SaveBannerKind::Saved));
             assert!(outcome.event.is_none());
@@ -1460,7 +1414,7 @@ mod operation_outcome_tests {
             // outstanding-write failure branch in perform_pending_save_load.
             callbacks.save_manager.finish_background().unwrap();
             callbacks.queue_operation(request);
-            let outcome = perform_pending_save_load(
+            let outcome = pollster::block_on(perform_pending_save_load(
                 &mut host,
                 &mut game,
                 &mut callbacks,
@@ -1468,7 +1422,7 @@ mod operation_outcome_tests {
                 &assets,
                 &profiles,
                 None,
-            );
+            ));
             assert!(outcome.processed());
             assert_eq!(outcome.banner, Some(SaveBannerKind::SaveFailed));
             assert!(outcome.event.is_none());
@@ -1513,7 +1467,7 @@ mod operation_outcome_tests {
             callbacks.pending_request(),
             Some(SaveLoadRequest::LoadRestart)
         ));
-        let outcome = perform_pending_save_load(
+        let outcome = pollster::block_on(perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -1521,14 +1475,14 @@ mod operation_outcome_tests {
             &assets,
             &profiles,
             None,
-        );
+        ));
         assert!(outcome.processed());
         assert!(outcome.restart_requested());
         assert!(outcome.restore().is_none());
         assert!(outcome.event.is_none());
         assert!(!outcome.reset_input());
         assert!(callbacks.pending.is_none());
-        let next = perform_pending_save_load(
+        let next = pollster::block_on(perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -1536,7 +1490,7 @@ mod operation_outcome_tests {
             &assets,
             &profiles,
             None,
-        );
+        ));
         assert!(!next.processed());
         assert!(!next.restart_requested());
         assert!(next.restore().is_none());
