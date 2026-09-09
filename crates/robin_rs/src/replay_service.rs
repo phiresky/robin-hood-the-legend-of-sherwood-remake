@@ -4,7 +4,9 @@
 //! authority; snapshots own immutable chunks; pending launches reject duplicates.
 use robin_engine::replay as engine_replay;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 pub struct PendingReplay {
     pub data: engine_replay::ReplayData,
