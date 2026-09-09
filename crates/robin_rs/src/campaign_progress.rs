@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use robin_engine::achievement::{AchievementAggregationSummary, AchievementSet};
 use robin_engine::campaign::Campaign;
 use robin_engine::campaign_history::{MissionAttempt, MissionAttemptOutcome};
-use robin_engine::mission::MissionStatus;
+use robin_engine::mission::{MissionEligibilityFailure, MissionStatus};
 use robin_engine::profiles::{MissionLocation, MissionProfile, MissionType, ProfileManager};
 use serde::{Deserialize, Serialize};
 
@@ -106,18 +106,13 @@ impl MissionKind {
 }
 
 /// Explain unmet conditions with the same values used by mission accessibility.
-/// TODO: Share a typed condition list with Mission::is_accessible_why instead
-/// of maintaining its player-facing formatting alongside the engine checks.
 fn availability_notes(
     campaign: &Campaign,
     profiles: &ProfileManager,
     mission_idx: usize,
 ) -> Vec<String> {
-    use robin_engine::campaign::CampaignValue;
     let mission = &campaign.missions[mission_idx];
     let profile = mission.profile(profiles);
-    let money = campaign.get_value(CampaignValue::Ransom);
-    let gang = campaign.get_size_of_gang();
     let mut notes = Vec::new();
     match MissionKind::for_profile(profile) {
         MissionKind::Epilogue => notes.push("Ending scene after The Sheriff of Nottingham.".into()),
@@ -130,65 +125,47 @@ fn availability_notes(
         }
         _ => {}
     }
-    if money < profile.min_ransom as i32 {
-        notes.push(format!(
-            "Need at least {} ransom money (currently {money}).",
-            profile.min_ransom
-        ));
-    }
-    if profile.max_ransom != 200000 && profile.max_ransom < money as u32 {
-        notes.push(format!(
-            "Requires no more than {} ransom money (currently {money}).",
-            profile.max_ransom
-        ));
-    }
-    if gang < usize::from(profile.min_gang_size) {
-        notes.push(format!(
-            "Need at least {} gang members (currently {gang}).",
-            profile.min_gang_size
-        ));
-    }
-    if gang > usize::from(profile.max_gang_size) {
-        notes.push(format!(
-            "Requires no more than {} gang members (currently {gang}).",
-            profile.max_gang_size
-        ));
-    }
-    if mission.age >= profile.life_time {
-        notes.push("This mission's availability window has expired.".into());
-    }
-    let ares = campaign.get_ares();
-    if profile.ares_sensible && ares != -1 {
-        let stage = usize::try_from(ares).expect("negative campaign story state");
-        if !profile.available_in_ares_state[stage] {
-            notes.push("Not available at the current point in the story.".into());
-        }
-    }
-    for (&id, must_be_done) in profile
-        .missions_required_to_be_done
-        .iter()
-        .map(|id| (id, true))
-        .chain(
-            profile
-                .missions_required_not_to_be_done
-                .iter()
-                .map(|id| (id, false)),
-        )
-    {
-        let required = campaign
-            .get_mission(id, profiles)
-            .expect("campaign mission prerequisite is missing");
-        if required.is_done() != must_be_done {
-            let name = &required.profile(profiles).mission_name;
-            notes.push(if must_be_done {
-                format!("Finish {name} first.")
-            } else if id == profile.id {
-                "This mission has already been resolved in this campaign.".into()
-            } else {
-                format!("Only offered before {name} is resolved.")
-            });
-        }
-    }
+    notes.extend(
+        mission
+            .eligibility_failures(campaign, profiles)
+            .map(|failure| {
+                use MissionEligibilityFailure as Failure;
+                match failure {
+                    Failure::MinimumRansom { required, current } => {
+                        format!("Need at least {required} ransom money (currently {current}).")
+                    }
+                    Failure::MaximumRansom { allowed, current } => format!(
+                        "Requires no more than {allowed} ransom money (currently {current})."
+                    ),
+                    Failure::MinimumGang { required, current } => {
+                        format!("Need at least {required} gang members (currently {current}).")
+                    }
+                    Failure::MaximumGang { allowed, current } => format!(
+                        "Requires no more than {allowed} gang members (currently {current})."
+                    ),
+                    Failure::Expired => "This mission's availability window has expired.".into(),
+                    Failure::StoryState => {
+                        "Not available at the current point in the story.".into()
+                    }
+                    Failure::Prerequisite {
+                        mission_id,
+                        must_be_done,
+                    } => {
+                        let required = campaign
+                            .get_mission(mission_id, profiles)
+                            .expect("eligibility evaluator validated prerequisite profile ID");
+                        let name = &required.profile(profiles).mission_name;
+                        if must_be_done {
+                            format!("Finish {name} first.")
+                        } else if mission_id == profile.id {
+                            "This mission has already been resolved in this campaign.".into()
+                        } else {
+                            format!("Only offered before {name} is resolved.")
+                        }
+                    }
+                }
+            }),
+    );
     if notes.is_empty() && !campaign.accessible_mission_indices.contains(&mission_idx) {
         notes.push(if campaign.pending_accessible_mission_indices.contains(&mission_idx) {
             "This mission is pending the next mission selection.".into()
@@ -838,6 +815,18 @@ mod tests {
         assert!(notes[1].contains("2 gang members (currently 0)"));
         assert!(notes[2].contains("point in the story"));
         assert_eq!(notes[3], "Finish First mission first.");
+        assert_eq!(
+            campaign.missions[1]
+                .eligibility_failures(&campaign, &profiles)
+                .map(MissionEligibilityFailure::reason)
+                .collect::<Vec<_>>(),
+            [
+                "Not enough money",
+                "Not enough gang members",
+                "Incompatible with ARES state",
+                "Some missions are required to be played"
+            ]
+        );
         assert!(
             campaign.missions[1]
                 .is_accessible_why(&campaign, &profiles)
@@ -855,6 +844,12 @@ mod tests {
         let notes = availability_notes(&campaign, &profiles, 1);
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("not currently offered"));
+        campaign.pending_accessible_mission_indices.push(1);
+        assert_eq!(
+            availability_notes(&campaign, &profiles, 1),
+            ["This mission is pending the next mission selection."]
+        );
+        campaign.pending_accessible_mission_indices.clear();
         campaign.accessible_mission_indices.push(1);
         assert!(availability_notes(&campaign, &profiles, 1).is_empty());
         profiles.missions[1].missions_required_not_to_be_done = vec![1];
@@ -862,6 +857,93 @@ mod tests {
             availability_notes(&campaign, &profiles, 1),
             ["Only offered before First mission is resolved."]
         );
+        campaign.missions[1].win();
+        profiles.missions[1].missions_required_not_to_be_done = vec![2];
+        assert_eq!(
+            availability_notes(&campaign, &profiles, 1),
+            ["This mission has already been resolved in this campaign."]
+        );
+    }
+
+    #[test]
+    fn eligibility_notes_agree_at_resource_and_story_boundaries() {
+        use robin_engine::campaign::CampaignValue;
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            id: 700,
+            mission_type: MissionType::Historical,
+            min_ransom: 100,
+            max_ransom: 200,
+            min_gang_size: 1,
+            max_gang_size: 2,
+            life_time: 10,
+            ares_sensible: true,
+            available_in_ares_state: [
+                true, false, false, false, false, false, false, false, false, true,
+            ],
+            ..Default::default()
+        });
+        let mut campaign = Campaign::new();
+        campaign.missions.push(Mission {
+            profile_idx: Some(0),
+            ..Mission::new()
+        });
+        campaign.accessible_mission_indices.push(0);
+        for money in [-1, 0, 99, 100, 200, 201] {
+            for gang in 0..=3 {
+                for age in [9, 10] {
+                    for ares in [-1, 0, 1, 9] {
+                        campaign.set_value(CampaignValue::Ransom, money);
+                        campaign.gang_indices = (0..gang).collect();
+                        campaign.missions[0].age = age;
+                        campaign.set_ares(ares);
+                        let notes = availability_notes(&campaign, &profiles, 0);
+                        let mission = &campaign.missions[0];
+                        assert_eq!(
+                            notes.is_empty(),
+                            mission.is_accessible(&campaign, &profiles),
+                            "money={money}, gang={gang}, age={age}, ares={ares}"
+                        );
+                        assert_eq!(
+                            notes.len(),
+                            mission.eligibility_failures(&campaign, &profiles).count()
+                        );
+                    }
+                }
+            }
+        }
+        campaign.set_value(CampaignValue::Ransom, 201);
+        assert_eq!(
+            availability_notes(&campaign, &profiles, 0),
+            [
+                "Requires no more than 200 ransom money (currently 201).",
+                "Requires no more than 2 gang members (currently 3).",
+                "This mission's availability window has expired.",
+            ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "required mission profile id 999 not found in campaign")]
+    fn availability_does_not_hide_invalid_prerequisites_behind_other_failures() {
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            min_ransom: 100,
+            missions_required_to_be_done: vec![999],
+            ..Default::default()
+        });
+        let mut campaign = Campaign::new();
+        campaign.set_value(robin_engine::campaign::CampaignValue::Ransom, 0);
+        campaign.missions.push(Mission {
+            profile_idx: Some(0),
+            ..Mission::new()
+        });
+        assert_eq!(
+            campaign.missions[0].is_accessible_why(&campaign, &profiles),
+            Err("Not enough money")
+        );
+        // Presentation deliberately visits all conditions, unlike simulation.
+        availability_notes(&campaign, &profiles, 0);
     }
 
     #[test]
