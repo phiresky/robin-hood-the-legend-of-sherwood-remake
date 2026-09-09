@@ -38,45 +38,56 @@ pub struct AchievementAggregationPresentation {
     pub compact_status: String,
 }
 
+fn badge_presentation(
+    id: AchievementId,
+    earned: robin_engine::achievement::AchievementSet,
+    localize: &mut impl FnMut(&str) -> Option<String>,
+) -> AchievementBadgePresentation {
+    let (localization_key, icon_key) = match id {
+        AchievementId::CleanHands => (
+            "achievement.clean_hands.name",
+            "achievement.clean_hands.icon",
+        ),
+        AchievementId::Ghost => ("achievement.ghost.name", "achievement.ghost.icon"),
+        AchievementId::PileOBones => (
+            "achievement.pile_o_bones.name",
+            "achievement.pile_o_bones.icon",
+        ),
+        // TODO: supply translated names and dedicated art for the expanded
+        // catalogue; protocol IDs are stable override keys in the meantime.
+        _ => (id.protocol_id(), id.protocol_id()),
+    };
+    AchievementBadgePresentation {
+        id,
+        localization_key,
+        icon_key,
+        label: localize(localization_key).unwrap_or_else(|| id.name().to_owned()),
+        earned: earned.contains(id),
+    }
+}
+
 pub fn mission_badge_presentations(
     earned: robin_engine::achievement::AchievementSet,
     mut localize: impl FnMut(&str) -> Option<String>,
-) -> [AchievementBadgePresentation; 4] {
-    let metadata = [
-        (
-            AchievementId::CleanHands,
-            "achievement.clean_hands.name",
-            "achievement.clean_hands.icon",
-            "Clean Hands",
-        ),
-        (
-            AchievementId::Ghost,
-            "achievement.ghost.name",
-            "achievement.ghost.icon",
-            "Ghost",
-        ),
-        (
-            AchievementId::PileOBones,
-            "achievement.pile_o_bones.name",
-            "achievement.pile_o_bones.icon",
-            "Pile-o-Bones",
-        ),
-        (
-            AchievementId::AllEnemiesOneBuilding,
-            "achievement.all_enemies_one_building.name",
-            "achievement.all_enemies_one_building.icon",
-            "All Enemies Stashed",
-        ),
-    ];
-    metadata.map(
-        |(id, localization_key, icon_key, fallback)| AchievementBadgePresentation {
-            id,
-            localization_key,
-            icon_key,
-            label: localize(localization_key).unwrap_or_else(|| fallback.to_string()),
-            earned: earned.contains(id),
-        },
-    )
+) -> Vec<AchievementBadgePresentation> {
+    AchievementId::ALL
+        .into_iter()
+        .filter(|id| !id.campaign_only())
+        .map(|id| badge_presentation(id, earned, &mut localize))
+        .collect()
+}
+
+pub fn permanent_badge_presentations(
+    earned: robin_engine::achievement::AchievementSet,
+) -> Vec<AchievementBadgePresentation> {
+    AchievementId::ALL
+        .into_iter()
+        .filter(|id| {
+            id.aggregation_policy()
+                != robin_engine::achievement::AchievementAggregationPolicy::MissionOnly
+        })
+        .map(|id| badge_presentation(id, earned, &mut |_| None))
+        .collect()
 }
 
 fn aggregation_status_text(status: AchievementAggregationStatus) -> &'static str {
@@ -105,21 +116,24 @@ pub fn format_aggregation_progress(progress: AchievementAggregationProgress) -> 
 
 pub fn achievement_aggregation_presentations(
     summary: AchievementAggregationSummary,
-) -> [AchievementAggregationPresentation; 4] {
-    let badges = mission_badge_presentations(summary.earned(), |_| None);
-    std::array::from_fn(|index| {
-        let progress = summary.get(AchievementId::ALL[index]);
-        AchievementAggregationPresentation {
-            badge: badges[index].clone(),
-            progress,
-            compact_status: format_aggregation_progress(progress),
-        }
-    })
+) -> Vec<AchievementAggregationPresentation> {
+    permanent_badge_presentations(summary.earned())
+        .into_iter()
+        .map(|badge| {
+            let progress = summary.get(badge.id);
+            AchievementAggregationPresentation {
+                badge,
+                progress,
+                compact_status: format_aggregation_progress(progress),
+            }
+        })
+        .collect()
 }
 
 fn evaluation_mark(evaluation: AchievementEvaluation) -> &'static str {
     match evaluation {
         AchievementEvaluation::Unverifiable => "N/A",
+        AchievementEvaluation::NotApplicable => "UNAVAILABLE",
         AchievementEvaluation::Failed => "FAILED",
         AchievementEvaluation::Earned => "MET",
     }
@@ -184,22 +198,16 @@ pub fn format_attempt_summary(results: MissionAchievementResults) -> String {
         )
     });
 
-    let all_enemies = results.evaluation(AchievementId::AllEnemiesOneBuilding);
-    lines.push(if all_enemies == AchievementEvaluation::Unverifiable {
-        format!(
-            "{}: {}",
-            "All Enemies Stashed",
-            evaluation(AchievementId::AllEnemiesOneBuilding)
-        )
-    } else {
-        format!(
-            "{}: {} ({}/{})",
-            "All Enemies Stashed",
-            evaluation(AchievementId::AllEnemiesOneBuilding),
-            metrics.enemies_in_stash_building,
-            metrics.enemies_required_for_stash,
-        )
-    });
+    for id in AchievementId::ALL.into_iter().skip(3) {
+        if results.evaluation(id) == AchievementEvaluation::NotApplicable {
+            continue;
+        }
+        lines.push(format!("{}: {}", id.name(), evaluation(id)));
+        lines.push(id.description().to_owned());
+    }
+    if results.provenance() == AchievementTrackingProvenance::MissionStart {
+        lines.push(format!("Enemies killed: {}/{}; rich civilians knocked out: {}/{}; beggars exhausted: {}/{}; banners purchased: {}/{}", metrics.dead_enemies, metrics.encountered_hostiles, metrics.rich_civilians_knocked_out, metrics.rich_civilians, metrics.beggars_exhausted, metrics.beggars, metrics.banners_purchased, metrics.purchasable_banners));
+    }
 
     if results.provenance() == AchievementTrackingProvenance::MissionStart {
         lines.push(format!(
@@ -281,17 +289,25 @@ pub fn tracker_lines(
             metrics.max_bodies_in_one_building.min(10)
         ));
     }
-    if config.show_all_enemies_one_building_tracker {
+    if config.show_new_achievement_trackers {
+        for id in AchievementId::ALL
+            .into_iter()
+            .skip(3)
+            .filter(|id| !id.campaign_only())
+        {
+            let result = progress.evaluations.get(id);
+            if result != AchievementEvaluation::NotApplicable {
+                lines.push(format!("{}: {}", id.name(), evaluation_mark(result)));
+            }
+        }
         lines.push(format!(
-            "{}: {} ({}/{})",
-            "All Enemies Stashed",
-            evaluation_mark(
-                progress
-                    .evaluations
-                    .get(AchievementId::AllEnemiesOneBuilding)
-            ),
-            metrics.enemies_in_stash_building,
-            metrics.enemies_required_for_stash
+            "Dead enemies {}/{}; rich civilians {}/{}; beggars {}/{}",
+            metrics.dead_enemies,
+            metrics.encountered_hostiles,
+            metrics.rich_civilians_knocked_out,
+            metrics.rich_civilians,
+            metrics.beggars_exhausted,
+            metrics.beggars
         ));
     }
     if config.show_detailed_xp {
@@ -372,13 +388,14 @@ mod tests {
         let badges = mission_badge_presentations(earned, |key| {
             (key == "achievement.clean_hands.name").then(|| "Saubere Hände".to_string())
         });
-        assert_eq!(badges.len(), 4);
+        assert_eq!(badges.len(), 10);
         assert_eq!(badges[0].label, "Saubere Hände");
         assert!(!badges[0].earned);
         assert_eq!(badges[1].id, AchievementId::Ghost);
         assert!(badges[1].earned);
-        assert_eq!(badges[2].icon_key, "achievement.pile_o_bones.icon");
-        assert_eq!(badges[3].label, "All Enemies Stashed");
+        assert_eq!(badges[2].id, AchievementId::Ruthless);
+        assert_eq!(badges[3].id, AchievementId::ImOffHome);
+        assert!(badges.iter().all(|badge| !badge.id.campaign_only()));
     }
 
     #[test]
@@ -406,7 +423,7 @@ mod tests {
                     unverifiable_missions: 1,
                     ..Default::default()
                 },
-                AchievementId::AllEnemiesOneBuilding => AchievementAggregationInput {
+                _ => AchievementAggregationInput {
                     envelope_complete: true,
                     required_missions: 1,
                     ..Default::default()
@@ -460,7 +477,7 @@ mod tests {
 
         assert!(summary.contains("Evidence unavailable"));
         assert!(summary.contains("Clean Hands: N/A"));
-        assert!(summary.contains("All Enemies Stashed: N/A"));
+        assert!(summary.contains("Ruthless: N/A"));
         assert!(!summary.contains("0/10"));
         assert!(!summary.contains("0/0"));
         assert!(!summary.contains("Time:"));

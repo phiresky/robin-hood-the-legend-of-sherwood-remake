@@ -394,6 +394,10 @@ impl EngineInner {
         // When the cursor has walked off the end, the beggar only says
         // "thanx" and nothing else happens (no cooldown bump either).
         if current_idx >= set_count {
+            self.mission_domain
+                .achievements
+                .record_beggar_response(beggar, true, false)
+                .expect("beggar response after finalization");
             self.say_beggar_remark(sim, assets, beggar, BeggarRemark::ExhaustedThanx);
             return Some(BeggarRemark::ExhaustedThanx);
         }
@@ -456,6 +460,11 @@ impl EngineInner {
             c.civilian.current_scroll_set = c.civilian.current_scroll_set.saturating_add(1);
         }
 
+        let exhausted = !self.are_there_revealable_scrolls(assets, beggar);
+        self.mission_domain
+            .achievements
+            .record_beggar_response(beggar, exhausted, revealable_count != 0)
+            .expect("beggar response after finalization");
         Some(remark)
     }
 

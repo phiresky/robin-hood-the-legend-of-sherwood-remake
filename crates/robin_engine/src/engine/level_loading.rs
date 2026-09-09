@@ -6610,7 +6610,14 @@ impl EngineInner {
                     | PT::MakeNet
                     | PT::MakeWaspNest => {
                         if last_won {
+                            let before = sector.amount;
                             sector.update_amount(last_length, specialist);
+                            if sector.amount > before {
+                                campaign
+                                    .deeds
+                                    .workers
+                                    .extend(sector.occupants.iter().map(|o| o.pc_description_idx));
+                            }
                         }
                         let bonus_spawns = sector.plan_bonus_spawns();
                         let (layer, sector_idx) =
@@ -6638,6 +6645,12 @@ impl EngineInner {
                         } else {
                             0
                         };
+                        if xp > 0 {
+                            campaign
+                                .deeds
+                                .workers
+                                .extend(sector.occupants.iter().map(|o| o.pc_description_idx));
+                        }
                         let (layer, sector_idx) =
                             zone_location.get(&sector.prod_type).copied().unzip();
                         plans.push(SectorPlan {

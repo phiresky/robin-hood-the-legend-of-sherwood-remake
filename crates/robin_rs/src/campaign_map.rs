@@ -115,7 +115,7 @@ struct CampaignMapItem {
     description: String,
     remaining_lifetime: u32,
     show_blazons: bool,
-    achievement_badges: [crate::achievement_hud::AchievementBadgePresentation; 4],
+    achievement_badges: Vec<crate::achievement_hud::AchievementBadgePresentation>,
 }
 
 #[derive(Default)]
@@ -499,6 +499,17 @@ impl CampaignMapModalState {
     }
 
     fn move_progress_page(&mut self, direction: i32) {
+        if self.achievement_overview {
+            // selected_play is reset when switching between the achievement
+            // overview and mission history; here it stores the catalogue page.
+            let count =
+                crate::achievement_hud::permanent_badge_presentations(Default::default()).len();
+            self.selected_play = self
+                .selected_play
+                .saturating_add_signed(direction as isize)
+                .min(count.saturating_sub(1) / 4);
+            return;
+        }
         let step = if self.presentation == CampaignPresentationMode::SherwoodMuseum {
             PROGRESS_PAGE_SIZE
         } else {
@@ -1392,8 +1403,10 @@ fn render_campaign_progress(
     if achievement_overview {
         let mut earned = graph.lifetime_achievements.earned();
         earned.union_with(graph.campaign_achievements.earned());
-        for (index, badge) in crate::achievement_hud::mission_badge_presentations(earned, |_| None)
+        for (index, badge) in crate::achievement_hud::permanent_badge_presentations(earned)
             .iter()
+            .skip(selected_play * 4)
+            .take(4)
             .enumerate()
         {
             let x = 32 + index as i32 % 2 * 496;
@@ -1430,9 +1443,7 @@ fn render_campaign_progress(
                 AchievementId::PileOBones => {
                     "Have at least 10 people knocked out, tied, netted, carried, or dead in one building at once, then win the mission."
                 }
-                AchievementId::AllEnemiesOneBuilding => {
-                    "Win with every enemy knocked out, tied, netted, carried, or dead inside the same building."
-                }
+                _ => badge.id.description(),
             };
             let wrapped = layout::wrap_text_for_box_font(font, requirement, 432, 4);
             for (line, text) in wrapped.lines.iter().enumerate() {
@@ -1478,7 +1489,13 @@ fn render_campaign_progress(
             renderer,
             font,
             transform,
-            "Tab: switch view   A: achievements   Esc: back",
+            &format!(
+                "Page {} / {}   PgUp/PgDn or wheel: browse   A: missions   Esc: back",
+                selected_play + 1,
+                crate::achievement_hud::permanent_badge_presentations(earned)
+                    .len()
+                    .div_ceil(4)
+            ),
             32,
             722,
             960,
@@ -1696,8 +1713,8 @@ fn render_campaign_progress(
         .iter()
         .enumerate()
         {
-            let x = 32 + index as i32 % 2 * 496;
-            let y = 650 + index as i32 / 2 * 27;
+            let x = 32 + index as i32 % 4 * 242;
+            let y = 650 + index as i32 / 4 * 24;
             draw_achievement_badge_icon(
                 renderer,
                 badge.id,
@@ -1716,7 +1733,7 @@ fn render_campaign_progress(
                 ),
                 x + 18,
                 y,
-                436,
+                218,
             );
         }
     }
@@ -1761,35 +1778,22 @@ fn render_achievement_aggregation_summary(
     font: &Font,
     y: i32,
 ) {
-    layout::render_text_virt_font(renderer, font, transform, scope_label, 25, y);
-    for (index, presentation) in
-        crate::achievement_hud::achievement_aggregation_presentations(summary)
-            .iter()
-            .enumerate()
-    {
-        let column = index % 2;
-        let row = index / 2;
-        let x = 105 + i32::try_from(column).expect("two achievement columns fit i32") * 255;
-        let item_y = y + i32::try_from(row).expect("two achievement rows fit i32") * 15;
-        draw_achievement_badge_icon(
-            renderer,
-            presentation.badge.id,
-            presentation.progress.earned(),
-            transform.origin_x + x,
-            transform.origin_y + item_y + 1,
-        );
-        layout::render_text_virt_font(
-            renderer,
-            font,
-            transform,
-            &format!(
-                "{}: {}",
-                presentation.badge.label, presentation.compact_status
-            ),
-            x + 14,
-            item_y,
-        );
-    }
+    let entries = crate::achievement_hud::achievement_aggregation_presentations(summary);
+    let earned = entries
+        .iter()
+        .filter(|entry| entry.progress.earned())
+        .count();
+    layout::render_text_virt_font(
+        renderer,
+        font,
+        transform,
+        &format!(
+            "{scope_label}: {earned}/{} achievements earned",
+            entries.len()
+        ),
+        25,
+        y,
+    );
 }
 
 /// Small code-native fallback icons. Stable badge icon keys remain available
@@ -1834,7 +1838,7 @@ fn draw_achievement_badge_icon(
             renderer.render_gpu_rect(x, y + 1, 3, 3, 245, 225, 160, 255);
             renderer.render_gpu_rect(x + 10, y + 10, 3, 3, 245, 225, 160, 255);
         }
-        AchievementId::AllEnemiesOneBuilding => {
+        _ => {
             renderer.draw_rect_outline_screen(x + 2, y + 5, x + 11, y + 12, color);
             renderer.draw_line_screen(x + 1, y + 5, x + 6, y + 1, color);
             renderer.draw_line_screen(x + 6, y + 1, x + 12, y + 5, color);
@@ -2421,7 +2425,7 @@ fn render_tooltip(
         assets,
         show_achievement_badges,
     );
-    let tooltip_height = if show_achievement_badges { 156 } else { 100 };
+    let tooltip_height = if show_achievement_badges { 344 } else { 100 };
 
     if assets.tooltip_bg.is_none() {
         renderer.render_gpu_rect(
@@ -2445,12 +2449,12 @@ fn render_tooltip(
 
     if show_achievement_badges {
         // The shipped tooltip bitmap is only 100 pixels tall. Extend it with
-        // a neutral panel for the port's four durable per-mission badges.
+        // a neutral panel for the mission badge catalogue.
         renderer.render_gpu_rect(
             transform.origin_x + short_desc.x,
             transform.origin_y + short_desc.y + 98,
             220,
-            58,
+            246,
             42,
             32,
             18,
@@ -2492,11 +2496,8 @@ fn render_tooltip(
 
     if show_achievement_badges {
         for (index, badge) in item.achievement_badges.iter().enumerate() {
-            let column = index % 2;
-            let row = index / 2;
-            let x =
-                short_desc.x + 8 + i32::try_from(column).expect("two badge columns fit i32") * 106;
-            let y = short_desc.y + 104 + i32::try_from(row).expect("two badge rows fit i32") * 24;
+            let x = short_desc.x + 8;
+            let y = short_desc.y + 104 + index as i32 * 24;
             draw_achievement_badge_icon(
                 renderer,
                 badge.id,
@@ -2504,7 +2505,10 @@ fn render_tooltip(
                 transform.origin_x + x,
                 transform.origin_y + y + 1,
             );
-            layout::render_text_virt_font(renderer, font, transform, &badge.label, x + 14, y);
+            let text = layout::wrap_text_for_box_font(font, &badge.label, 192, 1);
+            if let Some(label) = text.lines.first() {
+                layout::render_text_virt_font(renderer, font, transform, label, x + 14, y);
+            }
         }
     }
 }
@@ -2521,7 +2525,7 @@ impl ShortMissionDescriptionWindow {
         let mut x = input.virt_x as i32 + 25;
         let mut y = input.virt_y as i32 + 25;
         x = x.clamp(0, MAP_W - 220);
-        let height = if show_achievement_badges { 156 } else { 100 };
+        let height = if show_achievement_badges { 344 } else { 100 };
         y = y.clamp(0, MAP_H - height);
 
         let mut frame = FrameWnd::new(
@@ -3170,8 +3174,8 @@ mod capture_tests {
                 AchievementAggregationSummary::from_inputs(|id| AchievementAggregationInput {
                     earned_missions: u32::from(id == AchievementId::CleanHands) * 2,
                     required_missions: 10,
-                    envelope_unverifiable: id == AchievementId::AllEnemiesOneBuilding,
-                    unverifiable_missions: u32::from(id == AchievementId::AllEnemiesOneBuilding),
+                    envelope_unverifiable: id == AchievementId::Ruthless,
+                    unverifiable_missions: u32::from(id == AchievementId::Ruthless),
                     ..Default::default()
                 });
             state.graph.lifetime_achievements =
@@ -3186,7 +3190,7 @@ mod capture_tests {
                         0
                     },
                     required_missions: 10,
-                    unverifiable_missions: u32::from(id == AchievementId::AllEnemiesOneBuilding),
+                    unverifiable_missions: u32::from(id == AchievementId::Ruthless),
                     ..Default::default()
                 });
             state.lifetime_totals.attempts = state

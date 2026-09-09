@@ -302,6 +302,29 @@ impl EngineInner {
     ) {
         use PlayerCommand::*;
 
+        // A new manual order cannot inherit an earlier quick-action feat.
+        if !self.mission_domain.achievements.replaying_qa {
+            match cmd {
+                LaunchInteraction { actor, .. }
+                | LaunchGroundTarget { actor, .. }
+                | LaunchSelfAbility { actor, .. }
+                | LaunchScrollRead { actor, .. }
+                | EnterSwordfight { actor, .. }
+                | SwordStrikeCmd { actor, .. } => {
+                    self.mission_domain.achievements.qa_actors.remove(actor);
+                }
+                StopPc { pc_id } => {
+                    self.mission_domain.achievements.qa_actors.remove(pc_id);
+                }
+                GroupMove { actors, .. } => {
+                    for actor in actors {
+                        self.mission_domain.achievements.qa_actors.remove(actor);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Pre-flight reachability gate for object Take clicks. Bail
         // early when no authorized position can be found from the movement box,
         // target position, and target layer—silently skipping *both* the macro-side

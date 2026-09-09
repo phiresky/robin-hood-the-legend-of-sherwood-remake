@@ -618,7 +618,7 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v73** (2026-09-08, reversible background patches): adds the opt-in
 ///   simulation rule and remembered activation targets needed to reverse
 ///   animated patches after saving, loading, or rewinding.
-pub const SAVE_FORMAT_VERSION: u32 = 73;
+pub const SAVE_FORMAT_VERSION: u32 = 74;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1088,7 +1088,7 @@ mod tests {
 
     #[test]
     fn save_format_version_includes_reversible_background_patches() {
-        assert_eq!(SAVE_FORMAT_VERSION, 73);
+        assert_eq!(SAVE_FORMAT_VERSION, 74);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

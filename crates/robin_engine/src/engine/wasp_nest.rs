@@ -254,6 +254,20 @@ impl EngineInner {
                             crate::element::Command::ReceiveWaspSting,
                             Some(victim_id),
                         );
+                        if let Some(Entity::Projectile(wasp)) = self.get_entity(wasp_id) {
+                            if let Some(nest) = wasp.projectile.wasp.source_nest {
+                                let hostile = self
+                                    .get_entity(victim_id)
+                                    .and_then(Entity::soldier_data)
+                                    .is_some_and(|s| self.is_hostile_to_player_camp(s.cached_camp));
+                                if hostile {
+                                    self.mission_domain
+                                        .achievements
+                                        .pending_stings
+                                        .insert(victim_id, nest);
+                                }
+                            }
+                        }
                         self.launch_element(sting);
                     }
                 }

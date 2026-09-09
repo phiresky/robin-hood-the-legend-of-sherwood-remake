@@ -83,7 +83,7 @@ pub(crate) enum GameplaySetting {
     ShowCleanHandsTracker,
     ShowGhostTracker,
     ShowPileOfBonesTracker,
-    ShowAllEnemiesStashedTracker,
+    ShowNewAchievementTrackers,
     ShowAchievementBadges,
     ShowAchievementDebrief,
     TouchCameraGestures,
@@ -133,7 +133,7 @@ impl GameplaySetting {
         Self::ShowCleanHandsTracker,
         Self::ShowGhostTracker,
         Self::ShowPileOfBonesTracker,
-        Self::ShowAllEnemiesStashedTracker,
+        Self::ShowNewAchievementTrackers,
         Self::ShowAchievementBadges,
         Self::ShowAchievementDebrief,
         Self::TouchCameraGestures,
@@ -217,7 +217,7 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Clean Hands Tracker",
     "Ghost Tracker",
     "Pile-o-Bones Tracker",
-    "All Enemies Stashed Tracker",
+    "Additional Achievement Trackers",
     "Campaign Achievement Badges",
     "Achievement Debrief Details",
     "Touch Camera Gestures",
@@ -266,7 +266,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show live Clean Hands achievement progress.",
     "Show live Ghost achievement progress.",
     "Show live Pile-o-Bones achievement progress.",
-    "Show live All Enemies Stashed achievement progress.",
+    "Show live progress for the additional mission achievements.",
     "Show achievement badges in campaign presentations.",
     "Include achievement details in mission debriefs.",
     "Enable one-finger camera panning, anchored pinch zoom, and touch inertia.",
@@ -875,9 +875,8 @@ pub(crate) fn apply_setting(config: &mut GameplayConfig, setting: GameplaySettin
         Setting::ShowPileOfBonesTracker => {
             config.show_pile_o_bones_tracker = !config.show_pile_o_bones_tracker
         }
-        Setting::ShowAllEnemiesStashedTracker => {
-            config.show_all_enemies_one_building_tracker =
-                !config.show_all_enemies_one_building_tracker
+        Setting::ShowNewAchievementTrackers => {
+            config.show_new_achievement_trackers = !config.show_new_achievement_trackers
         }
         Setting::ShowAchievementBadges => {
             config.show_achievement_badges = !config.show_achievement_badges
@@ -993,7 +992,7 @@ impl GameplaySetting {
             Setting::ShowCleanHandsTracker => config.show_clean_hands_tracker,
             Setting::ShowGhostTracker => config.show_ghost_tracker,
             Setting::ShowPileOfBonesTracker => config.show_pile_o_bones_tracker,
-            Setting::ShowAllEnemiesStashedTracker => config.show_all_enemies_one_building_tracker,
+            Setting::ShowNewAchievementTrackers => config.show_new_achievement_trackers,
             Setting::ShowAchievementBadges => config.show_achievement_badges,
             Setting::ShowAchievementDebrief => config.show_achievement_debrief,
             Setting::TouchCameraGestures => config.touch_camera_gestures,
@@ -1208,7 +1207,7 @@ mod tests {
                 "Clean Hands Tracker",
                 "Ghost Tracker",
                 "Pile-o-Bones Tracker",
-                "All Enemies Stashed Tracker",
+                "Additional Achievement Trackers",
                 "Campaign Achievement Badges",
                 "Achievement Debrief Details",
                 "Touch Camera Gestures",
@@ -1323,7 +1322,7 @@ mod tests {
             config.show_clean_hands_tracker,
             config.show_ghost_tracker,
             config.show_pile_o_bones_tracker,
-            config.show_all_enemies_one_building_tracker,
+            config.show_new_achievement_trackers,
             config.show_achievement_badges,
             config.show_achievement_debrief,
         );
@@ -1342,7 +1341,7 @@ mod tests {
                 config.show_clean_hands_tracker,
                 config.show_ghost_tracker,
                 config.show_pile_o_bones_tracker,
-                config.show_all_enemies_one_building_tracker,
+                config.show_new_achievement_trackers,
                 config.show_achievement_badges,
                 config.show_achievement_debrief,
             )

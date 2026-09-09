@@ -114,7 +114,7 @@ impl Mission {
             };
             match results.evaluation(id) {
                 AchievementEvaluation::Unverifiable => true,
-                AchievementEvaluation::Failed => false,
+                AchievementEvaluation::Failed | AchievementEvaluation::NotApplicable => false,
                 AchievementEvaluation::Earned => attempt.achievement_attestation().is_none(),
             }
         })

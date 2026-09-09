@@ -17,7 +17,7 @@ fn ranked_protocol_tracks_exact_runtime_schemas() {
     );
     assert_eq!(
         robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-        40,
-        "reversible patch simulation state requires network protocol 40",
+        41,
+        "expanded deterministic achievement state requires network protocol 41",
     );
 }

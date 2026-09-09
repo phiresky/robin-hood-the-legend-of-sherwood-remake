@@ -532,7 +532,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // pair instead of inferring it from hourglass admission.
         let phase_start = super::frame_perf::start(profiling);
         finalize_interactive_recording(runtime, &mut frame);
-        let was_recording = runtime.replay_recorder.is_some();
+        let was_recording = runtime.is_recording();
         if runtime.seal_terminal_recording(&frame) && was_recording {
             if let Some(key) = manager.engine.campaign().latest_mission_attempt_key() {
                 crate::mission_replays::recording_finished(

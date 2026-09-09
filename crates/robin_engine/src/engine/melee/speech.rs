@@ -24,6 +24,14 @@ impl EngineInner {
         let Some(Entity::Pc(pc)) = self.get_entity(entity_id) else {
             return;
         };
+        if pc.pc.mission_role == crate::human_control::MissionRole::PlayerParty
+            && life_points_after < life_points_before
+        {
+            self.mission_domain.achievements.party_hurt = true;
+        }
+        let Some(Entity::Pc(pc)) = self.get_entity(entity_id) else {
+            unreachable!()
+        };
         let in_coma = self
             .pc_description_for_pc_data(&pc.pc)
             .is_some_and(|description| description.status.in_coma);

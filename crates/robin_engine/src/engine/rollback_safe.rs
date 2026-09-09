@@ -3477,7 +3477,7 @@ impl Engine {
         }
         // Startup scripts and Sherwood setup may intentionally create or kill
         // actors. Only the fully settled world is the Clean Hands baseline.
-        inner.initialize_achievement_tracking();
+        inner.initialize_achievement_tracking(assets);
         inner
             .world
             .validate_level_attachments(assets, inner.script_domains.zones.scripts.len());

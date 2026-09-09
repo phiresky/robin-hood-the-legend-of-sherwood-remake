@@ -67,7 +67,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// messages to that complete current-main wire contract.
 /// Protocol 40 adds reversible background-patch configuration and activation
 /// targets to the engine snapshots exchanged by peers.
-pub const NET_PROTOCOL_VERSION: u32 = 40;
+pub const NET_PROTOCOL_VERSION: u32 = 41;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1833,7 +1833,7 @@ mod tests {
         // package identity are also part of the protocol contract, as are the
         // targeted authenticated leaderboard co-sign and official-ranked-
         // session messages.
-        assert_eq!(NET_PROTOCOL_VERSION, 40);
+        assert_eq!(NET_PROTOCOL_VERSION, 41);
     }
 
     #[test]

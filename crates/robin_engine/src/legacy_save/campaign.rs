@@ -314,6 +314,10 @@ impl LegacyCampaign {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut campaign = Campaign {
+            deeds: crate::achievement::CampaignDeeds {
+                complete_evidence: false,
+                ..Default::default()
+            },
             values: enum_map! {
                 CampaignValue::Amulets => self.values[0],
                 CampaignValue::Ransom => self.values[1],

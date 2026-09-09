@@ -27,7 +27,7 @@ pub enum AchievementProjectionError {
 }
 
 /// Project every and only achievement configured by `ruleset`, retaining the
-/// engine's exact three-way decision and every frozen attempt counter.
+/// engine's award decision, applicability, and every frozen attempt counter.
 ///
 /// `RulesetManifestV1::validate_authoritative_achievements` deliberately runs
 /// last. It therefore rejects a missing/extra ID and a `Required` result that
@@ -44,10 +44,17 @@ pub fn project_authoritative_achievements(
         let achievement_id = OpaqueId::new(engine_id.protocol_id()).map_err(|error| {
             AchievementProjectionError::InvalidEngineAchievementId(error.to_string())
         })?;
+        let mut evidence = evidence.clone();
+        evidence.insert(
+            "applicable".into(),
+            CanonicalValue::Bool(
+                results.evaluation(engine_id) != AchievementEvaluation::NotApplicable,
+            ),
+        );
         projected.push(VerifiedAchievementV1 {
             achievement_id,
             evaluation: project_evaluation(results.evaluation(engine_id)),
-            evidence: evidence.clone(),
+            evidence,
         });
     }
     ruleset
@@ -66,7 +73,11 @@ fn engine_achievement_id(id: &str) -> Result<AchievementId, AchievementProjectio
 const fn project_evaluation(evaluation: AchievementEvaluation) -> VerifiedAchievementEvaluationV1 {
     match evaluation {
         AchievementEvaluation::Unverifiable => VerifiedAchievementEvaluationV1::Unverifiable,
-        AchievementEvaluation::Failed => VerifiedAchievementEvaluationV1::NotEarned,
+        // The ranked wire has three award states. Unavailable is not earned;
+        // retain the distinction in per-achievement evidence below.
+        AchievementEvaluation::Failed | AchievementEvaluation::NotApplicable => {
+            VerifiedAchievementEvaluationV1::NotEarned
+        }
         AchievementEvaluation::Earned => VerifiedAchievementEvaluationV1::Earned,
     }
 }
@@ -97,12 +108,36 @@ fn achievement_evidence(
             CanonicalValue::Unsigned(u64::from(metrics.encountered_hostiles)),
         ),
         (
-            "enemies_in_stash_building".into(),
-            CanonicalValue::Unsigned(u64::from(metrics.enemies_in_stash_building)),
+            "dead_enemies".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.dead_enemies)),
         ),
         (
-            "enemies_required_for_stash".into(),
-            CanonicalValue::Unsigned(u64::from(metrics.enemies_required_for_stash)),
+            "rich_civilians".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.rich_civilians)),
+        ),
+        (
+            "rich_civilians_knocked_out".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.rich_civilians_knocked_out)),
+        ),
+        (
+            "beggars".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.beggars)),
+        ),
+        (
+            "beggars_exhausted".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.beggars_exhausted)),
+        ),
+        (
+            "charitable_payments".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.charitable_payments)),
+        ),
+        (
+            "banners_purchased".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.banners_purchased)),
+        ),
+        (
+            "purchasable_banners".into(),
+            CanonicalValue::Unsigned(u64::from(metrics.purchasable_banners)),
         ),
         (
             "max_bodies_in_one_building".into(),
@@ -272,15 +307,21 @@ mod tests {
             unique_hostile_observers: 7,
             unique_observed_player_characters: 8,
             max_bodies_in_one_building: 9,
-            enemies_in_stash_building: 10,
-            enemies_required_for_stash: 11,
+            dead_enemies: 10,
+            rich_civilians: 11,
+            rich_civilians_knocked_out: 12,
+            beggars: 13,
+            beggars_exhausted: 14,
+            charitable_payments: 15,
+            banners_purchased: 16,
+            purchasable_banners: 17,
         };
         let evidence = achievement_evidence(AchievementTrackingProvenance::MissionStart, metrics);
-        assert_eq!(evidence.len(), 12);
+        assert_eq!(evidence.len(), 18);
         assert_eq!(evidence["duration_frames"], CanonicalValue::Unsigned(1));
         assert_eq!(
-            evidence["enemies_required_for_stash"],
-            CanonicalValue::Unsigned(11)
+            evidence["purchasable_banners"],
+            CanonicalValue::Unsigned(17)
         );
         assert_eq!(
             evidence["tracking_provenance"],
