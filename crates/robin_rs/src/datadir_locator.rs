@@ -168,9 +168,9 @@ fn display_available() -> bool {
 /// (`~/.local/share/robin_hood/datadir.txt` on Linux). `None` when the
 /// build has no OS-data-dir support.
 fn config_path() -> Option<PathBuf> {
-    #[cfg(feature = "native-fs")]
+    #[cfg(not(target_arch = "wasm32"))]
     return dirs::data_dir().map(|dir| dir.join("robin_hood").join("datadir.txt"));
-    #[cfg(not(feature = "native-fs"))]
+    #[cfg(target_arch = "wasm32")]
     None
 }
 
