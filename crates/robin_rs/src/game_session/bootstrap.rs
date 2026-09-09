@@ -847,7 +847,25 @@ impl LoadedInteractiveStage {
 }
 
 impl LoadedInteractiveStage<AudioPreparedBootstrap> {
-    async fn assemble_frontend(
+    // Loading renderers/resource managers also make this handoff substantial.
+    // Do not embed it in the complete mission builder's future merely because
+    // the simulation and inner GPU upload are already boxed.
+    fn assemble_frontend<'a>(
+        self,
+        window: &'a mut GameWindow,
+        profiles: &'a ProfileManager,
+        args: &'a crate::main_entry::CliArgs,
+    ) -> futures::future::LocalBoxFuture<
+        'a,
+        (
+            AudioPreparedBootstrap,
+            Result<InteractiveFrontendAssembly, String>,
+        ),
+    > {
+        Box::pin(self.assemble_frontend_inner(window, profiles, args))
+    }
+
+    async fn assemble_frontend_inner(
         self,
         window: &mut GameWindow,
         profiles: &ProfileManager,
@@ -1770,9 +1788,14 @@ mod tests {
             >()
         );
         let assembly = assembly_size(Stage::assemble_frontend);
+        assert_eq!(assembly, upload, "both production handoffs must be boxed");
+        // The real loading-screen/process handoff is about 29 KiB on native
+        // desktop builds. Budget one such construction, never an inline copy
+        // in every ancestor future (the source of the earlier stack overflow).
+        let assembly_construction = assembly_size(Stage::assemble_frontend_inner);
         assert!(
-            assembly < 16 * 1024,
-            "production assembly future is {assembly} bytes"
+            assembly_construction < 32 * 1024,
+            "production assembly construction is {assembly_construction} bytes"
         );
         // Boxing still constructs this future once on the stack. Keep a
         // separate budget for that real construction (before boxing).
@@ -1898,12 +1921,20 @@ mod tests {
             robin_engine::player_profile::DifficultyLevel::Medium,
         );
         players.set_active(player);
-        let context = crate::host::ApplicationContext::complete(
+        let files = std::sync::Arc::new(
+            robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+                robin_util::asset_fs::AssetVfs::default(),
+            ))
+            .snapshot(),
+        );
+        let context = crate::host::ApplicationContext::complete_with_localization_and_files(
             crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
             robin_engine::engine::GlobalOptions::default(),
             players,
             crate::key_config_store::KeyConfigStore::new(save_root),
             None,
+            crate::localization::LocalizationService::disabled(),
+            Some(files),
         )
         .unwrap();
         bootstrap.host =
