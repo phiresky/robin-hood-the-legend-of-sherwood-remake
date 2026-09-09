@@ -107,6 +107,65 @@ and short native animation batches to avoid reinitializing the render engine
 for every still. Existing pass files can be reused only when their scene and
 settings are unchanged. Finish with `compose_turntable.py --fast --split`.
 
+The ground-cleaned version is `turntable-ground-clean/sherwood-before-after.mp4`.
+It reuses unchanged original, solid and wireframe passes; refreshed textured
+passes use the new ground material. Override the loaded `turntable.py` module's
+`OUT` with that directory and compose with
+`--fast --split --output-dir level-editor/work/sherwood-refinement/turntable-ground-clean`.
+
+`turntable-hq/sherwood-before-after.mp4` is the slower 24-second version at
+1920 × 1280 and 60 fps. `render_hq_turntable.py` creates separate linked scenes
+through MCP. Native time remapping evaluates the camera and animation drivers
+at fractional frames, slowing both rotation and foliage to half speed.
+Independent camera actions unwrap the Euler rotation at the half-turn, avoiding
+an interpolation spin. The original and refined cameras use identical keys.
+EEVEE uses 16 samples and Workbench uses 16-sample antialiasing. Border rendering
+skips the half discarded by the final center split while retaining full-size
+RGBA coordinates. The framing and permitted edge cropping match the preview.
+
+Load the HQ module with `__name__='hq'`, call `setup()` once, then
+`render_batch(side, mode, start, count)` over valid consecutive intervals from
+`modes(frame)` for frames 5–1444. `side` is `refined` or `original`. Compose with
+`compose_turntable.py --hq --split --output-dir level-editor/work/sherwood-refinement/turntable-hq`.
+Call `finish()` through MCP after rendering to check pass completeness, matched
+cameras and advancing wind, then restore the textured preview and save the scene.
+
+## Ground texture reprojection
+
+The terrain originally retained the pipeline's old filled texture, leaving
+painted trunks on the floor after geometry refinements. The current material
+rebuilds the floor from the original Day map using the same `texture-synthesis`
+crate CLI used by the editor's `volume-fill.ts`.
+
+1. Run `prepare_ground_reprojection.py` through MCP. It saves a native backup,
+   exports the previous ground and renders independent original-camera masks
+   for the current static geometry and the legacy obstacles. Animated foliage
+   and ambient overlays are separate source assets, so they are excluded.
+2. Run `fill_ground_texture.py` with normal Python (Pillow and NumPy). It unions
+   those masks with audited trunk/root/prop polygons in
+   `ground_cleanup_regions.json`, dilates the boundary, and invokes the installed
+   CLI with a keep mask and a ground-only donor mask. A second shaded leaf-litter
+   pass blends into the upper forest regions. `--prepare-only` writes the masks
+   for inspection without synthesis. Set `TEXTURE_SYNTHESIS` to override the
+   default executable at `~/.cargo/bin/texture-synthesis`.
+3. Run `apply_ground_reprojection.py` through MCP. It assigns and packs the new
+   ground image, recomputes the world-space 35° projection UVs, verifies the
+   original baseline has a separate ground mesh, and renders four before/after
+   views. Repeated calls refresh the image without overwriting the before views.
+
+`ground-reprojection/` contains masks, donor diagnostics, synthesized textures
+and validation reports. The final cleanup mask covers 1,056,894 pixels (50.59%
+of the source); every pixel outside it is identical to the original Day map.
+The ground UVs already agreed with the projection to floating-point precision;
+the stale ownership texture was the problem. Packed image bytes are checked
+against the synthesized PNG. Hidden ground remains inferred, and some small
+unmodeled props and baked shadows still need separate work.
+
+Ownership masks are not automatically regenerated after future geometry edits.
+Inspect and replace only the generated **Sherwood Ground Ownership** scene and
+its mask copies before rerunning preparation; preserve the original backup and
+before images. TODO: automate mask refresh with geometry revision tracking.
+
 ## Geometry passes
 
 | Collection | Reconstruction |
@@ -119,7 +178,7 @@ settings are unchanged. Finish with `compose_turntable.py --fast --split`.
 | 12 | 61 boards across two bridges/two landings, beams and rope rails |
 | 13 | 26 faceted boulders, river-fence posts/rails and fallen branches |
 | 14 | 1,375 wall boards and roof shingles across huts and treehouses |
-| 15 | Subdivided river bluff and shallow clearing relief; filled ground texture retained |
+| 15 | Subdivided river bluff and shallow clearing relief; ground rebaked with updated ownership masks |
 | 16 | Cooperage, supply barrel, hollow cauldron, stools, spit and traced roots |
 | 17 | Remaining ladder, upper oak rungs, concealed bark and border-hut timber UVs |
 
