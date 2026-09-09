@@ -517,10 +517,6 @@ pub(super) fn drain_screenshot_requests(
             Ok(capture) => http.submit_screenshot(ss, capture),
             Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err)),
         }
-
-        // Clear the offscreen target so the next render (another
-        // screenshot or the live frame) starts from a clean slate.
-        ctx.renderer.reset_render_target();
     }
 }
 
@@ -601,8 +597,6 @@ pub(super) fn begin_save_thumbnail(
     timer.step("compose");
     let capture = ctx.renderer.begin_capture_frame_rgba();
     timer.step("submit");
-
-    ctx.renderer.reset_render_target();
 
     Box::pin(async move {
         let captured = capture.await;

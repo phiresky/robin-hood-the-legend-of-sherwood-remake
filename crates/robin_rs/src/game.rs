@@ -294,15 +294,7 @@ impl Game {
 
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
 
-        if let Some(load_code) = callbacks.debriefing_load_request() {
-            if load_code == GameCode::LevelLoad {
-                self.operation.set(GameCode::LevelLoad);
-            }
-            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-            None
-        } else {
-            Some(self.operation.get_current())
-        }
+        Some(self.operation.get_current())
     }
 
     fn handle_level_failed(
@@ -326,13 +318,7 @@ impl Game {
 
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
 
-        if let Some(load_code) = callbacks.debriefing_load_request() {
-            if load_code == GameCode::LevelLoad {
-                self.operation.set(GameCode::LevelLoad);
-            }
-            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-            None
-        } else if was_interrupted {
+        if was_interrupted {
             Some(GameCode::LevelInterrupted)
         } else {
             Some(GameCode::Quit)
@@ -744,11 +730,6 @@ pub trait GameCallbacks {
     fn display_ingame_menu(&mut self);
     fn display_debriefing(&mut self, won: bool);
 
-    // ── Debriefing result ──
-    /// A synchronous compatibility debriefing can return one load choice.
-    /// Cooperative hosts instead enqueue their outcome in the terminal phase.
-    fn debriefing_load_request(&self) -> Option<GameCode>;
-
     /// Return the mission's total elapsed simulation time in **seconds**.
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32;
 }
@@ -890,7 +871,6 @@ mod tests {
     struct StubCallbacks {
         save_exists: bool,
         save_mission_id: u32,
-        debriefing_load: Option<GameCode>,
         effects: Vec<AppEffect>,
     }
 
@@ -918,9 +898,6 @@ mod tests {
         fn send_script_message(&mut self, _: u32, _: u32) {}
         fn display_ingame_menu(&mut self) {}
         fn display_debriefing(&mut self, _: bool) {}
-        fn debriefing_load_request(&self) -> Option<GameCode> {
-            self.debriefing_load
-        }
         fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
             campaign.get_value(CampaignValue::MissionLength) as u32
         }
@@ -1042,10 +1019,7 @@ mod tests {
         game.operation.set(GameCode::LevelFailed);
         let campaign = Campaign::default();
         let profiles = engine_profiles::ProfileManager::new();
-        let mut cb = StubCallbacks {
-            debriefing_load: None,
-            ..Default::default()
-        };
+        let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
         assert_eq!(result, Some(GameCode::Quit));
@@ -1064,35 +1038,28 @@ mod tests {
         game.operation.set(GameCode::LevelInterrupted);
         let campaign = Campaign::default();
         let profiles = engine_profiles::ProfileManager::new();
-        let mut cb = StubCallbacks {
-            debriefing_load: None,
-            ..Default::default()
-        };
+        let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
         assert_eq!(result, Some(GameCode::LevelInterrupted));
     }
 
     #[test]
-    fn process_failed_with_load_continues() {
+    fn process_succeeded_returns_to_the_cooperative_terminal_flow() {
         let mut game = Game::default();
-        game.operation.set(GameCode::LevelFailed);
+        game.operation.set(GameCode::LevelSucceeded);
         let campaign = Campaign::default();
         let profiles = engine_profiles::ProfileManager::new();
-        let mut cb = StubCallbacks {
-            debriefing_load: Some(GameCode::LevelLoad),
-            ..Default::default()
-        };
+        let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
-        assert!(result.is_none());
-        assert!(game.operation.is(GameCode::LevelLoad));
+        assert_eq!(result, Some(GameCode::LevelSucceeded));
+        assert!(game.operation.is(GameCode::LevelSucceeded));
         assert_eq!(
             cb.effects,
             [
-                AppEffect::PlayJingle(Jingle::MissionLost),
+                AppEffect::PlayJingle(Jingle::MissionWon),
                 AppEffect::SetSoundMode(SoundMode::Menu),
-                AppEffect::SetSoundMode(SoundMode::Mission),
             ]
         );
     }

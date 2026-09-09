@@ -1,26 +1,10 @@
-//! Save / Load slot picker.
+//! Load-slot modal and shared save-picker presentation helpers.
 //!
-//! A 640x480 window with a list of save slots, a name-entry field (shown
-//! in Save mode — empty when the "< New Save >" pseudo-row is selected,
-//! prefilled with the slot's existing name when an existing slot is
-//! selected so the user can edit in place and overwrite), a thumbnail
-//! preview of the selected existing slot, and Load/Save, Delete, and
-//! Cancel buttons.
-//!
-//! Character input is driven by winit's text-input subsystem. IME state is
-//! reset when a Save-mode picker opens so that composition,
-//! dead keys, and non-ASCII keyboard layouts all work. Non-character keys
-//! (Backspace, Enter, Escape, arrows) are still handled off `KeyDown`.
-//!
-//! In Save mode the name-entry state is owned by a `WidgetInputField`,
-//! kept in `SelectedEditable` the whole time the modal is up. Committed
-//! text-input events feed straight into the widget's caret-aware insert
-//! path; Backspace routes through `WidgetInputField::backspace` so the
-//! caret and edit buffer stay in sync with no local bookkeeping.
+//! Main-menu and terminal loading drive one LoadPickerModalState. In-mission
+//! saving owns its cooperative UI task and reuses the picker/name-edit helpers.
 
 use crate::gfx_types::Keycode;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
@@ -28,23 +12,22 @@ use crate::renderer::Renderer;
 use crate::savegame::{SaveGame, SaveGameManager, SlotName};
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
-use crate::widget::{TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
+use crate::widget::{WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_fallback_panel,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
+    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
-    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
-    MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
+    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_MSG_REALLY_DELETE_SAVEGAME,
 };
 pub(crate) use super::save_picker::{
     ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, ListRow, PickerAction, PickerController, PickerModel,
     PickerSlot, PickerTarget, retire_thumbnail,
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
-use super::yesno::{YesNoModalState, show_yesno};
+use super::yesno::YesNoModalState;
 
 /// Which flavour of slot picker to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -65,9 +48,8 @@ pub enum SaveLoadOutcome {
 
 /// One-frame load-slot picker used by terminal mission debriefing.
 ///
-/// Save-mode editing keeps its existing standalone wrapper, while the
-/// mission-time load flow uses this persistent state so the outer driver can
-/// continue servicing networking and automation.
+/// The main menu drives this state with a small async loop; mission-time loads
+/// tick it cooperatively so networking and automation continue between frames.
 pub struct LoadPickerModalState {
     model: PickerModel,
     visible_rows: usize,
@@ -397,18 +379,13 @@ impl LoadPickerModalState {
     }
 }
 
-const INPUT_RECT: MenuRect = MenuRect {
-    x: 30,
-    y: 440,
-    w: 420,
-    h: 28,
-};
 const LOAD_LIST_RECT: MenuRect = MenuRect {
     x: 30,
     y: 10,
     w: 420,
     h: 450,
 };
+#[cfg(test)]
 const SAVE_LIST_RECT: MenuRect = MenuRect {
     x: 30,
     y: 10,
@@ -443,7 +420,6 @@ pub(crate) enum RelativeTimeUnit {
 pub(crate) trait SaveMetadataText {
     fn new_save_label(&self) -> String;
     fn new_save_hint(&self) -> String;
-    fn default_save_label(&self, ordinal: usize) -> String;
     fn mission(&self, value: &str) -> String;
     fn player(&self, value: &str) -> String;
     fn saved(&self, value: &str) -> String;
@@ -501,10 +477,6 @@ impl SaveMetadataText for EnglishSaveMetadataText {
 
     fn new_save_hint(&self) -> String {
         "Name optional - creates a new save slot".to_string()
-    }
-
-    fn default_save_label(&self, ordinal: usize) -> String {
-        format!("Save {ordinal}")
     }
 
     fn mission(&self, value: &str) -> String {
@@ -606,499 +578,37 @@ impl SaveMetadataText for EnglishSaveMetadataText {
 
 /// Longest allowed save name — passed to the input field as its
 /// max-length cap.
+#[cfg(test)]
 const MAX_NAME_LEN: usize = 45;
 
-/// Display the save/load picker. `mission_id` is recorded onto any new
-/// slot created in Save mode so headers stay consistent.
-///
-/// In Save mode the first row is a pseudo "< New Save >" entry. Selecting
-/// it and confirming creates a fresh slot on `save_manager`. Selecting an
-/// existing slot and confirming triggers an overwrite prompt first.
-///
-/// `sound` / `audio_backend` / `sample_loader` drive the input-field
-/// noisy events — focus-sound and activation-sound are played through
-/// [`WidgetInputField::play_noise`] each frame. All three are optional:
-/// when any is `None` the modal is silent, matching the main-menu Load
-/// path which doesn't thread audio.
-#[allow(clippy::too_many_arguments)]
-pub async fn show_save_load(
+/// Main-menu load picker. Mission-time loading drives the same state one tick
+/// at a time; saving belongs to the cooperative in-mission save task.
+pub async fn show_load_picker(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     mut cursor: Option<ModalCursor<'_>>,
     save_manager: &mut SaveGameManager,
-    mission_id: u32,
-    profiles: Option<&ProfileManager>,
     detailed_metadata: bool,
-    mode: SaveLoadMode,
-    mut sound: Option<&mut SoundManager>,
-    mut audio_backend: Option<&mut dyn AudioBackend>,
-    sample_loader: Option<&SampleLoader>,
 ) -> SaveLoadOutcome {
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-    let list_rect = match mode {
-        SaveLoadMode::Load => LOAD_LIST_RECT,
-        SaveLoadMode::Save => SAVE_LIST_RECT,
-    };
-    let row_height = if detailed_metadata {
-        DETAILED_ROW_HEIGHT
-    } else {
-        COMPACT_ROW_HEIGHT
-    };
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let load_save_label = resources.menu_text.get(match mode {
-        SaveLoadMode::Save => MT_BTN_SAVE,
-        SaveLoadMode::Load => MT_BTN_LOAD,
-    });
-    let delete_label = resources.menu_text.get(MT_BTN_DELETE);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-
-    // Bottom-right stack of buttons.
-    let bottom_labels: &[(&str, bool)] = &[
-        (&load_save_label, false),
-        (&delete_label, false),
-        (&cancel_label, true),
-    ];
-    let bottom_buttons = align_bottom_right(bottom_labels, btn_w, btn_h);
-    let btn_positions: [(u32, &str, i32, i32); 3] = [
-        (
-            ID_LOAD_SAVE,
-            &load_save_label,
-            bottom_buttons[0].x,
-            bottom_buttons[0].y,
-        ),
-        (
-            ID_DELETE,
-            &delete_label,
-            bottom_buttons[1].x,
-            bottom_buttons[1].y,
-        ),
-        (
-            ID_CANCEL,
-            &cancel_label,
-            bottom_buttons[2].x,
-            bottom_buttons[2].y,
-        ),
-    ];
-
-    // Snapshot of visible save indices. Filter depends on mode (Load
-    // hides only Continue/Restart; Save hides every special slot).
-    // Sort before rebuilding the list so the entries display in
-    // chronological order rather than insertion order.
-    save_manager.sort_by_time();
-    let visible_rows = (list_rect.h / row_height).max(1) as usize;
-    let mut model = PickerModel::new(mode, false, visible_rows, picker_slots(save_manager));
-
-    // Name-entry state lives on a `WidgetInputField` kept in
-    // `SelectedEditable` for the duration of the Save-mode dialog. Committed
-    // text input flows straight into the widget's caret-aware insert
-    // path each frame. The widget is resynced via `set_text` whenever
-    // the list selection changes — empty when the "< New Save >"
-    // pseudo-row is selected, prefilled with the slot's display text on
-    // an existing slot.
-    const ID_INPUT_FIELD: u32 = 1000;
-    let mut input_widget = WidgetInputField::new(ID_INPUT_FIELD);
-    input_widget.set_max_length(MAX_NAME_LEN);
-    // Give the widget a bbox so the state machine's bookkeeping stays
-    // sane — not used for hit-testing because we never leave edit mode.
-    input_widget.base.bbox = engine_coordinates::ScreenBBox::from_coords(
-        INPUT_RECT.x as f32,
-        INPUT_RECT.y as f32,
-        (INPUT_RECT.x + INPUT_RECT.w) as f32,
-        (INPUT_RECT.y + INPUT_RECT.h) as f32,
-    );
-    if mode == SaveLoadMode::Save {
-        input_widget.enter_edit_mode();
-    }
-    let mut caret_started_at_ms = crate::window::process_uptime_ms();
-
-    // Reset IME state when opening a Save-mode picker so
-    // IME composition and non-ASCII layouts work. Load mode stays quiet.
-    if mode == SaveLoadMode::Save {
-        crate::window::start_text_input();
-    }
-
-    // Thumbnail preview state: a WidgetPicture owns the alternate-surface
-    // handle; the metadata cache tracks which slot the surface was
-    // built for so we only rebuild on selection change.
-    let mut thumb_widget = WidgetPicture::new(u32::MAX);
-    let mut thumb_cache: Option<ThumbnailCache> = None;
-
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
-    let mut controller = PickerController::new(input_state);
-    let mut noise_tracker = widget_bridge::NoisyTracker::new();
-
-    // Stub keyboard fed into the input-field widget so its special-key
-    // branches (Backspace / Delete / Left / Right / Home / End / Tab /
-    // Up / Down / Enter / Escape) stay silent. The modal handles those
-    // at the `GameEvent::KeyDown` level and drives the widget via the
-    // public caret / backspace helpers — otherwise the release-edge
-    // `KeyPressed` transitions would double-fire with the modal's
-    // press-edge handling. Kept outside the loop so we don't pay the
-    // `Vec` reallocation on every frame.
-    let empty_keyboard = UiKeyboard::default();
-    let metadata_text = EnglishSaveMetadataText;
-    let mut clock_error_reported = false;
-    let local_time_zone = TimeZone::try_system()
-        .inspect_err(|error| tracing::warn!("Save menu local time is unavailable: {error}"))
-        .ok();
-
-    let mut error_notice = None;
-    let outcome = loop {
-        if error_notice.is_none()
-            && let Some(error) = model.operation_error()
-        {
-            error_notice = Some(crate::save_recovery::ErrorNotice::new(error.to_string()));
-        }
-        if let Some(notice) = &mut error_notice {
-            if notice.tick(event_pump, renderer, resources, cursor.as_ref()) {
-                error_notice = None;
-                model.dismiss_error();
-                if event_pump.close_requested {
-                    break SaveLoadOutcome::Cancel;
-                }
-            }
-            // Keep the save-only IME/widget owner alive, but do not feed modal
-            // acknowledgement input into the picker or name field.
-            crate::window::sleep_ui_frame().await;
-            continue;
-        }
-        model.refresh(picker_slots(save_manager));
-        let mut visible = model.visible();
-        let mut selected = model.selected_row();
-        // Build (or rebuild) the widget frame. Save mode accepts an
-        // empty name and fills a default label on confirmation.
-        controller.begin_frame(&model, &btn_positions, btn_w, btn_h);
-
-        // In Save mode the input is always editable. Load mode never shows it.
-        let input_editable = mode == SaveLoadMode::Save;
-
-        // ── Event loop ──────────────────────────────────────────
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            if controller.handle_event(&mut model, &event, transform, list_rect, row_height) {
-                selected = model.selected_row();
-                sync_input_for_selection(&mut input_widget, selected, mode, &visible, save_manager);
-                caret_started_at_ms = crate::window::process_uptime_ms();
-            }
-            if input_editable && edit_save_name(&mut input_widget, &event) {
-                caret_started_at_ms = crate::window::process_uptime_ms();
-            }
-        }
-
-        let widget_events = controller.process_widgets(&model);
-        let widget_input = controller.input.as_widget_input();
-        let mouse_virt = widget_input.mouse_position;
-        let mut field_events: Vec<crate::ui::UiEvent> = Vec::new();
-        if input_editable {
-            // Feed the text-input buffer straight to the input widget
-            // so the caret-aware insert path in `process_input_editable`
-            // handles composition, max-length, and control-char filter.
-            // Build a dedicated `WidgetInput` so the mouse/button state
-            // for the button frame doesn't accidentally drive state
-            // transitions on the field (which we force to stay
-            // `SelectedEditable` regardless).
-            field_events = feed_save_name(&mut input_widget, &widget_input, &empty_keyboard);
-        }
-        controller.input.end_frame();
-
-        // Play menu sounds for any noisy events emitted this frame.
-        // Buttons use `WIDGET_NOISY_BUTTON`; the input field uses
-        // `WIDGET_NOISY_INPUTFIELD`. Each routed through its own bank so
-        // the first-match behaviour of `play_widget_noise` doesn't
-        // cross-wire them.
-        if let (Some(snd), Some(loader)) = (sound.as_deref_mut(), sample_loader) {
-            let backend: Option<&mut dyn AudioBackend> = audio_backend
-                .as_deref_mut()
-                .map(|b| b as &mut dyn AudioBackend);
-            widget_bridge::play_frame_widget_noise(
-                &widget_events,
-                controller.frame(),
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                snd,
-                backend,
-                loader,
-                &mut noise_tracker,
-            );
-        }
-        if !field_events.is_empty()
-            && let (Some(snd), Some(loader)) = (sound.as_deref_mut(), sample_loader)
-        {
-            let backend: Option<&mut dyn AudioBackend> = audio_backend
-                .as_deref_mut()
-                .map(|b| b as &mut dyn AudioBackend);
-            WidgetInputField::play_noise(&field_events, snd, backend, loader);
-        }
-
-        if let Some(action) = controller.take_action() {
-            match action {
-                PickerAction::Cancel => break SaveLoadOutcome::Cancel,
-                PickerAction::Accept(target) => match (mode, target) {
-                    (SaveLoadMode::Save, PickerTarget::New) => {
-                        let text = accepted_save_text(
-                            &input_widget.edit_text,
-                            selected,
-                            save_manager,
-                            &visible,
-                            mission_id,
-                            profiles,
-                            &metadata_text,
-                        );
-                        match save_manager
-                            .create_draft(text, mission_id)
-                            .and_then(|handle| save_manager.resolve_handle(&handle))
-                        {
-                            Ok(idx) => break SaveLoadOutcome::Slot(idx),
-                            Err(error) => {
-                                tracing::error!("Creating save slot failed: {error:#}");
-                                model.report_error(format!("{error:#}"));
-                                continue;
-                            }
-                        }
-                    }
-                    (SaveLoadMode::Save, PickerTarget::Existing(name)) => {
-                        let Some(slot) = save_manager.find_by_filename(name.as_str()) else {
-                            model.report_error("the selected save is no longer available".into());
-                            continue;
-                        };
-                        let msg = resources.menu_text.get(MT_MSG_REALLY_OVERWRITE_SAVEGAME);
-                        if show_yesno(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &msg,
-                        )
-                        .await
-                        {
-                            // Apply edited name to the slot before overwriting.
-                            let new_text = accepted_save_text(
-                                &input_widget.edit_text,
-                                selected,
-                                save_manager,
-                                &visible,
-                                mission_id,
-                                profiles,
-                                &metadata_text,
-                            );
-                            if !new_text.is_empty() {
-                                let rename = save_manager
-                                    .slot_handle(slot)
-                                    .and_then(|handle| save_manager.rename_slot(&handle, new_text));
-                                if let Err(error) = rename {
-                                    tracing::error!("Save name update failed: {error:#}");
-                                    model.report_error(format!("{error:#}"));
-                                    continue;
-                                }
-                            }
-                            break SaveLoadOutcome::Slot(slot);
-                        }
-                    }
-                    (SaveLoadMode::Load, PickerTarget::Existing(name)) => {
-                        match save_manager.find_by_filename(name.as_str()) {
-                            Some(slot) => break SaveLoadOutcome::Slot(slot),
-                            None => model
-                                .report_error("the selected save is no longer available".into()),
-                        }
-                    }
-                    (SaveLoadMode::Load, PickerTarget::New) => {
-                        unreachable!("Load picker cannot create a save")
-                    }
-                },
-                PickerAction::ConfirmDelete(name) => {
-                    if begin_picker_delete(&mut model, name) {
-                        let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
-                        let confirmed = show_yesno(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &msg,
-                        )
-                        .await;
-                        finish_picker_delete(&mut model, save_manager, confirmed);
-                        visible = model.visible();
-                        let old_selection = selected;
-                        selected = model.selected_row();
-                        if selected != old_selection {
-                            sync_input_for_selection(
-                                &mut input_widget,
-                                selected,
-                                mode,
-                                &visible,
-                                save_manager,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // Refresh the thumbnail cache so the preview tracks the
-        // currently selected existing slot. Off-slot selections drop
-        // the cached surface; changing slot rebuilds it.
-        sync_thumbnail_cache(
-            &mut thumb_cache,
-            &mut thumb_widget,
-            selected,
-            &visible,
-            save_manager,
+    let mut state =
+        LoadPickerModalState::new(event_pump, renderer, save_manager, detailed_metadata, false);
+    loop {
+        if let Some(outcome) = state.tick(
+            event_pump,
             renderer,
-            mode,
-        );
-
-        // ── Render ──────────────────────────────────────────────
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
-
-        if let Some(bg) = resources.menu_bg[3] {
-            draw_screen_background(renderer, &bg);
-        }
-
-        // Input field — only drawn in Save + New mode.
-        if input_editable {
-            draw_input_field(
-                renderer,
-                resources,
-                transform,
-                &input_widget,
-                crate::window::process_uptime_ms().wrapping_sub(caret_started_at_ms),
-            );
-        }
-
-        // Rows. Re-read the wall clock while the modal is open so relative
-        // text crosses second/minute/hour boundaries without reopening it.
-        let now_unix = if detailed_metadata {
-            match crate::save_file::unix_timestamp_now() {
-                Ok(now) => Some(now),
-                Err(error) => {
-                    if !clock_error_reported {
-                        tracing::warn!("Save menu relative time is unavailable: {error:#}");
-                        clock_error_reported = true;
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        let total = model.total_rows();
-        let scrollbar_w = list_scrollbar_width(resources);
-        let needs_scrollbar = total > visible_rows && scrollbar_w > 0;
-        // Row area matches the old +10 left padding; mirror it on the
-        // right and keep text out from under the scrollbar.
-        let row_area_x = list_rect.x + 10;
-        let row_area_w = list_rect.w - 20 - if needs_scrollbar { scrollbar_w } else { 0 };
-
-        // Per-row hover → `list_focused` font; the renderer picks
-        // between default / focused / selected per row flags. The
-        // mouse position was snapshotted before `end_frame()` in
-        // virtual menu coords, so we hit-test against the active list
-        // rect directly.
-        let hovered_row = if list_rect.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32) {
-            let row_offset = ((mouse_virt.y as i32 - list_rect.y - 4) / row_height).max(0) as usize;
-            model.row_at(model.scroll_offset() + row_offset)
-        } else {
-            None
-        };
-
-        for row_offset in 0..visible_rows {
-            let row_index = model.scroll_offset() + row_offset;
-            if row_index >= total {
-                break;
-            }
-            let row = model
-                .row_at(row_index)
-                .expect("rendered row is within model bounds");
-            let row_y = list_rect.y + 4 + row_offset as i32 * row_height;
-            let is_selected = selected == Some(row);
-            let is_focused = hovered_row == Some(row);
-            let label = row_label(row, save_manager, &visible, &metadata_text);
-            let details = row_detail_lines(
-                row,
-                save_manager,
-                &visible,
-                now_unix,
-                local_time_zone.as_ref(),
-                &metadata_text,
-                detailed_metadata,
-            );
-
-            let Some(font) = resources.list_font(is_focused, is_selected) else {
-                continue;
-            };
-            let fitted = truncate_to_pixel_width(font, &label, row_area_w);
-            if !fitted.is_empty() {
-                render_text_virt_font(renderer, font, transform, &fitted, row_area_x, row_y);
-            }
-            for (line_index, detail) in details.iter().enumerate() {
-                let detail_fitted = truncate_to_pixel_width(font, detail, row_area_w);
-                if !detail_fitted.is_empty() {
-                    render_text_virt_font(
-                        renderer,
-                        font,
-                        transform,
-                        &detail_fitted,
-                        row_area_x,
-                        row_y + DETAIL_LINE_HEIGHT * (line_index as i32 + 1),
-                    );
-                }
-            }
-        }
-
-        if needs_scrollbar {
-            widget_bridge::draw_listbox_scrollbar(
-                renderer,
-                transform,
-                resources,
-                list_rect.x + list_rect.w - scrollbar_w,
-                list_rect.y,
-                scrollbar_w,
-                list_rect.h,
-                model.scroll_offset(),
-                visible_rows,
-                total,
-            );
-        }
-
-        // Thumbnail preview.
-        draw_preview(
-            renderer,
-            transform,
-            selected,
-            &visible,
-            thumb_cache.as_ref(),
-            &thumb_widget,
-            save_manager,
             resources,
-            now_unix,
-            local_time_zone.as_ref(),
-            &metadata_text,
-            detailed_metadata,
-        );
-
-        // Buttons.
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, controller.frame());
-
-        if let Some(c) = &cursor {
-            c.draw(renderer, transform, &controller.input);
+            cursor.as_mut().map(|cursor| cursor.reborrow()),
+            save_manager,
+            None,
+            None,
+            None,
+        ) {
+            state.close(renderer);
+            return outcome;
         }
-
-        renderer.present();
         crate::window::sleep_ui_frame().await;
-    };
-
-    // Make sure the cached thumbnail surface is returned to the renderer
-    // pool before we unwind.
-    clear_thumbnail_cache(&mut thumb_cache, &mut thumb_widget, renderer);
-    if mode == SaveLoadMode::Save {
-        crate::window::stop_text_input();
     }
-
-    outcome
 }
 
 /// Tracks a loaded thumbnail so we don't rebuild the GPU surface on
@@ -1178,96 +688,6 @@ fn clear_thumbnail_cache(
         renderer.retire_surface(old.surface);
     }
     widget.reset_alternate_picture();
-}
-
-fn draw_input_field(
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    transform: MenuTransform,
-    input_widget: &WidgetInputField,
-    caret_elapsed_ms: u32,
-) {
-    // Use the menu's input-field sprite if loaded, otherwise fall back
-    // to a simple outlined rect so layouts without DEFAULT.RES still
-    // render something usable.
-    if let Some(surf) = resources.input_field_surface(true) {
-        widget_bridge::draw_menu_surface_rect(
-            renderer,
-            transform,
-            surf,
-            INPUT_RECT.x,
-            INPUT_RECT.y,
-            INPUT_RECT.w,
-            INPUT_RECT.h,
-            0,
-            0,
-            INPUT_RECT.w,
-            INPUT_RECT.h,
-            true,
-        );
-    } else {
-        draw_fallback_panel(renderer, transform, &INPUT_RECT);
-    }
-
-    let Some(font) = resources.label_font_any() else {
-        return;
-    };
-
-    // Split the text into visible-left and visible-right slices around
-    // the caret using `WidgetInputField::get_text_from_caret`, with a
-    // horizontal scroll offset so the caret stays inside the field when
-    // the full string would overflow. Per-char advance is
-    // `character_width(ch) + extra_spacing()`.
-    let extra = font.extra_spacing();
-    let char_advance =
-        |ch: char| -> u32 { ((font.character_width(ch) as i32) + extra).max(0) as u32 };
-
-    // Interior width — 6px padding on each side, matching the text-
-    // origin offset used below.
-    let interior_w = (INPUT_RECT.w - 12).max(0) as u32;
-
-    // Pixel position of the caret measured from the start of the full text.
-    let caret_pixel: u32 = input_widget
-        .edit_text
-        .chars()
-        .take(input_widget.caret_offset)
-        .map(char_advance)
-        .sum();
-
-    // If the caret runs past the right edge, shift everything left
-    // by `interior_w - caret_pixel` (a negative offset) so the caret
-    // sits flush against the right edge.
-    let scroll_offset: i32 = if caret_pixel >= interior_w {
-        interior_w as i32 - caret_pixel as i32
-    } else {
-        0
-    };
-    let left_budget = (caret_pixel as i32 + scroll_offset).max(0) as u32;
-    let right_budget = (interior_w as i32 - caret_pixel as i32 - scroll_offset).max(0) as u32;
-
-    let left_text =
-        input_widget.get_text_from_caret(TextFromCaretSide::Left, left_budget, char_advance);
-    let right_text =
-        input_widget.get_text_from_caret(TextFromCaretSide::Right, right_budget, char_advance);
-
-    // Render the buffer plus a blinking caret. Wall time keeps the ~500 ms
-    // toggle stable on high-refresh displays. We don't
-    // have a dedicated caret sprite yet, so this inlines a `|` character
-    // at the caret position.
-    let show_caret = (caret_elapsed_ms / 500).is_multiple_of(2);
-    let display = if show_caret {
-        format!("{left_text}|{right_text}")
-    } else {
-        format!("{left_text}{right_text}")
-    };
-    render_text_virt_font(
-        renderer,
-        font,
-        transform,
-        &display,
-        INPUT_RECT.x + 6,
-        INPUT_RECT.y + 6,
-    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1521,38 +941,6 @@ fn metadata_value(value: &str, text: &impl SaveMetadataText) -> String {
     }
 }
 
-fn accepted_save_text(
-    input_text: &str,
-    selected: Option<ListRow>,
-    save_manager: &SaveGameManager,
-    visible: &[usize],
-    mission_id: u32,
-    profiles: Option<&ProfileManager>,
-    text: &impl SaveMetadataText,
-) -> String {
-    let trimmed = input_text.trim();
-    if !trimmed.is_empty() {
-        return trimmed.to_string();
-    }
-    if let Some(ListRow::Existing(v_idx)) = selected
-        && let Some(slot) = visible.get(v_idx).and_then(|&slot| save_manager.get(slot))
-        && !slot.text.trim().is_empty()
-    {
-        return slot.text.clone();
-    }
-    default_save_text(save_manager, mission_id, profiles, text)
-}
-
-fn default_save_text(
-    save_manager: &SaveGameManager,
-    mission_id: u32,
-    profiles: Option<&ProfileManager>,
-    text: &impl SaveMetadataText,
-) -> String {
-    mission_display_name(mission_id, profiles)
-        .unwrap_or_else(|| text.default_save_label(save_manager.count() + 1))
-}
-
 fn parse_save_timestamp(timestamp: &str) -> Result<u64, ()> {
     timestamp.parse::<u64>().map_err(|_| ())
 }
@@ -1644,16 +1032,6 @@ fn relative_time_quantity(seconds: u64) -> (u64, RelativeTimeUnit) {
         MONTH..YEAR => (seconds / MONTH, RelativeTimeUnit::Month),
         _ => (seconds / YEAR, RelativeTimeUnit::Year),
     }
-}
-
-fn mission_display_name(mission_id: u32, profiles: Option<&ProfileManager>) -> Option<String> {
-    let profiles = profiles?;
-    profiles
-        .missions
-        .iter()
-        .find(|mission| mission.id == mission_id)
-        .map(|mission| mission.mission_name.clone())
-        .filter(|name| !name.trim().is_empty())
 }
 
 /// Truncate `text` to the longest prefix that fits in `max_w` pixels
@@ -2065,55 +1443,6 @@ mod tests {
                 &EnglishSaveMetadataText,
             ),
             "Autosave - The Silver Arrow"
-        );
-    }
-
-    #[test]
-    fn empty_new_save_name_gets_default_label() {
-        let save_manager = SaveGameManager::new("/tmp/test_saves".into());
-        let metadata_text = EnglishSaveMetadataText;
-        let text = accepted_save_text(
-            "",
-            Some(ListRow::New),
-            &save_manager,
-            &[],
-            123,
-            None,
-            &metadata_text,
-        );
-        assert_eq!(text, "Save 1");
-    }
-
-    #[test]
-    fn empty_existing_save_name_preserves_slot_label() {
-        let mut save_manager = SaveGameManager::new("/tmp/test_saves".into());
-        let slot = save_manager.create("Existing Slot".into(), 123);
-        let visible = [slot];
-        let text = EnglishSaveMetadataText;
-
-        assert_eq!(
-            accepted_save_text(
-                "   ",
-                Some(ListRow::Existing(0)),
-                &save_manager,
-                &visible,
-                123,
-                None,
-                &text,
-            ),
-            "Existing Slot"
-        );
-        assert_eq!(
-            accepted_save_text(
-                " Renamed ",
-                Some(ListRow::Existing(0)),
-                &save_manager,
-                &visible,
-                123,
-                None,
-                &text,
-            ),
-            "Renamed"
         );
     }
 

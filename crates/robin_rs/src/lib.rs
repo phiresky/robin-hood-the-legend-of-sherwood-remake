@@ -302,7 +302,6 @@ pub mod save_file;
 pub mod save_operation;
 pub mod save_recovery;
 pub mod savegame;
-pub mod settings;
 pub mod shadow_polygon;
 pub mod sherwood_hud;
 pub mod sim_timeline;

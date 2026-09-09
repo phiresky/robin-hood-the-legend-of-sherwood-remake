@@ -2112,9 +2112,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     tracing::warn!(
                         "Pseudo-mission debriefing resources disappeared — acknowledging it"
                     );
-                    Some(ingame_menu::DebriefingOutcome::Ok {
-                        text_remaining: String::new(),
-                    })
+                    Some(ingame_menu::DebriefingOutcome::Ok)
                 };
                 if outcome.is_none() {
                     *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief { state });

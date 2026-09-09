@@ -657,11 +657,7 @@ impl TerminalDebriefingState {
                 ) else {
                     return TerminalDebriefingProgress::Pending;
                 };
-                if let DebriefingOutcome::LoadAttempt {
-                    body_remaining,
-                    was_on_stat,
-                } = outcome
-                {
+                if let DebriefingOutcome::LoadAttempt { body, was_on_stat } = outcome {
                     let detailed_metadata = context
                         .host
                         .application_context()
@@ -681,13 +677,13 @@ impl TerminalDebriefingState {
                             detailed_metadata,
                             context.host.transport.net().is_some(),
                         ),
-                        body: body_remaining,
+                        body,
                         was_on_stat,
                     };
                     return TerminalDebriefingProgress::Pending;
                 }
                 let settled = match outcome {
-                    DebriefingOutcome::Ok { .. } => SettledDebriefingOutcome::Ok,
+                    DebriefingOutcome::Ok => SettledDebriefingOutcome::Ok,
                     DebriefingOutcome::Restart => SettledDebriefingOutcome::Restart,
                     DebriefingOutcome::EmergencyEnd => SettledDebriefingOutcome::EmergencyEnd,
                     DebriefingOutcome::LoadAttempt { .. } => unreachable!(),

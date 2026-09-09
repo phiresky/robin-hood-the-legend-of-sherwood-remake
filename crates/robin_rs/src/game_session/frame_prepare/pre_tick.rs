@@ -649,7 +649,6 @@ mod tests {
             .unwrap();
         timeline.begin_bookkeeping();
         timeline.commit_simulation_history(
-            &mut host,
             &mut manager,
             &frame,
             FrameCommitPolicy {

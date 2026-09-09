@@ -522,7 +522,6 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
         if history_commit_pending {
             runtime.commit_simulation_history(
-                host,
                 manager,
                 &frame,
                 FrameCommitPolicy {

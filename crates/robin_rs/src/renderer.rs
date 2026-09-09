@@ -2739,29 +2739,8 @@ impl Renderer {
         self.resources.sprite_residency_stats()
     }
 
-    /// Capture the next-to-be-presented composite frame as RGBA8.
-    ///
-    /// Executes the queued draws against the offscreen render target
-    /// and reads it back via `copy_texture_to_buffer` + `map_async`.
-    /// The queue is consumed (cleared like `present()` does) so the
-    /// next live render starts fresh; the swapchain is untouched.
-    /// Used by the `/screenshot` HTTP endpoint, the `PrintScreen`
-    /// hotkey path, and the savegame thumbnail.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn capture_frame_rgba(&mut self) -> Option<(u32, u32, Vec<u8>)> {
-        self.try_capture_frame_rgba()
-            .map_err(|error| tracing::warn!(%error, "capture frame failed"))
-            .ok()
-    }
-
-    /// Read the composited logical framebuffer left by the latest `present`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn capture_presented_frame_rgba(&self) -> Option<(u32, u32, Vec<u8>)> {
-        self.try_capture_presented_frame_rgba()
-            .map_err(|error| tracing::warn!(%error, "capture presented frame failed"))
-            .ok()
-    }
-
+    /// Synchronous capture for native tools and GPU tests. Runtime callers use
+    /// owned asynchronous readbacks so completion never blocks the session loop.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn try_capture_frame_rgba(&mut self) -> Result<CapturedFrame, CaptureError> {
         readback::capture_frame_rgba(&self.gpu, &self.pipelines, &self.resources, &mut self.frame)
@@ -2801,10 +2780,6 @@ impl Renderer {
     pub async fn capture_presented_frame_rgba_async(&self) -> Result<CapturedFrame, CaptureError> {
         readback::capture_presented_frame_rgba_async(&self.gpu, &self.frame).await
     }
-
-    /// No-op because wgpu has no target stack: `capture_frame_rgba` already
-    /// clears the queue and the next `present()` re-clears the render target.
-    pub fn reset_render_target(&mut self) {}
 }
 
 // ---------------------------------------------------------------------

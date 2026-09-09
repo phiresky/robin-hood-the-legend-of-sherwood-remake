@@ -317,7 +317,6 @@ impl HeadlessMission {
         } = world.ingress();
         if timeline_advances {
             timeline.commit_simulation_history(
-                host,
                 manager,
                 frame,
                 FrameCommitPolicy {

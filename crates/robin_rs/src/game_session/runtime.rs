@@ -1426,10 +1426,9 @@ impl TimelineRuntime {
     pub(super) fn commit_history_frame(
         &mut self,
         input: robin_engine::engine::SimulationFrameInput,
-        host: &mut Host,
         engine: &Engine,
     ) {
-        self.history.commit(input, host, engine);
+        self.history.commit(input, engine);
     }
 
     pub(super) fn branch_history_at(&mut self, frame: u32) {
@@ -1852,7 +1851,6 @@ impl TimelineRuntime {
     /// steps; headless admission occurs here immediately afterward.
     pub(super) fn commit_simulation_history(
         &mut self,
-        host: &mut Host,
         manager: &mut EngineManager,
         frame: &MissionFrame,
         policy: FrameCommitPolicy,
@@ -1866,7 +1864,7 @@ impl TimelineRuntime {
         );
         if policy.store_rewind_commands {
             self.history
-                .commit(frame.authoritative_input(), host, &manager.engine);
+                .commit(frame.authoritative_input(), &manager.engine);
         }
     }
 
@@ -3625,7 +3623,6 @@ mod tests {
         )
         .expect("fixture engine");
         let mut manager = EngineManager::new(engine);
-        let mut host = Host::scratch(640.0, 480.0);
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
         timeline.adopt_frame(TimelineFrame::from_wire(crate::rewind::SNAPSHOT_INTERVAL));
         let mut frame = MissionFrame::new(0);
@@ -3637,7 +3634,6 @@ mod tests {
         timeline.begin_simulation();
         timeline.begin_bookkeeping();
         timeline.commit_simulation_history(
-            &mut host,
             &mut manager,
             &frame,
             FrameCommitPolicy {

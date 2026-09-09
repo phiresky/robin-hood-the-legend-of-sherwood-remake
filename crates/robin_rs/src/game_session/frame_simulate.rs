@@ -1317,7 +1317,6 @@ impl InteractiveFrameSimulation {
 
             if history_commit_pending {
                 runtime.commit_simulation_history(
-                    host,
                     manager,
                     &frame,
                     FrameCommitPolicy {
@@ -1376,7 +1375,6 @@ impl InteractiveFrameSimulation {
 
             if history_commit_pending {
                 runtime.commit_simulation_history(
-                    host,
                     manager,
                     &frame,
                     FrameCommitPolicy {

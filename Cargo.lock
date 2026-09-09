@@ -6044,7 +6044,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -6150,11 +6149,9 @@ dependencies = [
  "anyhow",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
- "hex",
  "nix 0.31.3",
  "rand",
  "robin_engine",
- "robin_highscores",
  "robin_ranked_verification",
  "robin_replay_format",
  "robin_run_protocol",
@@ -6164,9 +6161,7 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
- "tracing-subscriber",
  "walkdir",
 ]
 
@@ -6178,7 +6173,6 @@ dependencies = [
  "anyhow",
  "async-channel",
  "base64 0.23.1",
- "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bitflags 2.13.1",
  "bytemuck",

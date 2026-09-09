@@ -804,7 +804,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
 
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
         if append_history && after.number() > frame {
-            timeline.commit_history_frame(simulation_frame, host, engine);
+            timeline.commit_history_frame(simulation_frame, engine);
         }
         advanced += after
             .number()
@@ -1292,7 +1292,6 @@ mod tests {
         timeline.advance_frame();
         normal.commit_timeline_after(timeline.current_frame());
         timeline.commit_simulation_history(
-            &mut host,
             &mut manager,
             &normal,
             FrameCommitPolicy {

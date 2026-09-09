@@ -593,9 +593,7 @@ pub(super) use super::session_policy::{ReplayModalDismissals, pop_matching_dismi
 
 fn debriefing_replay_result(result: engine_player_command::DialogResult) -> DebriefingOutcome {
     match result {
-        engine_player_command::DialogResult::Completed => DebriefingOutcome::Ok {
-            text_remaining: String::new(),
-        },
+        engine_player_command::DialogResult::Completed => DebriefingOutcome::Ok,
         engine_player_command::DialogResult::Aborted => DebriefingOutcome::EmergencyEnd,
         engine_player_command::DialogResult::Restart
         | engine_player_command::DialogResult::Load { .. } => {
@@ -603,9 +601,7 @@ fn debriefing_replay_result(result: engine_player_command::DialogResult) -> Debr
                 ?result,
                 "queued debriefing replay result is only valid for final debriefing; treating as completed"
             );
-            DebriefingOutcome::Ok {
-                text_remaining: String::new(),
-            }
+            DebriefingOutcome::Ok
         }
     }
 }

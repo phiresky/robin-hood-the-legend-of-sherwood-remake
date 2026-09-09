@@ -14,7 +14,6 @@ use robin_assets::picture::Picture;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::campaign::Campaign;
 use robin_engine::engine as engine_api;
-use robin_engine::game_operation::GameCode;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 
@@ -613,11 +612,6 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
     fn display_debriefing(&mut self, won: bool) {
         tracing::info!("Debriefing (won={}): stub", won);
-    }
-    fn debriefing_load_request(&self) -> Option<GameCode> {
-        // The cooperative terminal flow queues its concrete request directly.
-        // This synchronous compatibility callback therefore has no result.
-        None
     }
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
         // Returns deterministic simulation seconds. Downstream consumers

@@ -1,6 +1,5 @@
 //! Reconstruction state; rewind storage and its checker always reset together.
 
-use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use robin_engine::engine::{Engine, LevelAssets, SimulationFrameInput};
@@ -35,10 +34,10 @@ impl ReconstructionHistory {
         self.buffer.truncate_recent_after(frame);
     }
 
-    pub(super) fn commit(&mut self, input: SimulationFrameInput, host: &mut Host, engine: &Engine) {
+    pub(super) fn commit(&mut self, input: SimulationFrameInput, engine: &Engine) {
         self.buffer.end_frame_input(input);
         if let Some(checker) = self.checker.as_mut() {
-            checker.check_after_commit(host, &self.buffer, engine);
+            checker.check_after_commit(&self.buffer, engine);
         }
     }
 }

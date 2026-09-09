@@ -8,7 +8,7 @@
 
 use crate::host::ApplicationContext;
 use crate::ingame_menu::widget_bridge::ModalCursor;
-use crate::ingame_menu::{IngameMenuResources, SaveLoadMode, SaveLoadOutcome, show_save_load};
+use crate::ingame_menu::{IngameMenuResources, SaveLoadOutcome, show_load_picker};
 use crate::main_menu::MainMenuChoice;
 use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
@@ -28,25 +28,13 @@ pub(crate) async fn run_main_menu_load(
         .unwrap_or_else(|error| panic!("Load Game requires an active profile: {error}"))
         .gameplay_config
         .detailed_save_metadata;
-    // `mission_id` is only written onto freshly-created Save slots; in
-    // Load mode `show_save_load` ignores it.  Pass 0 — there's no active
-    // mission at main-menu time.
-    // Main-menu entry has no live `SoundManager` plumbed through, so the
-    // widget noisy events are silent here. `None` on all three slots
-    // short-circuits `play_widget_noise` / `WidgetInputField::play_noise`.
-    let outcome = show_save_load(
+    let outcome = show_load_picker(
         event_pump,
         renderer,
         resources,
         Some(cursor),
         save_manager,
-        0,
-        None,
         detailed_metadata,
-        SaveLoadMode::Load,
-        None,
-        None,
-        None,
     )
     .await;
 

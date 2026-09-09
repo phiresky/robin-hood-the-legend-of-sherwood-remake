@@ -61,9 +61,8 @@
 //!    [`apply_screenshot_flags`] — the live `dev` is untouched.
 //! 3. After each throwaway render the loop reads pixels back
 //!    (`Renderer::begin_capture_frame_rgba`), hands completed pixels to
-//!    [`PendingScreenshot::respond`] to reply with `image/png`, and
-//!    calls `Renderer::reset_render_target` to clear the target for
-//!    the next render.
+//!    [`PendingScreenshot::respond`] to reply with `image/png`. Submission
+//!    consumes the queued commands; completion owns its independent readback.
 //! 4. Finally the live frame is rendered and presented as normal.
 //!
 //! No authentication. Bind is `127.0.0.1` only. Pass `--http-server 0`

@@ -234,10 +234,6 @@ syn = { workspace = true, features = ["full", "visit"] }
 qoi = "0.4"
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 robin_engine = { workspace = true, features = ["test-helpers"] }
-# The parity-native v67 wire format is authoritative and remains on 0.6.9.
-# Only the parity example needs it; production game formats use the workspace
-# codec and should not compile two bitcode packages.
-bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
 
 [build-dependencies]
 cc = "1"

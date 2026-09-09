@@ -15,7 +15,6 @@
 //! in the current directory, including the replay file path when one
 //! is available.
 
-use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use std::sync::{
     Arc,
@@ -82,12 +81,7 @@ impl RollbackChecker {
     /// Verify a window copied from the mission's one canonical timeline.
     /// The checker owns no live journal or checkpoint ring; its background job
     /// receives an immutable five-frame slice after the canonical commit.
-    pub fn check_after_commit(
-        &mut self,
-        host: &mut Host,
-        history: &RewindBuffer,
-        current_engine: &Engine,
-    ) {
+    pub fn check_after_commit(&mut self, history: &RewindBuffer, current_engine: &Engine) {
         let end_start = Instant::now();
         self.frames_since_check += 1;
         self.perf.end_bookkeeping_us += end_start.elapsed().as_micros();
@@ -98,11 +92,6 @@ impl RollbackChecker {
 
         let check_start = Instant::now();
         self.reap_worker();
-        // Replay starts from the oldest snapshot. The live `host` remains in
-        // this compatibility signature only for caller API parity; the worker
-        // reconstructs the serialized Engine directly from complete recorded
-        // SimulationFrameInputs and explicitly discards typed host output.
-        let _ = host;
         if self.worker.is_some() {
             tracing::debug!(
                 target: "robin_rs::rollback_checker::perf",

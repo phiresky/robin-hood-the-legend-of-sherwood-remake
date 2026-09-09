@@ -62,14 +62,13 @@ enum BodyFont {
 
 /// What happened when the player dismissed the debriefing window.
 ///
-/// `Ok { text_remaining }` is always empty for [`show_debriefing`]
-/// callers — the complete body is available through scrolling.
+/// `Ok` completes the flow; the complete body is available through scrolling.
 ///
 /// `LoadAttempt`: the player clicked the Load button.  The caller is
 /// expected to run the save-load picker; if a slot is selected it
 /// should queue the load, and if the picker is cancelled it must
 /// re-enter the debriefing via [`show_debriefing`] passing
-/// `body_remaining` for `body` and the same `stat`, with
+/// `body` for `body` and the same `stat`, with
 /// `start_at_stat` set to `was_on_stat` so the same page the player
 /// was looking at when they clicked Load is re-shown.
 ///
@@ -79,32 +78,26 @@ enum BodyFont {
 /// loop can propagate `GameCode::Quit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebriefingOutcome {
-    Ok {
-        text_remaining: String,
-    },
+    Ok,
     Restart,
     LoadAttempt {
         /// The body text the player was viewing when they clicked
         /// Load.  Used by the caller to re-enter `show_debriefing` if
         /// the picker is cancelled — feed this back as the new `body`.
-        body_remaining: String,
+        body: String,
         /// `true` if Load was clicked from the stat panel rather than
         /// the body page.  On picker cancel, the caller passes this
-        /// back as `start_at_stat` so the body pagination is skipped
+        /// back as `start_at_stat` so the body page is skipped
         /// and the stat panel is the first thing shown again.
         was_on_stat: bool,
     },
     EmergencyEnd,
 }
 
-/// Per-page outcome from [`show_one_page`].  The Load button click is
-/// surfaced as `LoadClicked` so the surrounding pagination loop in
-/// [`show_debriefing`] can run the save-game picker and then either
-/// propagate a real [`DebriefingOutcome::Load`] (slot picked) or
-/// continue the loop (picker cancelled).
+/// Outcome of one scrollable body or statistics page.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PageOutcome {
-    Ok { text_remaining: String },
+    Ok,
     Restart,
     LoadClicked,
     EmergencyEnd,
@@ -120,15 +113,14 @@ fn debriefing_title(resources: &IngameMenuResources, won: bool) -> String {
     resources.menu_text.get(id)
 }
 
-/// Display the debriefing window, paginating through the body text.
+/// Display the debriefing window.
 ///
-///   1. Render the body text, paging on overflow until the body is
-///      exhausted.
+///   1. Render the complete, scrollable body text.
 ///   2. If the player didn't click Load, render the mission stat
 ///      panel as a follow-up page.
 ///
 /// When `stat` is `Some`, the stat panel is shown as a follow-up page
-/// after the body pagination completes (and only if Load wasn't
+/// after the body page completes (and only if Load wasn't
 /// clicked).  Pass `None` to skip the stat panel — the cheat path
 /// that displays the full debriefing vector doesn't render the stat
 /// panel, so that caller passes `None`.
@@ -151,7 +143,7 @@ pub async fn show_debriefing(
     // short-circuit to "skip body, show stat" instead of queueing a
     // no-op load request.
     restart_snapshot_exists: bool,
-    // When `true`, skip the body pagination and start with the stat
+    // When `true`, skip the body page and start with the stat
     // panel.  Used by the caller to resume after a cancelled Load
     // picker on the stat phase, so the player stays on the page that
     // was visible when Load was clicked.
@@ -189,11 +181,9 @@ enum DebriefingPhase {
 
 /// One-frame state for a full debriefing flow: scrollable body text
 /// followed by an optional mission-stat page.
-// TODO: Retire legacy remainder bookkeeping after scripted debriefing callers
-// no longer depend on the pagination-shaped outcome interface.
 pub struct DebriefingModalState {
     title: String,
-    remaining: String,
+    body: String,
     stat_text: Option<String>,
     phase: DebriefingPhase,
     restart_allowed: bool,
@@ -219,7 +209,7 @@ impl DebriefingModalState {
             stat.map(|s| format_mission_stat_text(s, mission_length_seconds, &resources.menu_text));
         Self {
             title: debriefing_title(resources, won),
-            remaining: body,
+            body,
             stat_text,
             phase: if start_at_stat {
                 DebriefingPhase::Stat
@@ -234,7 +224,7 @@ impl DebriefingModalState {
     }
 
     /// Scripted replay batches begin on the body and await one recorded result;
-    /// physical buttons must not paginate or finish them ahead of that result.
+    /// physical buttons must not advance or finish them ahead of that result.
     pub(crate) fn render_scripted_replay_wait(
         &mut self,
         event_pump: &mut crate::window::GameWindow,
@@ -252,7 +242,7 @@ impl DebriefingModalState {
                 renderer,
                 resources,
                 self.title.clone(),
-                self.remaining.clone(),
+                self.body.clone(),
                 self.restart_allowed,
                 self.restart_snapshot_exists,
                 BodyFont::PopupScroll,
@@ -280,7 +270,7 @@ impl DebriefingModalState {
                         renderer,
                         resources,
                         self.title.clone(),
-                        self.remaining.clone(),
+                        self.body.clone(),
                         self.restart_allowed,
                         self.restart_snapshot_exists,
                         BodyFont::PopupScroll,
@@ -292,32 +282,12 @@ impl DebriefingModalState {
                     .as_mut()
                     .and_then(|page| page.tick(event_pump, renderer, resources, cursor));
                 let outcome = outcome?;
-                self.current_page = None;
-                match outcome {
-                    PageOutcome::Ok { text_remaining } => {
-                        if text_remaining.is_empty() || text_remaining == self.remaining {
-                            self.phase = DebriefingPhase::Stat;
-                        } else {
-                            self.remaining = text_remaining;
-                        }
-                    }
-                    PageOutcome::Restart => return Some(DebriefingOutcome::Restart),
-                    PageOutcome::LoadClicked => {
-                        return Some(DebriefingOutcome::LoadAttempt {
-                            body_remaining: self.remaining.clone(),
-                            was_on_stat: false,
-                        });
-                    }
-                    PageOutcome::EmergencyEnd => return Some(DebriefingOutcome::EmergencyEnd),
-                }
-                None
+                self.finish_page(outcome)
             }
             DebriefingPhase::Stat => {
                 let Some(stat_text) = self.stat_text.clone() else {
                     self.phase = DebriefingPhase::Done;
-                    return Some(DebriefingOutcome::Ok {
-                        text_remaining: String::new(),
-                    });
+                    return Some(DebriefingOutcome::Ok);
                 };
                 if self.current_page.is_none() {
                     self.current_page = Some(DebriefingPageState::new(
@@ -337,23 +307,31 @@ impl DebriefingModalState {
                     .as_mut()
                     .and_then(|page| page.tick(event_pump, renderer, resources, cursor));
                 let outcome = outcome?;
-                self.current_page = None;
-                match outcome {
-                    PageOutcome::Ok { .. } => self.phase = DebriefingPhase::Done,
-                    PageOutcome::Restart => return Some(DebriefingOutcome::Restart),
-                    PageOutcome::LoadClicked => {
-                        return Some(DebriefingOutcome::LoadAttempt {
-                            body_remaining: self.remaining.clone(),
-                            was_on_stat: true,
-                        });
-                    }
-                    PageOutcome::EmergencyEnd => return Some(DebriefingOutcome::EmergencyEnd),
-                }
+                self.finish_page(outcome)
+            }
+            DebriefingPhase::Done => Some(DebriefingOutcome::Ok),
+        }
+    }
+
+    /// Settle one actual scrollable page. The body is never consumed in pieces:
+    /// keep it intact so cancelling Load can reconstruct the same phase.
+    fn finish_page(&mut self, outcome: PageOutcome) -> Option<DebriefingOutcome> {
+        self.current_page = None;
+        match outcome {
+            PageOutcome::Ok => {
+                self.phase = match self.phase {
+                    DebriefingPhase::Body => DebriefingPhase::Stat,
+                    DebriefingPhase::Stat => DebriefingPhase::Done,
+                    DebriefingPhase::Done => unreachable!("completed debriefing has no page"),
+                };
                 None
             }
-            DebriefingPhase::Done => Some(DebriefingOutcome::Ok {
-                text_remaining: String::new(),
+            PageOutcome::Restart => Some(DebriefingOutcome::Restart),
+            PageOutcome::LoadClicked => Some(DebriefingOutcome::LoadAttempt {
+                body: self.body.clone(),
+                was_on_stat: matches!(self.phase, DebriefingPhase::Stat),
             }),
+            PageOutcome::EmergencyEnd => Some(DebriefingOutcome::EmergencyEnd),
         }
     }
 }
@@ -542,7 +520,6 @@ struct DebriefingPageState {
     frame: FrameWnd,
     input_state: ModalInputState,
     tooltip: TooltipState,
-    text_remaining: String,
     scroll_line: usize,
     scroll_drag_offset: Option<i32>,
 }
@@ -642,7 +619,6 @@ impl DebriefingPageState {
             frame,
             input_state,
             tooltip: TooltipState::new(),
-            text_remaining: String::new(),
             scroll_line: 0,
             scroll_drag_offset: None,
         }
@@ -744,9 +720,7 @@ impl DebriefingPageState {
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    outcome = Some(PageOutcome::Ok {
-                        text_remaining: self.text_remaining.clone(),
-                    });
+                    outcome = Some(PageOutcome::Ok);
                 }
                 GameEvent::KeyDown { physical_key, .. } if physical_key == self.quick_load_key => {
                     outcome = Some(PageOutcome::LoadClicked);
@@ -760,9 +734,7 @@ impl DebriefingPageState {
         self.input_state.end_frame();
         if let Some(id) = widget_bridge::find_activated(&events) {
             outcome = Some(match id {
-                BTN_OK => PageOutcome::Ok {
-                    text_remaining: self.text_remaining.clone(),
-                },
+                BTN_OK => PageOutcome::Ok,
                 BTN_RESTART => {
                     if self.restart_snapshot_exists {
                         PageOutcome::Restart
@@ -771,15 +743,11 @@ impl DebriefingPageState {
                             "Debriefing Restart clicked but no restart snapshot exists; \
                              falling through to stat panel"
                         );
-                        PageOutcome::Ok {
-                            text_remaining: String::new(),
-                        }
+                        PageOutcome::Ok
                     }
                 }
                 BTN_LOAD => PageOutcome::LoadClicked,
-                _ => PageOutcome::Ok {
-                    text_remaining: String::new(),
-                },
+                _ => PageOutcome::Ok,
             });
         }
 
@@ -845,7 +813,6 @@ impl DebriefingPageState {
                 );
             }
             // Scrolling exposes the complete body; OK advances to statistics.
-            self.text_remaining.clear();
             if lines.len() > visible {
                 widget_bridge::draw_listbox_scrollbar(
                     renderer,
@@ -889,6 +856,66 @@ fn scroll_line_at_pointer(y: i32, grab_offset: i32, total: usize, visible: usize
 mod tests {
     use super::*;
 
+    fn flow(body: &str) -> DebriefingModalState {
+        DebriefingModalState {
+            title: String::new(),
+            body: body.into(),
+            stat_text: Some("statistics".into()),
+            phase: DebriefingPhase::Body,
+            restart_allowed: true,
+            restart_snapshot_exists: true,
+            active_quick_load: None,
+            current_page: None,
+        }
+    }
+
+    #[test]
+    fn scrollable_body_advances_once_then_statistics_complete() {
+        let body = "long body\n".repeat(100);
+        let mut state = flow(&body);
+        assert_eq!(state.finish_page(PageOutcome::Ok), None);
+        assert!(matches!(state.phase, DebriefingPhase::Stat));
+        assert_eq!(state.body, body);
+        assert_eq!(state.finish_page(PageOutcome::Ok), None);
+        assert!(matches!(state.phase, DebriefingPhase::Done));
+    }
+
+    #[test]
+    fn load_attempt_preserves_complete_body_and_resume_phase() {
+        let mut state = flow("first line\nlast line");
+        for was_on_stat in [false, true] {
+            assert_eq!(
+                state.finish_page(PageOutcome::LoadClicked),
+                Some(DebriefingOutcome::LoadAttempt {
+                    body: "first line\nlast line".into(),
+                    was_on_stat,
+                })
+            );
+            // Cancelling the picker does not consume any body text or phase.
+            assert_eq!(matches!(state.phase, DebriefingPhase::Stat), was_on_stat);
+            state.finish_page(PageOutcome::Ok);
+        }
+    }
+
+    #[test]
+    fn restart_and_emergency_end_do_not_advance_the_page() {
+        for phase in [DebriefingPhase::Body, DebriefingPhase::Stat] {
+            let mut state = flow("body");
+            state.phase = phase;
+            let was_on_stat = matches!(state.phase, DebriefingPhase::Stat);
+            assert_eq!(
+                state.finish_page(PageOutcome::Restart),
+                Some(DebriefingOutcome::Restart)
+            );
+            assert_eq!(
+                state.finish_page(PageOutcome::EmergencyEnd),
+                Some(DebriefingOutcome::EmergencyEnd)
+            );
+            assert_eq!(matches!(state.phase, DebriefingPhase::Stat), was_on_stat);
+            assert_eq!(state.body, "body");
+        }
+    }
+
     #[test]
     fn scrollbar_drag_preserves_grab_position_and_reaches_both_ends() {
         let total = 100;
@@ -897,117 +924,6 @@ mod tests {
         assert_eq!(scroll_line_at_pointer(thumb_top + 8, 8, total, visible), 50);
         assert_eq!(scroll_line_at_pointer(-100, 8, total, visible), 0);
         assert_eq!(scroll_line_at_pointer(BODY_H + 100, 8, total, visible), 80);
-    }
-
-    /// The pagination control flow is the interesting part — exercise it
-    /// with a mock page-producer so we don't have to spin up a renderer.
-    ///   - keep feeding `text_remaining` back in until it's empty or
-    ///     identical to the input (defensive cycle break);
-    ///   - short-circuit on Load / Restart.
-    fn paginate<F>(body: &str, mut produce: F) -> PageOutcome
-    where
-        F: FnMut(&str) -> PageOutcome,
-    {
-        let mut remaining = body.to_string();
-        loop {
-            let outcome = produce(&remaining);
-            match outcome {
-                PageOutcome::Ok { text_remaining } => {
-                    if text_remaining.is_empty() || text_remaining == remaining {
-                        return PageOutcome::Ok {
-                            text_remaining: String::new(),
-                        };
-                    }
-                    remaining = text_remaining;
-                }
-                PageOutcome::Restart => return PageOutcome::Restart,
-                PageOutcome::LoadClicked => return PageOutcome::LoadClicked,
-                PageOutcome::EmergencyEnd => return PageOutcome::EmergencyEnd,
-            }
-        }
-    }
-
-    #[test]
-    fn pagination_short_circuits_on_emergency_end() {
-        let mut calls = 0;
-        let result = paginate("line1\nline2", |_| {
-            calls += 1;
-            PageOutcome::EmergencyEnd
-        });
-        assert_eq!(result, PageOutcome::EmergencyEnd);
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
-    fn pagination_exhausts_overflow() {
-        // Three-page body: each page hands back the next page's text.
-        let pages = std::cell::RefCell::new(vec![
-            "page 2\npage 3".to_string(),
-            "page 3".to_string(),
-            String::new(),
-        ]);
-        let mut visited = Vec::new();
-        let result = paginate("page 1\npage 2\npage 3", |input| {
-            visited.push(input.to_string());
-            let next = pages.borrow_mut().remove(0);
-            PageOutcome::Ok {
-                text_remaining: next,
-            }
-        });
-        assert_eq!(
-            result,
-            PageOutcome::Ok {
-                text_remaining: String::new()
-            }
-        );
-        assert_eq!(visited.len(), 3);
-        assert_eq!(visited[0], "page 1\npage 2\npage 3");
-        assert_eq!(visited[1], "page 2\npage 3");
-        assert_eq!(visited[2], "page 3");
-    }
-
-    #[test]
-    fn pagination_short_circuits_on_load_clicked() {
-        let mut calls = 0;
-        let result = paginate("line1\nline2", |_| {
-            calls += 1;
-            PageOutcome::LoadClicked
-        });
-        assert_eq!(result, PageOutcome::LoadClicked);
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
-    fn pagination_short_circuits_on_restart() {
-        let mut calls = 0;
-        let result = paginate("line1\nline2", |_| {
-            calls += 1;
-            PageOutcome::Restart
-        });
-        assert_eq!(result, PageOutcome::Restart);
-        assert_eq!(calls, 1);
-    }
-
-    #[test]
-    fn pagination_breaks_on_identical_remainder() {
-        // If `render_text_in_box` somehow hands back the same body (e.g.
-        // the box is too small for even one line), the defensive
-        // `text_remaining == remaining` guard must stop the loop so we
-        // don't spin forever.
-        let mut calls = 0;
-        let result = paginate("single page", |input| {
-            calls += 1;
-            PageOutcome::Ok {
-                text_remaining: input.to_string(),
-            }
-        });
-        assert_eq!(
-            result,
-            PageOutcome::Ok {
-                text_remaining: String::new()
-            }
-        );
-        assert_eq!(calls, 1);
     }
 
     #[test]
@@ -1150,23 +1066,5 @@ mod tests {
         };
         let text = format_mission_stat_text(&stat, 0, &menu_text);
         assert!(text.contains("Robin des bois"));
-    }
-
-    #[test]
-    fn pagination_stops_immediately_on_empty_remainder() {
-        let mut calls = 0;
-        let result = paginate("short text", |_| {
-            calls += 1;
-            PageOutcome::Ok {
-                text_remaining: String::new(),
-            }
-        });
-        assert_eq!(
-            result,
-            PageOutcome::Ok {
-                text_remaining: String::new()
-            }
-        );
-        assert_eq!(calls, 1);
     }
 }
