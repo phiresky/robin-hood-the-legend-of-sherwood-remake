@@ -41,8 +41,16 @@ Every distinct URL supplied in the conversation has a record. The two GameFAQs U
 
 ## Follow-up research pass
 
-Added fourteen records covering further English, French, German, Russian, and Czech material: reviews, Mac and MorphOS experiences, a historical patch, general tactics, a walkthrough continuation, speedrunning, recording problems, and academic reception. The collection now has 59 source records.
+Added fourteen records covering further English, French, German, Russian, and Czech material: reviews, Mac and MorphOS experiences, a historical patch, general tactics, a walkthrough continuation, speedrunning, recording problems, and academic reception. That pass brought the collection to 59 source records.
 
 Substantial indexed text recovered for [iDNES part 1](reference/idnes-walkthrough.md) replaces its earlier title-only entry; [part 2](guides/idnes-part-2.md) is now separately documented. Part 3 still needs readable article text.
 
 Further leads located but not substantively inspected include the [German manual PDF](https://www.mogelpower.de/manuals/Robin_Hood_Die_Legende_von_Sherwood_Handbuch.pdf), the [Gameswelt December 2002 article archive](https://www.gameswelt.de/archiv/artikel/2002-12), and a [Filmweb retrospective by Mariusz Kruk](https://www.filmweb.pl/reviews/recenzja-gry-Robin%2BHood%3A%2BLegenda%2BSherwood-23254). These are discovery links, not completed source records.
+
+## Additional languages and contemporary coverage
+
+Added eleven records, bringing the collection to 70. Searches now also cover Chinese, Japanese, and Turkish. New material includes a Chinese magazine campaign guide, Turkish magazine coverage, a Japanese review of the English build, a Chinese demo listing, additional European and English reviews, and German controls documentation.
+
+The [Sina guide titled 《侠盗罗宾汉》官方全攻略](https://games.sina.com.cn/handbook/0302/022112208.shtml) was located, but direct retrieval failed and only a short combat excerpt was readable. Its title's claim to be official remains unverified. [Computer Gaming World issue 226](https://www.cgwmuseum.org/galleries/issues/cgw_226.pdf) also surfaced through indexed material; the original review pages still need inspection. Neither lead is counted as a completed record.
+
+The [Chinese demo listing](history/gamersky-demo.md) labels its interface Chinese, while the [Japanese review](reviews/4gamer-japanese.md) explicitly tests English software before the planned local release. Keep article language, listing metadata, and verified build language separate. Turkish preview specifications are prerelease reporting, not confirmed engine measurements.
