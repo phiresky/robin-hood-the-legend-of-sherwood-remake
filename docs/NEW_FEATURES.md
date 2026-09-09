@@ -7,6 +7,10 @@ A list of which additional features we have added, which ones we might still wan
 - **Custom mission pane scrolling:** The mission list and wrapped mission details
   scroll independently under the pointer. Both show draggable scrollbars when
   their content overflows; selecting another mission resets its details to the top.
+  A shared scroll view also powers Campaign Manager’s Hall of Deeds, Achievements,
+  mission details, and Previous Plays, with a horizontal scrollbar for Campaign.
+  Scrolling preserves selection; keyboard navigation reveals the selected mission.
+  All scrollbars reuse the original menu artwork.
 
 - **Language-independent audio timing.** The required core-datadir
   `Data/AudioDurations.json` supplies English speech variants and sample

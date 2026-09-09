@@ -904,6 +904,7 @@ async fn dispatch_click(
                 menu_resources,
                 ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0),
                 &mods_root,
+                application_context.preparation_files()?,
             )
             .await
             .map(MainMenuChoice::CustomMission)

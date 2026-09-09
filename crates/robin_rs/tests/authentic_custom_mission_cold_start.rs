@@ -505,7 +505,9 @@ fn installed_corpus_matches_picker_layout_and_passes_production_loader_and_vm() 
     }
 
     let discovered = scan_mods_dir(&mods_root);
-    let actual_rows = enumerate_missions(&discovered)
+    let files =
+        robin_engine::sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+    let actual_rows = enumerate_missions(&discovered, &files)
         .into_iter()
         .filter(|entry| !entry.hackable)
         .map(|entry| {

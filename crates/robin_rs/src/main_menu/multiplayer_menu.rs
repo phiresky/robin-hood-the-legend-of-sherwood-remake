@@ -1394,7 +1394,12 @@ fn mission_choices(
             mods.extend(crate::mod_pack::scan_mods_dir(&overlay_root));
             mods.sort_by(|a, b| a.details.title.cmp(&b.details.title));
         }
-        for entry in crate::mod_pack::enumerate_missions(&mods) {
+        for entry in crate::mod_pack::enumerate_missions(
+            &mods,
+            application_context
+                .preparation_files()
+                .expect("multiplayer mission discovery requires initialized application files"),
+        ) {
             let crate::mod_pack::MissionStatus::Ok { map_filename } = &entry.status else {
                 continue;
             };

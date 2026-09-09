@@ -32,9 +32,29 @@ use robin_engine::sprite::BBox;
 
 use super::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, BTN_STATE_SELECTED,
-    MenuTransform, draw_background,
+    MenuTransform,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
+
+/// Shared thumb geometry for the artwork renderer and scroll-view hit testing.
+/// The top is relative to the track. Keep the original listbox ratio mapping.
+pub(crate) fn listbox_scrollbar_thumb(
+    track_h: i32,
+    offset: usize,
+    visible: usize,
+    total: usize,
+    min_height: i32,
+) -> (i32, i32) {
+    assert!(total > 0, "scrollbar geometry requires content");
+    let before = (offset as f32 / total as f32).clamp(0.0, 1.0);
+    let ratio = (visible as f32 / total as f32).clamp(0.0, 1.0);
+    let usable = (track_h - 2).max(0) as f32;
+    let top = 1 + (usable * before) as i32;
+    let bottom = 1 + (usable * (before + ratio)) as i32;
+    // TODO: Coordinate minimum-thumb travel with legacy listbox drag handlers
+    // so very large lists also keep the entire minimum-size thumb in the track.
+    (top, (bottom - top).max(min_height))
+}
 
 /// Draw an in-game listbox scrollbar from its three-slice track and
 /// three-slice thumb resources.
@@ -55,7 +75,52 @@ pub fn draw_listbox_scrollbar(
     visible_rows: usize,
     total_rows: usize,
 ) {
-    let slices = &resources.list_scrollbar;
+    draw_scrollbar_slices(
+        renderer,
+        transform,
+        &resources.list_scrollbar,
+        track_x,
+        track_y,
+        track_w,
+        track_h,
+        scroll_offset,
+        visible_rows,
+        total_rows,
+        false,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_scrollbar_slices(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    slices: &[Option<MenuSurface>; 6],
+    track_x: i32,
+    track_y: i32,
+    track_w: i32,
+    track_h: i32,
+    scroll_offset: usize,
+    visible_rows: usize,
+    total_rows: usize,
+    horizontal: bool,
+) {
+    let draw_background = |renderer: &mut Renderer,
+                           transform: MenuTransform,
+                           surface: &MenuSurface,
+                           x: i32,
+                           y: i32,
+                           w: i32,
+                           h: i32| {
+        if horizontal {
+            let (sx, sy) = transform.to_screen(track_x + y - track_y, track_y + x - track_x);
+            let dst = BBox::from_coords(sx as f32, sy as f32, (sx + h) as f32, (sy + w) as f32);
+            renderer
+                .draw_surface_rotated_ccw(surface.id, &dst)
+                .expect("live horizontal scrollbar surface");
+        } else {
+            super::layout::draw_background(renderer, transform, surface, x, y, w, h);
+        }
+    };
     let (Some(back_start), Some(back_fill), Some(back_end)) = (slices[0], slices[1], slices[2])
     else {
         return;
@@ -93,13 +158,14 @@ pub fn draw_listbox_scrollbar(
         end_h,
     );
 
-    let total = total_rows.max(1) as f32;
-    let before_ratio = (scroll_offset as f32 / total).clamp(0.0, 1.0);
-    let knob_ratio = (visible_rows as f32 / total).clamp(0.0, 1.0);
-    let usable = (track_h - 2).max(0) as f32;
-    let thumb_top = track_y + 1 + (usable * before_ratio) as i32;
-    let thumb_bot = track_y + 1 + (usable * (before_ratio + knob_ratio)) as i32;
-    let thumb_h = (thumb_bot - thumb_top).max(thumb_start.height + thumb_end.height);
+    let (thumb_top, thumb_h) = listbox_scrollbar_thumb(
+        track_h,
+        scroll_offset,
+        visible_rows,
+        total_rows,
+        thumb_start.height + thumb_end.height,
+    );
+    let thumb_top = track_y + thumb_top;
 
     let thumb_start_h = thumb_start.height.min(thumb_h);
     let thumb_end_h = thumb_end.height.min(thumb_h - thumb_start_h);
