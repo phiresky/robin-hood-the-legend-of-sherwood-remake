@@ -1945,12 +1945,24 @@ mod tests {
         };
         let error = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect_err("single-button popup cannot restart a mission");
-        assert_eq!(
-            error.kind,
-            crate::http_server::RpcErrorKind::InvalidRequest
-        );
+        assert_eq!(error.kind, crate::http_server::RpcErrorKind::InvalidRequest);
         assert!(error.to_string().contains("cannot accept result"));
         assert_eq!(host.effects.popup_text_count(), 1);
+    }
+
+    #[test]
+    fn empty_history_is_an_unavailable_rpc_capability_without_mutation() {
+        let (assets, mut manager, mut host, _dev, _game, mut timeline) = stepping_fixture(None);
+        let before = manager.engine.encode_native_snapshot();
+        let error = rewind_to_frame_rpc(&mut manager, &mut host, &assets, &mut timeline, 0)
+            .expect_err("no history has been retained");
+        assert_eq!(
+            error.kind,
+            crate::http_server::RpcErrorKind::UnavailableCapability
+        );
+        assert_eq!(error.to_string(), "rewind buffer empty");
+        assert_eq!(timeline.frame_number(), 0);
+        assert_eq!(manager.engine.encode_native_snapshot(), before);
     }
 
     #[test]
@@ -1982,7 +1994,7 @@ mod tests {
             "the recorded input must remain authoritative"
         );
 
-        let error = run_forward_ticks(
+        let error = run_forward_ticks_with_session_modals(
             &mut manager,
             &mut host,
             &assets,
@@ -1991,11 +2003,16 @@ mod tests {
             &mut timeline,
             1,
             &mut modal_policy,
+            None,
         )
         .expect_err("replay EOF must refuse a synthetic live frame");
 
         assert_eq!(
-            error,
+            error.kind,
+            crate::http_server::RpcErrorKind::UnavailableCapability
+        );
+        assert_eq!(
+            error.to_string(),
             "cannot step replay at timeline frame 1: replay is finished at ordinal 1 of 1"
         );
         assert_eq!(timeline.frame_number(), 1);
