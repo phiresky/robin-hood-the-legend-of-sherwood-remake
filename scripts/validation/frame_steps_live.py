@@ -30,11 +30,14 @@ def main():
     parser.add_argument("--graphical-replay", action="store_true")
     parser.add_argument("--bootstrap-probe", action="store_true", help="pause playback before admission and retain actual engine state")
     parser.add_argument("--save-load", action="store_true", help="exercise native quicksave/load-back before exporting")
+    parser.add_argument("--capture-isolation", action="store_true", help="verify repeated full-map captures preserve paused live rendering and state")
     args = parser.parse_args()
     if args.save_load and args.replay_file:
         parser.error("--save-load requires a fresh live recording")
     if args.save_load and args.bootstrap_probe:
         parser.error("--save-load requires complete playback, not a bootstrap probe")
+    if args.capture_isolation and (args.replay_file or args.bootstrap_probe):
+        parser.error("--capture-isolation requires a fresh live session and complete playback")
     binary = args.binary.resolve(strict=True)
     data = args.data.resolve(strict=True)
     evidence = args.evidence.resolve()
@@ -169,6 +172,13 @@ def main():
                 (evidence / "client_x11.py").write_bytes(Path(__file__).with_name("client_x11.py").read_bytes())
                 exercise_save_load(request, wait, display, evidence, summary)
             summary["live_state"] = request("/state")
+            if args.capture_isolation:
+                from capture_live import exercise_capture
+                (evidence / "capture_live.py").write_bytes(Path(__file__).with_name("capture_live.py").read_bytes())
+                def capture(query):
+                    with urllib.request.urlopen("http://127.0.0.1:7782/screenshot?" + query, timeout=60) as response:
+                        return response.read()
+                exercise_capture(request, capture, evidence, summary)
             with urllib.request.urlopen("http://127.0.0.1:7782/screenshot", timeout=30) as response:
                 screenshot = response.read()
             assert screenshot.startswith(b"\x89PNG\r\n\x1a\n")

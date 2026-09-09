@@ -176,7 +176,7 @@ impl Drop for ApplicationServices {
 
 /// Explicit application-owned configuration and persistence context.
 ///
-/// `CliArgs` initially carries a bootstrap context containing only parsed
+/// `MissionLaunch` initially carries a bootstrap context containing only parsed
 /// options. `rust_init` supplies the required profile/key/shipping services
 /// before an async game loop begins. Service accessors take snapshots while
 /// holding a lock and return owned data, so no lock guard can cross an
@@ -799,9 +799,8 @@ impl ApplicationContext {
         Ok(read(&profiles))
     }
 
-    /// Infallible in-memory update. A returned value (including a persistence
-    /// receipt) is not a transaction decision: use `try_update_player_profiles`
-    /// when callback errors must discard the staged mutation.
+    /// Infallible in-memory update. Callbacks only edit the staged value;
+    /// use an explicit persistence operation below to write it to storage.
     pub(crate) fn with_player_profiles_mut<R>(
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
@@ -816,13 +815,43 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> Result<R, String>,
     ) -> Result<R, String> {
+        self.update_profile_state(ProfilePersistence::MemoryOnly, update)
+            .map(|publication| publication.value)
+    }
+
+    /// Validate before writing. A failure before publication discards the
+    /// mutation; an already-visible replacement is published in memory too,
+    /// with its durability error preserved in the returned receipt.
+    pub(crate) fn try_persist_player_profiles<R>(
+        &self,
+        update: impl FnOnce(&mut PlayerProfileManager) -> Result<R, String>,
+    ) -> Result<ProfilePublication<R>, String> {
+        self.update_profile_state(ProfilePersistence::RequirePublication, update)
+    }
+
+    /// Validate and retain the change even if storage fails. The caller must
+    /// surface the receipt's error; subsequent profile saves retry this state.
+    pub(crate) fn update_and_retain_player_profiles<R>(
+        &self,
+        update: impl FnOnce(&mut PlayerProfileManager) -> R,
+    ) -> Result<ProfilePublication<R>, String> {
+        self.update_profile_state(ProfilePersistence::RetainOnFailure, |profiles| {
+            Ok(update(profiles))
+        })
+    }
+
+    fn update_profile_state<R>(
+        &self,
+        policy: ProfilePersistence,
+        update: impl FnOnce(&mut PlayerProfileManager) -> Result<R, String>,
+    ) -> Result<ProfilePublication<R>, String> {
         let mut profiles = self
             .required_services()?
             .player_profiles
             .lock()
             .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
-        // Lock before invoking user code, including callbacks that persist the
-        // staged profile. A poisoned configuration must not permit disk writes.
+        // No callback gets persistence authority. Both validation and I/O are
+        // owned here, with no opportunity to persist an unvalidated snapshot.
         let mut state = self
             .sim_config
             .lock()
@@ -830,9 +859,24 @@ impl ApplicationContext {
         let mut staged = profiles.clone();
         let result = update(&mut staged)?;
         let next = profile_derived_state(&staged, &state)?;
+        let persistence = match policy {
+            ProfilePersistence::MemoryOnly => Ok(()),
+            ProfilePersistence::RequirePublication | ProfilePersistence::RetainOnFailure => {
+                self.required_services()?.profile_store.save(&staged)
+            }
+        };
+        if matches!(policy, ProfilePersistence::RequirePublication)
+            && let Err(error) = &persistence
+            && !profile_publication_visible(error)
+        {
+            return Err(format!("persist player profiles: {error}"));
+        }
         *profiles = staged;
         *state = next;
-        Ok(result)
+        Ok(ProfilePublication {
+            value: result,
+            persistence: persistence.map_err(|error| error.to_string()),
+        })
     }
 
     /// Replace the auto-created first-launch placeholder and its parallel key
@@ -960,14 +1004,21 @@ impl ApplicationContext {
         Ok(profile_id)
     }
 
-    pub(crate) fn persist_player_profiles(
-        &self,
-        profiles: &PlayerProfileManager,
-    ) -> std::io::Result<()> {
-        self.required_services()
-            .map_err(std::io::Error::other)?
-            .profile_store
-            .save(profiles)
+    /// Retry the current validated profile state, including retained changes.
+    pub(crate) fn save_player_profiles(&self) -> Result<ProfilePublication<()>, String> {
+        self.with_player_profiles(|profiles| {
+            profiles
+                .validate_archive()
+                .map_err(|error| format!("invalid player profiles: {error}"))?;
+            Ok(ProfilePublication {
+                value: (),
+                persistence: self
+                    .required_services()?
+                    .profile_store
+                    .save(profiles)
+                    .map_err(|error| error.to_string()),
+            })
+        })?
     }
 
     /// Profile metadata is the commit point. Save quarantine is reversible
@@ -1016,16 +1067,7 @@ impl ApplicationContext {
             ));
         }
         if let Err(error) = services.profile_store.save(&staged) {
-            #[cfg(not(target_arch = "wasm32"))]
-            let published = error
-                .get_ref()
-                .and_then(|error| {
-                    error.downcast_ref::<crate::desktop_persistence::PublicationFailure>()
-                })
-                .is_some_and(|failure| failure.published());
-            #[cfg(target_arch = "wasm32")]
-            let published = false;
-            if !published {
+            if !profile_publication_visible(&error) {
                 let restored = services.profile_store.restore_profile_saves(id);
                 return Err(format!(
                     "persist player deletion: {error}; restore={restored:?}"
@@ -1275,6 +1317,45 @@ impl ApplicationContext {
         self.services.as_deref().ok_or_else(|| {
             "ApplicationContext services requested before rust initialization".to_string()
         })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[must_use = "profile persistence failures must be surfaced or explicitly handled"]
+pub(crate) struct ProfilePublication<R> {
+    pub(crate) value: R,
+    pub(crate) persistence: Result<(), String>,
+}
+
+impl<R> ProfilePublication<R> {
+    pub(crate) fn log_persistence_error(self, context: &str) -> R {
+        if let Err(error) = self.persistence {
+            tracing::error!("{context}: {error}; profile changes retained in memory for retry");
+        }
+        self.value
+    }
+}
+
+enum ProfilePersistence {
+    MemoryOnly,
+    RequirePublication,
+    RetainOnFailure,
+}
+
+fn profile_publication_visible(error: &std::io::Error) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        error
+            .get_ref()
+            .and_then(|error| {
+                error.downcast_ref::<crate::desktop_persistence::PublicationFailure>()
+            })
+            .is_some_and(|failure| failure.published())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = error;
+        false
     }
 }
 

@@ -481,6 +481,14 @@ impl EngineInner {
         self.dispatch_ai_stimulus(npc_id, stimulus);
         self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
 
+        // This FIFO was detached during the synchronous call, so deletion's
+        // owner hooks could not reach it. Do not restore newly stale targets.
+        preexisting.retain(|stimulus| {
+            stimulus
+                .info
+                .live_target()
+                .is_none_or(|target| self.world.entities.get_legacy_slot(target.get()).is_some())
+        });
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
                 "synchronous Think lost NPC {} before restoring its stimulus FIFO",
@@ -538,6 +546,17 @@ impl EngineInner {
                 &stimulus,
                 &mut enemy_detection_tick_data,
             );
+            if stimulus
+                .info
+                .live_target()
+                .is_some_and(|target| self.world.entities.get_legacy_slot(target.get()).is_none())
+            {
+                // Consume the scan record first: pruning this local batch
+                // would shift the absolute queue indices used by the scan.
+                tracing::warn!(npc = npc_id.index(), info = ?stimulus.info,
+                    "dropping detached detection stimulus after its target left the live world");
+                continue;
+            }
             // The original game's decision tick is a synchronous boundary. Its completion (and any
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
@@ -557,7 +576,9 @@ impl EngineInner {
             {
                 // A preceding synchronous stimulus can kill/remove this
                 // target before the next queued detection stimulus runs.
-                // TODO: remove target-owned queued stimuli at deletion time.
+                // Entity removal prunes the controller-owned queues, but this
+                // batch has already been taken off the controller. Revalidate
+                // each delivery after its predecessor's synchronous callbacks.
                 tracing::warn!(
                     npc = npc_id.index(),
                     target = handle.get(),

@@ -3,7 +3,7 @@
 //! This is the live counterpart to cold restoration: selection supplies one
 //! explicit installed locator or one canonical distributed-mod envelope, and
 //! this module turns the exact admitted bytes into the descriptor retained by
-//! `CliArgs`. No engine-facing path is reopened after this boundary.
+//! `MissionLaunch`. No engine-facing path is reopened after this boundary.
 
 use std::sync::Arc;
 

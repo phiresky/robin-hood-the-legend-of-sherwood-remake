@@ -98,6 +98,25 @@ pub struct SeatState {
 }
 
 impl SeatState {
+    /// Retire live UI references without changing unrelated selection order or
+    /// the seat's armed action. Disconnected seats must be cleaned too.
+    pub(crate) fn remove_entity(&mut self, id: EntityId) {
+        self.selection.retain(|&selected| selected != id);
+        for group in &mut self.quick_select_groups {
+            group.retain(|&member| member != id);
+        }
+        if self
+            .planned_shield_target
+            .is_some_and(|(actor, target)| actor == id || target == id)
+        {
+            self.planned_shield_target = None;
+        }
+        if self.follow_element == Some(id) {
+            self.follow_element = None;
+            self.locker_active = false;
+        }
+    }
+
     /// True if this seat currently has an attached player driving it.
     /// The host seat (index 0) is always considered active even
     /// without an explicit `ConnectSeat`, so single-player and

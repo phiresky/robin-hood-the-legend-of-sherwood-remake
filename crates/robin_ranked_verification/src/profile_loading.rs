@@ -11,8 +11,12 @@ use robin_engine::sbfile::{SB_FILE_READ, SbFileSystem};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileLoadError {
-    #[error("invalid JSON profile catalog {path}: {message}")]
-    Json { path: &'static str, message: String },
+    #[error("invalid JSON profile catalog {path}: {source}")]
+    Json {
+        path: &'static str,
+        #[source]
+        source: robin_engine::profiles::ProfileJsonLoadError,
+    },
     #[error("cannot open legacy profile catalog {path}: file status {status}")]
     Open { path: &'static str, status: i32 },
     #[error("cannot decode legacy profile catalog {path}: {message}")]
@@ -34,10 +38,10 @@ pub fn load_profiles(
         {
             tracing::info!(path = json_path, "verifier loading JSON profile catalog");
             let mut profiles =
-                ProfileManager::load_json_with_files(json_path, files).map_err(|message| {
+                ProfileManager::load_json_with_files(json_path, files).map_err(|source| {
                     ProfileLoadError::Json {
                         path: json_path,
-                        message,
+                        source,
                     }
                 })?;
             profiles.import_beam_mes_with_files(&options.level_directory, files);
@@ -65,4 +69,25 @@ pub fn load_profiles(
     };
 
     Ok(profiles)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn verifier_keeps_profile_json_source_chain() {
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("Data/Configuration/profile.cpf.json", b"{ broken".to_vec())
+            .unwrap();
+        let files = SbFileSystem::new(vfs);
+        let error = load_profiles(&GlobalOptions::default(), &files).unwrap_err();
+        let error = crate::ranked_verifier::RankedVerifierLoadError::Profiles(error);
+        let catalog = error.source().unwrap();
+        assert!(catalog.is::<ProfileLoadError>());
+        let json = catalog.source().unwrap();
+        assert!(json.is::<robin_engine::profiles::ProfileJsonLoadError>());
+        assert!(json.source().unwrap().is::<serde_json::Error>());
+    }
 }

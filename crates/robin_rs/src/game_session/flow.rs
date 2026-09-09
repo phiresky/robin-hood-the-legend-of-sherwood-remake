@@ -20,7 +20,7 @@ pub(super) struct MissionServices<'a> {
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
-    pub(super) args: &'a crate::main_entry::CliArgs,
+    pub(super) args: &'a crate::main_entry::MissionLaunch,
 }
 
 /// Control returned by one interactive host-frame iteration.
@@ -925,7 +925,7 @@ fn plan_interactive_pacing(
     host: &Host,
     engine: &Engine,
     frame: &MissionFrame,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
 ) -> (u32, u64) {
     runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──

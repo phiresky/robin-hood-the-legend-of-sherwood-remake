@@ -11,13 +11,13 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
-use super::cli::{CliArgs, requested_replay_data};
+use super::cli::{MissionLaunch, requested_replay_data};
 
 type ReplayLaunch = (
     Campaign,
     usize,
     MissionLocation,
-    CliArgs,
+    MissionLaunch,
     u64,
     robin_engine::engine::SimConfig,
 );
@@ -58,7 +58,7 @@ fn replay_preparation_mode(value: Option<&str>) -> Result<bool, String> {
 /// same-package comparison. Interactive and multiplayer ordering is unchanged.
 #[cfg(target_arch = "wasm32")]
 pub fn start_browser_replay_preparation(
-    args: &CliArgs,
+    args: &MissionLaunch,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     context: crate::host::ReadyApplicationContext,
 ) -> Result<Option<BrowserReplayPreparation>, String> {
@@ -157,7 +157,7 @@ pub async fn run_rust_game_with_browser_preparation(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     context: crate::host::ReadyApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
     preparation: Option<BrowserReplayPreparation>,
 ) -> Result<i32, String> {
     let owner = (*context).clone();
@@ -196,7 +196,7 @@ pub async fn run_rust_game(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
 ) -> Result<i32, String> {
     run_rust_game_inner(window, campaign, profiles, application_context, args, None).await
 }
@@ -206,7 +206,7 @@ async fn run_rust_game_inner(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
     prepared_replay: Option<PreparedInitialReplay>,
 ) -> Result<i32, String> {
     let owner = (*application_context).clone();
@@ -238,7 +238,7 @@ async fn run_rust_game_active(
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
     prepared_replay: Option<PreparedInitialReplay>,
 ) -> Result<i32, String> {
     // Combine parsed launcher options with the services loaded by `rust_init`.
@@ -320,7 +320,7 @@ async fn run_rust_game_active(
     // `run_rust_game`), so we just spin on the pending-replay slot
     // while pumping window events. When a replay lands, its header
     // picks the mission, then we move the decoded replay into
-    // `CliArgs::replay_data` before `run_mission` so engine
+    // `MissionLaunch::replay_data` before `run_mission` so engine
     // construction can use the recording's RNG seed. Skips every
     // auto-start branch below (demo / sherwood / --replay / menu) by
     // design — the whole point is to let the JS side drive mission
@@ -947,7 +947,7 @@ pub async fn run_rust_game_headless(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
 ) -> Result<i32, String> {
     let owner = (*application_context).clone();
     let result = run_rust_game_headless_active(campaign, profiles, application_context, args).await;
@@ -958,7 +958,7 @@ async fn run_rust_game_headless_active(
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
 ) -> Result<i32, String> {
     let application_context: ApplicationContext = application_context
         .with_options(args.global_options.options().clone())
@@ -1116,10 +1116,10 @@ async fn wait_for_replay_command_headless(context: &ApplicationContext) -> Resul
 
 #[cfg(not(target_arch = "wasm32"))]
 fn prepare_direct_custom_mission_args(
-    args: &CliArgs,
+    args: &MissionLaunch,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-) -> Result<Option<CliArgs>, String> {
+) -> Result<Option<MissionLaunch>, String> {
     let Some(archive) = args.custom_mission.as_deref() else {
         return Ok(None);
     };
@@ -1160,10 +1160,10 @@ fn prepare_direct_custom_mission_args(
 
 #[cfg(target_arch = "wasm32")]
 fn prepare_direct_custom_mission_args(
-    args: &CliArgs,
+    args: &MissionLaunch,
     _profiles: &engine_profiles::ProfileManager,
     _application_context: &ApplicationContext,
-) -> Result<Option<CliArgs>, String> {
+) -> Result<Option<MissionLaunch>, String> {
     if args.custom_mission.is_some() {
         return Err(
             "--custom-mission filesystem paths are unavailable in browser builds; use canonical host-distributed content"

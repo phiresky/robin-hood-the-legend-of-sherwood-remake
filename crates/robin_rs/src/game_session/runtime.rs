@@ -2934,7 +2934,7 @@ mod tests {
             &engine,
             &assets,
         );
-        assert_eq!(timeline.replay.validity(), &RecordingValidity::Linear);
+        assert_eq!(timeline.replay.validity(), RecordingValidity::Linear);
         assert!(timeline.is_recording());
         assert!(!timeline.replay.has_sealed_header());
         assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);

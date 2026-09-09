@@ -70,9 +70,9 @@ impl FramePresentationInputs {
                 engine.initial_mission_night_color()
             },
             graphic_config,
-            view: host.frontend.viewport.view_position,
-            zoom: host.frontend.viewport.zoom_factor,
-            screen_size: host.frontend.viewport.screen_size,
+            view: host.viewport().view_position,
+            zoom: host.viewport().zoom_factor,
+            screen_size: host.viewport().screen_size,
             draw_order_ids: host.frontend.presentation.draw_order.ids.clone(),
         }
     }
@@ -208,8 +208,8 @@ pub(crate) fn render_fog_of_war(
         return;
     }
     let fog = engine.fog_of_war();
-    let view = host.frontend.viewport.view_position;
-    let zoom = host.frontend.viewport.zoom_factor;
+    let view = host.viewport().view_position;
+    let zoom = host.viewport().zoom_factor;
     let screen_width = renderer.screen_width() as i32;
     let world_height = (renderer.screen_height() as i32 - engine_api::PANNEL_HEIGHT as i32).max(0);
     let level_size = fog.level_size();
@@ -295,9 +295,7 @@ pub(crate) fn render_door_overlays(
         if pts.len() < 3 {
             return;
         }
-        host.frontend
-            .presentation
-            .draw_manager
+        host.draw_manager()
             .draw_alpha_polygon(renderer, pts, color, alpha);
     };
 
@@ -306,9 +304,7 @@ pub(crate) fn render_door_overlays(
             if pts.len() < 3 {
                 return;
             }
-            host.frontend
-                .presentation
-                .draw_manager
+            host.draw_manager()
                 .draw_alpha_polygon(renderer, pts, color, alpha);
         };
 
@@ -647,14 +643,10 @@ pub(crate) fn render_view_cone_overlay(
         let pos =
             dev.cheat_free_shadow_polygon_pos
                 .unwrap_or_else(|| engine_coordinates::WorldPoint3D {
-                    x: host.frontend.viewport.view_position.x
-                        + (host.frontend.viewport.screen_size.x
-                            / host.frontend.viewport.zoom_factor)
-                            * 0.5,
-                    y: host.frontend.viewport.view_position.y
-                        + (host.frontend.viewport.screen_size.y
-                            / host.frontend.viewport.zoom_factor)
-                            * 0.5,
+                    x: host.viewport().view_position.x
+                        + (host.viewport().screen_size.x / host.viewport().zoom_factor) * 0.5,
+                    y: host.viewport().view_position.y
+                        + (host.viewport().screen_size.y / host.viewport().zoom_factor) * 0.5,
                     z: 0.0,
                 });
         (
@@ -687,13 +679,12 @@ pub(crate) fn render_view_cone_overlay(
     // (engine/render.rs) — the UI panel at the bottom is excluded so the
     // overlay leaves the panel alone.
     let view_rect = engine_coordinates::MapBBox::from_coords(
-        host.frontend.viewport.view_position.x,
-        host.frontend.viewport.view_position.y,
-        host.frontend.viewport.view_position.x
-            + (host.frontend.viewport.screen_size.x - 1.0) / host.frontend.viewport.zoom_factor,
-        host.frontend.viewport.view_position.y
-            + (host.frontend.viewport.screen_size.y - PANNEL_HEIGHT + 1.0)
-                / host.frontend.viewport.zoom_factor,
+        host.viewport().view_position.x,
+        host.viewport().view_position.y,
+        host.viewport().view_position.x
+            + (host.viewport().screen_size.x - 1.0) / host.viewport().zoom_factor,
+        host.viewport().view_position.y
+            + (host.viewport().screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport().zoom_factor,
     );
 
     let alpha = params
@@ -729,7 +720,7 @@ pub(crate) fn render_view_cone_overlay(
         crate::shadow_polygon::render_darken_inside(
             renderer,
             &view_rect,
-            host.frontend.viewport.zoom_factor,
+            host.viewport().zoom_factor,
             &slice.polys,
             tint,
             alpha,
@@ -933,13 +924,12 @@ fn render_all_view_cones(
     }
 
     let view_rect = engine_coordinates::MapBBox::from_coords(
-        host.frontend.viewport.view_position.x,
-        host.frontend.viewport.view_position.y,
-        host.frontend.viewport.view_position.x
-            + (host.frontend.viewport.screen_size.x - 1.0) / host.frontend.viewport.zoom_factor,
-        host.frontend.viewport.view_position.y
-            + (host.frontend.viewport.screen_size.y - PANNEL_HEIGHT + 1.0)
-                / host.frontend.viewport.zoom_factor,
+        host.viewport().view_position.x,
+        host.viewport().view_position.y,
+        host.viewport().view_position.x
+            + (host.viewport().screen_size.x - 1.0) / host.viewport().zoom_factor,
+        host.viewport().view_position.y
+            + (host.viewport().screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport().zoom_factor,
     );
 
     let obstacles_view = engine.sight_obstacles(assets);
@@ -1028,7 +1018,7 @@ fn render_all_view_cones(
     crate::shadow_polygon::render_tinted_cones(
         renderer,
         &view_rect,
-        host.frontend.viewport.zoom_factor,
+        host.viewport().zoom_factor,
         &cones,
     );
 }
@@ -1078,15 +1068,15 @@ fn render_ground_mark_set(
     if ground_mark.is_empty() {
         return;
     }
-    let zoom = host.frontend.viewport.zoom_factor;
-    let screen_w = host.frontend.viewport.screen_size.x as i32;
-    let screen_h = host.frontend.viewport.screen_size.y as i32;
+    let zoom = host.viewport().zoom_factor;
+    let screen_w = host.viewport().screen_size.x as i32;
+    let screen_h = host.viewport().screen_size.y as i32;
 
     // The same shadow rendering used for entity shadows.
     let shadow_color = presentation.shadow_color;
     let shadow_level = host.frontend.resources.frame_holder().global_shadow();
 
-    let view_pos = host.frontend.viewport.view_position;
+    let view_pos = host.viewport().view_position;
 
     let per_frame_offsets = ground_mark.per_frame_offsets();
 
@@ -1828,8 +1818,8 @@ fn draw_map_cross(
 }
 
 fn map_to_screen(host: &HostDraw<'_>, point: engine_coordinates::MapPoint) -> (i32, i32) {
-    let view = host.frontend.viewport.view_position;
-    let zoom = host.frontend.viewport.zoom_factor;
+    let view = host.viewport().view_position;
+    let zoom = host.viewport().zoom_factor;
     (
         ((point.x - view.x) * zoom).round() as i32,
         ((point.y - view.y) * zoom).round() as i32,
@@ -2069,10 +2059,10 @@ fn render_fx_entities_gpu<I>(
 ) where
     I: IntoIterator<Item = engine_element::EntityId>,
 {
-    let view = host.frontend.viewport.view_position;
-    let zoom = host.frontend.viewport.zoom_factor;
-    let screen_w = host.frontend.viewport.screen_size.x as i32;
-    let screen_h = host.frontend.viewport.screen_size.y as i32;
+    let view = host.viewport().view_position;
+    let zoom = host.viewport().zoom_factor;
+    let screen_w = host.viewport().screen_size.x as i32;
+    let screen_h = host.viewport().screen_size.y as i32;
     let shadow_color = presentation.shadow_color;
     let global_shadow = host.frontend.resources.frame_holder().global_shadow();
 

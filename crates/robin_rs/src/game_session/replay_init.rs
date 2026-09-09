@@ -176,7 +176,7 @@ fn should_record_local_replay(is_playing_back: bool, mission_start_map: bool) ->
 pub(super) fn init_replay_and_rollback(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: Arc<LevelAssets>,
-    args: &crate::main_entry::CliArgs,
+    args: &crate::main_entry::MissionLaunch,
     _mission_idx: usize,
     mission_id: &str,
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
@@ -555,7 +555,7 @@ mod tests {
 
     #[test]
     fn restart_evidence_is_local_to_the_run_arguments() {
-        let launch = crate::main_entry::CliArgs::default();
+        let launch = crate::main_entry::MissionLaunch::default();
         let mut restarting = launch.clone();
         restarting.mission_restart = true;
         assert!(restarting.clone().mission_restart);
@@ -565,9 +565,9 @@ mod tests {
         );
         assert!(mission_start_input_taints(false, false, launch.mission_restart).is_empty());
         assert!(!launch.mission_restart);
-        assert!(!crate::main_entry::CliArgs::default().mission_restart);
+        assert!(!crate::main_entry::MissionLaunch::default().mission_restart);
         // Configuration files cannot supply internal restart evidence.
-        let decoded: crate::main_entry::CliArgs =
+        let decoded: crate::main_entry::MissionLaunch =
             serde_json::from_str(r#"{"mission-restart":true}"#).unwrap();
         assert!(!decoded.mission_restart);
     }

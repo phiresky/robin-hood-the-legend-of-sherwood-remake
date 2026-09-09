@@ -1,6 +1,180 @@
 use super::*;
 
 #[test]
+fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
+    use crate::ai::{AiEntityHandle, Stimulus, StimulusInfo, StimulusType};
+    use crate::engine::movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
+    use crate::engine::seat::SeatState;
+    use crate::order::{AiOrderIntent, OrderType};
+    use crate::sequence::SequenceId;
+
+    let mut engine = EngineInner::new();
+    let removed = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let last = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let observer = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    engine.players.seats.push(SeatState::default()); // disconnected seat is still an owner
+    for (index, seat) in engine.players.seats.iter_mut().enumerate() {
+        seat.selection = vec![first, removed, last];
+        seat.quick_select_groups[2] = vec![last, removed, first];
+        seat.planned_shield_target = Some(if index == 0 {
+            (first, removed)
+        } else {
+            (removed, last)
+        });
+        seat.follow_element = Some(if index == 0 { removed } else { last });
+        seat.locker_active = true;
+    }
+    engine.players.selection_before_user_lock = vec![last, removed, first];
+    let mut historical = Stimulus::new(StimulusType::EventDone);
+    historical.owner = Some(AiEntityHandle::new(removed.index()));
+    let mut stale = Stimulus::new(StimulusType::EventDone);
+    stale.info = StimulusInfo::Human(AiEntityHandle::new(removed.index()));
+    let mut stale_object = stale;
+    stale_object.info = StimulusInfo::Object(AiEntityHandle::new(removed.index()));
+    let final_stimulus = Stimulus::new(StimulusType::EventReachPoint);
+    let queued = vec![historical, stale, stale_object, final_stimulus];
+    let ai = engine
+        .get_entity_mut(observer)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap();
+    ai.stimulus_queue = queued.clone();
+    ai.outbox.detection.stimuli = queued;
+
+    let request = |owner| PendingPathRequest::test_request(owner, SequenceId(1), 0);
+    let mut targeting_removed = request(first);
+    targeting_removed.antagonist = Some(removed);
+    let requests = vec![
+        request(first),
+        request(removed),
+        targeting_removed,
+        request(last),
+    ];
+    engine.orders.pending_path_requests =
+        PendingPathRequestQueue::restore_v48_waiting(requests.clone());
+    engine.orders.failed_path_requests = requests
+        .into_iter()
+        .map(|request| FailedPathRequest::from_pending(request, 10))
+        .collect();
+    let intent = || AiOrderIntent::new(OrderType::WalkingUpright, 1.0, 2.0);
+    let mut targeted_intent = intent();
+    targeted_intent.target_actor = Some(removed.index());
+    engine.orders.pending_move_requests = vec![
+        (last, intent()),
+        (first, targeted_intent),
+        (removed, intent()),
+        (first, intent()),
+    ];
+
+    engine.remove_entity(removed);
+    engine.remove_entity(removed); // idempotent, including queue ordering
+    assert!(engine.get_entity(removed).is_none());
+    assert_eq!(
+        u32::from(
+            engine
+                .get_entity(first)
+                .unwrap()
+                .element_data()
+                .index_in_elements_list
+        ),
+        first.index()
+    );
+    for seat in &engine.players.seats {
+        assert_eq!(seat.selection, [first, last]);
+        assert_eq!(seat.quick_select_groups[2], [last, first]);
+        assert_eq!(seat.planned_shield_target, None);
+    }
+    assert_eq!(engine.players.seats[0].follow_element, None);
+    assert!(!engine.players.seats[0].locker_active);
+    assert_eq!(engine.players.seats[1].follow_element, Some(last));
+    assert!(engine.players.seats[1].locker_active);
+    assert_eq!(engine.players.selection_before_user_lock, [last, first]);
+    let ai = engine
+        .get_entity(observer)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    for stimuli in [&ai.stimulus_queue, &ai.outbox.detection.stimuli] {
+        assert_eq!(stimuli.len(), 2);
+        assert_eq!(
+            stimuli[0].owner, historical.owner,
+            "historical provenance is retained"
+        );
+        assert_eq!(stimuli[1].stimulus_type, final_stimulus.stimulus_type);
+    }
+    assert_eq!(
+        engine
+            .orders
+            .pending_path_requests
+            .v48_waiting()
+            .iter()
+            .map(|request| request.owner)
+            .collect::<Vec<_>>(),
+        [first, last]
+    );
+    assert_eq!(
+        engine
+            .orders
+            .failed_path_requests
+            .iter()
+            .map(|request| request.owner)
+            .collect::<Vec<_>>(),
+        [first, last]
+    );
+    assert_eq!(
+        engine
+            .orders
+            .pending_move_requests
+            .iter()
+            .map(|(owner, _)| *owner)
+            .collect::<Vec<_>>(),
+        [last, first]
+    );
+}
+
+#[test]
+fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
+    use crate::ai::{AiEntityHandle, Stimulus, StimulusInfo, StimulusType};
+
+    let mut engine = EngineInner::new();
+    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let observer = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let mut human = Stimulus::new(StimulusType::EventDone);
+    human.info = StimulusInfo::Human(AiEntityHandle::new(target.index()));
+    let mut object = human;
+    object.info = StimulusInfo::Object(AiEntityHandle::new(target.index()));
+    // A synchronous caller can hold this batch while a nested call removes
+    // the target. Removal cannot edit the caller's local snapshot.
+    let detached = vec![human, object];
+    engine.remove_entity(target);
+    let ai = engine
+        .get_entity_mut(observer)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap();
+    let history = ai.last_stimulus;
+    ai.outbox.detection.stimuli = detached;
+    engine.tick_enemy_ai_drain_pending_stimuli_for_npc(
+        &crate::sim_rng::test_context(),
+        observer,
+        &LevelAssets::new(),
+        None,
+        None,
+    );
+    let ai = engine
+        .get_entity(observer)
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+    assert!(ai.outbox.detection.stimuli.is_empty());
+    assert_eq!(
+        ai.last_stimulus, history,
+        "neither stale target is delivered to Think"
+    );
+}
+
+#[test]
 fn add_entity_assigns_original_script_element_index() {
     let mut engine = EngineInner::new();
     let first = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));

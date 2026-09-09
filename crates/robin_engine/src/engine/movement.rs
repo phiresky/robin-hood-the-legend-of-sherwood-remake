@@ -3118,8 +3118,12 @@ pub(crate) struct PendingPathRequest {
     pub(crate) is_fast: bool,
 }
 
-#[cfg(test)]
 impl PendingPathRequest {
+    pub(in crate::engine) fn references_entity(&self, id: EntityId) -> bool {
+        self.owner == id || self.antagonist == Some(id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_request(
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -3312,21 +3316,21 @@ impl PendingPathRequestQueue {
         self.in_flight = Some(ProcessedPathRequest { request, waypoints });
     }
 
-    pub(super) fn retain_not_owned_by(&mut self, owner: EntityId) {
+    pub(super) fn remove_entity(&mut self, owner: EntityId) {
         let in_flight_is_owner = self
             .in_flight
             .as_ref()
-            .is_some_and(|processed| processed.request.owner == owner);
+            .is_some_and(|processed| processed.request.references_entity(owner));
         let waiting_head_is_owner = self.in_flight.is_none()
             && self
                 .waiting
                 .first()
-                .is_some_and(|request| request.owner == owner);
+                .is_some_and(|request| request.references_entity(owner));
 
         // Entity teardown follows the same path cancellation timing as an
         // interrupted movement element: the logical head stays in the queue,
         // is delivered invalid, and consumes this barrier's result slot.
-        // Only later requests for the removed owner disappear immediately.
+        // Only later requests involving the removed actor disappear immediately.
         if in_flight_is_owner || waiting_head_is_owner {
             self.ignore_next_path = true;
         }
@@ -3336,7 +3340,7 @@ impl PendingPathRequestQueue {
             .drain(..)
             .enumerate()
             .filter_map(|(index, request)| {
-                (index < first_waiting || request.owner != owner).then_some(request)
+                (index < first_waiting || !request.references_entity(owner)).then_some(request)
             })
             .collect();
     }

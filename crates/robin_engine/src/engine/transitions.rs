@@ -27,8 +27,88 @@ use crate::element_kinds::{
 };
 use crate::order::OrderType;
 use crate::sequence::{SequenceElementData, SequenceId};
+use serde::{Deserialize, Serialize};
 
 use super::{EngineInner, LevelAssets};
+
+/// Invalid transition state is not a gameplay refusal (for example trying to
+/// crouch an actor that is already crouched). Keep that distinction until the
+/// legacy sequence pipeline's bool boundary, where invalid state is reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+enum TransitionError {
+    #[error("transition owner {0:?} is missing")]
+    MissingOwner(EntityId),
+    #[error("transition element {seq_id:?}/{elem_idx} is missing")]
+    MissingElement { seq_id: SequenceId, elem_idx: usize },
+    #[error("transition element owner {actual:?} does not match {expected:?}")]
+    OwnerMismatch {
+        expected: EntityId,
+        actual: Option<EntityId>,
+    },
+}
+
+/// Identity only: never caches posture, action state, or other observations
+/// across callbacks. Revalidate against live state after each mutation stage.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct TransitionTarget {
+    owner: EntityId,
+    seq_id: SequenceId,
+    elem_idx: usize,
+}
+
+impl TransitionTarget {
+    fn validate(self, engine: &EngineInner) -> Result<(), TransitionError> {
+        engine
+            .get_entity(self.owner)
+            .ok_or(TransitionError::MissingOwner(self.owner))?;
+        let elem = engine
+            .orders
+            .sequence_manager
+            .get_element(self.seq_id, self.elem_idx)
+            .ok_or(TransitionError::MissingElement {
+                seq_id: self.seq_id,
+                elem_idx: self.elem_idx,
+            })?;
+        if elem.owner != Some(self.owner) {
+            return Err(TransitionError::OwnerMismatch {
+                expected: self.owner,
+                actual: elem.owner,
+            });
+        }
+        Ok(())
+    }
+
+    fn stage(
+        self,
+        engine: &mut EngineInner,
+        run: impl FnOnce(&mut EngineInner) -> bool,
+    ) -> Result<bool, TransitionError> {
+        self.validate(engine)?;
+        let allowed = run(engine);
+        // Even a refusing callback may have invalidated the target. Do not
+        // silently classify that as an ordinary impossible command.
+        self.validate(engine)?;
+        Ok(allowed)
+    }
+}
+
+fn transition_element(
+    engine: &EngineInner,
+    seq_id: SequenceId,
+    elem_idx: usize,
+) -> &crate::sequence::SequenceElement {
+    engine
+        .orders
+        .sequence_manager
+        .get_element(seq_id, elem_idx)
+        .expect("validated transition element must remain present within a stage")
+}
+
+fn transition_owner(engine: &EngineInner, owner: EntityId) -> &crate::element::Entity {
+    engine
+        .get_entity(owner)
+        .expect("validated transition owner must remain present within a stage")
+}
 
 // ---------------------------------------------------------------------------
 // Snapshot: read-only context passed to the flag/transition helpers so
@@ -686,13 +766,12 @@ fn stand_up_order_for_action_state(action_state: ActionState) -> OrderType {
 }
 
 fn set_posture_after(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize, p: Posture) {
-    if let Some(e) = engine
+    engine
         .orders
         .sequence_manager
         .get_element_mut(seq_id, elem_idx)
-    {
-        e.posture_after_transition = p;
-    }
+        .expect("validated transition element must remain present within a stage")
+        .posture_after_transition = p;
 }
 
 fn set_action_state_after(
@@ -701,13 +780,12 @@ fn set_action_state_after(
     elem_idx: usize,
     a: ActionState,
 ) {
-    if let Some(e) = engine
+    engine
         .orders
         .sequence_manager
         .get_element_mut(seq_id, elem_idx)
-    {
-        e.action_state_after_transition = a;
-    }
+        .expect("validated transition element must remain present within a stage")
+        .action_state_after_transition = a;
 }
 
 fn push_unequip_bow_transition_orders(
@@ -859,8 +937,7 @@ fn make_action_transition_actor(
         return true;
     }
 
-    let elem = engine.orders.sequence_manager.get_element(seq_id, elem_idx);
-    let command = elem.map(|e| e.command).unwrap_or(Command::Null);
+    let command = transition_element(engine, seq_id, elem_idx).command;
     // When true, skip the transition-order insertion for MOVING /
     // MOVING_FAST arms to avoid injecting spurious stop-walking
     // frames into a composite movement chain.
@@ -1032,6 +1109,9 @@ fn make_action_transition_human(
                 // AI callbacks therefore happen at transition-generation
                 // time, not when the animation eventually starts.
                 engine.quit_swordfight(sim, assets, owner);
+                // Return directly to TransitionTarget::stage: it revalidates
+                // the live target after these synchronous AI callbacks, before
+                // the posture stage reads it again.
             }
             true
         }
@@ -1099,14 +1179,12 @@ fn make_action_transition_soldier(
     owner: EntityId,
     flags: EX,
 ) -> bool {
-    let (attentive, action_state) = engine
-        .get_entity(owner)
-        .map(|e| {
-            let a = e.enemy_ai().map(|ai| ai.attentive).unwrap_or(false);
-            let st = e.actor_data().map(|a| a.action_state).unwrap_or_default();
-            (a, st)
-        })
-        .unwrap_or((false, ActionState::Waiting));
+    let entity = transition_owner(engine, owner);
+    let attentive = entity.enemy_ai().is_some_and(|ai| ai.attentive);
+    let action_state = entity
+        .actor_data()
+        .expect("soldier has actor data")
+        .action_state;
 
     // attentive && MUST_BE_WAITING && !CAN_BE_ALERTED → leave-attentive
     // transition.  This routes through the same translate arm as an
@@ -1121,7 +1199,7 @@ fn make_action_transition_soldier(
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| (e.posture_after_transition, Some(e.command)))
-            .unwrap_or_default();
+            .expect("validated transition element must remain present within a stage");
         tracing::trace!(
             ?owner,
             ?seq_id,
@@ -1191,12 +1269,8 @@ fn make_action_transition_pc(
     if flags.contains(EX::MUST_BE_LISTENING) {
         // PC requires ListeningState; refuse if the scheduled state
         // doesn't already match.
-        let action_state_after = engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.action_state_after_transition)
-            .unwrap_or_default();
+        let action_state_after =
+            transition_element(engine, seq_id, elem_idx).action_state_after_transition;
         if action_state_after != ActionState::Listening {
             return false;
         }
@@ -1213,10 +1287,7 @@ fn dispatch_make_action_transition(
     owner: EntityId,
     flags: EX,
 ) -> bool {
-    let kind = engine
-        .get_entity(owner)
-        .map(|e| e.kind())
-        .unwrap_or(ElementKind::ActorCivilian);
+    let kind = transition_owner(engine, owner).kind();
     match kind {
         ElementKind::ActorPc => {
             make_action_transition_pc(engine, sim, assets, seq_id, elem_idx, owner, flags)
@@ -1244,21 +1315,11 @@ fn make_posture_transition_actor(
     engine: &mut EngineInner,
     seq_id: SequenceId,
     elem_idx: usize,
-    owner: EntityId,
+    _owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture_after = engine
-        .orders
-        .sequence_manager
-        .get_element(seq_id, elem_idx)
-        .map(|e| e.posture_after_transition)
-        .unwrap_or_default();
-    let command = engine
-        .orders
-        .sequence_manager
-        .get_element(seq_id, elem_idx)
-        .map(|e| e.command)
-        .unwrap_or(Command::Null);
+    let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
+    let command = transition_element(engine, seq_id, elem_idx).command;
 
     if flags.contains(CP::MUST_BE_UPRIGHT) {
         return match posture_after {
@@ -1287,18 +1348,8 @@ fn make_posture_transition_actor(
                     // The original game translates stand-up as an in-place
                     // animation (direction computation disabled) chosen from
                     // the post-transition action state.
-                    let action_state_after = engine
-                        .orders
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .map(|e| e.action_state_after_transition)
-                        .or_else(|| {
-                            engine
-                                .get_entity(owner)
-                                .and_then(|entity| entity.actor_data())
-                                .map(|actor| actor.action_state)
-                        })
-                        .unwrap_or(ActionState::Waiting);
+                    let action_state_after =
+                        transition_element(engine, seq_id, elem_idx).action_state_after_transition;
                     let stand_up = stand_up_order_for_action_state(action_state_after);
                     push_anim_order_no_dir(engine, seq_id, elem_idx, stand_up);
                     set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
@@ -1397,10 +1448,7 @@ fn make_posture_transition_human(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture = engine
-        .get_entity(owner)
-        .map(|e| e.element_data().posture())
-        .unwrap_or(Posture::Upright);
+    let posture = transition_owner(engine, owner).element_data().posture();
 
     if posture == Posture::Leisure
         && flags.contains(CP::MUST_BE_UPRIGHT)
@@ -1428,10 +1476,7 @@ fn make_posture_transition_npc(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture = engine
-        .get_entity(owner)
-        .map(|e| e.element_data().posture())
-        .unwrap_or(Posture::Upright);
+    let posture = transition_owner(engine, owner).element_data().posture();
 
     if posture == Posture::Sitting && flags.contains(CP::MUST_BE_UPRIGHT) {
         push_anim_order_no_dir(
@@ -1454,10 +1499,7 @@ fn make_posture_transition_soldier(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture = engine
-        .get_entity(owner)
-        .map(|e| e.element_data().posture())
-        .unwrap_or(Posture::Upright);
+    let posture = transition_owner(engine, owner).element_data().posture();
 
     if posture == Posture::LeaningOut {
         if flags.contains(CP::MUST_BE_UPRIGHT) && !flags.contains(CP::CAN_BE_LEANING_OUT) {
@@ -1489,22 +1531,12 @@ fn make_posture_transition_pc(
     flags: CP,
 ) -> bool {
     if flags.contains(CP::MUST_BE_CARRYING_CORPSE) {
-        let posture_after = engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.posture_after_transition)
-            .unwrap_or_default();
+        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
         return posture_after == Posture::CarryingCorpse;
     }
 
     if flags.contains(CP::MUST_BE_UPRIGHT) {
-        let posture_after = engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.posture_after_transition)
-            .unwrap_or_default();
+        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
         let handled = match posture_after {
             Posture::HelpingToClimb => {
                 if !flags.contains(CP::CAN_BE_HELPING_TO_CLIMB) {
@@ -1675,12 +1707,7 @@ fn make_posture_transition_pc(
     }
 
     if flags.contains(CP::MUST_BE_ON_SHOULDERS) {
-        let posture_after = engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.posture_after_transition)
-            .unwrap_or_default();
+        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
         if posture_after != Posture::OnShoulders {
             return false;
         }
@@ -1696,10 +1723,7 @@ fn dispatch_make_posture_transition(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let kind = engine
-        .get_entity(owner)
-        .map(|e| e.kind())
-        .unwrap_or(ElementKind::ActorCivilian);
+    let kind = transition_owner(engine, owner).kind();
     match kind {
         ElementKind::ActorPc => make_posture_transition_pc(engine, seq_id, elem_idx, owner, flags),
         ElementKind::ActorSoldier => {
@@ -1722,21 +1746,11 @@ fn make_final_action_transition_actor(
     elem_idx: usize,
     flags: EA,
 ) -> bool {
-    let elem_snapshot = engine.orders.sequence_manager.get_element(seq_id, elem_idx);
-    let (posture_after, action_after) = match elem_snapshot {
-        Some(e) => (e.posture_after_transition, e.action_state_after_transition),
-        None => {
-            // The element pointer should always be valid; if we get
-            // here something is genuinely wrong with the caller's
-            // seq/elem indices.
-            tracing::error!(
-                ?seq_id,
-                elem_idx,
-                "make_final_action_transition: sequence element missing"
-            );
-            return false;
-        }
-    };
+    let elem = transition_element(engine, seq_id, elem_idx);
+    let (posture_after, action_after) = (
+        elem.posture_after_transition,
+        elem.action_state_after_transition,
+    );
 
     if flags.contains(EA::MUST_BE_BORED) {
         if posture_after == Posture::Upright && action_after == ActionState::Waiting {
@@ -1829,17 +1843,20 @@ fn make_final_action_transition_human(
         .sequence_manager
         .get_element(seq_id, elem_idx)
         .map(|e| (e.action_state_after_transition, e.owner))
-        .unwrap_or_default();
+        .expect("validated transition element must remain present within a stage");
 
     // Equip-bow terminates the sequence element early if the live
     // action state is already one of the aiming states — used to dedup
     // redundant equip-bow commands that target a Waiting
     // action_state_after_transition while the entity is already aiming.
-    let live_action_state = owner
-        .and_then(|e| engine.get_entity(e))
-        .and_then(|e| e.actor_data())
-        .map(|a| a.action_state)
-        .unwrap_or_default();
+    let entity = transition_owner(
+        engine,
+        owner.expect("human transition element requires an owner"),
+    );
+    let live_action_state = entity
+        .actor_data()
+        .expect("human transition owner requires actor data")
+        .action_state;
     let already_aiming = matches!(
         live_action_state,
         ActionState::AimingWithBow | ActionState::AimingWithBowUp | ActionState::AimingWithBowDown
@@ -1847,10 +1864,7 @@ fn make_final_action_transition_human(
 
     // Equip-bow: anonymous archers use the _ANONYMOUS animation
     // variants.
-    let is_anonymous = owner
-        .and_then(|e| engine.get_entity(e))
-        .map(|e| e.element_data().posture() == Posture::AnonymousArcher)
-        .unwrap_or(false);
+    let is_anonymous = entity.element_data().posture() == Posture::AnonymousArcher;
     let (equip_bow, loading_bow) = if is_anonymous {
         (
             OrderType::TransitionEquipBowAnonymous,
@@ -1941,11 +1955,9 @@ fn make_final_action_transition_soldier(
     // when a queued LeaveAttentiveMode is translated after its preceding
     // enter transition has completed: will-be is already false, while the
     // actor is actually attentive and needs no redundant enter animation.
-    let attentive = engine
-        .get_entity(owner)
-        .and_then(|e| e.enemy_ai())
-        .map(|e| e.attentive)
-        .unwrap_or(false);
+    let attentive = transition_owner(engine, owner)
+        .enemy_ai()
+        .is_some_and(|enemy| enemy.attentive);
 
     if flags.contains(EA::MUST_BE_ALERTED) && !attentive {
         // Enter-attentive-mode transition, routed through the same
@@ -1953,12 +1965,7 @@ fn make_final_action_transition_soldier(
         // waiting→alerted transition animation only plays when the
         // element's stamped posture is upright.  Any other posture
         // terminates the element and flips the attentive pose silently.
-        let posture_after = engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.posture_after_transition)
-            .unwrap_or_default();
+        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
         if posture_after == crate::element::Posture::Upright {
             push_anim_order_no_dir(
                 engine,
@@ -1987,12 +1994,8 @@ fn make_final_action_transition_soldier(
     }
 
     if flags.contains(EA::MUST_BE_AIMING_BOW_DOWN) {
-        let action_after = engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.action_state_after_transition)
-            .unwrap_or_default();
+        let action_after =
+            transition_element(engine, seq_id, elem_idx).action_state_after_transition;
         match action_after {
             ActionState::Waiting => {
                 push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionEquipBow);
@@ -2034,10 +2037,7 @@ fn dispatch_make_final_action_transition(
     owner: EntityId,
     flags: EA,
 ) -> bool {
-    let kind = engine
-        .get_entity(owner)
-        .map(|e| e.kind())
-        .unwrap_or(ElementKind::ActorCivilian);
+    let kind = transition_owner(engine, owner).kind();
     match kind {
         ElementKind::ActorSoldier => {
             make_final_action_transition_soldier(engine, seq_id, elem_idx, owner, flags)
@@ -2058,7 +2058,8 @@ impl EngineInner {
     /// real command logic runs.
     ///
     /// Returns `false` when the transition is impossible (caller should
-    /// mark the element `Impossible`) and `true` otherwise.
+    /// mark the element `Impossible`) and `true` otherwise. Invalid state is
+    /// reported separately before adapting to the sequence pipeline's bool API.
     pub(crate) fn generate_transition(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2067,43 +2068,48 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) -> bool {
-        let Some((actor_posture, actor_action_state)) = self.get_entity(owner).map(|entity| {
-            (
-                entity.element_data().posture(),
-                entity
-                    .actor_data()
-                    .map(|a| a.action_state)
-                    .unwrap_or_default(),
-            )
-        }) else {
-            tracing::warn!(
-                ?owner,
-                ?seq_id,
-                elem_idx,
-                "generate_transition: missing entity"
-            );
-            return false;
-        };
+        match self.try_generate_transition(sim, assets, owner, seq_id, elem_idx) {
+            Ok(allowed) => allowed,
+            Err(error) => {
+                tracing::error!(?owner, ?seq_id, elem_idx, %error, "invalid transition target");
+                false
+            }
+        }
+    }
 
-        if let Some(elem) = self
+    fn try_generate_transition(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+    ) -> Result<bool, TransitionError> {
+        let target = TransitionTarget {
+            owner,
+            seq_id,
+            elem_idx,
+        };
+        target.validate(self)?;
+        let entity = transition_owner(self, owner);
+        let actor_posture = entity.element_data().posture();
+        // Non-actor elements can carry commands too, but have no action-state
+        // machine. Waiting is their explicit initial state, not a missing-owner
+        // fallback; actor-specific dispatch below requires actual actor data.
+        let actor_action_state = entity
+            .actor_data()
+            .map_or(ActionState::Waiting, |a| a.action_state);
+        let elem = self
             .orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
-            && elem.posture_after_transition == Posture::Undefined
-        {
+            .expect("target was just validated");
+        if elem.posture_after_transition == Posture::Undefined {
             elem.posture_after_transition = actor_posture;
             elem.action_state_after_transition = actor_action_state;
         }
 
-        let Some(ctx) = build_ctx(self, owner, seq_id, elem_idx) else {
-            tracing::warn!(
-                ?owner,
-                ?seq_id,
-                elem_idx,
-                "generate_transition: missing element"
-            );
-            return false;
-        };
+        let ctx = build_ctx(self, owner, seq_id, elem_idx).expect("target was just validated");
 
         let (exit_flags, mut change_flags, enter_flags) = get_transition_flags(&ctx);
         // The reusable cape has only a stationary idle row. Any actor action
@@ -2115,30 +2121,35 @@ impl EngineInner {
             change_flags |= CP::MUST_BE_UPRIGHT;
         }
 
-        if !dispatch_make_action_transition(self, sim, assets, seq_id, elem_idx, owner, exit_flags)
-        {
-            return false;
+        if !target.stage(self, |engine| {
+            dispatch_make_action_transition(
+                engine, sim, assets, seq_id, elem_idx, owner, exit_flags,
+            )
+        })? {
+            return Ok(false);
         }
 
-        if !dispatch_make_posture_transition(self, seq_id, elem_idx, owner, change_flags) {
-            return false;
+        if !target.stage(self, |engine| {
+            dispatch_make_posture_transition(engine, seq_id, elem_idx, owner, change_flags)
+        })? {
+            return Ok(false);
         }
 
-        if !dispatch_make_final_action_transition(self, seq_id, elem_idx, owner, enter_flags) {
-            return false;
+        if !target.stage(self, |engine| {
+            dispatch_make_final_action_transition(engine, seq_id, elem_idx, owner, enter_flags)
+        })? {
+            return Ok(false);
         }
 
         // Stamp the transition-order count to the current order list
         // length so subsequent code can distinguish transition orders
         // from the orders queued by the command itself.
-        if let Some(elem) = self
-            .orders
+        self.orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
-        {
-            elem.initialize_transition_orders();
-        }
-        true
+            .expect("target was just revalidated")
+            .initialize_transition_orders();
+        Ok(true)
     }
 }
 
@@ -2256,6 +2267,116 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         engine.generate_transition(&sim, &assets, owner, seq, idx)
+    }
+
+    #[test]
+    fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
+        let (seq_id, elem_idx) = launch(&mut engine, owner, Command::CrouchDown);
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        assert_eq!(
+            engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx),
+            Ok(false)
+        );
+        assert_eq!(
+            engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx + 1),
+            Err(TransitionError::MissingElement {
+                seq_id,
+                elem_idx: elem_idx + 1
+            })
+        );
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .unwrap()
+            .owner = None;
+        assert_eq!(
+            engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx),
+            Err(TransitionError::OwnerMismatch {
+                expected: owner,
+                actual: None
+            })
+        );
+        engine.remove_entity(owner);
+        assert_eq!(
+            engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx),
+            Err(TransitionError::MissingOwner(owner))
+        );
+    }
+
+    #[test]
+    fn transition_stages_revalidate_callback_mutations_even_on_refusal() {
+        for allowed in [true, false] {
+            let mut engine = EngineInner::new();
+            let owner = engine.add_entity(make_pc(P::Upright, AS::Waiting));
+            let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
+            let target = TransitionTarget {
+                owner,
+                seq_id,
+                elem_idx,
+            };
+            assert_eq!(
+                target.stage(&mut engine, |engine| {
+                    engine.orders.sequence_manager = Default::default();
+                    allowed
+                }),
+                Err(TransitionError::MissingElement { seq_id, elem_idx })
+            );
+
+            let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
+            let target = TransitionTarget {
+                owner,
+                seq_id,
+                elem_idx,
+            };
+            assert_eq!(
+                target.stage(&mut engine, |engine| {
+                    engine.remove_entity(owner);
+                    allowed
+                }),
+                Err(TransitionError::MissingOwner(owner))
+            );
+        }
+    }
+
+    #[test]
+    fn transition_stages_observe_live_state_without_reordering_effects() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::Upright, AS::Waiting));
+        let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
+        let target = TransitionTarget {
+            owner,
+            seq_id,
+            elem_idx,
+        };
+        assert_eq!(
+            target.stage(&mut engine, |engine| {
+                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionCrouchingDown);
+                set_posture_after(engine, seq_id, elem_idx, P::Crouched);
+                true
+            }),
+            Ok(true)
+        );
+        assert_eq!(
+            target.stage(&mut engine, |engine| {
+                make_posture_transition_actor(engine, seq_id, elem_idx, owner, CP::MUST_BE_UPRIGHT)
+            }),
+            Ok(true)
+        );
+        assert_eq!(
+            orders_for(&engine, seq_id, elem_idx),
+            vec![
+                OrderType::TransitionCrouchingDown,
+                OrderType::TransitionCrouchingUp,
+            ]
+        );
+        assert_eq!(
+            transition_element(&engine, seq_id, elem_idx).posture_after_transition,
+            P::Upright
+        );
     }
 
     fn order_compute_direction_for(
@@ -2383,7 +2504,10 @@ mod tests {
             enemy.hth_weapon_id = 1;
         }
         let sim = crate::sim_rng::test_context();
-        assert!(engine.generate_transition(&sim, &assets, owner, seq, idx));
+        assert_eq!(
+            engine.try_generate_transition(&sim, &assets, owner, seq, idx),
+            Ok(true)
+        );
 
         assert_eq!(
             orders_for(&engine, seq, idx),

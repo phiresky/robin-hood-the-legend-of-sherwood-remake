@@ -114,6 +114,17 @@ impl PersistedOrderRuntime {
 }
 
 impl OrderRuntime {
+    /// Cancel movement involving a retired actor. The path queue owns its
+    /// logical-head timing; do not rebuild it or bypass its completion slot.
+    pub(crate) fn remove_entity(&mut self, id: EntityId) {
+        self.failed_path_requests
+            .retain(|request| !request.request.references_entity(id));
+        self.pending_move_requests.retain(|(owner, intent)| {
+            *owner != id && intent.antagonist != Some(id) && intent.target_actor != Some(id.index())
+        });
+        self.pending_path_requests.remove_entity(id);
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             next_order_id: 1,

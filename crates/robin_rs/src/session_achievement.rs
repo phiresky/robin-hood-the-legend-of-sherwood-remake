@@ -23,7 +23,7 @@ pub struct SessionAchievementEligibility {
 
 impl SessionAchievementEligibility {
     pub(crate) fn from_launch(
-        args: &crate::main_entry::CliArgs,
+        args: &crate::main_entry::MissionLaunch,
         mode: SessionExecutionMode,
     ) -> Self {
         Self::from_launch_facts(
@@ -118,9 +118,12 @@ mod tests {
 
     #[test]
     fn session_achievement_cli_path_flags_are_derived_once() {
-        let mut args = crate::main_entry::CliArgs {
-            custom_mission: Some("mission.rhm".into()),
-            replay: Some("playback.rhrec".into()),
+        let mut args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                custom_mission: Some("mission.rhm".into()),
+                replay: Some("playback.rhrec".into()),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let eligibility =
@@ -138,7 +141,7 @@ mod tests {
         let mut host = crate::host::Host::scratch(640.0, 480.0);
         assert!(host.session_achievement_eligibility().is_err());
         let policy = SessionAchievementEligibility::from_launch(
-            &crate::main_entry::CliArgs::default(),
+            &crate::main_entry::MissionLaunch::default(),
             SessionExecutionMode::Headless,
         );
         host.bind_session_achievement_eligibility(policy).unwrap();

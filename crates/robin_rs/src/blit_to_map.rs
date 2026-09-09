@@ -31,15 +31,19 @@ pub fn drain_pending_bg_blits(frontend: &mut HostFrontend, effects: &mut HostEff
 /// Called after `Engine::draw_background` has queued the base map and before
 /// `Renderer::flush_base_layer`, so these sprites live in the same visual
 /// layer as the old baked map pixels.
-pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::renderer::Renderer) {
+pub fn render_background_decals(
+    frontend: &HostFrontend,
+    viewport: &crate::host::ViewportState,
+    renderer: &mut crate::renderer::Renderer,
+) {
     if frontend.resources.background_decals.is_empty() {
         return;
     }
 
-    let view = frontend.viewport.view_position;
-    let zoom = frontend.viewport.zoom_factor;
-    let screen_w = frontend.viewport.screen_size.x as i32;
-    let screen_h = frontend.viewport.screen_size.y as i32;
+    let view = viewport.view_position;
+    let zoom = viewport.zoom_factor;
+    let screen_w = viewport.screen_size.x as i32;
+    let screen_h = viewport.screen_size.y as i32;
     let margin = 256;
 
     for decal in frontend.resources.background_decals.in_draw_order() {

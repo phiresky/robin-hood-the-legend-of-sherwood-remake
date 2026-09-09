@@ -497,19 +497,15 @@ fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: boo
 
 fn commit_active(application_context: &ApplicationContext, idx: usize) {
     let profile_id = application_context
-        .with_player_profiles_mut(|mgr| {
+        .update_and_retain_player_profiles(|mgr| {
             if idx < mgr.profile_count() {
                 mgr.set_active(idx);
-                if let Err(err) = application_context.persist_player_profiles(mgr) {
-                    tracing::error!(
-                        "Select Player: failed to persist active profile change: {err:#}"
-                    );
-                }
                 return Some(mgr.profiles[idx].id);
             }
             None
         })
-        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"));
+        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"))
+        .log_persistence_error("Select Player: failed to persist active profile change");
     if let Some(profile_id) = profile_id {
         application_context
             .with_key_configs_mut(|store| {
@@ -579,17 +575,15 @@ fn rename_profile(application_context: &ApplicationContext, idx: usize, new_name
     let trimmed = new_name.trim();
     let final_name = if trimmed.is_empty() { "Robin" } else { trimmed };
     application_context
-        .with_player_profiles_mut(|mgr| {
+        .update_and_retain_player_profiles(|mgr| {
             if idx >= mgr.profile_count() {
                 return;
             }
             mgr.profiles[idx].name = final_name.to_string();
             mgr.set_active(idx);
-            if let Err(err) = application_context.persist_player_profiles(mgr) {
-                tracing::error!("Select Player: failed to persist rename: {err:#}");
-            }
         })
-        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"));
+        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"))
+        .log_persistence_error("Select Player: failed to persist rename");
 }
 
 fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Result<bool, String> {
@@ -1578,16 +1572,14 @@ fn set_profile_difficulty(
         .validate()
         .expect("difficulty dialog returned invalid rules");
     application_context
-        .with_player_profiles_mut(|profiles| {
+        .update_and_retain_player_profiles(|profiles| {
             let profile = profiles.profiles.get_mut(idx).unwrap_or_else(|| {
                 panic!("difficulty profile index {idx} disappeared during editing")
             });
             profile.difficulty = difficulty;
-            if let Err(error) = application_context.persist_player_profiles(profiles) {
-                tracing::error!("Select Player: failed to persist difficulty: {error:#}");
-            }
         })
-        .unwrap_or_else(|error| panic!("Select Player difficulty update failed: {error}"));
+        .unwrap_or_else(|error| panic!("Select Player difficulty update failed: {error}"))
+        .log_persistence_error("Select Player: failed to persist difficulty");
 }
 
 #[cfg(test)]
