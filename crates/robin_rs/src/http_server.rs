@@ -69,20 +69,19 @@
 //! No authentication. Bind is `127.0.0.1` only. Pass `--http-server 0`
 //! to disable the server entirely.
 
-use robin_assets::decompile as assets_decompile;
-use robin_engine::coordinates as engine_coordinates;
+use crate::rpc_diagnostics::{
+    decompile_script, engine_dump_json, frame_console_response_to_json, info_json,
+    level_assets_json, list_natives_json, snapshot_host_debug, snapshot_script, snapshot_state,
+};
+pub use crate::rpc_screenshot::apply_screenshot_flags;
+use crate::rpc_screenshot::{can_capture_presented_ui, encode_png};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
-use robin_engine::engine::PANNEL_HEIGHT;
-use robin_engine::natives as engine_natives;
 use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
-use robin_engine::position_interface as engine_position_interface;
-use robin_engine::profiles as engine_profiles;
 use robin_engine::replay_rankability::InputTaintKind;
-use robin_engine::scb as engine_scb;
-use robin_engine::weapons as engine_weapons;
-use std::borrow::Cow;
-use std::collections::{BTreeSet, VecDeque};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+use std::collections::BTreeSet;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -931,6 +930,78 @@ mod transport_lifecycle_tests {
         assert!(response.starts_with("HTTP/1.1 400"));
         assert!(response.contains("Transfer-Encoding"));
     }
+
+    #[test]
+    fn native_query_validation_happens_before_mission_admission() {
+        use std::io::Read;
+        let (transport, _) = running();
+        let port = transport.port.unwrap();
+        let mut ingress = transport.attach();
+        for path in [
+            "/screenshot?frame=bad",
+            "/screenshot?view_cones=maybe",
+            "/screenshot?frame=1&frame=2",
+            "/script/decompile?class=%FF",
+        ] {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            write!(
+                client,
+                "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+            assert!(response.contains("\"error\""));
+            assert!(
+                ingress.take_requests().is_empty(),
+                "invalid query reached the mission"
+            );
+        }
+        for path in [
+            "/screenshot?view_cones&frame=12",
+            "/script/decompile?class=Guard%20A%2BB",
+        ] {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            write!(
+                client,
+                "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let request = loop {
+                if let Some(request) = ingress.take_requests().pop() {
+                    break request;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "valid query was not queued"
+                );
+                thread::yield_now();
+            };
+            match &request.payload {
+                HttpPayload::Screenshot(value) => {
+                    assert_eq!(value.frame, Some(12));
+                    assert_eq!(value.flags.view_cones, Some(true));
+                }
+                HttpPayload::Decompile { class } => assert_eq!(class.as_deref(), Some("Guard A+B")),
+                _ => panic!("unexpected query payload"),
+            }
+            assert!(request.response_tx.admit());
+            request
+                .response_tx
+                .send(Ok(serde_json::json!({"ok": true}).into()));
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        }
+    }
 }
 fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     match payload {
@@ -1120,44 +1191,6 @@ fn browser_rejection_reason(
     None
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
-    ScreenshotRequest {
-        frame: query_param(query, "frame").and_then(|s| s.parse().ok()),
-        width: query_param(query, "w").and_then(|s| s.parse().ok()),
-        height: query_param(query, "h").and_then(|s| s.parse().ok()),
-        hide_ui: query_flag(query, "hide_ui").unwrap_or(false),
-        full_map: query_flag(query, "full_map").unwrap_or(false),
-        flags: ScreenshotFlags {
-            view_cones: query_flag(query, "view_cones"),
-            pc_sight: query_flag(query, "pc_sight"),
-            motion_graph: query_flag(query, "motion_graph"),
-            surface: query_flag(query, "surface"),
-            all_obstacles: query_flag(query, "all_obstacles"),
-            elevation: query_flag(query, "elevation"),
-            noise: query_flag(query, "noise"),
-            sound_source: query_flag(query, "sound_source"),
-            actor_info: query_flag(query, "actor_info"),
-            script_zones: query_flag(query, "script_zones"),
-            door: query_flag(query, "door"),
-            projection_areas: query_flag(query, "projection_areas"),
-            railroad: query_flag(query, "railroad"),
-            probability: query_flag(query, "probability"),
-            company_number: query_flag(query, "company_number"),
-            combat_energy: query_flag(query, "combat_energy"),
-            light_zones: query_flag(query, "light_zones"),
-            animation_lines: query_flag(query, "animation_lines"),
-            seek_points: query_flag(query, "seek_points"),
-            fps: query_flag(query, "fps"),
-            sprite_masks: query_flag(query, "sprite_masks"),
-            // Default-on for screenshots: if the caller doesn't mention
-            // the flag, force it true so every `/screenshot` labels
-            // entities.  Pass `entity_ids=0` to opt out.
-            entity_ids: Some(query_flag(query, "entity_ids").unwrap_or(true)),
-        },
-    }
-}
-
 /// Send a payload to the game loop and wait for the reply.  Caps the
 /// wait at 60 s so a wedged game doesn't hang the client forever.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1207,86 +1240,7 @@ async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
-    for kv in query.split('&') {
-        if let Some((k, v)) = kv.split_once('=')
-            && k == key
-        {
-            return Some(v);
-        }
-    }
-    None
-}
-
-/// Parse a query param as an optional bool.  Accepts `1`/`0`,
-/// `true`/`false`, `yes`/`no`, `on`/`off` (case-insensitive).  Absent
-/// key → `None`; present but empty → `Some(true)` so bare
-/// `?view_cones&pc_sight` works.
-#[cfg(not(target_arch = "wasm32"))]
-fn query_flag(query: &str, key: &str) -> Option<bool> {
-    let v = query_param(query, key)?;
-    if v.is_empty() {
-        return Some(true);
-    }
-    match v.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
-fn info_json() -> serde_json::Value {
-    serde_json::json!({
-        "name": "robin-hood-script-rpc",
-        "endpoints": [
-            {"method": "GET",  "path": "/natives",            "desc": "list every NativeFn (index, name, params, return type)"},
-            {"method": "GET",  "path": "/engine-dump",        "desc": "full serialized engine for ad-hoc debug"},
-            {"method": "GET",  "path": "/level-assets",       "desc": "level-scoped static assets for ad-hoc debug, including static fast-grid sectors plus runtime fast-grid flags"},
-            {"method": "GET",  "path": "/host-debug",         "desc": "host/UI state for ad-hoc debug, including trajectory preview and mouse hover fields"},
-            {"method": "GET",  "path": "/script",             "desc": "mission-script class & function listing"},
-            {"method": "GET",  "path": "/script/decompile",   "desc": "decompile to TypeScript-like pseudocode (?class=Foo)"},
-            {"method": "POST", "path": "/native",             "desc": "invoke one native: {op, args, this?}"},
-            {"method": "POST", "path": "/batch",              "desc": "invoke many natives on one tick: {calls: [{op, args, this?}]}"},
-            {"method": "POST", "path": "/console",            "desc": "run a debug-console command: {command: '...'}"},
-            {"method": "POST", "path": "/command",            "desc": "apply a PlayerCommand (externally-tagged JSON enum)"},
-            {"method": "GET",  "path": "/screenshot",         "desc": "PNG at the requested frame. Query: frame (absolute sim frame), full_map, w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
-            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N, auto_dismiss: bool, dismissals: [{kind, result}], synchronized_multiplayer: bool}; live multiplayer requires explicit synchronized_multiplayer=true on the host and reconnects peers from the result."},
-            {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N, auto_dismiss, dismissals}; the modal policy matches step-forward. Fails if target frame is older than the oldest retained snapshot."},
-            {"method": "POST", "path": "/go-to-frame",        "desc": "Seek to an absolute frame. Body {frame: N, auto_dismiss, dismissals}; forward seeks tick and backward seeks restore canonical timeline history."},
-        ],
-    })
-}
-
-fn list_natives_json() -> serde_json::Value {
-    let mut entries = Vec::new();
-    for i in 0u32..512 {
-        if let Ok(n) = engine_natives::NativeFn::try_from(i) {
-            let name: &'static str = n.into();
-            let sig = engine_natives::native_signature_by_name(name);
-            entries.push(serde_json::json!({
-                "index": i,
-                "name": name,
-                "return_type": sig.map(|s| s.return_type),
-                "params": sig.map(|s| {
-                    s.params.iter().map(|p| serde_json::json!({"type": p.ty, "name": p.name})).collect::<Vec<_>>()
-                }),
-            }));
-        }
-    }
-    serde_json::json!({"natives": entries})
-}
-
-// ──────────────────────────────────────────────────────────────────
-// Per-tick dispatch
-// ──────────────────────────────────────────────────────────────────
-
-/// Drain pending requests through `engine`/`host`. Called once per
-/// tick from the game-session frame loop.  No-op when the transport
-/// isn't running.
-/// Drain the RPC queue without an engine — for use during the
-/// `--wait-for-command` idle phase, where replay import/export does not need
-/// engine state. The router rejects mission requests while no session is active.
+/// Drain process requests while no mission is active.
 fn drain_pre_engine(server: &HttpServer) {
     let pending: Vec<HttpRequest> = {
         let mut q = server.queue.lock().expect("queue mutex poisoned");
@@ -1669,575 +1623,6 @@ impl SessionIngress {
     }
 }
 
-fn snapshot_state(engine: &Engine, replay: Option<ReplayStatus>) -> serde_json::Value {
-    let replay = replay.map(|s| {
-        serde_json::json!({
-            "frame": s.frame,
-            "total": s.total,
-            "paused": s.paused,
-        })
-    });
-    serde_json::json!({
-        "frame": engine.frame_counter(),
-        "map": engine.mission_map_name(),
-        "replay": replay,
-    })
-}
-
-fn snapshot_host_debug(
-    engine: &Engine,
-    frontend: &crate::host::HostFrontend,
-    local_seat: robin_engine::player_command::PlayerId,
-    assets: &LevelAssets,
-) -> serde_json::Value {
-    let selected_action = engine.selected_action_for_seat(local_seat);
-    let selected_pc = engine.hero_selection(local_seat).first().copied();
-    let selected_pc_state = selected_pc.and_then(|id| {
-        engine.get_entity(id).map(|entity| {
-            serde_json::json!({
-                "id": id,
-                "kind": entity.kind(),
-                "pc_current_action": entity.pc_data().map(|pc| pc.current_action),
-                "actor_action_state": entity.actor_data().map(|actor| actor.action_state),
-                "position_map": entity.element_data().position_map(),
-                "position_3d": entity.element_data().position(),
-                "layer": entity.element_data().layer(),
-                "direction": entity.element_data().direction(),
-            })
-        })
-    });
-    let preview = frontend.trajectory_preview();
-    let last_preview_point = preview.points().last().map(|point| {
-        serde_json::json!({
-            "position": point.position,
-            "time": point.time,
-        })
-    });
-    let bow_hover = match (
-        selected_action,
-        selected_pc,
-        frontend.input.feedback.focused_entity_id,
-    ) {
-        (engine_profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
-            let (target_status, shoot_mode) =
-                engine.can_shoot_with_bow_at(assets, pc_id, target_id);
-            Some(serde_json::json!({
-                "target_id": target_id,
-                "target_status": format!("{target_status:?}"),
-                "shoot_mode": format!("{shoot_mode:?}"),
-                "range_debug": bow_range_debug(engine, assets, pc_id, target_id),
-            }))
-        }
-        _ => None,
-    };
-
-    serde_json::json!({
-        "frame": engine.frame_counter(),
-        "selected_action": selected_action,
-        "selection": engine.hero_selection(local_seat),
-        "selected_pc": selected_pc_state,
-        "valid_trajectory": preview.is_valid(),
-        "trajectory_preview_points_len": preview.points().len(),
-        "trajectory_preview_start": preview.start(),
-        "trajectory_preview_last": last_preview_point,
-        "trajectory_preview_layer": preview.layer(),
-        "net_crumpled": preview.crumpled(),
-        "time_no_mouse_move": preview.hover_ticks(),
-        "mouse_map_prev": preview.previous_mouse(),
-        "trajectory_mark_count": preview.mark_count(),
-        "bow_hover": bow_hover,
-        "input": {
-            "focused_entity_id": frontend.input.feedback.focused_entity_id,
-            "target_drag": frontend.input.gestures.target_drag,
-            "double_status_bar_entity_id": frontend.input.feedback.double_status_bar_entity_id,
-            "selected_layer": frontend.input.spatial_hit().selected_layer,
-            "selected_sector_idx": frontend.input.spatial_hit().selected_sector_idx,
-            "selected_patch_idx": frontend.input.spatial_hit().selected_patch_idx,
-            "hovered_door_idx": frontend.input.spatial_hit().hovered_door_idx,
-            "valid_position_for_move": frontend.input.spatial_hit().valid_position_for_move,
-            "mouse_opacity": frontend.input.feedback.mouse_opacity,
-            "mouse_shadow_color": frontend.input.feedback.mouse_shadow_color,
-            "left_mouse_down": frontend.input.left_mouse_down(),
-            "right_mouse_down": frontend.input.controls.right_mouse_down,
-            "is_dragging": frontend.input.is_dragging(),
-            "is_alt": frontend.input.controls.is_alt,
-        },
-    })
-}
-
-fn bow_debug_ground_y_raw(point: engine_coordinates::WorldPoint3D) -> f32 {
-    point.y
-}
-
-fn bow_debug_ground_y_projected(point: engine_coordinates::WorldPoint3D) -> f32 {
-    point.to_map().y
-}
-
-fn game_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> u8 {
-    const COS_PI_SIXTEENTH: f32 = 0.980_785_25;
-    const SIN_PI_SIXTEENTH: f32 = 0.195_090_32;
-    const TAN_PI_EIGHTH: f32 = 0.414_213_57;
-
-    let mut rotated_x = x * COS_PI_SIXTEENTH * aspect_ratio - y * SIN_PI_SIXTEENTH;
-    let mut rotated_y = x * SIN_PI_SIXTEENTH * aspect_ratio + y * COS_PI_SIXTEENTH;
-
-    let west = rotated_x < 0.0;
-    if west {
-        rotated_x = -rotated_x;
-    }
-
-    let south = rotated_y > 0.0;
-    if !south {
-        rotated_y = -rotated_y;
-    }
-
-    let east_west = rotated_y < rotated_x;
-    let skew = if east_west {
-        rotated_y > rotated_x * TAN_PI_EIGHTH
-    } else {
-        rotated_x > rotated_y * TAN_PI_EIGHTH
-    };
-
-    let mut sector = 0u8;
-    if west {
-        sector |= 8;
-    }
-    if west ^ south {
-        sector |= 4;
-    }
-    if west ^ south ^ east_west {
-        sector |= 2;
-    }
-    if west ^ south ^ east_west ^ skew {
-        sector |= 1;
-    }
-    sector
-}
-
-fn bow_profile_debug(
-    engine: &Engine,
-    assets: &LevelAssets,
-    entity_id: engine_element::EntityId,
-) -> Option<serde_json::Value> {
-    let entity = engine.get_entity(entity_id)?;
-    let (bow_profile_idx, shooting_ability) = match entity {
-        engine_element::Entity::Pc(pc) => {
-            let idx = usize::from(pc.pc.profile_index);
-            let profile = assets.profile_manager.characters.get(idx)?;
-            if profile.shooting_weapon_id == 0 {
-                return None;
-            }
-            (profile.shooting_weapon_id, profile.shooting as u32)
-        }
-        engine_element::Entity::Soldier(soldier) => {
-            let idx = usize::from(soldier.soldier.soldier_profile_index);
-            let profile = assets.profile_manager.soldiers.get(idx)?;
-            if profile.shooting_weapon_id == 0 {
-                return None;
-            }
-            (profile.shooting_weapon_id, profile.shooting as u32)
-        }
-        _ => return None,
-    };
-
-    let bow_profile = assets.profile_manager.get_bow(bow_profile_idx)?;
-    let bow_state = engine_weapons::BowState::new(bow_profile_idx, bow_profile, 1);
-    Some(serde_json::json!({
-        "bow_profile_idx": bow_profile_idx,
-        "shooting_ability": shooting_ability,
-        "normal_range": bow_profile.normal_shoot.range,
-        "long_range": bow_profile.long_shoot.range,
-        "has_long_shoot": bow_profile.has_long_shoot,
-        "max_range": bow_state.get_max_range(bow_profile),
-    }))
-}
-
-fn bow_target_points_debug(
-    engine: &Engine,
-    target_id: engine_element::EntityId,
-) -> Option<serde_json::Value> {
-    let target = engine.get_entity(target_id)?;
-    let range_target = if target.is_human() {
-        target.compute_belt_point()
-    } else {
-        Some(target.element_data().position())
-    };
-    let preview_target = if target.is_human() {
-        target.compute_belt_point()
-    } else if target.is_fx_target() {
-        target.compute_target_center()
-    } else {
-        Some(target.element_data().position())
-    };
-
-    Some(serde_json::json!({
-        "id": target_id,
-        "kind": target.kind(),
-        "is_human": target.is_human(),
-        "is_fx_target": target.is_fx_target(),
-        "position_3d": target.element_data().position(),
-        "position_map": target.element_data().position_map(),
-        "belt_point": target.compute_belt_point(),
-        "eyes_point": target.compute_eyes_point(None),
-        "fx_center": target.compute_target_center(),
-        "range_target_point": range_target,
-        "preview_target_point": preview_target,
-    }))
-}
-
-fn bow_range_math_debug(
-    hand_point: engine_coordinates::WorldPoint3D,
-    target_point: engine_coordinates::WorldPoint3D,
-    max_range: f32,
-    forest_target: bool,
-) -> serde_json::Value {
-    const THROW_ANGLE_BOW: f32 = 0.3;
-    let rel_height = hand_point.z - target_point.z;
-    let base_radius = if rel_height > 0.0 {
-        max_range + rel_height * THROW_ANGLE_BOW.tan()
-    } else {
-        max_range
-    };
-    let radius = if forest_target {
-        base_radius * 2.0
-    } else {
-        base_radius
-    };
-
-    let dx = target_point.x - hand_point.x;
-    let dy_raw = bow_debug_ground_y_raw(target_point) - bow_debug_ground_y_raw(hand_point);
-    let dy_projected =
-        bow_debug_ground_y_projected(target_point) - bow_debug_ground_y_projected(hand_point);
-    let dz = target_point.z - hand_point.z;
-    let dy_range_raw = dy_raw * engine_position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
-    let dy_range_projected =
-        dy_projected * engine_position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
-    let square_distance_raw = dx * dx + dy_range_raw * dy_range_raw;
-    let square_distance_projected = dx * dx + dy_range_projected * dy_range_projected;
-    let radius_square = radius * radius;
-    let dist_3d_raw = (dx * dx + dy_raw * dy_raw + dz * dz).sqrt();
-    let dist_3d_projected = (dx * dx + dy_projected * dy_projected + dz * dz).sqrt();
-
-    serde_json::json!({
-        "hand_point": hand_point,
-        "target_point": target_point,
-        "target_delta": {
-            "dx": dx,
-            "dy_raw_game": dy_raw,
-            "dy_projected_y_minus_z": dy_projected,
-            "dz": dz,
-        },
-        "range": {
-            "max_range": max_range,
-            "rel_height": rel_height,
-            "throw_angle_bow": THROW_ANGLE_BOW,
-            "base_radius": base_radius,
-            "forest_target": forest_target,
-            "radius": radius,
-            "radius_square": radius_square,
-            "dy_raw_times_projectile_aspect": dy_range_raw,
-            "dy_projected_times_projectile_aspect": dy_range_projected,
-            "square_distance_raw_game_y": square_distance_raw,
-            "square_distance_projected_y_minus_z": square_distance_projected,
-            "in_range_raw_game_y": square_distance_raw < radius_square,
-            "in_range_projected_y_minus_z": square_distance_projected < radius_square,
-            "dist_3d_raw_game_y": dist_3d_raw,
-            "dist_3d_projected_y_minus_z": dist_3d_projected,
-        },
-        "direction": {
-            "iso_sector_raw_game_y": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
-            "rust_iso_sector_projected_y_minus_z": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
-            "game_sector_aspect_raw_game_y": game_sector_0_to_15_with_aspect(
-                dx,
-                dy_raw,
-                engine_position_interface::ASPECT_RATIO,
-            ),
-            "game_sector_aspect_projected_y_minus_z": game_sector_0_to_15_with_aspect(
-                dx,
-                dy_projected,
-                engine_position_interface::ASPECT_RATIO,
-            ),
-        },
-    })
-}
-
-fn bow_range_debug(
-    engine: &Engine,
-    assets: &LevelAssets,
-    pc_id: engine_element::EntityId,
-    target_id: engine_element::EntityId,
-) -> serde_json::Value {
-    let Some(shooter) = engine.get_entity(pc_id) else {
-        return serde_json::json!({"error": "missing_shooter", "pc_id": pc_id});
-    };
-    let Some(target) = engine.get_entity(target_id) else {
-        return serde_json::json!({"error": "missing_target", "target_id": target_id});
-    };
-    let Some(hand_point) = shooter.compute_hand_point(None) else {
-        return serde_json::json!({"error": "missing_shooter_hand_point", "pc_id": pc_id});
-    };
-
-    let bow_profile = bow_profile_debug(engine, assets, pc_id);
-    let max_range = bow_profile
-        .as_ref()
-        .and_then(|profile| profile.get("max_range"))
-        .and_then(serde_json::Value::as_u64)
-        .map(|v| v as f32);
-    let range_target_point = if target.is_human() {
-        target.compute_belt_point()
-    } else {
-        Some(target.element_data().position())
-    };
-    let preview_target_point = if target.is_human() {
-        target.compute_belt_point()
-    } else if target.is_fx_target() {
-        target.compute_target_center()
-    } else {
-        Some(target.element_data().position())
-    };
-    let forest_target = !target.is_human() && engine.weather().is_forest_level;
-    let range_math = match (range_target_point, max_range) {
-        (Some(point), Some(max_range)) => Some(bow_range_math_debug(
-            hand_point,
-            point,
-            max_range,
-            forest_target,
-        )),
-        _ => None,
-    };
-    let preview_direction = preview_target_point.map(|point| {
-        let dx = point.x - shooter.element_data().position().x;
-        let dy_raw = point.y - shooter.element_data().position().y;
-        let dy_projected =
-            bow_debug_ground_y_projected(point) - bow_debug_ground_y_projected(shooter.element_data().position());
-        serde_json::json!({
-            "source_position_3d": shooter.element_data().position(),
-            "preview_target_point": point,
-            "dx": dx,
-            "dy_raw_game": dy_raw,
-            "dy_projected_y_minus_z": dy_projected,
-            "iso_sector_raw_game_y": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
-            "rust_iso_sector_projected_y_minus_z": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
-            "game_sector_aspect_raw_game_y": game_sector_0_to_15_with_aspect(
-                dx,
-                dy_raw,
-                engine_position_interface::ASPECT_RATIO,
-            ),
-            "game_sector_aspect_projected_y_minus_z": game_sector_0_to_15_with_aspect(
-                dx,
-                dy_projected,
-                engine_position_interface::ASPECT_RATIO,
-            ),
-        })
-    });
-
-    serde_json::json!({
-        "shooter": {
-            "id": pc_id,
-            "kind": shooter.kind(),
-            "position_3d": shooter.element_data().position(),
-            "position_map": shooter.element_data().position_map(),
-            "hand_point": hand_point,
-            "direction": shooter.element_data().direction(),
-            "posture": shooter.element_data().posture(),
-            "pc_current_action": shooter.pc_data().map(|pc| pc.current_action),
-            "actor_action_state": shooter.actor_data().map(|actor| actor.action_state),
-        },
-        "target": bow_target_points_debug(engine, target_id),
-        "bow_profile": bow_profile,
-        "forest_target": forest_target,
-        "range_math": range_math,
-        "preview_direction": preview_direction,
-    })
-}
-
-fn engine_dump_json(engine: &Engine) -> Result<serde_json::Value, String> {
-    crate::json_value::to_json_value(engine).map_err(|e| e.to_string())
-}
-
-fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json::Value, String> {
-    let mut root = serde_json::Map::new();
-    root.insert("schema".into(), serde_json::json!("level-assets.v1"));
-    root.insert(
-        "counts".into(),
-        serde_json::json!({
-            "level_grid": {
-                "lines": assets.navigation.level_grid.lines.len(),
-                "sectors": assets.navigation.level_grid.sectors.len(),
-                "masks": assets.navigation.level_grid.masks.len(),
-                "jump_lines": assets.navigation.level_grid.jump_lines.len(),
-                "blocks": assets.navigation.level_grid.blocks.len(),
-                "layers": assets.navigation.level_grid.layers.len(),
-                "level_repulsive_points": assets.navigation.level_grid.level_repulsive_points.len(),
-                "shadow_data": assets.navigation.level_grid.shadow_data.len(),
-            },
-            "pathfinder_graph": {
-                "nodes": assets.navigation.pathfinder_graph.nodes.len(),
-                "layers": assets.navigation.pathfinder_graph.layers.len(),
-                "links": assets.navigation.pathfinder_graph.static_data.links.len(),
-                "link_configs": assets.navigation.pathfinder_graph.static_data.link_configs.len(),
-                "move_layers": assets.navigation.pathfinder_graph.static_data.move_layers.len(),
-                "alternative_move_layers": assets.navigation.pathfinder_graph.static_data.alternative_move_layers.len(),
-            },
-            "profiles": {
-                "characters": assets.profile_manager.characters.len(),
-                "soldiers": assets.profile_manager.soldiers.len(),
-                "civilians": assets.profile_manager.civilians.len(),
-                "hth_weapons": assets.profile_manager.hth_weapons.len(),
-                "bows": assets.profile_manager.bows.len(),
-                "missions": assets.profile_manager.missions.len(),
-            },
-            "mission_script_programs": assets.scripts.mission_programs.len(),
-            "hiking_paths": assets.navigation.hiking_paths.len(),
-            "static_sight_obstacles": assets.environment.static_sight_obstacles.len(),
-            "accessory_sprite_prototypes": assets.accessory_sprite_prototypes.len(),
-            "water_zones": assets.environment.water_zones.zones.len(),
-            "material_sectors": assets.environment.material_sectors.sectors.len(),
-            "script_locations": assets.scripts.location_count,
-            "script_points": assets.scripts.point_count,
-            "script_buildings": assets.scripts.building_count,
-            "script_hiking_paths": assets.scripts.hiking_path_count,
-        }),
-    );
-    root.insert(
-        "pixel_opacity_attached".into(),
-        serde_json::json!(assets.attachments.pixel_opacity.is_some()),
-    );
-    insert_json(&mut root, "fast_grid_runtime", engine.fast_grid())?;
-
-    let mut asset = serde_json::Map::new();
-    insert_json(&mut asset, "sprite_scriptor", &*assets.sprite_scriptor)?;
-    insert_json(&mut asset, "level_grid", &*assets.navigation.level_grid)?;
-    insert_json(
-        &mut asset,
-        "pathfinder_graph",
-        &*assets.navigation.pathfinder_graph,
-    )?;
-    insert_json(&mut asset, "hiking_paths", &*assets.navigation.hiking_paths)?;
-    insert_json(&mut asset, "profile_manager", &*assets.profile_manager)?;
-    insert_json(&mut asset, "bank_signature", &assets.bank_signature)?;
-    insert_json(
-        &mut asset,
-        "mission_script_programs",
-        &*assets.scripts.mission_programs,
-    )?;
-    insert_json(&mut asset, "peasant_firstnames", &assets.peasant_firstnames)?;
-    insert_json(&mut asset, "peasant_surnames", &assets.peasant_surnames)?;
-    insert_json(
-        &mut asset,
-        "accessory_sprite_prototypes",
-        &assets.accessory_sprite_prototypes,
-    )?;
-    insert_json(
-        &mut asset,
-        "exclamation_durations",
-        &assets.audio.exclamation_durations(),
-    )?;
-    insert_json(
-        &mut asset,
-        "source_durations",
-        &assets.audio.source_durations(),
-    )?;
-    insert_json(
-        &mut asset,
-        "sound_source_required_ids",
-        &assets.audio.sound_source_required_ids,
-    )?;
-    insert_json(
-        &mut asset,
-        "patch_entity_handles",
-        &assets.entities.patch_animation_entities,
-    )?;
-    insert_json(
-        &mut asset,
-        "scroll_entity_ids",
-        &assets.entities.scroll_entity_ids,
-    )?;
-    insert_json(
-        &mut asset,
-        "all_soldier_entity_ids",
-        &assets.entities.soldier_entity_ids,
-    )?;
-    insert_json(
-        &mut asset,
-        "soldier_subordinate_ids",
-        &assets.entities.soldier_subordinate_ids,
-    )?;
-    insert_json(&mut asset, "water_zones", &assets.environment.water_zones)?;
-    insert_json(
-        &mut asset,
-        "material_sectors",
-        &assets.environment.material_sectors,
-    )?;
-    insert_json(
-        &mut asset,
-        "static_sight_obstacles",
-        &*assets.environment.static_sight_obstacles,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_location_count",
-        &assets.scripts.location_count,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_point_count",
-        &assets.scripts.point_count,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_location_positions",
-        &assets.scripts.location_positions,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_location_layers",
-        &assets.scripts.location_layers,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_location_sectors",
-        &assets.scripts.location_sectors,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_building_count",
-        &assets.scripts.building_count,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_hiking_path_count",
-        &assets.scripts.hiking_path_count,
-    )?;
-    insert_json(
-        &mut asset,
-        "script_zone_grid_indices",
-        &assets.scripts.zone_grid_indices,
-    )?;
-    root.insert("assets".into(), serde_json::Value::Object(asset));
-
-    Ok(serde_json::Value::Object(root))
-}
-
-fn insert_json<T>(
-    object: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    value: &T,
-) -> Result<(), String>
-where
-    T: serde::Serialize + ?Sized,
-{
-    object.insert(
-        key.into(),
-        crate::json_value::to_json_value(value).map_err(|e| e.to_string())?,
-    );
-    Ok(())
-}
-
-// ──────────────────────────────────────────────────────────────────
-// Replay export transport adapter
-// ──────────────────────────────────────────────────────────────────
-
 fn start_replay_export(exports: &crate::replay_service::ReplayExports, response_tx: Responder) {
     response_tx.send(Ok(ReplyBody::ReplayExport(exports.export())));
 }
@@ -2346,125 +1731,6 @@ impl PendingStep {
 
     pub fn respond_err(self, error: RpcError) {
         self.response_tx.send(Err(error));
-    }
-}
-
-fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
-    !request.hide_ui && !request.full_map && request.flags == ScreenshotFlags::default()
-}
-
-/// Merge a request's `Some(x)` overrides onto `debug`, mutating in
-/// place.  Apply this to a **cloned** `DevState` so the live state
-/// stays untouched — the caller keeps the original and passes the
-/// clone to `render_frame`.
-pub fn apply_screenshot_flags(debug: &mut engine_api::DebugFlags, flags: &ScreenshotFlags) {
-    macro_rules! set {
-        ($name:ident, $field:ident) => {
-            if let Some(v) = flags.$name {
-                debug.$field = v;
-            }
-        };
-    }
-    set!(view_cones, all_view_cones);
-    set!(pc_sight, pc_sight);
-    set!(motion_graph, motion_graph_display);
-    set!(surface, surface_display);
-    set!(all_obstacles, all_obstacles_display);
-    set!(elevation, elevation_display);
-    set!(noise, noise_display);
-    set!(sound_source, sound_source_display);
-    set!(actor_info, actor_info_display);
-    set!(script_zones, script_zone_display);
-    set!(door, door_display);
-    set!(projection_areas, projection_areas_display);
-    set!(railroad, railroad_display);
-    set!(probability, prob_display);
-    set!(company_number, company_number_display);
-    set!(combat_energy, combat_energy_display);
-    set!(light_zones, display_light_zones);
-    set!(animation_lines, display_animation_lines);
-    set!(seek_points, display_seek_points);
-    set!(fps, fps_display);
-    set!(sprite_masks, sprite_masks_display);
-    set!(entity_ids, entity_ids);
-}
-
-/// Apply optional crop + resize, then encode as PNG.  Nearest-neighbour
-/// scaling — good enough for a dev-inspection endpoint and avoids
-/// pulling in an image crate.
-fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRequest) -> Reply {
-    // Optional bottom-panel crop: strip the HUD strip before any resize.
-    let (src, mut used_w, mut used_h) =
-        if req.hide_ui && !req.full_map && src_h > PANNEL_HEIGHT as u32 {
-            let new_h = src_h - PANNEL_HEIGHT as u32;
-            let stride = (src_w as usize) * 4;
-            let cropped: Vec<u8> = rgba[..stride * new_h as usize].to_vec();
-            (Cow::Owned(cropped), src_w, new_h)
-        } else {
-            (Cow::Borrowed(rgba), src_w, src_h)
-        };
-
-    let (target_w, target_h) =
-        screenshot_target_dimensions(used_w, used_h, req).map_err(RpcError::invalid_request)?;
-
-    let resized;
-    let pixels: &[u8] = if (target_w, target_h) != (used_w, used_h) {
-        let mut out = vec![0u8; (target_w * target_h * 4) as usize];
-        for dy in 0..target_h {
-            let sy = (dy * used_h / target_h).min(used_h - 1);
-            for dx in 0..target_w {
-                let sx = (dx * used_w / target_w).min(used_w - 1);
-                let si = ((sy * used_w + sx) * 4) as usize;
-                let di = ((dy * target_w + dx) * 4) as usize;
-                out[di..di + 4].copy_from_slice(&src[si..si + 4]);
-            }
-        }
-        resized = out;
-        used_w = target_w;
-        used_h = target_h;
-        &resized
-    } else {
-        &src
-    };
-
-    let mut png_bytes: Vec<u8> = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut png_bytes, used_w, used_h);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|e| RpcError::internal(format!("png header: {e}")))?;
-        writer
-            .write_image_data(pixels)
-            .map_err(|e| RpcError::internal(format!("png data: {e}")))?;
-    }
-    Ok(ReplyBody::Binary {
-        content_type: "image/png",
-        data: png_bytes,
-    })
-}
-
-fn screenshot_target_dimensions(
-    src_w: u32,
-    src_h: u32,
-    req: &ScreenshotRequest,
-) -> Result<(u32, u32), String> {
-    let (Some(max_w), Some(max_h)) = (req.width, req.height) else {
-        return Ok((src_w, src_h));
-    };
-    if max_w == 0 || max_h == 0 {
-        return Err("screenshot width/height must be > 0".into());
-    }
-
-    let max_w = max_w as u32;
-    let max_h = max_h as u32;
-    let height_for_max_w = ((src_h as u64 * max_w as u64) / src_w as u64) as u32;
-    if height_for_max_w <= max_h {
-        Ok((max_w, height_for_max_w.max(1)))
-    } else {
-        let width_for_max_h = ((src_w as u64 * max_h as u64) / src_h as u64) as u32;
-        Ok((width_for_max_h.max(1), max_h))
     }
 }
 
@@ -2834,162 +2100,16 @@ mod tests {
         assert!(browser_rejection_reason(None, None, Some("LOCALHOST:17640"), 17640).is_none());
     }
 
-    fn screenshot_request(width: Option<u16>, height: Option<u16>) -> ScreenshotRequest {
-        ScreenshotRequest {
-            width,
-            height,
-            ..ScreenshotRequest::default()
-        }
-    }
-
-    #[test]
-    fn screenshot_dimensions_fit_width_limited_bounds() {
-        let req = screenshot_request(Some(1280), Some(720));
-        assert_eq!(
-            screenshot_target_dimensions(1024, 768, &req).unwrap(),
-            (960, 720)
-        );
-    }
-
-    #[test]
-    fn screenshot_dimensions_fit_height_limited_bounds() {
-        let req = screenshot_request(Some(640), Some(480));
-        assert_eq!(
-            screenshot_target_dimensions(1920, 1080, &req).unwrap(),
-            (640, 360)
-        );
-    }
-
-    #[test]
-    fn screenshot_dimensions_leave_size_when_bounds_missing() {
-        let req = screenshot_request(Some(640), None);
-        assert_eq!(
-            screenshot_target_dimensions(1024, 768, &req).unwrap(),
-            (1024, 768)
-        );
-    }
-
-    #[test]
-    fn screenshot_dimensions_reject_zero_bounds() {
-        let req = screenshot_request(Some(0), Some(720));
-        assert!(screenshot_target_dimensions(1024, 768, &req).is_err());
-    }
-
-    #[test]
-    fn only_plain_ui_screenshots_use_presented_modal_frame() {
-        let plain = ScreenshotRequest::default();
-        assert!(can_capture_presented_ui(&plain));
-
-        let hidden = ScreenshotRequest {
-            hide_ui: true,
-            ..plain.clone()
-        };
-        assert!(!can_capture_presented_ui(&hidden));
-
-        let full_map = ScreenshotRequest {
-            full_map: true,
-            ..plain.clone()
-        };
-        assert!(!can_capture_presented_ui(&full_map));
-
-        let overridden = ScreenshotRequest {
-            flags: ScreenshotFlags {
-                view_cones: Some(true),
-                ..ScreenshotFlags::default()
-            },
-            ..plain
-        };
-        assert!(!can_capture_presented_ui(&overridden));
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn screenshot_query_parses_frame_and_full_map() {
-        let req = parse_screenshot_query("frame=10&full_map=1&hide_ui=true&entity_ids=0");
+        let req =
+            crate::rpc_query::screenshot("frame=10&full_map=1&hide_ui=true&entity_ids=0").unwrap();
         assert_eq!(req.frame, Some(10));
         assert!(req.full_map);
         assert!(req.hide_ui);
         assert_eq!(req.flags.entity_ids, Some(false));
     }
-}
-
-fn frame_console_response_to_json(response: engine_api::FrameConsoleResponse) -> serde_json::Value {
-    use engine_api::FrameConsoleResponse as R;
-
-    match response {
-        R::Ok(message) => serde_json::json!({"kind": "ok", "message": message}),
-        R::Unknown => serde_json::json!({"kind": "unknown"}),
-        R::NotImplemented(command) => {
-            serde_json::json!({"kind": "not_implemented", "command": command})
-        }
-        R::LoadCampaignRequested(path) => serde_json::json!({
-            "kind": "host_followup",
-            "variant": "LoadCampaignRequested",
-            "path": path,
-        }),
-        R::DeityInvoked => serde_json::json!({
-            "kind": "host_followup",
-            "variant": "DeityInvoked",
-        }),
-    }
-}
-
-fn snapshot_script(engine: &Engine) -> serde_json::Value {
-    let Some(script) = engine.mission_script() else {
-        return serde_json::json!({"loaded": false});
-    };
-    let scb = script.scb();
-    let counts = script.instance_counts();
-    let classes: Vec<_> = scb
-        .classes
-        .iter()
-        .map(|c| {
-            let funcs: Vec<&str> = c.functions.iter().map(|f| f.name.as_str()).collect();
-            let members: Vec<&str> = c.member_variables.iter().map(|m| m.name.as_str()).collect();
-            serde_json::json!({
-                "name": c.class_name,
-                "source_filename": c.source_file,
-                "functions": funcs,
-                "members": members,
-                "quad_count": c.quads.len(),
-            })
-        })
-        .collect();
-    serde_json::json!({
-        "loaded": true,
-        "version": scb.version,
-        "class_count": classes.len(),
-        "actor_instances": counts.actors,
-        "zone_instances": counts.zones,
-        "target_instances": counts.targets,
-        "scroll_instances": counts.scrolls,
-        "waypoint_instances": counts.waypoints,
-        "classes": classes,
-    })
-}
-
-fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
-    let Some(script) = engine.mission_script() else {
-        return serde_json::json!({"error": "no mission script loaded"});
-    };
-    let scb = script.scb();
-    let source = if let Some(name) = class {
-        // Single-class mode: rebuild a minimal ScbFile holding just
-        // this class so the existing whole-file decompiler can run on
-        // it without us reaching into its private per-class entry
-        // points.
-        let Some(c) = scb.classes.iter().find(|c| c.class_name == name) else {
-            return serde_json::json!({"error": format!("class not found: {name}")});
-        };
-        let scb_one = engine_scb::ScbFile {
-            version: scb.version,
-            classes: vec![c.clone()],
-        };
-        assets_decompile::decompile(&scb_one)
-    } else {
-        assets_decompile::decompile(scb)
-    };
-    serde_json::json!({"source": source})
 }
 
 // ──────────────────────────────────────────────────────────────────

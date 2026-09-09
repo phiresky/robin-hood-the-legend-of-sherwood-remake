@@ -1317,6 +1317,60 @@ mod tests {
     }
 
     #[test]
+    fn full_save_restores_initialized_and_populated_achievement_trackers() {
+        let (mut engine, assets) = fresh_engine();
+        engine.test_seed_achievement_persistence(&assets);
+        engine.test_set_frame_counter(42);
+        let host = Host::scratch(800.0, 600.0);
+        let expected = engine.mission_achievement_state().clone();
+        let expected_native = bitcode::encode(&expected);
+        let expected_hash = robin_util::state_hash::compute(&expected);
+        let document = serde_json::to_value(&expected).unwrap();
+        for field in [
+            "npc_baselines",
+            "party_health",
+            "wasp_targets",
+            "pending_stings",
+            "qa_actors",
+            "qa_successes",
+        ] {
+            assert!(
+                !document[field].as_object().expect(field).is_empty(),
+                "{field} fixture must be populated"
+            );
+        }
+        assert!(
+            !document["qa_successes"]["1"]
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
+
+        let save = GameSaveFile::capture(&engine, &host, 7, "Populated achievement save".into());
+        let identity = save.replay_identity().unwrap();
+        let encoded = serde_json::to_vec(&save).expect("serialize populated full save");
+        let decoded: GameSaveFile =
+            serde_json::from_slice(&encoded).expect("decode populated full save");
+        assert_eq!(decoded.replay_identity().unwrap(), identity);
+        assert_eq!(decoded.engine.mission_achievement_state(), &expected);
+
+        let (mut restored, restored_assets) = fresh_engine();
+        let mut restored_host = Host::scratch(800.0, 600.0);
+        decoded
+            .apply_to(&mut restored, &mut restored_host, &restored_assets)
+            .expect("restore populated full save");
+        assert_eq!(restored.frame_counter(), 42);
+        let actual = restored.mission_achievement_state();
+        assert_eq!(actual, &expected);
+        assert_eq!(bitcode::encode(actual), expected_native);
+        assert_eq!(robin_util::state_hash::compute(actual), expected_hash);
+        let recaptured = GameSaveFile::capture(&restored, &restored_host, 7, "Restored".into());
+        let second: GameSaveFile =
+            serde_json::from_slice(&serde_json::to_vec(&recaptured).unwrap()).unwrap();
+        assert_eq!(second.engine.mission_achievement_state(), &expected);
+    }
+
+    #[test]
     fn replay_save_projection_matches_disk_and_discards_clone_only_ai_continuations() {
         let (mut engine, assets) = fresh_engine();
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);

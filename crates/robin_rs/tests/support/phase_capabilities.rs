@@ -341,6 +341,37 @@ fn http_transport_does_not_own_replay_storage() {
 }
 
 #[test]
+fn diagnostic_and_image_builders_do_not_own_rpc_lifetimes() {
+    struct Boundaries;
+    impl<'ast> Visit<'ast> for Boundaries {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            for segment in &path.segments {
+                assert!(
+                    ![
+                        "HttpTransport",
+                        "SessionIngress",
+                        "Responder",
+                        "RequestRouter",
+                        "HttpRequest"
+                    ]
+                    .iter()
+                    .any(|name| segment.ident == name),
+                    "{} does not belong in a diagnostic/image builder",
+                    segment.ident
+                );
+            }
+            visit::visit_path(self, path);
+        }
+    }
+    for source in [
+        include_str!("../../src/rpc_diagnostics.rs"),
+        include_str!("../../src/rpc_screenshot.rs"),
+    ] {
+        Boundaries.visit_file(&syn::parse_file(source).unwrap());
+    }
+}
+
+#[test]
 fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
     struct ExecutionSignatures {
         found_advance: bool,

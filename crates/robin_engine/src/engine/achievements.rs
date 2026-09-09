@@ -73,12 +73,7 @@ impl EngineInner {
                     campaign.deeds.companion_victories.insert(4);
                 }
                 Some(K::MerryManA | K::MerryManB | K::MerryManC) => {
-                    if self
-                        .mission_domain
-                        .achievements
-                        .contributors
-                        .contains(&character)
-                    {
+                    if self.mission_domain.achievements.has_contributed(character) {
                         campaign.deeds.contributing_veterans.insert(character);
                     }
                 }
@@ -164,7 +159,7 @@ impl EngineInner {
         let index = self
             .pc_description_index_for_pc_data(pc)
             .expect("contributing party member has no campaign identity");
-        self.mission_domain.achievements.contributors.insert(index);
+        self.mission_domain.achievements.record_contribution(index);
     }
     /// Capture the baseline after startup scripts and Sherwood production
     /// setup have settled. This is deliberately later than level parsing:
@@ -234,11 +229,7 @@ impl EngineInner {
             })
             .collect::<Vec<_>>();
         for &(id, hp, _) in &party {
-            if let Some(previous) = self.mission_domain.achievements.party_health.insert(id, hp) {
-                if hp < previous {
-                    self.mission_domain.achievements.party_hurt = true;
-                }
-            }
+            self.mission_domain.achievements.record_party_health(id, hp);
         }
         let alive = self
             .world
@@ -261,11 +252,7 @@ impl EngineInner {
                 let party_target = ai.base.primary_target.is_some_and(|target| {
                     party.iter().any(|(pc, _, _)| pc.index() == target.get())
                 });
-                let still_searching = self
-                    .mission_domain
-                    .achievements
-                    .escape_pursuers
-                    .contains(&id)
+                let still_searching = self.mission_domain.achievements.is_tracked_pursuer(id)
                     && matches!(
                         ai.base.current_state,
                         crate::ai::AiState::Seeking | crate::ai::AiState::Wondering
@@ -302,11 +289,10 @@ impl EngineInner {
                     )
                 )
             });
-        if !party.is_empty() && !generic_only {
-            self.mission_domain.achievements.named_party_participated = true;
-        }
-        let generic_only =
-            generic_only && !self.mission_domain.achievements.named_party_participated;
+        let generic_only = self
+            .mission_domain
+            .achievements
+            .record_party_composition(!party.is_empty(), generic_only);
         let optional = self
             .mission_domain
             .campaign

@@ -4304,6 +4304,59 @@ impl Engine {
     // `robin_rs` enables the feature in its `[dev-dependencies]`
     // block so its round-trip tests compile.
 
+    /// Build populated achievement evidence via the real mission initializer
+    /// and tracking operations, without exposing mutable tracker collections.
+    #[cfg(feature = "test-helpers")]
+    #[doc(hidden)]
+    pub fn test_seed_achievement_persistence(&mut self, assets: &LevelAssets) {
+        use crate::element::*;
+        let mut pc_element = ElementData::default();
+        pc_element.kind = ElementKind::ActorPc;
+        pc_element.active = true;
+        let pc = self.inner.add_entity(Entity::Pc(ActorPc {
+            element: pc_element,
+            actor: Default::default(),
+            human: Default::default(),
+            pc: PcData {
+                life_points: 100,
+                mission_role: crate::human_control::MissionRole::PlayerParty,
+                kind: Some(crate::character_kind::CharacterKind::MerryManA),
+                ..Default::default()
+            },
+        }));
+        let mut soldier_element = ElementData::default();
+        soldier_element.kind = ElementKind::ActorSoldier;
+        soldier_element.active = true;
+        let soldier = self.inner.add_entity(Entity::Soldier(ActorSoldier {
+            element: soldier_element,
+            actor: Default::default(),
+            human: Default::default(),
+            npc: NpcData {
+                life_points: 100,
+                ..Default::default()
+            },
+            soldier: SoldierData {
+                cached_camp: Camp::Royalists,
+                ..Default::default()
+            },
+        }));
+        let nest = self.inner.add_entity(Entity::Projectile(ElementProjectile {
+            element: Default::default(),
+            object: Default::default(),
+            projectile: Default::default(),
+        }));
+        self.inner.initialize_achievement_tracking(assets);
+        let state = &mut self.inner.mission_domain.achievements;
+        state.record_party_health(pc, 90);
+        state.record_wasp_nest_throw(nest);
+        state.queue_wasp_sting(soldier, nest);
+        state.begin_quick_action_execution();
+        state.record_quick_action_launch(pc, soldier);
+        state.record_qa_success(pc, soldier);
+        state.record_quick_action_launch(pc, soldier);
+        state.end_quick_action_execution();
+    }
+
     /// Insert a fully-formed entity into a test engine. Input-resolution
     /// tests need live entities to click on; the blank `new_for_test`
     /// level has none and the production spawn path requires proto data.

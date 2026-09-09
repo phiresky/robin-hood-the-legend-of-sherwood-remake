@@ -27,7 +27,7 @@ impl EngineInner {
         if pc.pc.mission_role == crate::human_control::MissionRole::PlayerParty
             && life_points_after < life_points_before
         {
-            self.mission_domain.achievements.party_hurt = true;
+            self.mission_domain.achievements.record_party_harm();
         }
         let Some(Entity::Pc(pc)) = self.get_entity(entity_id) else {
             unreachable!()

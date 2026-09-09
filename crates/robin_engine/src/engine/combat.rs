@@ -5857,8 +5857,7 @@ impl EngineInner {
                     let wasp_id = self.add_entity(wasp_entity);
                     self.mission_domain
                         .achievements
-                        .wasp_targets
-                        .insert(wasp_id, Default::default());
+                        .record_wasp_nest_throw(wasp_id);
                     self.attach_accessory_sprite(assets, wasp_id);
                     tracing::debug!(
                         actor = ?actor_id,

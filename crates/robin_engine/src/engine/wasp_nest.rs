@@ -263,8 +263,7 @@ impl EngineInner {
                                 if hostile {
                                     self.mission_domain
                                         .achievements
-                                        .pending_stings
-                                        .insert(victim_id, nest);
+                                        .queue_wasp_sting(victim_id, nest);
                                 }
                             }
                         }

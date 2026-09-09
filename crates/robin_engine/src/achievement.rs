@@ -1006,30 +1006,29 @@ pub struct MissionAchievementState {
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     npc_baselines: std::collections::BTreeMap<crate::element::EntityId, (i32, bool)>,
     harmed_npc: bool,
-    pub contributors: BTreeSet<usize>,
+    contributors: BTreeSet<usize>,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    pub party_health: std::collections::BTreeMap<crate::element::EntityId, i32>,
-    pub party_hurt: bool,
-    pub knockouts: BTreeSet<crate::element::EntityId>,
-    pub scarlet_knockouts: BTreeSet<crate::element::EntityId>,
-    pub beer_by_tuck: BTreeSet<crate::element::EntityId>,
-    pub beer_drinkers: BTreeSet<crate::element::EntityId>,
+    party_health: std::collections::BTreeMap<crate::element::EntityId, i32>,
+    party_hurt: bool,
+    knockouts: BTreeSet<crate::element::EntityId>,
+    scarlet_knockouts: BTreeSet<crate::element::EntityId>,
+    beer_by_tuck: BTreeSet<crate::element::EntityId>,
+    beer_drinkers: BTreeSet<crate::element::EntityId>,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    pub wasp_targets:
+    wasp_targets:
         std::collections::BTreeMap<crate::element::EntityId, BTreeSet<crate::element::EntityId>>,
-    pub escape_pursuers: BTreeSet<crate::element::EntityId>,
-    pub escape_earned: bool,
+    escape_pursuers: BTreeSet<crate::element::EntityId>,
+    escape_earned: bool,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    pub pending_stings:
-        std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
-    pub replaying_qa: bool,
-    pub named_party_participated: bool,
-    pub qa_execution: u32,
+    pending_stings: std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
+    replaying_qa: bool,
+    named_party_participated: bool,
+    qa_execution: u32,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    pub qa_actors:
+    qa_actors:
         std::collections::BTreeMap<crate::element::EntityId, (u32, crate::element::EntityId)>,
     #[serde(with = "qa_success_map_serde")]
-    pub qa_successes: std::collections::BTreeMap<
+    qa_successes: std::collections::BTreeMap<
         u32,
         std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
     >,
@@ -1088,6 +1087,126 @@ impl Default for MissionAchievementState {
 }
 
 impl MissionAchievementState {
+    /// Start one execution group before replaying any actor's queued orders.
+    pub(crate) fn begin_quick_action_execution(&mut self) {
+        self.assert_tracking_open();
+        assert!(
+            !self.replaying_qa,
+            "nested quick-action achievement execution"
+        );
+        self.qa_execution = self
+            .qa_execution
+            .checked_add(1)
+            .expect("QA achievement execution overflow");
+        self.replaying_qa = true;
+    }
+
+    pub(crate) fn end_quick_action_execution(&mut self) {
+        self.assert_tracking_open();
+        assert!(
+            self.replaying_qa,
+            "quick-action achievement execution not started"
+        );
+        self.replaying_qa = false;
+    }
+
+    /// Manual orders invalidate attribution, except while replaying the queue.
+    pub(crate) fn cancel_quick_action_for_manual_order(&mut self, actor: crate::element::EntityId) {
+        if !self.replaying_qa {
+            self.clear_quick_action_actor(actor);
+        }
+    }
+
+    pub(crate) fn clear_quick_action_actor(&mut self, actor: crate::element::EntityId) {
+        self.assert_tracking_open();
+        self.qa_actors.remove(&actor);
+    }
+
+    pub(crate) fn record_quick_action_launch(
+        &mut self,
+        actor: crate::element::EntityId,
+        target: crate::element::EntityId,
+    ) {
+        self.assert_tracking_open();
+        assert!(
+            self.replaying_qa,
+            "quick-action launch outside execution group"
+        );
+        self.qa_actors.insert(actor, (self.qa_execution, target));
+    }
+
+    pub(crate) fn record_party_health(&mut self, actor: crate::element::EntityId, health: i32) {
+        self.assert_tracking_open();
+        if let Some(previous) = self.party_health.insert(actor, health) {
+            self.party_hurt |= health < previous;
+        }
+    }
+
+    pub(crate) fn record_party_harm(&mut self) {
+        self.assert_tracking_open();
+        self.party_hurt = true;
+    }
+
+    pub(crate) fn record_contribution(&mut self, character: usize) {
+        self.assert_tracking_open();
+        self.contributors.insert(character);
+    }
+
+    pub(crate) fn has_contributed(&self, character: usize) -> bool {
+        self.contributors.contains(&character)
+    }
+
+    pub(crate) fn is_tracked_pursuer(&self, actor: crate::element::EntityId) -> bool {
+        self.escape_pursuers.contains(&actor)
+    }
+
+    /// Named participation is sticky even after that character leaves the party.
+    pub(crate) fn record_party_composition(&mut self, present: bool, generic_only: bool) -> bool {
+        self.assert_tracking_open();
+        self.named_party_participated |= present && !generic_only;
+        generic_only && !self.named_party_participated
+    }
+
+    pub(crate) fn record_knockout(&mut self, victim: crate::element::EntityId) {
+        self.assert_tracking_open();
+        self.knockouts.insert(victim);
+    }
+
+    pub(crate) fn record_scarlet_knockout(&mut self, victim: crate::element::EntityId) {
+        self.assert_tracking_open();
+        self.scarlet_knockouts.insert(victim);
+    }
+
+    pub(crate) fn record_tuck_beer(&mut self, bottle: crate::element::EntityId) {
+        self.assert_tracking_open();
+        self.beer_by_tuck.insert(bottle);
+    }
+
+    pub(crate) fn record_wasp_nest_throw(&mut self, nest: crate::element::EntityId) {
+        self.assert_tracking_open();
+        self.wasp_targets.insert(nest, BTreeSet::new());
+    }
+
+    pub(crate) fn queue_wasp_sting(
+        &mut self,
+        victim: crate::element::EntityId,
+        nest: crate::element::EntityId,
+    ) {
+        self.assert_tracking_open();
+        self.pending_stings.insert(victim, nest);
+    }
+
+    pub(crate) fn complete_wasp_sting(&mut self, victim: crate::element::EntityId) {
+        self.assert_tracking_open();
+        if let Some(nest) = self.pending_stings.remove(&victim) {
+            self.record_wasp_sting(nest, victim);
+        }
+    }
+
+    fn assert_tracking_open(&self) {
+        self.ensure_not_finalized()
+            .expect("achievement effect after finalization");
+    }
     pub fn latch(&mut self, id: AchievementId) {
         self.ensure_not_finalized()
             .expect("achievement effect after finalization");
@@ -1099,6 +1218,7 @@ impl MissionAchievementState {
         actor: crate::element::EntityId,
         target: crate::element::EntityId,
     ) {
+        self.assert_tracking_open();
         let Some(&(group, expected_target)) = self.qa_actors.get(&actor) else {
             return;
         };
@@ -1118,6 +1238,7 @@ impl MissionAchievementState {
         soldier: crate::element::EntityId,
         bottle: crate::element::EntityId,
     ) {
+        self.assert_tracking_open();
         if self.beer_by_tuck.contains(&bottle) {
             self.beer_drinkers.insert(soldier);
             if self.beer_drinkers.len() >= 3 {
@@ -1131,6 +1252,7 @@ impl MissionAchievementState {
         nest: crate::element::EntityId,
         victim: crate::element::EntityId,
     ) {
+        self.assert_tracking_open();
         // Only nests registered on a successful player throw participate.
         if let Some(targets) = self.wasp_targets.get_mut(&nest) {
             targets.insert(victim);
@@ -1141,6 +1263,7 @@ impl MissionAchievementState {
     }
 
     pub fn record_npc_harm(&mut self) {
+        self.assert_tracking_open();
         self.harmed_npc = true;
     }
 
@@ -1149,6 +1272,7 @@ impl MissionAchievementState {
         pursuing: BTreeSet<crate::element::EntityId>,
         present_alive: BTreeSet<crate::element::EntityId>,
     ) {
+        self.assert_tracking_open();
         if self
             .escape_pursuers
             .iter()
@@ -1175,6 +1299,7 @@ impl MissionAchievementState {
     }
 
     pub fn configure_banners(&mut self, requirement: Option<(u32, u32)>) {
+        self.assert_tracking_open();
         for id in [
             AchievementId::NoBannersPurchased,
             AchievementId::AllBannersPurchased,
@@ -2351,6 +2476,78 @@ mod tests {
         let native = bitcode::encode(&state);
         let from_native: MissionAchievementState = bitcode::decode(&native).unwrap();
         assert_eq!(from_native, state);
+    }
+
+    #[test]
+    fn quick_action_attribution_respects_execution_and_manual_cancellation() {
+        use crate::element::EntityId;
+        use crate::entity_id::{PcId, SoldierId};
+        let actor = EntityId::Pc(PcId(0));
+        let target = EntityId::Soldier(SoldierId(0));
+        let mut state = MissionAchievementState::from_mission_start();
+        state.begin_quick_action_execution();
+        state.record_quick_action_launch(actor, target);
+        state.cancel_quick_action_for_manual_order(actor);
+        assert!(
+            state.qa_actors.contains_key(&actor),
+            "queue replay must retain attribution"
+        );
+        state.end_quick_action_execution();
+        state.record_qa_success(actor, actor);
+        assert!(state.qa_successes.is_empty(), "wrong target must not count");
+        state.record_qa_success(actor, target);
+        assert_eq!(state.qa_successes[&1][&actor], target);
+        assert!(state.qa_actors.is_empty());
+        state.begin_quick_action_execution();
+        state.record_quick_action_launch(actor, target);
+        state.end_quick_action_execution();
+        state.cancel_quick_action_for_manual_order(actor);
+        state.record_qa_success(actor, target);
+        assert!(
+            !state.qa_successes.contains_key(&2),
+            "manual replacement cancels the pending feat"
+        );
+    }
+
+    #[test]
+    fn health_and_named_party_evidence_remain_sticky() {
+        let actor = crate::element::EntityId::Pc(crate::entity_id::PcId(0));
+        let mut state = MissionAchievementState::from_mission_start();
+        state.record_party_health(actor, 100);
+        assert!(!state.party_hurt);
+        state.record_party_health(actor, 90);
+        state.record_party_health(actor, 100);
+        assert!(state.party_hurt, "healing must not undo harm");
+        assert!(state.record_party_composition(true, true));
+        assert!(!state.record_party_composition(true, false));
+        assert!(
+            !state.record_party_composition(true, true),
+            "named participation survives departure"
+        );
+        state.record_contribution(7);
+        assert!(state.has_contributed(7));
+    }
+
+    #[test]
+    fn queued_wasp_stings_count_only_once_after_completion() {
+        let nest = crate::element::EntityId::Projectile(crate::entity_id::ProjectileId(0));
+        let victim = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(0));
+        let mut state = MissionAchievementState::from_mission_start();
+        state.record_wasp_nest_throw(nest);
+        state.queue_wasp_sting(victim, nest);
+        assert!(state.wasp_targets[&nest].is_empty());
+        state.complete_wasp_sting(victim);
+        state.complete_wasp_sting(victim);
+        assert!(state.pending_stings.is_empty());
+        assert_eq!(state.wasp_targets[&nest], BTreeSet::from([victim]));
+    }
+
+    #[test]
+    #[should_panic(expected = "achievement effect after finalization")]
+    fn finalized_trackers_reject_new_evidence() {
+        let mut state = MissionAchievementState::from_mission_start();
+        state.finalize_success();
+        state.record_party_harm();
     }
 
     #[test]

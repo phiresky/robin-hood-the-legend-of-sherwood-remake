@@ -303,26 +303,30 @@ impl EngineInner {
         use PlayerCommand::*;
 
         // A new manual order cannot inherit an earlier quick-action feat.
-        if !self.mission_domain.achievements.replaying_qa {
-            match cmd {
-                LaunchInteraction { actor, .. }
-                | LaunchGroundTarget { actor, .. }
-                | LaunchSelfAbility { actor, .. }
-                | LaunchScrollRead { actor, .. }
-                | EnterSwordfight { actor, .. }
-                | SwordStrikeCmd { actor, .. } => {
-                    self.mission_domain.achievements.qa_actors.remove(actor);
-                }
-                StopPc { pc_id } => {
-                    self.mission_domain.achievements.qa_actors.remove(pc_id);
-                }
-                GroupMove { actors, .. } => {
-                    for actor in actors {
-                        self.mission_domain.achievements.qa_actors.remove(actor);
-                    }
-                }
-                _ => {}
+        match cmd {
+            LaunchInteraction { actor, .. }
+            | LaunchGroundTarget { actor, .. }
+            | LaunchSelfAbility { actor, .. }
+            | LaunchScrollRead { actor, .. }
+            | EnterSwordfight { actor, .. }
+            | SwordStrikeCmd { actor, .. } => {
+                self.mission_domain
+                    .achievements
+                    .cancel_quick_action_for_manual_order(*actor);
             }
+            StopPc { pc_id } => {
+                self.mission_domain
+                    .achievements
+                    .cancel_quick_action_for_manual_order(*pc_id);
+            }
+            GroupMove { actors, .. } => {
+                for actor in actors {
+                    self.mission_domain
+                        .achievements
+                        .cancel_quick_action_for_manual_order(*actor);
+                }
+            }
+            _ => {}
         }
 
         // Pre-flight reachability gate for object Take clicks. Bail

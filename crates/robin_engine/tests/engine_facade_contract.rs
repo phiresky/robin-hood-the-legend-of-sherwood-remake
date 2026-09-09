@@ -17,6 +17,26 @@ fn parse_rust(relative_path: &str) -> syn::File {
     parse_rust_path(&path)
 }
 
+#[test]
+fn achievement_tracking_collections_are_owned_by_the_aggregate() {
+    let syntax = parse_rust("src/achievement.rs");
+    let state = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Struct(item) if item.ident == "MissionAchievementState" => Some(item),
+            _ => None,
+        })
+        .expect("mission achievement aggregate");
+    assert!(
+        state
+            .fields
+            .iter()
+            .all(|field| matches!(field.vis, Visibility::Inherited)),
+        "achievement evidence must change through named tracking operations"
+    );
+}
+
 fn parse_rust_path(path: &Path) -> syn::File {
     let source = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));

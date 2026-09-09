@@ -73,10 +73,10 @@ pub(super) async fn dispatch(
         Some(Route::Info) => return (200, info_json().into()),
         Some(Route::Natives) => return (200, list_natives_json().into()),
         Some(Route::EngineDump) => Ok(HttpPayload::EngineDump),
-        Some(Route::Decompile) => Ok(HttpPayload::Decompile {
-            class: query_param(query, "class").map(str::to_string),
-        }),
-        Some(Route::Screenshot) => Ok(HttpPayload::Screenshot(parse_screenshot_query(query))),
+        Some(Route::Decompile) => {
+            crate::rpc_query::decompile_class(query).map(|class| HttpPayload::Decompile { class })
+        }
+        Some(Route::Screenshot) => crate::rpc_query::screenshot(query).map(HttpPayload::Screenshot),
         Some(Route::Rpc(kind)) => {
             if matches!(kind, RequestKind::LoadReplay)
                 && let Err(error) = validate_replay_headers(&req)

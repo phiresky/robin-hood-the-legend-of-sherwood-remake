@@ -226,6 +226,10 @@ pub mod mission_asset_launch;
 pub mod mission_asset_restore;
 pub mod mission_descriptors;
 pub mod mission_replays;
+pub mod rpc_diagnostics;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod rpc_query;
+pub mod rpc_screenshot;
 pub mod session_achievement;
 pub mod shader_preset;
 pub mod shipping_mission;

@@ -550,7 +550,7 @@ impl EngineInner {
                 .and_then(Entity::pc_data)
                 .is_some_and(|pc| pc.kind == Some(crate::character_kind::CharacterKind::FriarTuck))
             {
-                self.mission_domain.achievements.beer_by_tuck.insert(ale_id);
+                self.mission_domain.achievements.record_tuck_beer(ale_id);
             }
             // Ale creation clones the ACCESSORIES_Ale master before
             // lying-object animation assignment, whose forced restart resets the
@@ -1469,16 +1469,9 @@ impl EngineInner {
         // GETTING_FREE_FROM_WASP START — `Say(REMARK_WASP_STING)`.
         // Plain `say` on the AI base.
         for speaker in wasp_sting_remark {
-            if let Some(nest) = self
-                .mission_domain
+            self.mission_domain
                 .achievements
-                .pending_stings
-                .remove(&speaker)
-            {
-                self.mission_domain
-                    .achievements
-                    .record_wasp_sting(nest, speaker);
-            }
+                .complete_wasp_sting(speaker);
             if let Some(entity) = self.world.entities.get_mut(speaker)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(base) = npc.ai_brain.base_mut()

@@ -3446,7 +3446,7 @@ impl EngineInner {
                     && self.is_hostile_to_player_camp(entity.camp())
             });
             if attacker_is_pc && hostile {
-                self.mission_domain.achievements.knockouts.insert(victim_id);
+                self.mission_domain.achievements.record_knockout(victim_id);
                 let scarlet = self
                     .world
                     .entities
@@ -3458,8 +3458,7 @@ impl EngineInner {
                 if stone && scarlet {
                     self.mission_domain
                         .achievements
-                        .scarlet_knockouts
-                        .insert(victim_id);
+                        .record_scarlet_knockout(victim_id);
                 }
                 self.record_achievement_tactical_effect(actor, victim_id);
             }

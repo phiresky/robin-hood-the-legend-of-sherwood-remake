@@ -1108,13 +1108,9 @@ impl EngineInner {
             return;
         }
 
-        self.mission_domain.achievements.qa_execution = self
-            .mission_domain
+        self.mission_domain
             .achievements
-            .qa_execution
-            .checked_add(1)
-            .expect("QA achievement execution overflow");
-        self.mission_domain.achievements.replaying_qa = true;
+            .begin_quick_action_execution();
         for pc_id in &targets {
             let intended_target = self
                 .players
@@ -1130,15 +1126,16 @@ impl EngineInner {
                         _ => None,
                     })
                 });
-            self.mission_domain.achievements.qa_actors.remove(pc_id);
+            self.mission_domain
+                .achievements
+                .clear_quick_action_actor(*pc_id);
             self.replay_macro_slot(sim, display, assets, *pc_id, slot);
             if !self.has_quick_action(*pc_id, slot)
                 && let Some(target) = intended_target
             {
-                self.mission_domain.achievements.qa_actors.insert(
-                    *pc_id,
-                    (self.mission_domain.achievements.qa_execution, target),
-                );
+                self.mission_domain
+                    .achievements
+                    .record_quick_action_launch(*pc_id, target);
             }
             if self.has_quick_action(*pc_id, slot) {
                 // The original game posts a macro-fizzle message when a quick action's
@@ -1160,7 +1157,9 @@ impl EngineInner {
         // QuickActionFailed (some target still has the slot — its
         // sequence build refused).  `targets.is_empty()` was checked
         // above so at-least-one-launched is implicitly true here.
-        self.mission_domain.achievements.replaying_qa = false;
+        self.mission_domain
+            .achievements
+            .end_quick_action_execution();
         let all_launched = !targets.iter().any(|id| self.has_quick_action(*id, slot));
         let jingle = if all_launched {
             crate::sound::Jingle::QuickActionSucceeded

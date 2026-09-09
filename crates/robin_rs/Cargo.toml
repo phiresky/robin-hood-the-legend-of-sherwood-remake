@@ -28,6 +28,7 @@ indexmap.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde_urlencoded = "0.7"
+percent-encoding = "2.3"
 url = "2"
 serde-value = "0.7"
 tracing.workspace = true

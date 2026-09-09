@@ -6218,6 +6218,7 @@ dependencies = [
  "naga",
  "ogg",
  "parking_lot",
+ "percent-encoding",
  "png",
  "pollster 1.0.1",
  "qoi",
