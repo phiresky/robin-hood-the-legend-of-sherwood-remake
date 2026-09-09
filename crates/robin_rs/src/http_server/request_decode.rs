@@ -208,9 +208,7 @@ fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, RpcE
                 &body.data,
                 &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
             )
-            .map_err(|error| {
-                RpcError::invalid_request(format!("invalid compact replay: {error}"))
-            })?;
+            .map_err(|error| RpcError::replay_format("invalid compact replay", error))?;
             HttpPayload::LoadReplay {
                 data: body.data,
                 paused: body.paused,

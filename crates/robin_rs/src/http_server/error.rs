@@ -42,6 +42,16 @@ constructors! {
 }
 
 impl RpcError {
+    pub(super) fn replay_format(context: &str, error: robin_replay_format::FormatError) -> Self {
+        let message = format!("{context}: {error}");
+        match error {
+            robin_replay_format::FormatError::LimitExceeded { .. }
+            | robin_replay_format::FormatError::CountOverflow { .. } => Self::capacity(message),
+            robin_replay_format::FormatError::InvalidLimits(_) => Self::internal(message),
+            _ => Self::invalid_request(message),
+        }
+    }
+
     /// Legacy transport envelope. Category serialization is reserved for
     /// internal diagnostics until a separately versioned protocol adopts it.
     pub fn wire_body(&self) -> serde_json::Value {
@@ -60,6 +70,40 @@ impl std::error::Error for RpcError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn replay_limit_failures_are_not_malformed_request_failures() {
+        let error = RpcError::replay_format(
+            "invalid compact replay",
+            robin_replay_format::FormatError::LimitExceeded {
+                kind: robin_replay_format::ReplayLimitKind::CompactInputBytes,
+                observed: 2,
+                limit: 1,
+            },
+        );
+        assert_eq!(error.kind, RpcErrorKind::Capacity);
+        assert_eq!(
+            error.message,
+            "invalid compact replay: compact replay CompactInputBytes observed 2, limit is 1"
+        );
+        assert_eq!(
+            RpcError::replay_format(
+                "decode compact replay",
+                robin_replay_format::FormatError::MissingPrefix
+            )
+            .kind,
+            RpcErrorKind::InvalidRequest
+        );
+        assert_eq!(
+            RpcError::replay_format(
+                "decode compact replay",
+                robin_replay_format::FormatError::InvalidLimits("misconfigured".into())
+            )
+            .kind,
+            RpcErrorKind::Internal
+        );
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
