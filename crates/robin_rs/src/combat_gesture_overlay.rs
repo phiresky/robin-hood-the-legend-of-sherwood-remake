@@ -16,7 +16,7 @@ use robin_engine::player_command::{CompositeSwordTechnique, PlayerId};
 /// Render enabled gesture help after the world scene and mouse trail but
 /// before the portrait panel.
 pub fn render(
-    frontend: &mut HostFrontend,
+    frontend: &HostFrontend,
     local_seat: PlayerId,
     engine: &Engine,
     renderer: &mut Renderer,
@@ -36,7 +36,16 @@ pub fn render(
 
     if frontend.gameplay_config.combat_gesture_coach {
         render_coach(frontend, renderer, fonts);
-    } else {
+    }
+}
+
+/// Retire live feedback explicitly; screenshots only filter expired feedback.
+pub(crate) fn prepare_feedback(frontend: &mut HostFrontend, now: u32) {
+    if !frontend.gameplay_config.combat_gesture_coach
+        || frontend
+            .gesture_coach_feedback
+            .is_some_and(|feedback| now.wrapping_sub(feedback.created_at_ms) > 1_800)
+    {
         frontend.gesture_coach_feedback = None;
     }
 }
@@ -118,13 +127,12 @@ fn render_guide(
     }
 }
 
-fn render_coach(frontend: &mut HostFrontend, renderer: &mut Renderer, fonts: Option<&HudFonts>) {
+fn render_coach(frontend: &HostFrontend, renderer: &mut Renderer, fonts: Option<&HudFonts>) {
     let Some(feedback) = frontend.gesture_coach_feedback else {
         return;
     };
     let now = crate::window::process_uptime_ms();
     if now.wrapping_sub(feedback.created_at_ms) > 1_800 {
-        frontend.gesture_coach_feedback = None;
         return;
     }
 

@@ -54,6 +54,27 @@ pub struct QueueStripAnimation {
     pub fall_offset: i32,
 }
 
+impl QueueStripAnimation {
+    pub(crate) fn prepare_fixed_tick(&mut self, count: usize) {
+        self.fall_offset = if count < self.previous_count {
+            10
+        } else {
+            self.fall_offset.saturating_sub(2).max(0)
+        };
+        self.previous_count = count;
+    }
+
+    /// An early thumbnail may observe a queue change before live preparation.
+    /// Project its first collapse frame without advancing the live animation.
+    pub(crate) fn displayed_offset(&self, count: usize) -> i32 {
+        if count < self.previous_count {
+            10
+        } else {
+            self.fall_offset
+        }
+    }
+}
+
 /// Mutable application services shared by clones of one
 /// [`ApplicationContext`]. Separate contexts allocate separate service sets,
 /// which makes tests, headless sessions, and future multi-instance hosts
@@ -2141,6 +2162,17 @@ pub(crate) struct HostPresentation<'a> {
 }
 
 impl HostPresentation<'_> {
+    /// Drawing cannot advance frontend state or escape into application services.
+    pub(crate) fn draw(&self) -> HostDraw<'_> {
+        HostDraw {
+            frontend: self.frontend,
+            sound: self.sound,
+            options: self.options,
+            local_seat: self.local_seat,
+            graphic_config: self.graphic_config(),
+        }
+    }
+
     /// Read only the active presentation settings, without granting storage,
     /// profile mutation, asset preparation, or other application authority.
     pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
@@ -2152,6 +2184,23 @@ impl HostPresentation<'_> {
             })
             .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
             .expect("rendering requires an active profile")
+    }
+}
+
+/// Immutable gameplay presentation inputs; GPU command buffers remain separately
+/// mutable in the renderer. Like other borrowed capabilities, this is not a
+/// serializable owner and cannot reconstruct live frontend authority.
+pub(crate) struct HostDraw<'a> {
+    pub(crate) frontend: &'a HostFrontend,
+    pub(crate) sound: &'a crate::sound::SoundManager,
+    pub(crate) options: &'a engine_api::GlobalOptions,
+    pub(crate) local_seat: robin_engine::player_command::PlayerId,
+    graphic_config: robin_engine::graphic_config::GraphicConfig,
+}
+
+impl HostDraw<'_> {
+    pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
+        self.graphic_config.clone()
     }
 }
 
