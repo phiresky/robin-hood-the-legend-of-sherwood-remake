@@ -237,9 +237,8 @@ async fn run_rust_game_inner(
 
     // Bring up the script-RPC transport. Native binds a loopback HTTP
     // listener; wasm installs the in-process JS bridge queue. The
-    // handle lives in a process-global so the per-tick drain in
-    // `game_session` can reach it without threading the queue through
-    // every signature.
+    // process-owned router binds requests to the active mission's ingress;
+    // deferred work is retired when that mission ends.
     crate::http_server::start_global(args.http_server)?;
 
     // Warm this application's asset cache (sprite bank, sound banks,

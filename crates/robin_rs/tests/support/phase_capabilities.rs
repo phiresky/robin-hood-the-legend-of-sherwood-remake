@@ -24,11 +24,39 @@ fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
         matches!(&ingress.ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "SessionIngress"))
     );
 
+    struct StaticTypes;
+    impl<'ast> Visit<'ast> for StaticTypes {
+        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+            struct DeferredTypes;
+            impl<'ast> Visit<'ast> for DeferredTypes {
+                fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+                    for segment in &path.path.segments {
+                        assert!(
+                            ![
+                                "PendingStep",
+                                "PendingScreenshot",
+                                "InputTaintKind",
+                                "ReplayStatus",
+                                "SessionIngress"
+                            ]
+                            .iter()
+                            .any(|name| segment.ident == name),
+                            "deferred mission work must not be stored in a static"
+                        );
+                    }
+                    visit::visit_type_path(self, path);
+                }
+            }
+            DeferredTypes.visit_type(&item.ty);
+            visit::visit_item_static(self, item);
+        }
+    }
     for source in [
         include_str!("../../src/http_server.rs"),
         include_str!("../../src/http_server/ingress.rs"),
     ] {
         let syntax = syn::parse_file(source).unwrap();
+        StaticTypes.visit_file(&syntax);
         for item in syntax.items {
             if let syn::Item::Static(item) = item {
                 let name = item.ident.to_string();
