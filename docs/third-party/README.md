@@ -1,8 +1,8 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **70 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **78 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
-This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
+This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
 ## Start here
 
@@ -67,6 +67,9 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [iDNES — Czech contemporary review](reviews/idnes.md) | Czech | Article opening and campaign discussion inspected |
 | [LEVEL — Turkish magazine review](reviews/level-turkish.md) | Turkish | Substantial indexed PDF passage inspected; direct PDF retrieval failed |
 | [4Gamer — Japanese review of the English edition](reviews/4gamer-japanese.md) | Japanese | Article text inspected |
+| [GameFAQs — Challenging but fun](reviews/gamefaqs-guybrush999.md) | English | Review text inspected |
+| [PC Games — Nicht ganz der Stoff, aus dem die Helden sind](reviews/pcgames.md) | German | Article page and indexed text inspected; continuation pages not inspected |
+| [Games.cz — Leon's contemporary review](reviews/tiscali-leon.md) | Czech | Article text and verdict inspected |
 
 ## Compatibility and configuration
 
@@ -95,6 +98,11 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Academic research — Medieval Soundspace in the New Digital Leisure Time Media](history/medieval-soundspace.md) | English | Abstract and relevant PDF text inspected |
 | [LEVEL — Turkish prerelease preview](history/level-turkish-preview.md) | Turkish | Substantial indexed PDF passage inspected |
 | [GamerSky — Chinese demo announcement](history/gamersky-demo.md) | Simplified Chinese | Indexed announcement and download metadata inspected |
+| [Sector — firsthand Czech localization report](history/sector-czech-localization.md) | Slovak | Indexed article text inspected; direct retrieval failed |
+| [iDNES — Robin Hood in computer games](history/idnes-adaptations.md) | Czech | Article text inspected |
+| [Games.cz — July 2002 release-window correction](history/tiscali-release-revision.md) | Czech | Indexed article text inspected; direct retrieval failed |
+| [Games.cz — completion and regional schedule report](history/tiscali-gold.md) | Czech | Article text inspected; linked press release could not be retrieved |
+| [Games.cz — Czech distribution agreement and trailer](history/tiscali-localization-announcement.md) | Czech | Indexed article text inspected |
 
 ## Indexes, media, and sources awaiting access
 

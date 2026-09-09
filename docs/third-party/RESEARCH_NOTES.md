@@ -54,3 +54,11 @@ Added eleven records, bringing the collection to 70. Searches now also cover Chi
 The [Sina guide titled 《侠盗罗宾汉》官方全攻略](https://games.sina.com.cn/handbook/0302/022112208.shtml) was located, but direct retrieval failed and only a short combat excerpt was readable. Its title's claim to be official remains unverified. [Computer Gaming World issue 226](https://www.cgwmuseum.org/galleries/issues/cgw_226.pdf) also surfaced through indexed material; the original review pages still need inspection. Neither lead is counted as a completed record.
 
 The [Chinese demo listing](history/gamersky-demo.md) labels its interface Chinese, while the [Japanese review](reviews/4gamer-japanese.md) explicitly tests English software before the planned local release. Keep article language, listing metadata, and verified build language separate. Turkish preview specifications are prerelease reporting, not confirmed engine measurements.
+
+## Release reporting and further reviews
+
+Added eight records, bringing the collection to 78. The additions cover PC Games, Games.cz, GameFAQs player reception, an iDNES adaptation history, and a Slovak firsthand report on the Czech localization.
+
+The [July 2002 schedule correction](history/tiscali-release-revision.md) explicitly records earlier 2003 expectations being replaced by a 2002 target. This contextualizes the [Turkish preview](history/level-turkish-preview.md) without proving its date came from the same source. The [October localization announcement](history/tiscali-localization-announcement.md), [completion report](history/tiscali-gold.md), and [February Czech-edition impressions](history/sector-czech-localization.md) distinguish plans from an observed localized release.
+
+Additional leads: [Macworld's April 2005 page](https://www.macworld.com/article/175293/robinhood-4.html) yielded only its opening; [the July 2005 magazine PDF](https://vintageapple.org/macworld/pdf/MacWorld_0507_July_2005.pdf) has indexed review material that still needs comparison with the original pages. Sector's game index links a November 2002 editorial review, but its original article URL and full body remain unresolved. These leads are not counted as additional records.
