@@ -916,96 +916,102 @@ impl LoadedInteractiveStage {
             .await
     }
 
-    async fn assemble_process_frontend(
-        bootstrap: &mut MissionBootstrap,
+    // Keep the renderer/upload future behind a pointer as well: inlining it
+    // into the consuming stage and its owner-retention closure multiplies the
+    // stack required to construct and poll graphical startup.
+    fn assemble_process_frontend<'a>(
+        bootstrap: &'a mut MissionBootstrap,
         mut process: MissionProcessResources<DecodingInterfaceResources>,
         mut loading: MissionLoadingScreen,
-        window: &mut GameWindow,
-        profiles: &ProfileManager,
-        args: &crate::main_entry::CliArgs,
-    ) -> Result<InteractiveFrontendAssembly, String> {
-        let LoadedInteractiveResources {
-            level_descriptors,
-            hud_fonts,
-        } = pre_decode_maps_and_resources(
-            Some(window),
-            &mut loading.renderer,
-            &mut bootstrap.loaded.engine,
-            profiles,
-            &bootstrap.host,
-            &bootstrap.game,
-        )?;
-        let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref());
-
-        let mut timer = super::setup::PhaseTimer::new("frontend assembly");
-        let (renderer_config, prepared_renderer) = loading.close_before_renderer();
-        let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
-            window,
-            renderer_config,
-            prepared_renderer,
-        );
-        timer.step("game renderer construction");
-
-        // Deferred-terrain join: this is the first point that needs the
-        // decoded pixels, so the decode overlapped everything since the
-        // mission header was read. A decode failure aborts the mission
-        // launch here (the engine's campaign is recovered by the caller).
-        let (background, minimap) = match bootstrap.loaded.pending_terrain.take() {
-            Some(pending) => {
-                let decoded = pending.join().await;
-                let background = decoded.background?;
-                if let Some(bg) = background.as_ref() {
-                    assert_eq!(
-                        (bg.width as f32, bg.height as f32),
-                        bootstrap.loaded.bg_pixel_dims,
-                        "background map header dimensions diverge from decoded bitmap"
-                    );
-                }
-                timer.step("terrain decode join");
-                (background, decoded.minimap)
-            }
-            None => (
-                bootstrap.loaded.pre_decoded_background.take(),
-                bootstrap.loaded.pre_decoded_minimap.take(),
-            ),
-        };
-        let ambience_backgrounds =
-            std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_backgrounds);
-        let ambience_minimaps = std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_minimaps);
-        renderer.upload_maps(
-            &bootstrap.loaded.engine,
-            &mut bootstrap.host,
-            background,
-            minimap,
-            ambience_backgrounds,
-            ambience_minimaps,
-        );
-        timer.step("map upload");
-
-        // Interface pre-decode join: `load_mission_sprites` and the in-game
-        // menus consume these managers next.
-        let (text, cursor, menu_res, audio_backend) = process.collect().await;
-        timer.step("interface decode join");
-
-        renderer.assemble_process_frontend(
-            window,
-            &mut bootstrap.host,
-            &bootstrap.game,
-            &mut bootstrap.loaded.engine,
-            &bootstrap.loaded.assets,
-            text,
-            cursor,
-            menu_res,
-            audio_backend,
-            LoadedInteractiveResources {
+        window: &'a mut GameWindow,
+        profiles: &'a ProfileManager,
+        args: &'a crate::main_entry::CliArgs,
+    ) -> futures::future::LocalBoxFuture<'a, Result<InteractiveFrontendAssembly, String>> {
+        Box::pin(async move {
+            let LoadedInteractiveResources {
                 level_descriptors,
                 hud_fonts,
-            },
-            short_briefings,
-            args,
-            bootstrap.spec.mission_idx,
-            bootstrap.spec.location,
-        )
+            } = pre_decode_maps_and_resources(
+                Some(window),
+                &mut loading.renderer,
+                &mut bootstrap.loaded.engine,
+                profiles,
+                &bootstrap.host,
+                &bootstrap.game,
+            )?;
+            let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref());
+
+            let mut timer = super::setup::PhaseTimer::new("frontend assembly");
+            let (renderer_config, prepared_renderer) = loading.close_before_renderer();
+            let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
+                window,
+                renderer_config,
+                prepared_renderer,
+            );
+            timer.step("game renderer construction");
+
+            // Deferred-terrain join: this is the first point that needs the
+            // decoded pixels, so the decode overlapped everything since the
+            // mission header was read. A decode failure aborts the mission
+            // launch here (the engine's campaign is recovered by the caller).
+            let (background, minimap) = match bootstrap.loaded.pending_terrain.take() {
+                Some(pending) => {
+                    let decoded = pending.join().await;
+                    let background = decoded.background?;
+                    if let Some(bg) = background.as_ref() {
+                        assert_eq!(
+                            (bg.width as f32, bg.height as f32),
+                            bootstrap.loaded.bg_pixel_dims,
+                            "background map header dimensions diverge from decoded bitmap"
+                        );
+                    }
+                    timer.step("terrain decode join");
+                    (background, decoded.minimap)
+                }
+                None => (
+                    bootstrap.loaded.pre_decoded_background.take(),
+                    bootstrap.loaded.pre_decoded_minimap.take(),
+                ),
+            };
+            let ambience_backgrounds =
+                std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_backgrounds);
+            let ambience_minimaps =
+                std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_minimaps);
+            renderer.upload_maps(
+                &bootstrap.loaded.engine,
+                &mut bootstrap.host,
+                background,
+                minimap,
+                ambience_backgrounds,
+                ambience_minimaps,
+            );
+            timer.step("map upload");
+
+            // Interface pre-decode join: `load_mission_sprites` and the in-game
+            // menus consume these managers next.
+            let (text, cursor, menu_res, audio_backend) = process.collect().await;
+            timer.step("interface decode join");
+
+            renderer.assemble_process_frontend(
+                window,
+                &mut bootstrap.host,
+                &bootstrap.game,
+                &mut bootstrap.loaded.engine,
+                &bootstrap.loaded.assets,
+                text,
+                cursor,
+                menu_res,
+                audio_backend,
+                LoadedInteractiveResources {
+                    level_descriptors,
+                    hud_fonts,
+                },
+                short_briefings,
+                args,
+                bootstrap.spec.mission_idx,
+                bootstrap.spec.location,
+            )
+        })
     }
 }
 
