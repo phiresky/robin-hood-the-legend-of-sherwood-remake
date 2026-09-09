@@ -89,8 +89,40 @@ pub(super) struct MissionBootstrap {
     pub(super) host: Host,
     pub(super) game: Game,
     pub(super) loaded: LoadedMissionCore,
-    restart_save_started: bool,
-    restart_save_identity: Option<crate::save_file::ReplaySaveIdentity>,
+    restart_save: RestartSaveState,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+enum RestartSaveState {
+    #[default]
+    Absent,
+    Pending(super::runtime::BootstrapSaveBoundary),
+    Completed(super::runtime::BootstrapSaveBoundary),
+}
+
+impl RestartSaveState {
+    fn observe_completion(
+        &mut self,
+        result: anyhow::Result<crate::savegame::SaveWriteStatus>,
+    ) -> bool {
+        let Self::Pending(boundary) = *self else {
+            panic!("Restart completion requires an admitted pending save");
+        };
+        match result {
+            Ok(crate::savegame::SaveWriteStatus::Queued) => false,
+            Ok(crate::savegame::SaveWriteStatus::Completed) => {
+                *self = Self::Completed(boundary);
+                true
+            }
+            Err(error) => {
+                tracing::error!(
+                    "Restart save publication failed; no replay save marker: {error:#}"
+                );
+                *self = Self::Absent;
+                true
+            }
+        }
+    }
 }
 
 /// Audio preparation grants the only owner that can complete mission entry.
@@ -137,8 +169,7 @@ impl MissionBootstrap {
             host,
             game,
             loaded,
-            restart_save_started: false,
-            restart_save_identity: None,
+            restart_save: RestartSaveState::Absent,
         };
         bootstrap.install_mission_assets(args);
         bootstrap
@@ -210,7 +241,7 @@ impl MissionBootstrap {
         if !playing_back && !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-            self.restart_save_started = match callbacks.save_manager.write_restart_save_background(
+            self.restart_save = match callbacks.save_manager.write_restart_save_background(
                 &mut self.host,
                 &self.game,
                 &self.loaded.engine,
@@ -218,18 +249,42 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                Ok(
-                    crate::savegame::SaveWriteStatus::Queued
-                    | crate::savegame::SaveWriteStatus::Completed,
-                ) => {
-                    self.restart_save_identity = callbacks.save_manager.restart_session_identity();
-                    true
+                Ok(status) => {
+                    let boundary = super::runtime::BootstrapSaveBoundary::capture(
+                        &self.loaded.engine,
+                        &self.host,
+                        &self.game,
+                        callbacks.save_manager.restart_session_identity(),
+                    );
+                    match status {
+                        crate::savegame::SaveWriteStatus::Queued => {
+                            RestartSaveState::Pending(boundary)
+                        }
+                        crate::savegame::SaveWriteStatus::Completed => {
+                            RestartSaveState::Completed(boundary)
+                        }
+                    }
                 }
                 Err(error) => {
                     tracing::error!("Restart save could not start: {error:#}");
-                    false
+                    RestartSaveState::Absent
                 }
             };
+        }
+    }
+
+    /// Resolve persistence before opening recorder frame zero. Polling uses
+    /// the normal runtime pacing hook: native serialization stays on its worker
+    /// while the dedicated game thread waits, and the browser yields its loop.
+    async fn complete_restart_save(&mut self, callbacks: &mut RustCallbacks) {
+        if !matches!(self.restart_save, RestartSaveState::Pending(_)) {
+            return;
+        }
+        while !self
+            .restart_save
+            .observe_completion(callbacks.save_manager.try_finish_background())
+        {
+            crate::window::sleep_ms(1).await;
         }
     }
 
@@ -364,16 +419,11 @@ impl MissionBootstrap {
             self.host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
-        // Entry eligibility is insufficient: capture/indexing can fail, and
-        // headless startup can skip restart creation entirely. Only an admitted
-        // background save represents a frame-0 payload that can later be loaded.
-        timeline.register_bootstrap_save(
-            &self.loaded.engine,
-            &self.host,
-            &self.game,
-            self.restart_save_started,
-            self.restart_save_identity,
-        );
+        timeline.register_bootstrap_save(match self.restart_save {
+            RestartSaveState::Absent => None,
+            RestartSaveState::Completed(boundary) => Some(boundary),
+            RestartSaveState::Pending(_) => panic!("runtime opened before Restart save completion"),
+        });
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
             .host
@@ -418,12 +468,10 @@ impl AudioPreparedBootstrap {
         frontend: InteractiveFrontendAssembly,
         width: u32,
         height: u32,
-        callbacks: &mut RustCallbacks,
         args: &crate::main_entry::CliArgs,
     ) -> InteractiveMission {
-        let mut bootstrap = self.0;
+        let bootstrap = self.0;
         assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Interactive);
-        bootstrap.prepare_interactive_entry(callbacks, args);
         let frontend = frontend.finish(width, height);
         let wait_for_multiplayer_start = bootstrap.host.transport.net().is_some();
         InteractiveMission {
@@ -1584,7 +1632,7 @@ impl InteractiveMissionBuilder {
             }
         };
         timer.step("audio prepare");
-        let (bootstrap, frontend) = stage.assemble_frontend(window, profiles, args).await;
+        let (mut bootstrap, frontend) = stage.assemble_frontend(window, profiles, args).await;
         let frontend = match frontend {
             Ok(frontend) => frontend,
             Err(error) => {
@@ -1599,8 +1647,9 @@ impl InteractiveMissionBuilder {
         };
         timer.step("frontend assembly");
 
-        let mission =
-            bootstrap.finish_interactive(frontend, window.width, window.height, callbacks, args);
+        bootstrap.0.prepare_interactive_entry(callbacks, args);
+        bootstrap.0.complete_restart_save(callbacks).await;
+        let mission = bootstrap.finish_interactive(frontend, window.width, window.height, args);
         timer.step("mission entry + HUD finish + runtime/replay init");
         timer.total();
         InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
@@ -1615,7 +1664,7 @@ impl InteractiveMissionBuilder {
 mod tests {
     use super::{
         AudioPreparedBootstrap, MissionFrontendKind, MissionSpec, MultiplayerSetupFailurePolicy,
-        built_in_mission_assets_for_loaded_level,
+        RestartSaveState, built_in_mission_assets_for_loaded_level,
     };
     use robin_engine::campaign::{Campaign, CampaignValue};
     use robin_engine::game_operation::GameCode;
@@ -1822,7 +1871,7 @@ mod tests {
             Err(failure) => failure,
         };
         assert!(!error.is_empty());
-        assert!(!bootstrap.restart_save_started);
+        assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         let (campaign, _, _) = bootstrap.into_campaign_and_simulation();
         assert_eq!(campaign.missions.as_ptr(), original_allocation);
         assert_eq!(serde_json::to_value(campaign).unwrap(), expected);
@@ -1866,6 +1915,30 @@ mod tests {
     }
 
     #[test]
+    fn restart_completion_preserves_captured_boundary_and_failure_never_registers_it() {
+        let bootstrap = scratch_bootstrap_fixture();
+        let boundary = super::super::runtime::BootstrapSaveBoundary::capture(
+            &bootstrap.loaded.engine,
+            &bootstrap.host,
+            &bootstrap.game,
+            None,
+        );
+        let expected = serde_json::to_value(boundary).unwrap();
+        let mut successful = RestartSaveState::Pending(boundary);
+        assert!(!successful.observe_completion(Ok(crate::savegame::SaveWriteStatus::Queued)));
+        assert!(matches!(successful, RestartSaveState::Pending(_)));
+        assert!(successful.observe_completion(Ok(crate::savegame::SaveWriteStatus::Completed)));
+        let RestartSaveState::Completed(captured) = successful else {
+            panic!("successful completion lost its captured boundary");
+        };
+        assert_eq!(serde_json::to_value(captured).unwrap(), expected);
+
+        let mut failed = RestartSaveState::Pending(boundary);
+        assert!(failed.observe_completion(Err(anyhow::anyhow!("disk publication failed"))));
+        assert!(matches!(failed, RestartSaveState::Absent));
+    }
+
+    #[test]
     fn bootstrap_installs_save_assets_and_tracks_failed_restart_creation() {
         let mut bootstrap = scratch_bootstrap_fixture();
         assert_eq!(
@@ -1897,7 +1970,7 @@ mod tests {
         .unwrap();
         let mut callbacks = crate::main_entry::RustCallbacks::new(application_context).unwrap();
         bootstrap.prepare_interactive_entry(&mut callbacks, &crate::main_entry::CliArgs::default());
-        assert!(!bootstrap.restart_save_started);
+        assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert_eq!(
             bootstrap.loaded.engine.campaign().values[CampaignValue::MissionLength],
             0
@@ -1910,7 +1983,7 @@ mod tests {
             lost.loaded.engine.campaign().values[CampaignValue::MissionLength],
             23
         );
-        assert!(!lost.restart_save_started);
+        assert!(matches!(lost.restart_save, RestartSaveState::Absent));
     }
 
     #[test]
@@ -1978,11 +2051,11 @@ mod tests {
             prepared.0.loaded.engine.campaign().values[CampaignValue::MissionLength],
             23
         );
-        assert!(!prepared.0.restart_save_started);
+        assert!(matches!(prepared.0.restart_save, RestartSaveState::Absent));
         let mut bootstrap = *prepared.0;
         let files_before = std::fs::read_dir(directory.path()).unwrap().count();
         bootstrap.prepare_interactive_entry(&mut callbacks, &args);
-        assert!(!bootstrap.restart_save_started);
+        assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert!(!callbacks.save_manager.has_restart_save());
         let replay = super::super::replay_init::init_replay_and_rollback(
             &bootstrap.loaded.replay_campaign,
