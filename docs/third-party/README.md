@@ -1,8 +1,8 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **138 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **168 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
-This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
+This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Hungarian, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
 ## Start here
 
@@ -49,6 +49,8 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [GOG — accessing castle-recapture missions](guides/gog-castle-recapture.md) | English | No |
 | [Sina / 怡采强档 — Chinese campaign walkthrough continuation](guides/sina-yicai-chinese.md) | Simplified Chinese | Substantial indexed mission passages inspected; direct retrieval failed. |
 | [GOG — camp production and the results parchment](guides/gog-production-parchment.md) | English | No |
+| [GOG — production assignments and unchanged training stats](guides/gog-crafting-training-report.md) | English | No |
+| [Jeuxvideo.com — camp production and arrow shortages](guides/jeuxvideo-camp-arrow-shortage.md) | French | No |
 
 ## Reviews and player impressions
 
@@ -95,6 +97,16 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Ziemia Jałowa — Krzywol’s retrospective](reviews/ziemia-jalowa-krzywol.md) | Polish | No |
 | [PatientGamers — returning player’s combat and AI impressions](reviews/patientgamers-spiderousmenace.md) | English | No |
 | [Old-Games.RU — Virgil’s catalogue review](reviews/old-games-virgil.md) | Russian | No |
+| [Gameswelt — contemporary review](reviews/gameswelt-review.md) | German | No |
+| [PatientGamers — Zehnpae’s retrospective](reviews/patientgamers-zehnpae.md) | English | No |
+| [Impulse Gamer — Andrew B’s review](reviews/impulsegamer-andrew-b.md) | English | No |
+| [TheGameGuru.Me — critical retrospective](reviews/thegameguru-troublmaker.md) | English | No |
+| [PC Guru — Hungarian retrospective](reviews/pcguru-lolyci.md) | Hungarian | No |
+| [Gameguru Mania — contemporary review](reviews/ggmania-hx.md) | English | No |
+| [Jeuxvideo.com — French player reviews](reviews/jeuxvideo-player-reviews.md) | French | No |
+| [Toronto Computes! — Chris Talbot’s review](reviews/toronto-computes-talbot.md) | English | No |
+| [Jawsh’s Gaming Diary — early-mission impressions](reviews/jawsh-play-diary.md) | English | No |
+| [Grouvee — player reviews and completion statistics](reviews/grouvee-player-records.md) | English | No |
 
 ## Compatibility and configuration
 
@@ -129,6 +141,16 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [GOG — executable naming and flickering report](technical/gog-flicker-executable-name.md) | English | No |
 | [GOG — York mission unlocked after reloading the prior ending](technical/gog-post-ransom-progression.md) | English | No |
 | [GOG — ambush completion loop through Porting Kit](technical/gog-mac-ambush-loop.md) | English | No |
+| [ModDB — Gravitr’s gameplay modification](technical/moddb-gravitr.md) | English | No |
+| [ModDB — fan cinematic enhancement](technical/moddb-cinematic-enhancement.md) | English | No |
+| [MacUpdate — Intel Mac version listing](technical/macupdate-intel-version.md) | English | No |
+| [Amiga News — MorphOS test executable](technical/amiga-news-morphos-test.md) | English | No |
+| [ModDB — performance-fix history and withdrawal](technical/moddb-performance-fix-history.md) | English and Russian | No |
+| [WineHQ — mouse-jitter regression report](technical/wine-mouse-jitter-57031.md) | English | No |
+| [DxWnd — launch hooks and GOG version differences](technical/dxwnd-hooking-discussion.md) | English | No |
+| [DxWnd — cursor trails and flipchain investigation](technical/dxwnd-flipchain-investigation.md) | English | No |
+| [PC Review — 2004 Windows XP graphics report](technical/pcreview-xp-cursor-trails.md) | English | No |
+| [Softpedia — Mac review and conflicting requirements](technical/softpedia-mac-listing.md) | English | No |
 
 ## Releases, ports, and development
 
@@ -162,6 +184,12 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Sector — October 2002 demo impressions](history/sector-demo-impressions.md) | Slovak | No |
 | [Sector — February 2002 announcement](history/sector-february-announcement.md) | Slovak | No |
 | [Gram.pl — Spellbound studio retrospective](history/gram-spellbound-retrospective.md) | Polish | No |
+| [WorthPlaying — beta preview](history/worthplaying-beta-preview.md) | English | No |
+| [Gameswelt — Wanadoo’s Games Convention plans](history/gameswelt-games-convention.md) | German | No |
+| [Amiga Impact — 2006 community award](history/amigaimpact-2006-award.md) | French | No |
+| [Amiga News — MorphOS retailer shipments](history/amiga-news-morphos-shipping.md) | German | No |
+| [Amiga News — Apollo schedule and later licensing report](history/amiga-news-apollo-status.md) | English | No |
+| [Impulse Gamer — Australian Fantasy 6-Pack rerelease](history/impulsegamer-fantasy-six-pack.md) | English | No |
 
 ## Indexes, media, and sources awaiting access
 
@@ -176,6 +204,8 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [JuegoMania — Spanish cheat reference](reference/juegomania-cheats.md) | Spanish | Yes |
 | [Speedrun.com — leaderboard and research community](reference/speedrun-community.md) | English interface | Yes |
 | [PC Savegames — annotated campaign checkpoint catalogue](reference/nicouzouf-savegames.md) | English listing | No |
+| [The Strong — physical-game catalogue](reference/strong-museum.md) | English | No |
+| [Gayle Fallon — scholarly videogame reference](reference/fallon-ludic-scholarship.md) | English | No |
 
 ## Related games supplied by the user
 
@@ -319,3 +349,19 @@ The [GOG reply](guides/gog-production-parchment.md) distinguishes production fro
 Added five non-Steam records, bringing the collection to 138: four reviews and a studio retrospective. [Virgil’s catalogue review](reviews/old-games-virgil.md) is distinct from the existing redwings article; its dated comments add camp-management and combat observations. The [PatientGamers review](reviews/patientgamers-spiderousmenace.md) describes guard coordination alongside frustrations with combat and repeated missions. These player observations remain unverified mechanics claims.
 
 The [Krzywol retrospective](reviews/ziemia-jalowa-krzywol.md) was recovered through substantial indexed passages. [Blady’s article](reviews/dualshock-blady.md) and the [Gram.pl studio history](history/gram-spellbound-retrospective.md) were directly readable. The latter’s explanation of why Spellbound received the Gothic project is conjecture. A GameStar reader-review index also surfaced “Taktik im Sherwood Forest” (7 April 2008), but its substantive review body remains unrecovered and is not counted.
+
+#### Extended multilingual search and technical-source follow-up
+
+Added 30 non-Steam source records, bringing the collection to 168. This pass followed review archives, blogs, French and GOG discussions, mod pages, port announcements, museum metadata, scholarly references, and Wine/DxWnd development reports. Hungarian joins the languages represented. The new records contain original summaries with source links and explicit access limits.
+
+Useful additions include [Wine’s mouse-jitter regression report](technical/wine-mouse-jitter-57031.md), [DxWnd’s hook-method discussion](technical/dxwnd-hooking-discussion.md), [flipchain development notes](technical/dxwnd-flipchain-investigation.md), [the retired performance-fix launcher](technical/moddb-performance-fix-history.md), [Toronto Computes!’s May 2003 review](reviews/toronto-computes-talbot.md), and [PC Guru’s Hungarian retrospective](reviews/pcguru-lolyci.md). The [Apollo status record](history/amiga-news-apollo-status.md) distinguishes a proposed release schedule from later attributed licensing statements.
+
+Searches continued across English, German, French, Polish, Czech/Slovak, Russian, Italian, Spanish, Chinese, Japanese, Hungarian, and additional Portuguese, Scandinavian, and Balkan terms. Later general and site-specific searches increasingly repeated collected articles, storefront translations, mirrors, or unrelated games. This is the practical limit reached with the accessible search index, not proof that no further sources exist. Downloads were not executed, and video descriptions were not treated as watched playthroughs.
+
+Remaining leads and exclusions:
+
+- [GameStar’s April 2008 reader review](https://www.gamestar.de/spiele/robin-hood-die-legende-von-sherwood%2Cleser-rezensionen%2C9865.html), [Sector’s November 2002 editorial review](https://www.sector.sk/hra/1785/robin-hood.htm), and [AppleTell/TechnologyTell’s Mac reviews](https://uk.testseek.com/games/mac-games/robin_hood_the_legend_of_sherwood-p-6e5fa011-0f7c-2a92-ee60-b1f1d9c47e87.html) remain index-only leads.
+- [Spirit of Sherwood’s news archive](https://www.robinofsherwood.org/news.html) identifies a game review in Tales of Sherwood Forest issue 8, January 2003; the review itself was not recovered. The adjacent Defender of the Crown coverage concerns another game.
+- [The retrogaming review thread](https://www.reddit.com/r/retrogaming/comments/1h8mchv) still failed direct retrieval. [Wine bug 39513](https://bugs.winehq.org/show_bug.cgi?id=39513), referenced by the new jitter report, was also inaccessible.
+- [Old PC Gaming’s review](https://oldpcgaming.net/robin-hood-the-legend-of-sherwood-review/) overlaps wording in the existing Game Over Online review; it is not counted as independent criticism. WhatIFF?’s Willem Drijver interview is already in the [interview archive](../interviews/README.md).
+- Large magazine scans and video-only leads remain partly uninspected. The new Amiga News records disclose where only indexed text or a shifting paginated archive could be read.
