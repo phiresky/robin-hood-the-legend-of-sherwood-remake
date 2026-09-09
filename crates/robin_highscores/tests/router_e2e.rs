@@ -1750,7 +1750,7 @@ async fn red_storage_keeps_health_live_and_does_not_issue_or_consume_admission()
             "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?"
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap(),
         None,
@@ -1758,7 +1758,7 @@ async fn red_storage_keeps_health_live_and_does_not_issue_or_consume_admission()
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
         0
@@ -1840,7 +1840,7 @@ async fn missing_authenticated_backup_blocks_offers_and_fresh_upload_reservation
             "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?"
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap(),
         None
@@ -2067,7 +2067,7 @@ async fn signed_rename_offer_upload_status_and_verified_publication_cross_the_re
          WHERE public_key = ? ORDER BY generation",
     )
     .bind(owner_key.as_bytes().as_slice())
-    .fetch_all(rig.database.pool())
+    .fetch_all(rig.database.fixture_pool())
     .await
     .unwrap();
     assert_eq!(history.len(), 2);
@@ -2125,7 +2125,7 @@ async fn signed_rename_offer_upload_status_and_verified_publication_cross_the_re
     sqlx::query("UPDATE verified_runs SET campaign_complete_evidence_sha256 = ? WHERE id = ?")
         .bind(private_completion_digest.as_bytes().as_slice())
         .bind(run_id.as_str())
-        .execute(rig.database.pool())
+        .execute(rig.database.fixture_pool())
         .await
         .unwrap();
     let corrupted_evidence = sqlx::query(
@@ -2134,7 +2134,7 @@ async fn signed_rename_offer_upload_status_and_verified_publication_cross_the_re
     )
     .bind(r#"{"PRIVATE_ACHIEVEMENT_EVIDENCE_SENTINEL":1.5}"#)
     .bind(run_id.as_str())
-    .execute(rig.database.pool())
+    .execute(rig.database.fixture_pool())
     .await
     .unwrap();
     assert!(corrupted_evidence.rows_affected() > 0);
@@ -2143,7 +2143,7 @@ async fn signed_rename_offer_upload_status_and_verified_publication_cross_the_re
                 public_projection_binding_json FROM verified_runs WHERE id = ?",
     )
     .bind(run_id.as_str())
-    .fetch_one(rig.database.pool())
+    .fetch_one(rig.database.fixture_pool())
     .await
     .unwrap();
     for column in [
@@ -2414,7 +2414,7 @@ async fn authenticated_submission_rejects_shape_signature_and_offer_before_reser
             .unwrap();
         assert_eq!(response.status(), status);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submission_upload_reservations")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap();
         assert_eq!(count, 0);
@@ -2456,10 +2456,10 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
             "SELECT state, lease_token FROM submission_upload_reservations WHERE upload_challenge_id = ?",
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.pool()).await.unwrap();
+        .fetch_one(rig.database.fixture_pool()).await.unwrap();
         assert_eq!(state, ("abandoned".to_owned(), None));
         let submissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap();
         assert_eq!(submissions, 0, "partial artifacts must never be finalized");
@@ -2474,7 +2474,7 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
         )
         .bind(uuid::Uuid::now_v7().to_string())
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .execute(rig.database.pool())
+        .execute(rig.database.fixture_pool())
         .await
         .unwrap();
         let busy = rig
@@ -2492,7 +2492,7 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
              abandoned_at_ms = updated_at_ms WHERE upload_challenge_id = ?",
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .execute(rig.database.pool())
+        .execute(rig.database.fixture_pool())
         .await
         .unwrap();
 
@@ -2519,7 +2519,7 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
             "committed retries do not ingest campaign bytes"
         );
         let submissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap();
         assert_eq!(submissions, 1);
@@ -2530,7 +2530,7 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
              FROM submissions s JOIN submission_upload_reservations r \
              ON r.submission_id = s.id",
         )
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap();
         assert_eq!(
@@ -2593,7 +2593,7 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
             "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?",
         )
         .bind(valid_challenge)
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap(),
         None,
@@ -2661,7 +2661,7 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
                 "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?",
             )
             .bind(&challenge_id)
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
             None,
@@ -2672,7 +2672,7 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
                 "SELECT COUNT(*) FROM submission_upload_reservations WHERE upload_challenge_id = ?",
             )
             .bind(&challenge_id)
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
             0,
@@ -2687,7 +2687,7 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
     }
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
         0
@@ -2719,7 +2719,7 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
             "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?",
         )
         .bind(valid_challenge)
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap()
         .is_some()
@@ -2788,7 +2788,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-                .fetch_one(rig.database.pool())
+                .fetch_one(rig.database.fixture_pool())
                 .await
                 .unwrap(),
             0,
@@ -2805,7 +2805,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
     assert_eq!(partial.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
         0
@@ -2815,7 +2815,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
             "SELECT COUNT(*) FROM submission_upload_reservations WHERE upload_challenge_id = ?",
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap(),
         0,
@@ -2843,7 +2843,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
         0
@@ -2853,7 +2853,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
             "SELECT COUNT(*) FROM submission_upload_reservations WHERE upload_challenge_id = ?",
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap(),
         0,
@@ -2864,7 +2864,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
             "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?",
         )
         .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap(),
         None,
@@ -2881,7 +2881,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM replay_objects WHERE sha256 = ?")
             .bind(replay_digest.as_slice())
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
         0,
@@ -2925,7 +2925,7 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
     assert_eq!(retried.submission_id, accepted.submission_id);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-            .fetch_one(rig.database.pool())
+            .fetch_one(rig.database.fixture_pool())
             .await
             .unwrap(),
         1
@@ -3733,7 +3733,7 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
                 public_projection_binding_json FROM full_campaign_runs WHERE id = ?",
     )
     .bind(full_campaign_run_id.as_str())
-    .fetch_one(rig.database.pool())
+    .fetch_one(rig.database.fixture_pool())
     .await
     .unwrap();
     assert_eq!(
@@ -3971,7 +3971,7 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
             "SELECT {column} FROM full_campaign_runs WHERE id = ?"
         )))
         .bind(full_campaign_run_id.as_str())
-        .fetch_one(rig.database.pool())
+        .fetch_one(rig.database.fixture_pool())
         .await
         .unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -3979,7 +3979,7 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
         )))
         .bind(format!(" {original}"))
         .bind(full_campaign_run_id.as_str())
-        .execute(rig.database.pool())
+        .execute(rig.database.fixture_pool())
         .await
         .unwrap();
         let corrupt_response = rig
@@ -3999,7 +3999,7 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
         )))
         .bind(original)
         .bind(full_campaign_run_id.as_str())
-        .execute(rig.database.pool())
+        .execute(rig.database.fixture_pool())
         .await
         .unwrap();
     }

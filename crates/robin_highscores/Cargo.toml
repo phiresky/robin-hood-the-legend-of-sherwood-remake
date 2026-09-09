@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[features]
+# Raw database access for corruption/concurrency fixtures; never enable in deployment builds.
+test-support = []
+
+[[test]]
+name = "router_e2e"
+required-features = ["test-support"]
+
 [lib]
 name = "robin_highscores"
 path = "src/lib.rs"
