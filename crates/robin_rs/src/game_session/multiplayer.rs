@@ -6,7 +6,6 @@ use super::runtime::TimelineFrame;
 use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use crate::sim_timeline::{RestorePolicy, replay_authoritative_frame_profiled};
-use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::player_command::PlayerInput;
