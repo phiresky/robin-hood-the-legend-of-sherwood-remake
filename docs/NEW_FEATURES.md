@@ -4,6 +4,10 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Custom mission pane scrolling:** The mission list and wrapped mission details
+  scroll independently under the pointer. Both show draggable scrollbars when
+  their content overflows; selecting another mission resets its details to the top.
+
 - **Language-independent audio timing.** The required core-datadir
   `Data/AudioDurations.json` supplies English speech variants and sample
   durations to the client, replay preparation, and ranked verifier. A French-only
