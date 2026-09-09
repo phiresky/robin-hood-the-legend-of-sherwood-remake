@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from urllib.parse import quote, urlencode
 
 
 def inventory(root: Path) -> dict[str, tuple[Path, str]]:
@@ -112,25 +113,34 @@ def publish(root: Path, repo: str, tag: str, commit: str, prerelease: bool):
     assets = inventory(root)
     release = find_release(repo, tag)
     if release is None:
-        gh("release", "create", tag, "--repo", repo, "--draft", "--target", commit,
-           "--title", tag, "--notes", f"Build of {commit}. Assets verified before publication.",
-           *(["--prerelease"] if prerelease else ["--verify-tag"]))
-        release = find_release(repo, tag)
-        if release is None:
-            raise RuntimeError("created draft is not visible; retry without deleting the candidate")
+        if not prerelease:
+            # Stable releases still require an existing tag.
+            gh("api", f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}")
+        # Use the creation response instead of rediscovering the new draft
+        # through a releases list that may not yet include it.
+        release = json.loads(gh(
+            "api", "--method", "POST", f"repos/{repo}/releases",
+            "-f", f"tag_name={tag}", "-f", f"target_commitish={commit}",
+            "-f", f"name={tag}",
+            "-f", f"body=Build of {commit}. Assets verified before publication.",
+            "-F", "draft=true", "-F", f"prerelease={str(prerelease).lower()}",
+        ))
     if release["target_commitish"] != commit:
         raise ValueError("release target differs from the requested commit")
     missing = verify_remote(repo, release, assets, allow_missing=release["draft"])
     if not release["draft"]:
         print(f"{tag} is already published with identical assets")
         return
+    # Tag-based CLI upload/edit commands would rediscover the draft too.
+    # Keep using this candidate's ID and the upload URL returned by GitHub.
+    endpoint = f"repos/{repo}/releases/{release['id']}"
+    upload_url = release["upload_url"].split("{", 1)[0]
     for name in missing:
-        gh("release", "upload", tag, str(assets[name][0]), "--repo", repo)
-    release = find_release(repo, tag)
-    if release is None:
-        raise RuntimeError("candidate disappeared before verification")
+        gh("api", "--method", "POST", f"{upload_url}?{urlencode({'name': name})}",
+           "-H", "Content-Type: application/octet-stream", "--input", str(assets[name][0]))
+    release = json.loads(gh("api", endpoint))
     verify_remote(repo, release, assets, allow_missing=False)
-    gh("release", "edit", tag, "--repo", repo, "--draft=false")
+    gh("api", "--method", "PATCH", endpoint, "-F", "draft=false")
     print(f"published verified candidate {tag}")
 
 

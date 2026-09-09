@@ -56,16 +56,40 @@ class NativeReleaseTests(unittest.TestCase):
 
     def test_resume_uploads_missing_then_verifies_before_promotion(self):
         assets = {"game": (Path("game"), hashlib.sha256(b"expected").hexdigest())}
-        draft = {"draft": True, "target_commitish": "commit", "assets": []}
+        draft = {"id": 42, "upload_url": "https://uploads.github.com/repos/owner/repo/releases/42/assets{?name,label}", "draft": True, "target_commitish": "commit", "assets": []}
         complete = {**draft, "assets": [{"name": "game", "id": 1}]}
         with patch.object(release, "inventory", return_value=assets), \
-             patch.object(release, "find_release", side_effect=[draft, complete]), \
+             patch.object(release, "find_release", return_value=draft), \
              patch.object(release, "remote_asset_sha256", return_value=assets["game"][1]) as digest, \
-             patch.object(release, "gh", return_value="") as gh:
+             patch.object(release, "gh", side_effect=["{}", json.dumps(complete), "{}"]) as gh:
             release.publish(Path("assets"), "owner/repo", "candidate", "commit", True)
-        self.assertEqual(gh.call_args_list[0].args[:2], ("release", "upload"))
+        self.assertEqual(gh.call_args_list[0].args, ("api", "--method", "POST", "https://uploads.github.com/repos/owner/repo/releases/42/assets?name=game", "-H", "Content-Type: application/octet-stream", "--input", "game"))
         digest.assert_called_once_with("owner/repo", 1)
-        self.assertEqual(gh.call_args_list[1].args[:2], ("release", "edit"))
+        self.assertEqual(gh.call_args_list[1].args, ("api", "repos/owner/repo/releases/42"))
+        self.assertEqual(gh.call_args_list[2].args, ("api", "--method", "PATCH", "repos/owner/repo/releases/42", "-F", "draft=false"))
+
+    def test_created_draft_need_not_appear_in_release_listing(self):
+        assets = {"game": (Path("game"), hashlib.sha256(b"expected").hexdigest())}
+        draft = {"id": 42, "upload_url": "https://uploads.github.com/repos/owner/repo/releases/42/assets{?name,label}",
+                 "draft": True, "target_commitish": "commit", "assets": []}
+        complete = {**draft, "assets": [{"name": "game", "id": 1}]}
+        for prerelease in (True, False):
+            with (
+                self.subTest(prerelease=prerelease),
+                patch.object(release, "inventory", return_value=assets),
+                patch.object(release, "find_release", return_value=None) as find,
+                patch.object(release, "remote_asset_sha256", return_value=assets["game"][1]),
+                patch.object(release, "gh", side_effect=([] if prerelease else ["{}"]) +
+                             [json.dumps(draft), "{}", json.dumps(complete), "{}"]) as gh,
+            ):
+                release.publish(Path("assets"), "owner/repo", "v1", "commit", prerelease)
+            find.assert_called_once_with("owner/repo", "v1")
+            calls = gh.call_args_list
+            if not prerelease:
+                self.assertEqual(calls.pop(0).args, ("api", "repos/owner/repo/git/ref/tags/v1"))
+            self.assertEqual(calls[0].args[:4], ("api", "--method", "POST", "repos/owner/repo/releases"))
+            self.assertIn(f"prerelease={str(prerelease).lower()}", calls[0].args)
+            self.assertEqual(calls[-1].args, ("api", "--method", "PATCH", "repos/owner/repo/releases/42", "-F", "draft=false"))
 
     def test_published_release_is_never_modified(self):
         assets = {"game": (Path("game"), hashlib.sha256(b"expected").hexdigest())}
