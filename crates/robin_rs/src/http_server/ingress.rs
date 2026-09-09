@@ -67,6 +67,11 @@ impl SessionIngress {
         Self::with_router(GLOBAL.get().map(|server| server.queue.clone()))
     }
 
+    #[cfg(test)]
+    pub(crate) fn detached_for_test() -> Self {
+        Self::with_router(None)
+    }
+
     fn with_router(router: Option<Queue>) -> Self {
         let requests = Arc::new(Mutex::new(VecDeque::new()));
         if let Some(router) = &router {

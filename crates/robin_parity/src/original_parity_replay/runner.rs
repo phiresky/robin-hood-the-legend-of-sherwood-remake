@@ -386,7 +386,8 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             loaded.apply_display_to(&mut display);
             loaded.apply_display_to(&mut host.frontend.engine_display);
             selected_view_element = loaded.selected_view_element();
-            host.frontend.selected_view_element = selected_view_element;
+            host.frontend
+                .set_selected_view_element(selected_view_element);
         }
         assert!(
             loaded.trajectory_output().clear_preview,
@@ -514,9 +515,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                 let drained = drain_headless_http(
                     &mut http_ingress,
                     &mut engine,
-                    &mut display,
                     &assets,
-                    &mut input,
                     &mut selected_view_element,
                     &mut manual_pause,
                     &mut active_http_step,
@@ -1299,9 +1298,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                 serve_halted_http(
                     &mut http_ingress,
                     &mut engine,
-                    &mut display,
                     &assets,
-                    &mut input,
                     &mut selected_view_element,
                 );
             }

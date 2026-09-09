@@ -1064,9 +1064,7 @@ impl SessionIngress {
     pub fn drain_headless(
         &mut self,
         engine: &mut Engine,
-        _display: &mut engine_api::HostDisplayState,
         assets: &LevelAssets,
-        _input: &mut engine_api::InputState,
         selected_view_element: &mut Option<engine_element::EntityId>,
     ) -> FrameCommands {
         let mut commands = FrameCommands::new();
@@ -2475,7 +2473,8 @@ mod tests {
     use super::*;
     use std::io::Write as _;
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn query_dispatch_has_only_read_authority() {
         // Function-pointer coercion is a compile-time capability proof: adding
         // mutable state, frontend input, or command sinks breaks this contract.
@@ -2489,7 +2488,8 @@ mod tests {
         ) -> serde_json::Value = snapshot_host_debug;
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn transport_classification_separates_authority_without_losing_arguments() {
         for payload in [
             HttpPayload::State,
