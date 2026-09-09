@@ -501,16 +501,7 @@ impl ResourceManager {
     /// Optional collection lookup without disguising broken registered assets
     /// as absent. Non-picture resource IDs do not identify pictures.
     pub fn find_pictures(&mut self, id: ResourceId) -> Result<Option<&[Option<Picture>]>> {
-        let registered_picture = self.lifetime.file_entries.get(&id).is_some_and(|entry| {
-            matches!(
-                &entry.resource_type,
-                b"PIC " | b"PICC" | b"BTTN" | b"TOGL" | b"NPTF" | b"CUR " | b"SLID" | b"RDO "
-            )
-        });
-        if !self.data.pictures.contains_key(&id)
-            && !self.data.encoded_pictures.contains_key(&id)
-            && !registered_picture
-        {
+        if !self.has_picture_resource(id) {
             return Ok(None);
         }
         self.ensure_pictures_loaded(id)?;
@@ -1220,7 +1211,12 @@ impl ResourceManager {
     pub fn has_picture_resource(&self, id: ResourceId) -> bool {
         self.data.pictures.contains_key(&id)
             || self.data.encoded_pictures.contains_key(&id)
-            || self.lifetime.references.contains_key(&id)
+            || self.lifetime.file_entries.get(&id).is_some_and(|entry| {
+                matches!(
+                    &entry.resource_type,
+                    b"PIC " | b"PICC" | b"BTTN" | b"TOGL" | b"NPTF" | b"CUR " | b"SLID" | b"RDO "
+                )
+            })
     }
 
     /// True if a text resource is loaded or registered.
@@ -1615,6 +1611,46 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picture_presence_uses_registered_type_not_reference_bookkeeping() {
+        let mut manager = ResourceManager::new();
+        for tag in [b"TEXT", b"WAVE", b"NOPE"] {
+            manager.lifetime.file_entries.insert(
+                42,
+                ResourceFileEntry {
+                    file_path: "not-opened.res".to_owned(),
+                    file_offset: 0,
+                    resource_type: *tag,
+                },
+            );
+            manager.lifetime.references.insert(42, 1);
+            assert!(!manager.has_picture_resource(42));
+            assert!(manager.find_pictures(42).unwrap().is_none());
+        }
+        for tag in [
+            b"PIC ", b"PICC", b"BTTN", b"TOGL", b"NPTF", b"CUR ", b"SLID", b"RDO ",
+        ] {
+            manager
+                .lifetime
+                .file_entries
+                .get_mut(&42)
+                .unwrap()
+                .resource_type = *tag;
+            assert!(manager.has_picture_resource(42));
+            // Registered-but-unreadable is an error, not absence.
+            assert!(manager.find_pictures(42).is_err());
+        }
+        manager.lifetime.file_entries.clear();
+        assert!(!manager.has_picture_resource(42));
+        manager.data.pictures.insert(42, vec![None]);
+        assert!(manager.has_picture_resource(42));
+        assert_eq!(manager.find_pictures(42).unwrap().unwrap().len(), 1);
+        manager.data.pictures.clear();
+        manager.data.encoded_pictures.insert(42, vec![None; 2]);
+        assert!(manager.has_picture_resource(42));
+        assert_eq!(manager.find_pictures(42).unwrap().unwrap().len(), 2);
+    }
 
     #[test]
     fn resource_writer_rejects_unrepresentable_lengths_and_widget_slots() {
