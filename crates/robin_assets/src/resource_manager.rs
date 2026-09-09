@@ -967,36 +967,53 @@ impl ResourceManager {
     /// Per-slot dimensions, preserving holes, without decoding JXL frame pixels.
     /// Malformed image headers remain errors rather than becoming empty frames.
     pub fn get_picture_dimensions(&mut self, id: ResourceId) -> Result<Vec<Option<(u16, u16)>>> {
+        self.picture_dimensions(id)?.collect()
+    }
+
+    /// Recover once, then borrow the winning collection without collecting or decoding pixels.
+    fn picture_dimensions(
+        &mut self,
+        id: ResourceId,
+    ) -> Result<impl Iterator<Item = Result<Option<(u16, u16)>>> + '_> {
         self.ensure_picture_metadata_loaded(id)?;
-        if let Some(pictures) = self.data.pictures.get(&id) {
-            return Ok(pictures
-                .iter()
-                .map(|slot| slot.as_ref().map(|pic| (pic.width, pic.height)))
-                .collect());
-        }
-        self.data
-            .encoded_pictures
-            .get(&id)
-            .ok_or_else(|| anyhow!("resource {id}: not found"))?
-            .iter()
-            .enumerate()
-            .map(|(sub_id, slot)| {
-                slot.as_ref()
-                    .map(EncodedPicture::dimensions)
-                    .transpose()
-                    .with_context(|| format!("resource {id}/{sub_id}: picture dimensions"))
-            })
-            .collect()
+        let decoded = self.data.pictures.get(&id);
+        let encoded = if decoded.is_some() {
+            None
+        } else {
+            Some(
+                self.data
+                    .encoded_pictures
+                    .get(&id)
+                    .ok_or_else(|| anyhow!("resource {id}: not found"))?,
+            )
+        };
+        Ok(decoded
+            .into_iter()
+            .flatten()
+            .map(|slot| Ok(slot.as_ref().map(|pic| (pic.width, pic.height))))
+            .chain(
+                encoded
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .map(move |(sub_id, slot)| {
+                        slot.as_ref()
+                            .map(EncodedPicture::dimensions)
+                            .transpose()
+                            .with_context(|| format!("resource {id}/{sub_id}: picture dimensions"))
+                    }),
+            ))
     }
 
     /// Count present frames with nonzero width and height, without decoding pixels.
     pub fn get_nonempty_picture_count(&mut self, id: ResourceId) -> Result<usize> {
-        Ok(self
-            .get_picture_dimensions(id)?
-            .into_iter()
-            .flatten()
-            .filter(|&(width, height)| width > 0 && height > 0)
-            .count())
+        let mut count = 0;
+        for dimensions in self.picture_dimensions(id)? {
+            if dimensions?.is_some_and(|(width, height)| width > 0 && height > 0) {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// Read pixel-derived engine geometry without decoding shipping JXL frames.
@@ -1095,9 +1112,11 @@ impl ResourceManager {
     pub fn get_dimension(&mut self, id: ResourceId) -> Result<(u16, u16)> {
         let mut max_w: u16 = 0;
         let mut max_h: u16 = 0;
-        for (width, height) in self.get_picture_dimensions(id)?.into_iter().flatten() {
-            max_w = max_w.max(width);
-            max_h = max_h.max(height);
+        for dimensions in self.picture_dimensions(id)? {
+            if let Some((width, height)) = dimensions? {
+                max_w = max_w.max(width);
+                max_h = max_h.max(height);
+            }
         }
         if max_w == 0 && max_h == 0 {
             bail!("resource {id}: no valid sub-pictures");
@@ -1660,6 +1679,23 @@ mod tests {
         picture.bytes.truncate(header_len);
         assert!(picture.decode().is_err());
         assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert!(manager.pictures_raw(42).is_none());
+
+        // Aggregates must inspect later slots too, not hide corruption after
+        // a valid nonempty frame has already contributed dimensions.
+        manager
+            .data
+            .encoded_pictures
+            .get_mut(&42)
+            .unwrap()
+            .push(Some(EncodedPicture::jxl_rgba565_keyed(vec![])));
+        for error in [
+            manager.get_nonempty_picture_count(42).unwrap_err(),
+            manager.get_dimension(42).unwrap_err(),
+            manager.get_picture_dimensions(42).unwrap_err(),
+        ] {
+            assert!(error.to_string().contains("resource 42/2"), "{error:#}");
+        }
         assert!(manager.pictures_raw(42).is_none());
     }
 
