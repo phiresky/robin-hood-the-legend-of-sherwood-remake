@@ -569,7 +569,7 @@ impl MissionFrame {
         &self.external_actions[self.external_actions_applied..]
     }
 
-    pub(super) fn record_applied_post_external_actions(
+    fn record_applied_post_external_actions(
         &mut self,
         actions: Vec<robin_engine::engine::ExternalAction>,
     ) {
@@ -584,7 +584,7 @@ impl MissionFrame {
         }
     }
 
-    pub(super) fn mark_post_external_actions_applied(&mut self) {
+    fn mark_post_external_actions_applied(&mut self) {
         self.post_external_actions_applied = self.post_external_actions.len();
     }
 
