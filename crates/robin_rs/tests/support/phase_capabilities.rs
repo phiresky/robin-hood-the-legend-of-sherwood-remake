@@ -4,6 +4,62 @@
 
 use syn::visit::{self, Visit};
 
+#[test]
+fn frontend_policy_and_observation_owners_remain_private() {
+    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    let structure = |name: &str| {
+        host.items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == name => Some(item),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing owner {name}"))
+    };
+    let frontend = structure("HostFrontend");
+    for name in [
+        "preferences",
+        "diagnostics",
+        "planning",
+        "pointer_capture",
+        "queue_strip_animations",
+    ] {
+        let field = frontend
+            .fields
+            .iter()
+            .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+            .unwrap_or_else(|| panic!("missing frontend owner {name}"));
+        assert!(
+            matches!(field.vis, syn::Visibility::Inherited),
+            "{name} must be private"
+        );
+    }
+    for name in ["FrontendPreferences", "QueueStripAnimations"] {
+        assert!(
+            structure(name)
+                .fields
+                .iter()
+                .all(|field| matches!(field.vis, syn::Visibility::Inherited)),
+            "{name} must expose operations, not writable fields"
+        );
+    }
+    let diagnostics = syn::parse_file(include_str!("../../src/frontend_diagnostics.rs")).unwrap();
+    let owner = diagnostics
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "FrontendDiagnostics" => Some(item),
+            _ => None,
+        })
+        .expect("diagnostics owner");
+    assert!(
+        owner
+            .fields
+            .iter()
+            .all(|field| matches!(field.vis, syn::Visibility::Inherited))
+    );
+}
+
 fn readonly_reference_to(ty: &syn::Type, expected: &str) -> bool {
     matches!(ty, syn::Type::Reference(reference)
         if reference.mutability.is_none()
