@@ -165,6 +165,34 @@ impl FrameWnd {
         self.widgets.get(index)
     }
 
+    /// Find the next enabled widget in collection order, wrapping at either end.
+    /// Selection is an ID, not a vector index. If it no longer exists, start
+    /// at the first widget when moving forward, or the last when moving back.
+    /// Returns `None` when the frame has no enabled widgets.
+    pub(crate) fn next_enabled_widget(&self, current: WidgetId, forward: bool) -> Option<WidgetId> {
+        let len = self.widgets.len();
+        if len == 0 {
+            return None;
+        }
+        let mut position = self
+            .widgets
+            .iter()
+            .position(|widget| widget.id() == current)
+            .unwrap_or(if forward { len - 1 } else { 0 });
+        for _ in 0..len {
+            position = if forward {
+                (position + 1) % len
+            } else {
+                position.checked_sub(1).unwrap_or(len - 1)
+            };
+            let widget = &self.widgets[position];
+            if widget.base().enabled {
+                return Some(widget.id());
+            }
+        }
+        None
+    }
+
     /// Number of widgets in this frame.
     pub fn widget_count(&self) -> usize {
         self.widgets.len()

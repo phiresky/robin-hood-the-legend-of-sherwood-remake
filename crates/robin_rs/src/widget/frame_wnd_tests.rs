@@ -418,3 +418,38 @@ fn restore_region_skips_non_intersecting() {
         "non-intersecting widget must not be refreshed",
     );
 }
+
+#[test]
+fn keyboard_navigation_uses_widget_ids_and_skips_disabled_entries() {
+    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+    for id in [91, 4, 700] {
+        frame.add_widget_absolute(make_button_widget(id, 0.0, 0.0, 20.0, 20.0));
+    }
+    frame.widget_mut(4).unwrap().base_mut().enabled = false;
+    assert_eq!(frame.next_enabled_widget(91, true), Some(700));
+    assert_eq!(frame.next_enabled_widget(700, true), Some(91));
+    assert_eq!(frame.next_enabled_widget(91, false), Some(700));
+    assert_eq!(frame.next_enabled_widget(700, false), Some(91));
+    assert_eq!(frame.next_enabled_widget(4, true), Some(700));
+    assert_eq!(frame.next_enabled_widget(4, false), Some(91));
+    // A removed selection starts at the appropriate end, not at an unrelated ID/index.
+    assert_eq!(frame.next_enabled_widget(999, true), Some(91));
+    assert_eq!(frame.next_enabled_widget(999, false), Some(700));
+}
+
+#[test]
+fn keyboard_navigation_handles_empty_disabled_and_single_widget_frames() {
+    let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+    for forward in [false, true] {
+        assert_eq!(frame.next_enabled_widget(42, forward), None);
+    }
+    frame.add_widget_absolute(make_button_widget(42, 0.0, 0.0, 20.0, 20.0));
+    for forward in [false, true] {
+        assert_eq!(frame.next_enabled_widget(42, forward), Some(42));
+    }
+    frame.widget_mut(42).unwrap().base_mut().enabled = false;
+    for forward in [false, true] {
+        assert_eq!(frame.next_enabled_widget(42, forward), None);
+        assert_eq!(frame.next_enabled_widget(999, forward), None);
+    }
+}

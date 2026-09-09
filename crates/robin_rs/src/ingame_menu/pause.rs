@@ -318,25 +318,11 @@ impl PauseMenu {
     }
 
     fn move_keyboard_selection(&mut self, direction: i32) {
-        let len = self.frame.widget_count() as i32;
-        if len == 0 {
-            return;
-        }
-        let current_position = self
+        if let Some(next) = self
             .frame
-            .widgets()
-            .iter()
-            .position(|widget| widget.id() == self.keyboard_selection)
-            .unwrap_or(0) as i32;
-        let mut position = current_position;
-        for _ in 0..len {
-            position = (position + direction).rem_euclid(len);
-            if let Some(w) = self.frame.widget_at(position as usize)
-                && w.base().enabled
-            {
-                self.keyboard_selection = w.id();
-                break;
-            }
+            .next_enabled_widget(self.keyboard_selection, direction > 0)
+        {
+            self.keyboard_selection = next;
         }
     }
 

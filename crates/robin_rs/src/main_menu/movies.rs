@@ -116,11 +116,11 @@ pub(crate) async fn show_movies(
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
                     ..
-                } => move_keyboard_selection(&frame, &mut keyboard_selection, -1),
+                } => super::move_keyboard_selection(&frame, &mut keyboard_selection, -1),
                 GameEvent::KeyDown {
                     keycode: Keycode::Down,
                     ..
-                } => move_keyboard_selection(&frame, &mut keyboard_selection, 1),
+                } => super::move_keyboard_selection(&frame, &mut keyboard_selection, 1),
                 GameEvent::KeyDown {
                     keycode: Keycode::Return,
                     ..
@@ -204,22 +204,5 @@ pub(crate) async fn show_movies(
 
         renderer.present();
         crate::window::sleep_ui_frame().await;
-    }
-}
-
-fn move_keyboard_selection(frame: &FrameWnd, selection: &mut u32, direction: i32) {
-    let len = frame.widget_count() as i32;
-    if len == 0 {
-        return;
-    }
-    let mut idx = *selection as i32;
-    for _ in 0..len {
-        idx = (idx + direction).rem_euclid(len);
-        if let Some(w) = frame.widget_at(idx as usize)
-            && w.base().enabled
-        {
-            *selection = idx as u32;
-            break;
-        }
     }
 }
