@@ -125,7 +125,7 @@ export async function publish(
     // Keep the creation response; the list may not yet contain the new draft.
     ({ data: release } = await github.rest.repos.createRelease({
       ...repo, tag_name: tag, target_commitish: commit, name: tag,
-      body: `Build of ${commit}. Assets verified before publication.`, draft: true, prerelease,
+      body: `Automatic build of ${commit}.`, draft: true, prerelease,
     }));
   }
   if (release.target_commitish !== commit) throw new Error('release target differs from the requested commit');
