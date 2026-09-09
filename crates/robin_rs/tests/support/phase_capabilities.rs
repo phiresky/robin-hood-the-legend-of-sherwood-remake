@@ -170,7 +170,13 @@ fn timeline_reconciliation_and_history_are_private_owners() {
             _ => None,
         })
         .expect("timeline runtime");
-    for name in ["network", "history", "mp_admission", "replay"] {
+    for name in [
+        "network",
+        "history",
+        "mp_admission",
+        "replay",
+        "multiplayer_timing",
+    ] {
         let field = owner
             .fields
             .iter()
@@ -192,7 +198,10 @@ fn timeline_reconciliation_and_history_are_private_owners() {
                 "replay_player",
                 "replay_recorder",
                 "recording_validity",
-                "sealed_replay_header"
+                "sealed_replay_header",
+                "mp_host_frame_schedule",
+                "pending_mp_state_hash",
+                "last_mp_state_hash_frame"
             ]
             .iter()
             .any(|name| field.ident.as_ref().is_some_and(|ident| ident == name)),
