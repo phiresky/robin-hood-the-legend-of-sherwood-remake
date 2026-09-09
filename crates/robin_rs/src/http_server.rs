@@ -5,8 +5,8 @@
 //!
 //! Two transports share the same request/reply enums + per-tick drain:
 //!
-//! - **Native:** a `tiny_http` listener on `127.0.0.1:<port>` (see
-//!   [`start_global`]).  Endpoints are:
+//! - **Native:** an application-owned Hyper listener on `127.0.0.1:<port>` (see
+//!   [`HttpTransport::start`]).  Endpoints are:
 //!
 //!   | Method | Path                | Body / Query                                 | Response                                               |
 //!   |--------|---------------------|----------------------------------------------|--------------------------------------------------------|
@@ -31,7 +31,8 @@
 //!
 //! ### Threading (native)
 //!
-//! A dedicated listener thread runs `tiny_http`'s blocking accept loop.
+//! A dedicated listener thread owns a Tokio runtime and at most eight HTTP
+//! connection tasks. Shutdown cancels and joins every connection task.
 //! Each request is decoded into a [`HttpRequest`] and pushed onto a
 //! shared FIFO with a one-shot `SyncSender` for the reply. The game
 //! mission owner drains its queue once per tick, executes each request inline, and
@@ -40,7 +41,7 @@
 //!
 //! Requests requiring an engine fail immediately between missions. A busy
 //! active mission can defer execution until its next RPC boundary, bounded
-//! by a 60 s recv timeout on the
+//! by a 60 s reply deadline on the
 //! listener side.  Clients that want to fail fast instead of waiting
 //! out a blocked main loop should pass a shorter HTTP timeout
 //! themselves (e.g. `curl --max-time 2`).
@@ -354,7 +355,7 @@ pub struct ScreenshotFlags {
     pub entity_ids: Option<bool>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NativeCall {
     pub op: String,
     #[serde(default)]
@@ -419,8 +420,14 @@ impl Responder {
 }
 
 mod ingress;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_routes;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_transport;
 use ingress::RequestRouter;
 pub use ingress::SessionIngress;
+#[cfg(not(target_arch = "wasm32"))]
+use native_transport::NativeRequest;
 
 pub type Queue = Arc<Mutex<RequestRouter>>;
 
@@ -433,10 +440,12 @@ pub struct HttpServer {
     #[cfg(not(target_arch = "wasm32"))]
     listener: Option<thread::JoinHandle<()>>,
     #[cfg(not(target_arch = "wasm32"))]
-    stop: Arc<std::sync::atomic::AtomicBool>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 /// Application-owned transport. Diagnostics cannot recreate a listener.
+/// Stopping retires the queue and cancels and joins every native connection,
+/// including stalled bodies and responses. Dropping performs the same teardown.
 #[derive(Default, serde::Serialize)]
 pub struct HttpTransport {
     port: Option<u16>,
@@ -505,9 +514,9 @@ impl HttpTransport {
                 }
             });
             #[cfg(not(target_arch = "wasm32"))]
-            server
-                .stop
-                .store(true, std::sync::atomic::Ordering::Release);
+            if let Some(stop) = server.stop.take() {
+                let _ = stop.send(());
+            }
             server.queue.lock().expect("RPC router poisoned").retire();
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(listener) = server.listener.take() {
@@ -626,7 +635,13 @@ mod transport_lifecycle_tests {
         let (mut transport, _) = running();
         let queue = transport.server.as_ref().unwrap().queue.clone();
         let mut ingress = transport.attach();
-        let worker = thread::spawn(move || relay(&queue, HttpPayload::SetPaused { paused: true }));
+        let worker = thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(relay(&queue, HttpPayload::SetPaused { paused: true }))
+        });
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         loop {
             if let Some(request) = ingress.take_requests().pop() {
@@ -648,43 +663,87 @@ mod transport_lifecycle_tests {
         assert_eq!(worker.join().unwrap().0, 400);
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_accept_inherits_shutdown_io_timeouts() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let socket = socket2::SockRef::from(&listener);
-        socket
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        socket
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let _client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (accepted, _) = listener.accept().unwrap();
-        assert_eq!(
-            accepted.read_timeout().unwrap(),
-            Some(Duration::from_secs(2))
-        );
-        assert_eq!(
-            accepted.write_timeout().unwrap(),
-            Some(Duration::from_secs(2))
-        );
-    }
-
-    #[cfg(target_os = "linux")]
     #[test]
     fn shutdown_does_not_wait_forever_for_an_incomplete_request_body() {
         let (mut transport, _) = running();
         let port = transport.port.unwrap();
         let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         write!(client, "POST /console HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 100\r\nContent-Type: application/json\r\n\r\n{{").unwrap();
-        // Allow tiny_http to hand the parsed headers to the body reader.
+        // Allow the connection task to begin acquiring the incomplete body.
         thread::sleep(Duration::from_millis(50));
         let before = std::time::Instant::now();
         transport.stop();
-        assert!(before.elapsed() < Duration::from_secs(8));
+        assert!(before.elapsed() < Duration::from_secs(2));
         std::net::TcpListener::bind(("127.0.0.1", port))
             .expect("listener released after partial body");
+    }
+
+    #[test]
+    fn shutdown_cancels_a_continuously_trickled_body() {
+        let (mut transport, _) = running();
+        let port = transport.port.unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        write!(
+            client,
+            "POST /console HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 1000000\r\n\r\n{{"
+        )
+        .unwrap();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_finished = finished.clone();
+        let writer = thread::spawn(move || {
+            while !writer_finished.load(std::sync::atomic::Ordering::Acquire) {
+                if client.write_all(b" ").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        thread::sleep(Duration::from_millis(50));
+        let before = std::time::Instant::now();
+        transport.stop();
+        let elapsed = before.elapsed();
+        finished.store(true, std::sync::atomic::Ordering::Release);
+        writer.join().unwrap();
+        assert!(elapsed < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn native_transport_preserves_security_and_early_replay_header_rejection() {
+        use std::io::Read;
+        let (transport, _) = running();
+        let port = transport.port.unwrap();
+        let exchange = |request: String| {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            client.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            response
+        };
+        assert!(
+            exchange(format!(
+                "GET /info HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            ))
+            .starts_with("HTTP/1.1 200")
+        );
+        assert!(exchange(format!("GET /info HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: https://example.com\r\nConnection: close\r\n\r\n")).starts_with("HTTP/1.1 403"));
+        assert!(
+            exchange(
+                "GET /info HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n".into()
+            )
+            .starts_with("HTTP/1.1 403")
+        );
+        // No chunk/body follows: validation must reject from headers alone.
+        let response = exchange(format!(
+            "POST /load-replay HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nTransfer-Encoding: chunked\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+        ));
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(response.contains("Transfer-Encoding"));
     }
 }
 fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
@@ -787,31 +846,36 @@ fn start(
              or `--http-server <port>` to pick a different port)"
         )
     })?;
-    // Linux inherits these options into accepted sockets. A stalled client
-    // must not strand shutdown in tiny_http's synchronous body/response I/O.
-    // TODO: Verify accepted-socket timeout inheritance on other native targets.
-    let socket = socket2::SockRef::from(&listener);
-    socket
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|e| format!("HTTP read timeout: {e}"))?;
-    socket
-        .set_write_timeout(Some(Duration::from_secs(2)))
-        .map_err(|e| format!("HTTP write timeout: {e}"))?;
-    let server = tiny_http::Server::from_listener(listener, None)
-        .map_err(|e| format!("HTTP listener: {e}"))?;
-    let bind_addr = server
-        .server_addr()
-        .to_ip()
-        .ok_or_else(|| "script HTTP server bound to non-IP address".to_string())?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("HTTP listener nonblocking: {e}"))?;
+    let bind_addr = listener
+        .local_addr()
+        .map_err(|e| format!("HTTP listener address: {e}"))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("HTTP runtime: {e}"))?;
+    let listener = {
+        let _entered = runtime.enter();
+        tokio::net::TcpListener::from_std(listener)
+            .map_err(|e| format!("HTTP listener registration: {e}"))?
+    };
     tracing::info!("script HTTP server listening on http://{bind_addr}");
 
     let queue: Queue = Arc::new(Mutex::new(RequestRouter::default()));
     let queue_for_thread = queue.clone();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let listener_stop = stop.clone();
+    let (stop, listener_stop) = tokio::sync::oneshot::channel();
     let listener = thread::Builder::new()
         .name("robin-http-server".into())
-        .spawn(move || run_listener(server, queue_for_thread, listener_stop))
+        .spawn(move || {
+            runtime.block_on(native_transport::run(
+                listener,
+                queue_for_thread,
+                listener_stop,
+                bind_addr.port(),
+            ))
+        })
         .map_err(|e| format!("script HTTP server: failed to spawn listener thread: {e}"))?;
     Ok(HttpServer {
         queue,
@@ -819,7 +883,7 @@ fn start(
         replay_exports,
         replay_launches,
         listener: Some(listener),
-        stop,
+        stop: Some(stop),
     })
 }
 
@@ -860,217 +924,6 @@ fn browser_rejection_reason(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_listener(server: tiny_http::Server, queue: Queue, stop: Arc<std::sync::atomic::AtomicBool>) {
-    use tiny_http::Method;
-
-    let listen_port = server
-        .server_addr()
-        .to_ip()
-        .map(|addr| addr.port())
-        .expect("script HTTP server listens on an IP address");
-
-    while !stop.load(std::sync::atomic::Ordering::Acquire) {
-        let mut req = match server.recv_timeout(Duration::from_millis(20)) {
-            Ok(Some(request)) => request,
-            Ok(None) => continue,
-            Err(error) => {
-                tracing::error!(%error, "script HTTP listener failed");
-                break;
-            }
-        };
-        let header_value = |name: &'static str| {
-            req.headers()
-                .iter()
-                .find(|h| h.field.equiv(name))
-                .map(|h| h.value.as_str().to_string())
-        };
-        if let Some(reason) = browser_rejection_reason(
-            header_value("Origin").as_deref(),
-            header_value("Sec-Fetch-Site").as_deref(),
-            header_value("Host").as_deref(),
-            listen_port,
-        ) {
-            tracing::warn!("script HTTP server: rejected request: {reason}");
-            let response = tiny_http::Response::from_data(
-                serde_json::to_vec(&serde_json::json!({ "error": reason }))
-                    .expect("static rejection body"),
-            )
-            .with_status_code(403)
-            .with_header(
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .expect("static content-type header"),
-            );
-            if let Err(e) = req.respond(response) {
-                tracing::warn!("script HTTP response failed: {e}");
-            }
-            continue;
-        }
-
-        let path_full = req.url().to_string();
-        let (path, query) = match path_full.split_once('?') {
-            Some((p, q)) => (p.to_string(), q.to_string()),
-            None => (path_full, String::new()),
-        };
-        let method = req.method().clone();
-
-        let (code, body): (u16, ReplyBody) = match (&method, path.as_str()) {
-            (Method::Get, "/") | (Method::Get, "/info") => (200, info_json().into()),
-            (Method::Get, "/natives") => (200, list_natives_json().into()),
-            (Method::Get, "/state") => relay(&queue, HttpPayload::State),
-            (Method::Get, "/host-debug") => relay(&queue, HttpPayload::HostDebug),
-            (Method::Get, "/engine-dump") => relay(&queue, HttpPayload::EngineDump),
-            (Method::Get, "/level-assets") => relay(&queue, HttpPayload::LevelAssets),
-            (Method::Get, "/script") => relay(&queue, HttpPayload::Script),
-            (Method::Get, "/script/decompile") => {
-                let class = query_param(&query, "class").map(str::to_string);
-                relay(&queue, HttpPayload::Decompile { class })
-            }
-            (Method::Get, "/screenshot") => relay(
-                &queue,
-                HttpPayload::Screenshot(parse_screenshot_query(&query)),
-            ),
-            (Method::Post, "/native") => match read_json::<NativeCall>(&mut req) {
-                Ok(c) => relay(
-                    &queue,
-                    HttpPayload::Native {
-                        name: c.op,
-                        args: c.args,
-                        this: c.this,
-                    },
-                ),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/batch") => {
-                #[derive(serde::Deserialize)]
-                struct BatchBody {
-                    calls: Vec<NativeCall>,
-                }
-                match read_json::<BatchBody>(&mut req) {
-                    Ok(b) => relay(&queue, HttpPayload::Batch(b.calls)),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Post, "/console") => {
-                #[derive(serde::Deserialize)]
-                struct ConsoleBody {
-                    command: String,
-                }
-                match read_json::<ConsoleBody>(&mut req) {
-                    Ok(c) => relay(&queue, HttpPayload::Console(c.command)),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Post, "/command") => match read_json::<PlayerCommand>(&mut req) {
-                Ok(c) => relay(&queue, HttpPayload::Command(c)),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/step-forward") => match parse_step_body(&mut req) {
-                Ok(request) => relay(&queue, HttpPayload::StepForward { request }),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/step-back") => match parse_step_body(&mut req) {
-                Ok(request) => relay(&queue, HttpPayload::StepBack { request }),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/go-to-frame") => {
-                #[derive(serde::Deserialize)]
-                struct GoToBody {
-                    frame: u32,
-                    #[serde(flatten)]
-                    modal_policy: StepModalPolicy,
-                }
-                match read_json::<GoToBody>(&mut req) {
-                    Ok(b) => relay(
-                        &queue,
-                        HttpPayload::GoToFrame {
-                            target: b.frame,
-                            modal_policy: b.modal_policy,
-                        },
-                    ),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Post, "/set-paused") => {
-                #[derive(serde::Deserialize)]
-                struct SetPausedBody {
-                    paused: bool,
-                }
-                match read_json::<SetPausedBody>(&mut req) {
-                    Ok(b) => relay(&queue, HttpPayload::SetPaused { paused: b.paused }),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Get, "/get-replay") => relay(&queue, HttpPayload::GetReplay),
-            (Method::Post, "/load-replay") => {
-                #[derive(serde::Deserialize)]
-                struct LoadReplayBody {
-                    data: String,
-                    #[serde(default)]
-                    paused: bool,
-                }
-                match read_replay_json::<LoadReplayBody>(&mut req) {
-                    Ok(b) => match crate::replay_format::preflight_compact_transport(
-                        &b.data,
-                        &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-                    ) {
-                        Ok(_) => relay(
-                            &queue,
-                            HttpPayload::LoadReplay {
-                                data: b.data,
-                                paused: b.paused,
-                            },
-                        ),
-                        Err(error) => (
-                            400,
-                            serde_json::json!({"error": format!("invalid compact replay: {error}")})
-                                .into(),
-                        ),
-                    },
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            _ => (404, serde_json::json!({"error": "not found"}).into()),
-        };
-
-        let (content_type, bytes): (&[u8], Vec<u8>) = match body {
-            ReplyBody::Json(v) => (
-                &b"application/json"[..],
-                serde_json::to_vec(&v)
-                    .unwrap_or_else(|_| br#"{"error":"json encode failed"}"#.to_vec()),
-            ),
-            ReplyBody::Binary { content_type, data } => (content_type.as_bytes(), data),
-        };
-        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type)
-            .expect("static content-type header");
-        let response = tiny_http::Response::from_data(bytes)
-            .with_status_code(code)
-            .with_header(header);
-        if let Err(e) = req.respond(response) {
-            tracing::warn!("script HTTP response failed: {e}");
-        }
-    }
-}
-
-/// Parse the body of `/step-forward` / `/step-back` into a tick count.
-///
-/// Accepts either a JSON object `{"n": N}` or an empty body (defaults
-/// to `1`).  `N` must be a positive integer.
-#[cfg(not(target_arch = "wasm32"))]
-fn parse_step_body(req: &mut tiny_http::Request) -> Result<StepRequest, String> {
-    let mut body = String::new();
-    std::io::Read::read_to_string(req.as_reader(), &mut body)
-        .map_err(|e| format!("body read: {e}"))?;
-    if body.trim().is_empty() {
-        return Ok(StepRequest::default());
-    }
-    let body: StepRequest = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
-    if body.n == 0 {
-        return Err("n must be >= 1".into());
-    }
-    Ok(body)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
     ScreenshotRequest {
         frame: query_param(query, "frame").and_then(|s| s.parse().ok()),
@@ -1108,76 +961,10 @@ fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn read_json<T: serde::de::DeserializeOwned>(req: &mut tiny_http::Request) -> Result<T, String> {
-    let mut body = String::new();
-    std::io::Read::read_to_string(req.as_reader(), &mut body)
-        .map_err(|e| format!("body read: {e}"))?;
-    serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))
-}
-
-/// Bounded transport reader for the only HTTP replay-admission route.
-///
-/// This cap is applied before UTF-8/JSON/String allocation. Generic RPC bodies
-/// are small trusted automation messages; `/load-replay` can carry the bounded
-/// local-custom replay lane (including a maximum valid embedded package) and
-/// therefore has its own hostile-input acquisition path.
-#[cfg(not(target_arch = "wasm32"))]
-fn read_replay_json<T: serde::de::DeserializeOwned>(
-    req: &mut tiny_http::Request,
-) -> Result<T, String> {
-    use std::io::Read as _;
-
-    const JSON_OVERHEAD_BYTES: usize = 1024;
-    let limit = crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS
-        .max_input_bytes
-        .checked_add(JSON_OVERHEAD_BYTES)
-        .expect("replay JSON transport limit fits usize");
-
-    let header = |name: &'static str| {
-        req.headers()
-            .iter()
-            .find(|header| header.field.equiv(name))
-            .map(|header| header.value.as_str())
-    };
-    if header("Transfer-Encoding").is_some() {
-        return Err("load-replay does not accept Transfer-Encoding".into());
-    }
-    if header("Content-Encoding").is_some() {
-        return Err("load-replay does not accept Content-Encoding".into());
-    }
-    let content_type = header("Content-Type")
-        .ok_or_else(|| "load-replay requires Content-Type: application/json".to_string())?;
-    let media_type = content_type.split(';').next().unwrap_or_default().trim();
-    if !media_type.eq_ignore_ascii_case("application/json") {
-        return Err("load-replay requires Content-Type: application/json".into());
-    }
-    let declared = req
-        .body_length()
-        .ok_or_else(|| "load-replay requires a bounded Content-Length".to_string())?;
-    if declared > limit {
-        return Err(format!(
-            "load-replay JSON body observed {declared} bytes, limit is {limit}"
-        ));
-    }
-
-    let mut body = Vec::with_capacity(declared.min(limit));
-    std::io::Read::take(req.as_reader(), (limit + 1) as u64)
-        .read_to_end(&mut body)
-        .map_err(|error| format!("body read: {error}"))?;
-    if body.len() > limit {
-        return Err(format!(
-            "load-replay JSON body observed at least {} bytes, limit is {limit}",
-            body.len()
-        ));
-    }
-    serde_json::from_slice(&body).map_err(|error| format!("bad json: {error}"))
-}
-
 /// Send a payload to the game loop and wait for the reply.  Caps the
 /// wait at 60 s so a wedged game doesn't hang the client forever.
 #[cfg(not(target_arch = "wasm32"))]
-fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
+async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
     let (tx, rx) = mpsc::sync_channel::<Reply>(1);
     queue
         .lock()
@@ -1191,11 +978,15 @@ fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
         if queue.lock().expect("RPC router poisoned").is_retired() {
             break Ok(Err("HTTP transport stopped".into()));
         }
-        match rx.recv_timeout(Duration::from_millis(20)) {
-            Err(mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {
-                continue;
+        match rx.try_recv() {
+            Err(mpsc::TryRecvError::Empty) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
             }
-            result => break result,
+            Err(mpsc::TryRecvError::Empty) => break Err(mpsc::RecvTimeoutError::Timeout),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                break Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            Ok(reply) => break Ok(reply),
         }
     };
     match reply {
