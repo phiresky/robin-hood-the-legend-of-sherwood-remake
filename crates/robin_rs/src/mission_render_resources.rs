@@ -265,7 +265,10 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         if let Some(old) = previous {
             renderer.draw_surface(old, None, None, 0).unwrap();
         }
-        host.frontend.mission_surfaces.replace_map(renderer, owned);
+        host.frontend
+            .resources
+            .mission_surfaces
+            .replace_map(renderer, owned);
         if let Some(old) = previous {
             assert!(renderer.surface_dimensions(old).is_err());
             assert_eq!(
@@ -276,31 +279,33 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         }
         previous = Some(id);
         host.post_load_reset();
-        assert_eq!(host.frontend.mission_surfaces.map(), Some(id));
+        assert_eq!(host.frontend.resources.mission_surfaces.map(), Some(id));
         assert!(renderer.surface_dimensions(id).is_ok());
     }
     let dot = upload(renderer);
     let corner_size = ScreenSize::new(12.0, 15.0);
     host.frontend
+        .resources
         .mission_surfaces
         .replace_corners(renderer, corner_size, vec![]);
     assert_eq!(
-        host.frontend.mission_surfaces.corner_size(),
+        host.frontend.resources.mission_surfaces.corner_size(),
         corner_size,
         "known layout dimensions survive unavailable corner pictures"
     );
-    assert!(host.frontend.mission_surfaces.corner(0).is_none());
+    assert!(host.frontend.resources.mission_surfaces.corner(0).is_none());
     assert!(renderer.upload_rgb565(2, 2, &[0xffff]).is_none());
     assert_eq!(
-        host.frontend.mission_surfaces.map(),
+        host.frontend.resources.mission_surfaces.map(),
         previous,
         "a failed upload must leave the installed map intact"
     );
     host.frontend
+        .resources
         .mission_surfaces
         .replace_dots(renderer, vec![None, Some(dot)]);
-    assert!(host.frontend.mission_surfaces.dots()[0].is_none());
-    let borrowed_dot = host.frontend.mission_surfaces.dots()[1]
+    assert!(host.frontend.resources.mission_surfaces.dots()[0].is_none());
+    let borrowed_dot = host.frontend.resources.mission_surfaces.dots()[1]
         .as_ref()
         .unwrap()
         .parts()
@@ -340,11 +345,12 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         serde_json::from_value(serde_json::to_value(&candidate).unwrap()).unwrap();
     let (_, rejected) = host
         .frontend
+        .resources
         .mission_surfaces
         .try_replace_dots(renderer, vec![Some(candidate), Some(decoded)])
         .unwrap_err();
     assert_eq!(
-        host.frontend.mission_surfaces.dots()[1]
+        host.frontend.resources.mission_surfaces.dots()[1]
             .as_ref()
             .unwrap()
             .parts()
@@ -360,12 +366,14 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
             .is_err()
     );
     host.frontend
+        .resources
         .mission_surfaces
         .replace_dots(renderer, vec![]);
     assert!(renderer.draw_surface(borrowed_dot, None, None, 0).is_err());
     for reserved in [0, 1] {
         assert!(
             host.frontend
+                .resources
                 .mission_surfaces
                 .try_replace_dots(renderer, vec![Some(OwnedSurface::synthetic(reserved))])
                 .is_err()
@@ -374,6 +382,7 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
     let candidate = upload(renderer);
     let (_, candidates) = host
         .frontend
+        .resources
         .mission_surfaces
         .try_replace_corners(
             renderer,
@@ -381,9 +390,13 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
             vec![candidate, OwnedSurface::synthetic(u32::MAX)],
         )
         .unwrap_err();
-    assert_eq!(host.frontend.mission_surfaces.corner_size(), corner_size);
+    assert_eq!(
+        host.frontend.resources.mission_surfaces.corner_size(),
+        corner_size
+    );
     let (_, candidates) = host
         .frontend
+        .resources
         .mission_surfaces
         .try_replace_ground_marks(renderer, candidates)
         .unwrap_err();
@@ -394,9 +407,12 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
             .try_retire_surface(candidates.next().unwrap())
             .is_err()
     );
-    host.frontend.mission_surfaces.retire(renderer);
+    host.frontend
+        .request_print_screen(crate::host::PrintScreenRequest::Plain);
+    host.frontend.retire_mission(renderer);
+    assert!(host.frontend.take_print_screen().is_none());
     assert!(renderer.surface_dimensions(previous.unwrap()).is_err());
-    host.frontend.mission_surfaces.retire(renderer);
+    host.frontend.retire_mission(renderer);
 }
 
 #[cfg(test)]

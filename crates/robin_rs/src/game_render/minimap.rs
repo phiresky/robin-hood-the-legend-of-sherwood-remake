@@ -4,7 +4,7 @@ use crate::host::HostDraw;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer, SurfaceHandle};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
-use robin_engine::engine::{EngineInner, LevelAssets};
+use robin_engine::engine::{LevelAssets, PresentationView};
 use robin_engine::minimap as engine_minimap;
 use robin_engine::minimap::UIState;
 use robin_engine::sprite::BBox;
@@ -17,11 +17,11 @@ use robin_engine::sprite::BBox;
 pub(crate) fn render_minimap(
     host: &HostDraw<'_>,
     display: &engine_api::HostDisplayState,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
-    let Some(map_surface) = host.frontend.mission_surfaces.map() else {
+    let Some(map_surface) = host.frontend.resources.mission_surfaces.map() else {
         return; // no minimap loaded
     };
 
@@ -36,7 +36,7 @@ pub(crate) fn render_minimap(
                 UIState::Focused => 1,
                 UIState::Selected => 2,
             };
-            if let Some(surface) = host.frontend.mission_surfaces.corner(state_idx) {
+            if let Some(surface) = host.frontend.resources.mission_surfaces.corner(state_idx) {
                 let tl = mm.button_box().top_left();
                 let br = mm.button_box().bottom_right();
                 let src = BBox::from_coords(0.0, 0.0, br.x - tl.x, br.y - tl.y);
@@ -111,7 +111,7 @@ pub(crate) fn render_minimap(
     // ── Element dots ──
     // Sort for minimap, draw each active non-highlighted element's
     // dot, then draw delayed highlights.
-    if host.frontend.mission_surfaces.dots().is_empty() {
+    if host.frontend.resources.mission_surfaces.dots().is_empty() {
         return;
     }
 
@@ -274,7 +274,7 @@ fn clipped_dot_blit(
     widget_box: &engine_coordinates::ScreenBBox,
 ) -> Option<(SurfaceHandle, BBox, BBox)> {
     let idx = dot_type as usize;
-    let (surface, dot_w, dot_h) = match host.frontend.mission_surfaces.dots().get(idx) {
+    let (surface, dot_w, dot_h) = match host.frontend.resources.mission_surfaces.dots().get(idx) {
         Some(Some(frame)) => frame.parts(),
         _ => return None,
     };
@@ -338,7 +338,7 @@ fn level_size_for(host: &HostDraw<'_>) -> engine_coordinates::MapSize {
 }
 
 fn render_minimap_fog(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     renderer: &mut Renderer,

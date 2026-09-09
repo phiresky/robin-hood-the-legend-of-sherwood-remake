@@ -18,7 +18,7 @@ use crate::host::HostTitbitPreview;
 use robin_assets::picture::Picture;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
-use robin_engine::engine::EngineInner;
+use robin_engine::engine::PresentationView;
 use robin_engine::graphic_config::TextureScaleMode;
 
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
@@ -314,7 +314,7 @@ impl TitbitRenderer {
     fn render_host_preview_if_due(
         &mut self,
         host: &HostDraw<'_>,
-        engine: &EngineInner,
+        engine: &PresentationView<'_>,
         renderer: &mut crate::renderer::Renderer,
         next_sim_display_order: f32,
         display_order_max: f32,
@@ -338,7 +338,7 @@ impl TitbitRenderer {
     fn render_host_preview(
         &self,
         host: &HostDraw<'_>,
-        engine: &EngineInner,
+        engine: &PresentationView<'_>,
         renderer: &mut crate::renderer::Renderer,
         preview: HostTitbitPreview,
     ) {
@@ -400,7 +400,7 @@ impl TitbitRenderer {
     pub(crate) fn render_up_to(
         &mut self,
         host: &HostDraw<'_>,
-        engine: &EngineInner,
+        engine: &PresentationView<'_>,
         assets: &engine_api::LevelAssets,
         renderer: &mut crate::renderer::Renderer,
         display_order_max: f32,

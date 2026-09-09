@@ -2,6 +2,7 @@
 //! These paths never enter deterministic campaign/save state.
 
 use robin_engine::campaign_history::MissionAttemptKey;
+#[cfg(not(target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -143,6 +144,7 @@ fn backfill() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RecordingLink {
     key: MissionAttemptKey,

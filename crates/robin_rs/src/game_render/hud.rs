@@ -8,18 +8,16 @@ use crate::renderer::Renderer;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Entity, ListenPhase};
-use robin_engine::engine::{EngineInner, MULTI_SELECTION_THRESHOLD, MissionCountdownMode};
+use robin_engine::engine::{MULTI_SELECTION_THRESHOLD, MissionCountdownMode, PresentationView};
 
 /// Render the author-controlled active-play countdown at the top centre.
 pub(crate) fn render_mission_countdown(
     presentation: &FramePresentationInputs,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
     fonts: &HudFonts,
 ) {
-    if !presentation.graphic_config.show_mission_countdown
-        || !engine.sim_config().enable_timed_missions
-    {
+    if !presentation.graphic_config.show_mission_countdown || !engine.timed_missions_enabled() {
         return;
     }
     let Some(status) = engine.mission_countdown() else {
@@ -62,7 +60,7 @@ pub(crate) fn render_mission_countdown(
 /// ready once that call site lands.
 pub(crate) fn render_combat_status_bars(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
     use robin_engine::element::{Entity, EntityId, Human};
@@ -93,7 +91,7 @@ pub(crate) fn render_combat_status_bars(
     // NPCs that got `display_double_status_bar` set by other code paths
     // (soldier mouse focus, AI, etc.).  The flag is one-shot:
     // consumers elsewhere clear it after rendering.  We only *read* it
-    // here to keep this function `&EngineInner`; the clearing happens in
+    // here to keep this function `&PresentationView<'_>`; the clearing happens in
     // `clear_display_flags`.
     for npc_id in engine.npc_ids() {
         let Some(e) = engine.get_entity(npc_id) else {
@@ -321,7 +319,7 @@ pub(crate) fn render_item_effect_preview(
     };
 
     if let Some(radius) = preview.radius {
-        host.frontend.draw_manager.draw_circle(
+        host.frontend.presentation.draw_manager.draw_circle(
             renderer,
             preview.center,
             radius,
@@ -352,7 +350,7 @@ pub(crate) fn render_item_effect_preview(
 /// frames.
 pub(crate) fn render_listen_ping(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
     const TIME_LISTEN: u32 = 5;
@@ -392,7 +390,7 @@ pub(crate) fn render_listen_ping(
             }
             _ => continue,
         };
-        host.frontend.draw_manager.draw_circle(
+        host.frontend.presentation.draw_manager.draw_circle(
             renderer, position, radius, 0xFFFF, // white
         );
     }
@@ -406,7 +404,7 @@ pub(crate) fn render_listen_ping(
 /// text with a drop shadow using the shadow font at ±1 offsets, then
 /// the main font on top.
 pub(crate) fn render_ransom_amulet_overlay(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
     fonts: &HudFonts,
     menu_resources: Option<&IngameMenuResources>,
@@ -470,7 +468,7 @@ fn substitute_int(template: &str, value: i32) -> String {
 /// * When latched, paint the four edges in the select/unselect color.
 pub(crate) fn prepare_multi_selection_box(
     host: &mut crate::host::HostPresentation<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
 ) {
     if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {
         host.frontend.input.cancel_selection_for_swordfight();
@@ -497,7 +495,7 @@ fn selection_outline_visible(host: &HostDraw<'_>) -> bool {
 /// but only `prepare_multi_selection_box` commits the persistent latch.
 pub(crate) fn draw_multi_selection_box(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
     if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {

@@ -7,6 +7,7 @@ use crate::audio_backend::KiraAudioBackend;
 use crate::game::Game;
 use crate::host::Host;
 use crate::host::{DeferredAudioRequest, HostSignal};
+use crate::http_server::RpcError;
 use crate::sound::AlertStatus;
 use robin_engine::ai::AlertLevel;
 use robin_engine::coordinates::MapBBox;
@@ -152,7 +153,7 @@ pub(super) fn tick_audio(
 ///
 /// - Drain deferred patch-effect background decal updates.
 ///
-/// The back-to-front draw order (`host.frontend.draw_order`) is refreshed at the
+/// The back-to-front draw order (`host.frontend.presentation.draw_order`) is refreshed at the
 /// top of the main loop via `engine.compute_display_order()` — it's host-
 /// cache derived state, not sim state, and lives outside the command
 /// pipeline.
@@ -172,16 +173,19 @@ pub(super) fn sync_render_camera(frontend: &mut crate::host::HostFrontend) {
         // The original game's refresh updates
         // the draw manager from the current camera before any world-space
         // overlay uses it.
-        frontend.draw_manager.update_drawing_parameters(
-            0,
-            MapBBox::from_coords(
-                view.x,
-                view.y,
-                view.x + (screen.x - 1.0) / zoom,
-                view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
-            ),
-            zoom,
-        );
+        frontend
+            .presentation
+            .draw_manager
+            .update_drawing_parameters(
+                0,
+                MapBBox::from_coords(
+                    view.x,
+                    view.y,
+                    view.x + (screen.x - 1.0) / zoom,
+                    view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
+                ),
+                zoom,
+            );
     }
 }
 
@@ -252,31 +256,31 @@ pub(super) fn drain_steps(
         if let Err(error) =
             validate_multiplayer_step_request(host, timeline.multiplayer_admission(), &kind)
         {
-            step.respond_err(error);
+            step.respond_err(RpcError::unavailable_capability(error));
             continue;
         }
         if let Some(policy) = modal_policy.as_ref()
             && let Err(error) = resolve_local_ui(policy)
         {
-            step.respond_err(error);
+            step.respond_err(RpcError::unavailable_capability(error));
             continue;
         }
         if modal_policy.is_some()
             && let Some(reason) = mission_ui_block_reason
         {
-            step.respond_err(format!(
+            step.respond_err(RpcError::unavailable_capability(format!(
                 "blocked by {reason}; dismiss it in the game before stepping"
-            ));
+            )));
             continue;
         }
         if let (Some(policy), Some(terminal)) =
             (modal_policy.as_mut(), terminal_debriefing.as_deref_mut())
         {
             let Some(modal_kind) = terminal.current_kind() else {
-                step.respond_err(
+                step.respond_err(RpcError::unavailable_capability(
                     "blocked by mission-end leaderboard; dismiss it in the game before stepping"
                         .to_owned(),
-                );
+                ));
                 continue;
             };
             let explicit = policy
@@ -291,10 +295,10 @@ pub(super) fn drain_steps(
             }) {
                 Some(result) => result,
                 None => {
-                    step.respond_err(format!(
+                    step.respond_err(RpcError::unavailable_capability(format!(
                         "blocked by modal {}; retry with auto_dismiss=true or a matching typed dismissal",
                         serde_json::to_string(&modal_kind).expect("ModalKind serializes")
-                    ));
+                    )));
                     continue;
                 }
             };
@@ -303,18 +307,21 @@ pub(super) fn drain_steps(
                 result,
             };
             if let Err(error) = validate_http_modal_result(&modal_kind, result)
+                .map_err(RpcError::invalid_request)
                 .and_then(|()| authorize_http_modal_dismissals(host, &[terminal_dismissal]))
                 .and_then(|()| {
-                    terminal.queue_http_result(modal_kind.clone(), result, terminal_save_manager)
+                    terminal
+                        .queue_http_result(modal_kind.clone(), result, terminal_save_manager)
+                        .map_err(RpcError::unavailable_capability)
                 })
             {
                 step.respond_err(error);
                 continue;
             }
-            step.respond_err(format!(
+            step.respond_err(RpcError::unavailable_capability(format!(
                 "dismissed terminal modal {}; retry the step after the outer frame applies it",
                 serde_json::to_string(&modal_kind).expect("ModalKind serializes")
-            ));
+            )));
             continue;
         }
         let strict_session_replay = session_modals.is_some() && timeline.playback().is_some();
@@ -364,7 +371,7 @@ pub(super) fn drain_steps(
                         if let Err(error) =
                             begin_synchronized_step_resync(host, timeline, &manager.engine)
                         {
-                            step.respond_err(error);
+                            step.respond_err(RpcError::internal(error));
                             continue;
                         }
                         step.respond_ok(serde_json::json!({
@@ -381,11 +388,11 @@ pub(super) fn drain_steps(
             }
             crate::http_server::StepKind::Back { n, .. } => {
                 let Some(target) = timeline.frame_number().checked_sub(n) else {
-                    step.respond_err(format!(
+                    step.respond_err(RpcError::invalid_request(format!(
                         "n={} exceeds current frame {}",
                         n,
                         timeline.frame_number()
-                    ));
+                    )));
                     continue;
                 };
                 match rewind_with_session_modals(
@@ -400,7 +407,7 @@ pub(super) fn drain_steps(
                         if let Err(error) =
                             begin_synchronized_step_resync(host, timeline, &manager.engine)
                         {
-                            step.respond_err(error);
+                            step.respond_err(RpcError::internal(error));
                             continue;
                         }
                         step.respond_ok(serde_json::json!({
@@ -418,7 +425,7 @@ pub(super) fn drain_steps(
             crate::http_server::StepKind::GoToFrame { target, .. } => {
                 let from = timeline.frame_number();
                 use std::cmp::Ordering;
-                let mut result: Result<&'static str, String> = match target.cmp(&from) {
+                let mut result: Result<&'static str, RpcError> = match target.cmp(&from) {
                     Ordering::Equal => Ok("noop"),
                     Ordering::Greater => {
                         let delta = target - from;
@@ -438,9 +445,9 @@ pub(super) fn drain_steps(
                             Ok((advanced, dismissed_during)) => {
                                 accepted_dismissals.extend(dismissed_during);
                                 if advanced < delta {
-                                    Err(format!(
+                                    Err(RpcError::unavailable_capability(format!(
                                         "advanced {advanced} of {delta} frames before stepping stopped"
-                                    ))
+                                    )))
                                 } else {
                                     Ok("forward")
                                 }
@@ -478,7 +485,7 @@ pub(super) fn drain_steps(
                         if let Err(error) =
                             begin_synchronized_step_resync(host, timeline, &manager.engine)
                         {
-                            step.respond_err(error);
+                            step.respond_err(RpcError::internal(error));
                             continue;
                         }
                         step.respond_ok(serde_json::json!({
@@ -596,6 +603,7 @@ pub(super) fn run_forward_ticks(
         modal_policy,
         None,
     )
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -660,7 +668,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
     n: u32,
     modal_policy: &mut crate::http_server::StepModalPolicy,
     mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
-) -> Result<(u32, Vec<crate::http_server::HttpModalDismissal>), String> {
+) -> Result<(u32, Vec<crate::http_server::HttpModalDismissal>), RpcError> {
     let mut advanced = 0;
     let mut dismissed = Vec::new();
     for _ in 0..n {
@@ -676,7 +684,9 @@ pub(super) fn run_forward_ticks_with_session_modals(
             if let Some(scheduler) = session_modals.as_deref_mut() {
                 scheduler.checkpoint(ordinal, &host.effects);
             }
-            timeline.apply_playback_timeline_events(host, game, manager, assets)?;
+            timeline
+                .apply_playback_timeline_events(host, game, manager, assets)
+                .map_err(RpcError::internal)?;
             if loads_state && let Some(scheduler) = session_modals.as_deref_mut() {
                 scheduler.after_load_back();
             }
@@ -684,10 +694,10 @@ pub(super) fn run_forward_ticks_with_session_modals(
         let frame = timeline.frame_number();
         let buffered_frame = if frame < timeline.retained_history().next_record_frame() {
             let Some(recorded) = timeline.retained_history().frame_for(frame).cloned() else {
-                return Err(format!(
+                return Err(RpcError::unavailable_capability(format!(
                     "cannot step frame {frame}: rewind command history starts at frame {}",
                     timeline.retained_history().oldest_cmd_frame()
-                ));
+                )));
             };
             Some(recorded)
         } else {
@@ -695,7 +705,10 @@ pub(super) fn run_forward_ticks_with_session_modals(
         };
 
         let mut recorded_modals = super::session_policy::ReplayModalDismissals::default();
-        let source = match timeline.consume_replay_frame_for_step()? {
+        let source = match timeline
+            .consume_replay_frame_for_step()
+            .map_err(RpcError::internal)?
+        {
             super::runtime::ReplayStepAdmission::NoActiveReplay => match buffered_frame {
                 Some(input) => ManualFrameSource::Buffered(input),
                 None => ManualFrameSource::Live,
@@ -719,10 +732,10 @@ pub(super) fn run_forward_ticks_with_session_modals(
                     }
                 }
                 if recorded.timeline_before != frame {
-                    return Err(format!(
+                    return Err(RpcError::internal(format!(
                         "replay ordinal admitted at timeline {}, current timeline is {}",
                         recorded.timeline_before, frame
-                    ));
+                    )));
                 }
                 ManualFrameSource::Replay {
                     input: recorded.input,
@@ -738,9 +751,9 @@ pub(super) fn run_forward_ticks_with_session_modals(
                 ordinal,
                 total_frames,
             } => {
-                return Err(format!(
+                return Err(RpcError::unavailable_capability(format!(
                     "cannot step replay at timeline frame {frame}: replay is finished at ordinal {ordinal} of {total_frames}"
-                ));
+                )));
             }
         };
 
@@ -867,14 +880,17 @@ fn rewind_with_session_modals(
     timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
     session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
-) -> Result<u32, String> {
+) -> Result<u32, RpcError> {
     // Resolve without leaving the playback cursor changed, before mutating Engine or Host.
     let restore_ordinal = if let Some(scheduler) = session_modals.as_ref() {
         let ordinal = timeline
-            .resolve_replay_ordinal(super::runtime::TimelineFrame::from_wire(target))?
+            .resolve_replay_ordinal(super::runtime::TimelineFrame::from_wire(target))
+            .map_err(RpcError::unavailable_capability)?
             .map(|ordinal| ordinal.number());
         if let Some(ordinal) = ordinal {
-            scheduler.validate_restore(ordinal)?;
+            scheduler
+                .validate_restore(ordinal)
+                .map_err(RpcError::unavailable_capability)?;
         }
         ordinal
     } else {
@@ -891,21 +907,20 @@ fn rewind_with_session_modals(
     Ok(from)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn rewind_to_frame(
+fn rewind_to_frame(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
     timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
-) -> Result<u32, String> {
+) -> Result<u32, RpcError> {
     let Some(oldest) = timeline.retained_history().oldest_reachable_frame() else {
-        return Err("rewind buffer empty".into());
+        return Err(RpcError::unavailable_capability("rewind buffer empty"));
     };
     if target < oldest {
-        return Err(format!(
+        return Err(RpcError::unavailable_capability(format!(
             "target frame {target} is older than the oldest retained snapshot ({oldest})"
-        ));
+        )));
     }
     let from = timeline.frame_number();
     timeline.begin_rewind_session();
@@ -916,7 +931,9 @@ pub(super) fn rewind_to_frame(
     );
     timeline.end_rewind_session();
     if !restored {
-        return Err("rewind_to failed (no matching snapshot)".into());
+        return Err(RpcError::internal(
+            "rewind_to failed (no matching snapshot)",
+        ));
     }
     refresh_authoritative_multiplayer_state(host, timeline.frame_number(), &manager.engine);
     Ok(from)
@@ -1006,27 +1023,34 @@ use super::session_policy::validate_modal_result as validate_http_modal_result;
 fn authorize_http_modal_dismissals(
     host: &Host,
     dismissals: &[crate::http_server::HttpModalDismissal],
-) -> Result<(), String> {
+) -> Result<(), RpcError> {
     let Some(net) = host.transport.net() else {
         return Ok(());
     };
 
     if host.transport.local_seat() == PlayerId::HOST {
         for dismissal in dismissals {
-            let instance = net.open_modal_instance(&dismissal.kind)?;
-            net.decide_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)?;
-            net.complete_modal_instance(&dismissal.kind, instance)?;
+            let instance = net
+                .open_modal_instance(&dismissal.kind)
+                .map_err(RpcError::internal)?;
+            net.decide_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)
+                .map_err(RpcError::internal)?;
+            net.complete_modal_instance(&dismissal.kind, instance)
+                .map_err(RpcError::internal)?;
         }
         Ok(())
     } else {
         for dismissal in dismissals {
-            let instance = net.open_modal_instance(&dismissal.kind)?;
-            net.propose_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)?;
+            let instance = net
+                .open_modal_instance(&dismissal.kind)
+                .map_err(RpcError::internal)?;
+            net.propose_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)
+                .map_err(RpcError::internal)?;
         }
-        Err(format!(
+        Err(RpcError::unavailable_capability(format!(
             "blocked by host-authoritative multiplayer modal; submitted {} proposal(s) and left local modal state unchanged",
             dismissals.len()
-        ))
+        )))
     }
 }
 
@@ -1034,7 +1058,7 @@ fn resolve_http_step_modals(
     host: &mut Host,
     active_modal: Option<&mut Option<ActiveModal>>,
     policy: &mut crate::http_server::StepModalPolicy,
-) -> Result<Vec<crate::http_server::HttpModalDismissal>, String> {
+) -> Result<Vec<crate::http_server::HttpModalDismissal>, RpcError> {
     use robin_engine::player_command::{MissionStateModalKind, ModalKind};
 
     let mut pending = host.effects.pending_modal_kinds();
@@ -1062,12 +1086,12 @@ fn resolve_http_step_modals(
         let result = explicit
             .or_else(|| policy.auto_dismiss.then(|| default_http_modal_result(&kind)))
             .ok_or_else(|| {
-                format!(
+                RpcError::unavailable_capability(format!(
                     "blocked by modal {}; retry with auto_dismiss=true or a matching typed dismissal",
                     serde_json::to_string(&kind).expect("ModalKind serializes")
-                )
+                ))
             })?;
-        validate_http_modal_result(&kind, result)?;
+        validate_http_modal_result(&kind, result).map_err(RpcError::invalid_request)?;
         accepted.push(crate::http_server::HttpModalDismissal { kind, result });
     }
 
@@ -1564,6 +1588,7 @@ mod tests {
                 Some(&mut missing)
             )
             .unwrap_err()
+            .to_string()
             .contains("checkpoint")
         );
         assert_eq!(timeline.frame_number(), 1);
@@ -1799,8 +1824,12 @@ mod tests {
         };
         let error = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect_err("unanswered modal must block");
-        assert!(error.contains("blocked by modal"));
-        assert!(error.contains("dialog_id"));
+        assert_eq!(
+            error.kind,
+            crate::http_server::RpcErrorKind::UnavailableCapability
+        );
+        assert!(error.to_string().contains("blocked by modal"));
+        assert!(error.to_string().contains("dialog_id"));
         assert_eq!(host.effects.dialogue_count(), 1);
     }
 
@@ -1846,7 +1875,15 @@ mod tests {
         let error = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect_err("client HTTP endpoint is not modal authority");
 
-        assert!(error.contains("host-authoritative multiplayer modal"));
+        assert_eq!(
+            error.kind,
+            crate::http_server::RpcErrorKind::UnavailableCapability
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("host-authoritative multiplayer modal")
+        );
         assert_eq!(host.effects.dialogue_count(), 1);
         assert!(matches!(
             outgoing.try_recv().expect("advisory proposal"),
@@ -1900,8 +1937,24 @@ mod tests {
         };
         let error = resolve_http_step_modals(&mut host, None, &mut policy)
             .expect_err("single-button popup cannot restart a mission");
-        assert!(error.contains("cannot accept result"));
+        assert_eq!(error.kind, crate::http_server::RpcErrorKind::InvalidRequest);
+        assert!(error.to_string().contains("cannot accept result"));
         assert_eq!(host.effects.popup_text_count(), 1);
+    }
+
+    #[test]
+    fn empty_history_is_an_unavailable_rpc_capability_without_mutation() {
+        let (assets, mut manager, mut host, _dev, _game, mut timeline) = stepping_fixture(None);
+        let before = manager.engine.encode_native_snapshot();
+        let error = rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 0)
+            .expect_err("no history has been retained");
+        assert_eq!(
+            error.kind,
+            crate::http_server::RpcErrorKind::UnavailableCapability
+        );
+        assert_eq!(error.to_string(), "rewind buffer empty");
+        assert_eq!(timeline.frame_number(), 0);
+        assert_eq!(manager.engine.encode_native_snapshot(), before);
     }
 
     #[test]
@@ -1933,7 +1986,7 @@ mod tests {
             "the recorded input must remain authoritative"
         );
 
-        let error = run_forward_ticks(
+        let error = run_forward_ticks_with_session_modals(
             &mut manager,
             &mut host,
             &assets,
@@ -1942,11 +1995,16 @@ mod tests {
             &mut timeline,
             1,
             &mut modal_policy,
+            None,
         )
         .expect_err("replay EOF must refuse a synthetic live frame");
 
         assert_eq!(
-            error,
+            error.kind,
+            crate::http_server::RpcErrorKind::UnavailableCapability
+        );
+        assert_eq!(
+            error.to_string(),
             "cannot step replay at timeline frame 1: replay is finished at ordinal 1 of 1"
         );
         assert_eq!(timeline.frame_number(), 1);

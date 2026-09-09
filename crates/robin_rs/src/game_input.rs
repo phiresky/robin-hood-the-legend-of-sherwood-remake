@@ -70,8 +70,11 @@ pub fn resolve_left_click_with_planning(
     // five-PC assumptions. A direct click still feels like ordinary unit
     // selection and may coexist with heroes when Shift is held.
     if host.frontend.preferences().control_tactical_units()
-        && let Some(soldier) =
-            engine.find_tactically_controllable_unit(assets, &host.frontend.draw_order.ids, map_pt)
+        && let Some(soldier) = engine.find_tactically_controllable_unit(
+            assets,
+            &host.frontend.presentation.draw_order.ids,
+            map_pt,
+        )
     {
         let mut commands = Vec::new();
         if !shift_held {
@@ -186,7 +189,7 @@ pub fn resolve_left_click_with_planning(
     if num_selected == 0 {
         if let Some(pc_id) = engine.find_focusable_entity(
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             map_pt,
             Focus::Select,
         ) {
@@ -204,7 +207,7 @@ pub fn resolve_left_click_with_planning(
         if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
-                &host.frontend.draw_order.ids,
+                &host.frontend.presentation.draw_order.ids,
                 map_pt,
                 Focus::Sword,
             ) {
@@ -229,7 +232,7 @@ pub fn resolve_left_click_with_planning(
         return vec![];
     }
 
-    let is_swordfighting = is_selected_unit_swordfighting(engine, local_seat);
+    let is_swordfighting = is_selected_unit_swordfighting(&engine.presentation_view(), local_seat);
 
     // Unselected PC → select it
     if let Some(pc_id) = engine.find_focusable_pc(assets, map_pt, Focus::Select)
@@ -254,8 +257,12 @@ pub fn resolve_left_click_with_planning(
     // Use-focusable entity (search/carry/tie) — single selection, not swordfighting
     if !is_swordfighting
         && num_selected == 1
-        && let Some(target_id) =
-            engine.find_focusable_entity(assets, &host.frontend.draw_order.ids, map_pt, Focus::Use)
+        && let Some(target_id) = engine.find_focusable_entity(
+            assets,
+            &host.frontend.presentation.draw_order.ids,
+            map_pt,
+            Focus::Use,
+        )
     {
         let pc_id = selected[0];
         // Scroll-attached NPC — opens a dialog.  Hands a composite
@@ -321,9 +328,12 @@ pub fn resolve_left_click_with_planning(
     // Soldier / non-soldier break: when the sword target is NOT a
     // soldier, only the first selected PC engages.  For soldiers every
     // selected PC piles on.
-    if let Some(target_id) =
-        engine.find_focusable_entity(assets, &host.frontend.draw_order.ids, map_pt, Focus::Sword)
-    {
+    if let Some(target_id) = engine.find_focusable_entity(
+        assets,
+        &host.frontend.presentation.draw_order.ids,
+        map_pt,
+        Focus::Sword,
+    ) {
         host.frontend.input.gestures.element_old_click = Some(target_id);
         let target_is_soldier = engine
             .get_entity(target_id)
@@ -691,7 +701,7 @@ fn resolve_action_left_click(
     is_double: bool,
     is_planning: bool,
 ) -> Vec<PlayerCommand> {
-    let draw_order = &host.frontend.draw_order.ids;
+    let draw_order = &host.frontend.presentation.draw_order.ids;
     let pc_id = match engine.hero_selection(local_seat).first().copied() {
         Some(id) => id,
         None => return vec![],
@@ -1296,7 +1306,7 @@ pub fn resolve_action_drag(
     // Swordfighting PCs feed the mouse-way gesture recognizer on
     // drag, not the action arm.  The drag path already filters in the
     // caller; this defensive check is a safety net.
-    if is_selected_unit_swordfighting(engine, local_seat) {
+    if is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         return vec![];
     }
 
@@ -1326,16 +1336,20 @@ pub fn resolve_action_drag(
         return vec![];
     }
 
-    let target =
-        match engine.find_focusable_entity(assets, &host.frontend.draw_order.ids, map_pt, focus) {
-            Some(t) => t,
-            None => {
-                // No focus found: clear `target_drag` so a subsequent
-                // re-hover re-fires the arm.
-                host.frontend.input.gestures.target_drag = None;
-                return vec![];
-            }
-        };
+    let target = match engine.find_focusable_entity(
+        assets,
+        &host.frontend.presentation.draw_order.ids,
+        map_pt,
+        focus,
+    ) {
+        Some(t) => t,
+        None => {
+            // No focus found: clear `target_drag` so a subsequent
+            // re-hover re-fires the arm.
+            host.frontend.input.gestures.target_drag = None;
+            return vec![];
+        }
+    };
 
     // Dedup: when the same target is still under the cursor, skip — the
     // action only fires on the first frame a focus is acquired or when
@@ -1460,7 +1474,7 @@ fn resolve_double_click_repeat(
     };
 
     let selected_pcs = engine.hero_selection(local_seat).to_vec();
-    let selected_combatants = selected_units(engine, local_seat);
+    let selected_combatants = selected_units(&engine.presentation_view(), local_seat);
     if selected_combatants.is_empty() {
         return vec![];
     }
@@ -1541,7 +1555,7 @@ fn resolve_double_click_repeat(
 
 /// Resolve a right-click into player commands.
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
-    let selected_combatants = selected_units(engine, local_seat);
+    let selected_combatants = selected_units(&engine.presentation_view(), local_seat);
     let clear_tactical = !engine.tactical_selection(local_seat).is_empty();
     let finish = |mut commands: Vec<PlayerCommand>| {
         if clear_tactical {
@@ -1551,7 +1565,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
     };
 
     // Swordfighting → parry
-    if is_selected_unit_swordfighting(engine, local_seat) {
+    if is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         let mut cmds = Vec::new();
         for &pc_id in &selected_combatants {
             let is_fighting = engine
@@ -1747,7 +1761,7 @@ pub fn resolve_swordfight(
     is_left_button: bool,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.transport.local_seat();
-    if !is_selected_unit_swordfighting(engine, local_seat) {
+    if !is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         return vec![];
     }
 
@@ -1756,7 +1770,7 @@ pub fn resolve_swordfight(
     let mut feedback_recorded = false;
     let combat_rules = engine.sim_config();
 
-    for pc_id in selected_units(engine, local_seat) {
+    for pc_id in selected_units(&engine.presentation_view(), local_seat) {
         let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
             let h = entity.human_data()?;
             let is_sword = !h.opponents.is_empty();
@@ -1778,7 +1792,7 @@ pub fn resolve_swordfight(
             if is_left_button
                 && let Some(target_id) = engine.find_focusable_entity(
                     assets,
-                    &host.frontend.draw_order.ids,
+                    &host.frontend.presentation.draw_order.ids,
                     map_pt,
                     Focus::Sword,
                 )
@@ -1852,7 +1866,7 @@ pub fn resolve_swordfight(
                 }
                 let Some(target_id) = engine.find_focusable_entity(
                     assets,
-                    &host.frontend.draw_order.ids,
+                    &host.frontend.presentation.draw_order.ids,
                     map_pt,
                     Focus::Sword,
                 ) else {
@@ -1937,7 +1951,10 @@ pub fn resolve_swordfight(
     cmds
 }
 
-fn selected_units(engine: &engine_api::EngineInner, local_seat: PlayerId) -> Vec<EntityId> {
+fn selected_units(
+    engine: &engine_api::PresentationView<'_>,
+    local_seat: PlayerId,
+) -> Vec<EntityId> {
     engine
         .hero_selection(local_seat)
         .iter()
@@ -1950,7 +1967,7 @@ fn selected_units(engine: &engine_api::EngineInner, local_seat: PlayerId) -> Vec
 /// engaged in melee. The original engine query intentionally remains PC-only;
 /// UI input uses this broader query for the optional allied-control layer.
 pub fn is_selected_unit_swordfighting(
-    engine: &engine_api::EngineInner,
+    engine: &engine_api::PresentationView<'_>,
     local_seat: PlayerId,
 ) -> bool {
     selected_units(engine, local_seat).into_iter().any(|id| {
@@ -2855,7 +2872,7 @@ mod tests {
     fn left_click_on_pc_without_selection_selects_it() {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 50.0, 50.0, Posture::Upright);
-        host.frontend.draw_order.ids.push(pc);
+        host.frontend.presentation.draw_order.ids.push(pc);
 
         let cmds = resolve_left_click(
             &mut host,
@@ -2881,7 +2898,7 @@ mod tests {
     fn left_click_shift_appends_to_selection() {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 50.0, 50.0, Posture::Upright);
-        host.frontend.draw_order.ids.push(pc);
+        host.frontend.presentation.draw_order.ids.push(pc);
 
         let cmds = resolve_left_click(
             &mut host,
@@ -2907,7 +2924,11 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         let selected = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         let other = add_pc(&mut engine, 200.0, 200.0, Posture::Upright);
-        host.frontend.draw_order.ids.extend([selected, other]);
+        host.frontend
+            .presentation
+            .draw_order
+            .ids
+            .extend([selected, other]);
         select(&mut engine, &assets, selected);
 
         let cmds = resolve_left_click(
@@ -3523,7 +3544,10 @@ mod tests {
         let soldier = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
         select_allied(&mut engine, &assets, soldier);
 
-        assert!(is_selected_unit_swordfighting(&engine, PlayerId(0)));
+        assert!(is_selected_unit_swordfighting(
+            &engine.presentation_view(),
+            PlayerId(0)
+        ));
         assert_cmds!(
             resolve_right_click(&engine, PlayerId(0)),
             vec![

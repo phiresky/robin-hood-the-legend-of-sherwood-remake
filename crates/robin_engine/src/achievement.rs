@@ -1003,26 +1003,32 @@ pub struct MissionAchievementState {
     hostile_observers: BTreeSet<crate::element::EntityId>,
     observed_player_characters: BTreeSet<crate::element::EntityId>,
     observation_pairs: BTreeSet<(crate::element::EntityId, crate::element::EntityId)>,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     npc_baselines: std::collections::BTreeMap<crate::element::EntityId, (i32, bool)>,
     harmed_npc: bool,
     pub contributors: BTreeSet<usize>,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub party_health: std::collections::BTreeMap<crate::element::EntityId, i32>,
     pub party_hurt: bool,
     pub knockouts: BTreeSet<crate::element::EntityId>,
     pub scarlet_knockouts: BTreeSet<crate::element::EntityId>,
     pub beer_by_tuck: BTreeSet<crate::element::EntityId>,
     pub beer_drinkers: BTreeSet<crate::element::EntityId>,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub wasp_targets:
         std::collections::BTreeMap<crate::element::EntityId, BTreeSet<crate::element::EntityId>>,
     pub escape_pursuers: BTreeSet<crate::element::EntityId>,
     pub escape_earned: bool,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub pending_stings:
         std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
     pub replaying_qa: bool,
     pub named_party_participated: bool,
     pub qa_execution: u32,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub qa_actors:
         std::collections::BTreeMap<crate::element::EntityId, (u32, crate::element::EntityId)>,
+    #[serde(with = "qa_success_map_serde")]
     pub qa_successes: std::collections::BTreeMap<
         u32,
         std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
@@ -1031,6 +1037,48 @@ pub struct MissionAchievementState {
     pile_o_bones_earned: bool,
     history_promotion_attempted: bool,
     finalized: Option<MissionAchievementResults>,
+}
+
+/// Adapt the inner entity-keyed maps, not just the already JSON-compatible
+/// execution IDs. Keep the runtime map types unchanged: native bitcode and
+/// StateHash must continue to encode/hash the original typed maps directly.
+mod qa_success_map_serde {
+    use crate::element::EntityId;
+    use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
+
+    type Successes = BTreeMap<u32, BTreeMap<EntityId, EntityId>>;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(transparent)]
+    struct Targets(
+        #[serde(with = "serde_json_any_key::any_key_map_sized")] BTreeMap<EntityId, EntityId>,
+    );
+
+    pub(super) fn serialize<S: serde::Serializer>(
+        successes: &Successes,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(successes.len()))?;
+        for (execution, targets) in successes {
+            // The wrapper exists only at the serde boundary, never in live
+            // state. Copy one small completed-QA target map at a time.
+            map.serialize_entry(execution, &Targets(targets.clone()))?;
+        }
+        map.end()
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Successes, D::Error> {
+        BTreeMap::<u32, Targets>::deserialize(deserializer).map(|executions| {
+            executions
+                .into_iter()
+                .map(|(execution, targets)| (execution, targets.0))
+                .collect()
+        })
+    }
 }
 
 impl Default for MissionAchievementState {
@@ -2303,6 +2351,85 @@ mod tests {
         let native = bitcode::encode(&state);
         let from_native: MissionAchievementState = bitcode::decode(&native).unwrap();
         assert_eq!(from_native, state);
+    }
+
+    #[test]
+    fn populated_entity_keyed_achievement_maps_roundtrip_without_changing_native_state() {
+        use crate::element::EntityId;
+        use crate::entity_id::{PcId, SoldierId};
+        use std::collections::BTreeMap;
+
+        let pc = EntityId::Pc(PcId(0));
+        let soldier = EntityId::Soldier(SoldierId(0));
+        let mut state = MissionAchievementState::from_mission_start();
+        // Both variants at slot zero must survive as distinct map keys.
+        state.npc_baselines = BTreeMap::from([(pc, (100, false)), (soldier, (40, true))]);
+        state.party_health = BTreeMap::from([(pc, 90), (soldier, 35)]);
+        state.wasp_targets = BTreeMap::from([
+            (pc, BTreeSet::from([soldier])),
+            (soldier, BTreeSet::from([pc])),
+        ]);
+        state.pending_stings = BTreeMap::from([(pc, soldier), (soldier, pc)]);
+        state.qa_actors = BTreeMap::from([(pc, (0, soldier)), (soldier, (1, pc))]);
+        state.qa_successes = BTreeMap::from([
+            (0, BTreeMap::from([(pc, soldier), (soldier, pc)])),
+            (1, BTreeMap::new()),
+        ]);
+
+        // Reproduce the pre-adapter failure without a second full build: the
+        // unchanged raw map types cannot be written as JSON directly.
+        for error in [
+            serde_json::to_string(&state.npc_baselines).unwrap_err(),
+            serde_json::to_string(&state.qa_successes).unwrap_err(),
+        ] {
+            assert_eq!(error.to_string(), "key must be a string");
+        }
+
+        let native = bitcode::encode(&state);
+        let hash = robin_util::state_hash::compute(&state);
+        let json = serde_json::to_string(&state).expect("populated maps must be valid save JSON");
+        let value = serde_json::to_value(&state).expect("generic snapshot JSON must also work");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            value
+        );
+        let pc_key = serde_json::to_string(&pc).unwrap();
+        let soldier_key = serde_json::to_string(&soldier).unwrap();
+        for field in [
+            "npc_baselines",
+            "party_health",
+            "wasp_targets",
+            "pending_stings",
+            "qa_actors",
+        ] {
+            let map = value[field]
+                .as_object()
+                .expect("entity map is a JSON object");
+            assert_eq!(map.len(), 2, "{field}");
+            assert!(map.contains_key(&pc_key), "{field} lost typed Pc(0)");
+            assert!(
+                map.contains_key(&soldier_key),
+                "{field} lost typed Soldier(0)"
+            );
+        }
+        let targets = value["qa_successes"]["0"]
+            .as_object()
+            .expect("nested target map");
+        assert_eq!(targets.len(), 2);
+        assert!(targets.contains_key(&pc_key));
+        assert!(targets.contains_key(&soldier_key));
+        assert_eq!(value["qa_successes"]["1"], serde_json::json!({}));
+
+        for decoded in [
+            serde_json::from_str::<MissionAchievementState>(&json).unwrap(),
+            serde_json::from_value::<MissionAchievementState>(value).unwrap(),
+            bitcode::decode::<MissionAchievementState>(&native).unwrap(),
+        ] {
+            assert_eq!(decoded, state);
+            assert_eq!(bitcode::encode(&decoded), native);
+            assert_eq!(robin_util::state_hash::compute(&decoded), hash);
+            assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
+        }
     }
 
     #[test]

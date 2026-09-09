@@ -5,6 +5,40 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn rendering_entrypoint_requires_the_explicit_presentation_view() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
+    let render = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(item) if item.sig.ident == "render_frame" => Some(item),
+            _ => None,
+        })
+        .expect("production render entrypoint");
+    struct ViewArgument {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for ViewArgument {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            for segment in &path.path.segments {
+                assert!(
+                    segment.ident != "Engine" && segment.ident != "EngineInner",
+                    "render pass must not receive the general simulation read API"
+                );
+                self.found |= segment.ident == "PresentationView";
+            }
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut argument = ViewArgument { found: false };
+    argument.visit_signature(&render.sig);
+    assert!(
+        argument.found,
+        "render pass must consume the explicit read view"
+    );
+}
+
+#[test]
 fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
     let syntax = syn::parse_file(include_str!("../../src/game_session/interactive.rs")).unwrap();
     let owner = syntax
@@ -137,8 +171,8 @@ fn mission_journals_and_sprite_publication_are_private() {
         ),
         (
             include_str!("../../src/host.rs"),
-            "HostFrontend",
-            &["frame_holder"][..],
+            "FrontendResources",
+            &["frame_holder", "frame_holder_opacity"][..],
         ),
     ] {
         let syntax = syn::parse_file(source).unwrap();
@@ -458,6 +492,48 @@ fn frontend_policy_and_observation_owners_remain_private() {
             .unwrap_or_else(|| panic!("missing owner {name}"))
     };
     let frontend = structure("HostFrontend");
+    for (owner, fields) in [
+        (
+            "FrontendResources",
+            &[
+                "mission_surfaces",
+                "frame_holder",
+                "frame_holder_opacity",
+                "shipping",
+                "background_decals",
+            ][..],
+        ),
+        (
+            "FrontendPresentation",
+            &[
+                "engine_display",
+                "draw_order",
+                "selection_mark",
+                "draw_manager",
+                "pc_info_overlay",
+                "fade_to_black",
+                "skip_render",
+            ][..],
+        ),
+    ] {
+        let owner = structure(owner);
+        for name in fields {
+            assert!(
+                owner
+                    .fields
+                    .iter()
+                    .any(|field| field.ident.as_ref().is_some_and(|ident| ident == name)),
+                "missing lifecycle-owned {name}"
+            );
+            assert!(
+                !frontend
+                    .fields
+                    .iter()
+                    .any(|field| field.ident.as_ref().is_some_and(|ident| ident == name)),
+                "{name} must not duplicate the lifecycle owner in HostFrontend"
+            );
+        }
+    }
     let input = syn::parse_file(include_str!("../../src/frontend_input.rs")).unwrap();
     let pointer_sequence = input
         .items
@@ -480,6 +556,7 @@ fn frontend_policy_and_observation_owners_remain_private() {
         "pointer_sequence",
         "queue_strip_animations",
         "interaction",
+        "pending_print_screen",
     ] {
         let field = frontend
             .fields

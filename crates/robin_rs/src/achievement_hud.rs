@@ -6,7 +6,7 @@ use robin_engine::{
         AchievementAggregationSummary, AchievementEvaluation, AchievementId,
         AchievementTrackingProvenance, MissionAchievementResults,
     },
-    engine::EngineInner,
+    engine::PresentationView,
     gameplay_config::GameplayConfig,
     player_command::PlayerId,
 };
@@ -245,7 +245,7 @@ fn format_speedrun_time(frames: u32) -> String {
 /// Build the text independently of rendering so settings and exact counter
 /// semantics remain straightforward to test.
 pub fn tracker_lines(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     config: GameplayConfig,
 ) -> Result<Vec<String>, String> {
@@ -338,7 +338,7 @@ pub fn tracker_lines(
 }
 
 pub fn render_trackers(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     config: GameplayConfig,
     renderer: &mut Renderer,

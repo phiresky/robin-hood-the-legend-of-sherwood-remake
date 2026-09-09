@@ -18,7 +18,7 @@ use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
-use robin_engine::engine::EngineInner;
+use robin_engine::engine::PresentationView;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
@@ -1348,7 +1348,7 @@ impl PortraitBarItem {
 }
 
 pub(crate) fn portrait_bar_items(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     screen_width: u16,
 ) -> (Vec<PortraitBarItem>, bool) {
@@ -1442,7 +1442,7 @@ fn blit_to_screen_widget(
 /// life_points=5 (set by wound handling). They render as burned portraits
 /// with the health gauge visible. Fully dead PCs have life_points<=0
 /// and are NOT in coma — their scrolls are hidden entirely.
-fn is_pc_in_coma(engine: &EngineInner, entity: &Entity) -> bool {
+fn is_pc_in_coma(engine: &PresentationView<'_>, entity: &Entity) -> bool {
     let profile_idx = match entity.pc_data() {
         Some(pc) => pc.profile_index,
         None => return false,
@@ -1592,7 +1592,7 @@ fn render_allied_portrait_layer(
 /// or physical-display refresh. This is presentation-only animation state.
 pub(crate) fn prepare_auto_queue_animations(
     frontend: &mut HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     screen_width: u16,
 ) {
@@ -1626,7 +1626,7 @@ pub(crate) fn prepare_auto_queue_animations(
 fn render_auto_queue_ticks(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     identity: crate::host::QueueStripIdentity,
     members: &[EntityId],
@@ -1672,7 +1672,7 @@ fn render_allied_portrait(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     profiles: &engine_profiles::ProfileManager,
     seat: PlayerId,
     item: &PortraitBarItem,
@@ -1846,7 +1846,7 @@ fn render_allied_portrait(
 }
 
 fn allied_visage_kind(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     profiles: &engine_profiles::ProfileManager,
     members: &[EntityId],
 ) -> AlliedVisageKind {
@@ -2058,7 +2058,7 @@ fn blit_centered_between_scrolls(
 #[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
     frontend: &HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
@@ -2257,7 +2257,7 @@ pub fn draw_panel(
 
                 // Guard indicator (centered between scrolls).
                 if is_guarded {
-                    let guard_visible = if engine.mission().mission_won {
+                    let guard_visible = if engine.mission_won() {
                         (frame / 25).is_multiple_of(2)
                     } else {
                         true
@@ -2503,16 +2503,14 @@ pub fn draw_panel(
             let qa_strip_y = upper_top.saturating_sub(QA_ICON_HEIGHT);
             let recording_slot = if engine.is_qa_recording_for(pc_id) {
                 engine
-                    .macro_store()
-                    .get(pc_id)
+                    .portrait_macro(pc_id)
                     .and_then(|m| m.recording_slot())
             } else {
                 None
             };
             for slot_idx in 0..NUMBER_OF_QA_MEMORY_U16 {
                 let has_macro = engine
-                    .macro_store()
-                    .get(pc_id)
+                    .portrait_macro(pc_id)
                     .map(|m| m.has_macro(slot_idx as usize))
                     .unwrap_or(false);
                 let is_recording_slot = recording_slot == Some(slot_idx as u8);
@@ -2552,12 +2550,14 @@ pub fn draw_panel(
                 // offset by `shift_phase` along +X to produce the slide.
                 let slot_idx_usz = slot_idx as usize;
                 let shift_phase = frontend
+                    .presentation
                     .engine_display
                     .macro_shift_phase(pc_id, slot_idx_usz);
                 // Fizzle-blink visibility: the QA strobe toggles the per-slot
                 // titbit on/off after a macro fizzles.  When blink-hidden,
                 // skip the titbit blit.
                 let blink_hidden = frontend
+                    .presentation
                     .engine_display
                     .macro_titbit_blink_hidden(pc_id, slot_idx_usz);
                 if has_macro && !blink_hidden {
@@ -2575,8 +2575,7 @@ pub fn draw_panel(
                     // interact-only flows (`LaunchInteraction`) keep their
                     // player/NPC interaction fallback from `commands.rs`.
                     let frame_from_last_step = engine
-                        .macro_store()
-                        .get(pc_id)
+                        .portrait_macro(pc_id)
                         .and_then(|m| m.slot(slot_idx as usize))
                         .and_then(|s| s.steps.last())
                         .and_then(|step| {
@@ -2584,8 +2583,7 @@ pub fn draw_panel(
                         });
                     let phase_from_slot_titbit = || {
                         engine
-                            .macro_store()
-                            .get(pc_id)
+                            .portrait_macro(pc_id)
                             .and_then(|m| m.get_slot_titbit(slot_idx as usize))
                             .and_then(|id| engine.titbit_manager().get_phase(id))
                     };
@@ -2599,8 +2597,7 @@ pub fn draw_panel(
                     // driven by `is_running_for_qa(...)` on the slot's
                     // titbit id.
                     let run = engine
-                        .macro_store()
-                        .get(pc_id)
+                        .portrait_macro(pc_id)
                         .and_then(|m| m.get_slot_titbit(slot_idx as usize))
                         .map(|id| engine.titbit_manager().is_running_for_qa(id))
                         .unwrap_or(false);
@@ -3340,7 +3337,7 @@ pub fn draw_screen_tooltip(
 /// itself to the screen bounds each frame.
 pub fn draw_pc_info_overlay(
     frontend: &HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
@@ -3348,7 +3345,7 @@ pub fn draw_pc_info_overlay(
 ) {
     use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
 
-    let ov = &frontend.pc_info_overlay;
+    let ov = &frontend.presentation.pc_info_overlay;
     if !ov.visible {
         return;
     }
@@ -3431,7 +3428,7 @@ pub fn draw_pc_info_overlay(
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
 pub fn render_macro_dotted_chains(
     frontend: &HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
     use robin_engine::macro_store::DISTANCE_DOT;
@@ -3457,7 +3454,7 @@ pub fn render_macro_dotted_chains(
     // re-advance the canonical phase.
     let mut phase = engine.titbit_dotted_start();
     for (pc_id, pc_pos) in per_pc {
-        let Some(state) = engine.macro_store().get(pc_id) else {
+        let Some(state) = engine.portrait_macro(pc_id) else {
             continue;
         };
         if state.slots().iter().all(|s| s.is_empty()) {
@@ -3472,7 +3469,7 @@ pub fn render_macro_dotted_chains(
         for slot in state.slots() {
             for step in &slot.steps {
                 let to = step.position;
-                frontend.draw_manager.draw_dotted_line(
+                frontend.presentation.draw_manager.draw_dotted_line(
                     renderer,
                     from,
                     to,
@@ -3576,7 +3573,7 @@ pub fn hit_test_portrait(
 /// Uses engine state to determine burned/selected per slot, and maps
 /// the click Y to the appropriate sub-area.
 pub fn hit_test_portrait_detailed(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     portraits: &PortraitCache,
     screen_width: u16,

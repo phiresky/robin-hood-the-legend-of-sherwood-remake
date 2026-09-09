@@ -1095,8 +1095,7 @@ impl BuiltInteractiveMission {
             .host_phase()
             .host
             .frontend
-            .mission_surfaces
-            .retire(&mut self.mission.frontend.presentation.renderer);
+            .retire_mission(&mut self.mission.frontend.presentation.renderer);
         if result.is_ok() {
             self.mission
                 .runtime

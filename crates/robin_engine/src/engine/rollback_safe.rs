@@ -278,6 +278,11 @@ impl<'de> serde::Deserialize<'de> for Engine {
 }
 
 impl Engine {
+    /// Borrow the explicit rendering query surface of the current fixed world.
+    pub fn presentation_view(&self) -> super::PresentationView<'_> {
+        super::PresentationView::new(&self.inner)
+    }
+
     /// Capture only persisted mission state; unlike `Clone`, this deliberately
     /// excludes runtime continuations, caches, capabilities and attachments.
     pub fn capture_persisted_state(&self) -> Result<super::PersistedEngineState, String> {
@@ -309,15 +314,15 @@ impl Engine {
 
 /// Host-only world copy with interpolation authority, but no simulation authority.
 ///
-/// The read-only projection is `EngineInner`, not `Engine`: callers cannot clone
-/// the projection into an authoritative engine or acquire snapshot/tick APIs.
+/// The projection exposes only explicit rendering queries: callers cannot clone
+/// it into an authoritative engine or acquire general simulation APIs.
 /// Serialized diagnostics deliberately have no live-state decoder.
 ///
 /// ```no_run
-/// use robin_engine::engine::{Engine, EngineInner, PresentationEngine};
+/// use robin_engine::engine::{Engine, PresentationView, PresentationEngine};
 /// fn render(source: &Engine) {
 ///     let presentation = PresentationEngine::new(source);
-///     let view: &EngineInner = presentation.view();
+///     let view: PresentationView<'_> = presentation.view();
 ///     let _ = view.frame_counter();
 /// }
 /// ```
@@ -341,11 +346,11 @@ impl Engine {
 /// use robin_engine::engine::{EngineInner, PresentationEngine};
 /// fn forbidden(view: &mut PresentationEngine) -> &mut EngineInner { view.view() }
 /// ```
-/// Read-only presentation state cannot be laundered through a serde snapshot:
-/// ```compile_fail,E0277
+/// The read surface does not expose simulation snapshot operations:
+/// ```compile_fail,E0599
 /// use robin_engine::engine::PresentationEngine;
 /// fn forbidden(view: &PresentationEngine) {
-///     let _ = serde_json::to_value(view.view());
+///     let _ = view.view().capture_persisted_state();
 /// }
 /// ```
 pub struct PresentationEngine {
@@ -387,8 +392,8 @@ impl PresentationEngine {
         }
     }
 
-    pub fn view(&self) -> &EngineInner {
-        &self.presentation
+    pub fn view(&self) -> super::PresentationView<'_> {
+        super::PresentationView::new(&self.presentation)
     }
 
     /// Apply an absolute interpolation sample to an owned presentation clone.
@@ -5808,7 +5813,7 @@ mod tests {
         let mut presentation = PresentationEngine::new(&current);
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
-        let first_sample_hash = crate::replay::state_hash(presentation.view());
+        let first_sample_hash = crate::replay::state_hash(&presentation.presentation);
         let sampled = presentation.view().get_entity(pc_id).expect("sampled PC");
         assert_eq!(
             sampled.element_data().position(),
@@ -5825,7 +5830,7 @@ mod tests {
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
         assert_eq!(
-            crate::replay::state_hash(presentation.view()),
+            crate::replay::state_hash(&presentation.presentation),
             first_sample_hash,
             "repeating one display sample must be idempotent"
         );
@@ -5900,6 +5905,95 @@ mod tests {
         assert_eq!(diagnostic.as_object().expect("diagnostic object").len(), 2);
         assert!(serde_json::from_value::<PresentationEngine>(diagnostic.clone()).is_err());
         assert!(serde_json::from_value::<Engine>(diagnostic).is_err());
+        for view in [engine.presentation_view(), presentation.view()] {
+            let diagnostic = serde_json::to_value(view).expect("read-view diagnostic");
+            assert_eq!(diagnostic.as_object().expect("diagnostic object").len(), 2);
+            assert!(
+                serde_json::from_value::<super::super::PresentationView<'_>>(diagnostic.clone())
+                    .is_err()
+            );
+            assert!(serde_json::from_value::<Engine>(diagnostic).is_err());
+        }
+    }
+
+    #[test]
+    fn presentation_queries_preserve_fixed_world_results_and_snapshot_bytes() {
+        use crate::player_command::PlayerId;
+        let (engine, assets, pc, _) = selection_boundary_fixture();
+        let snapshot = engine.encode_native_snapshot();
+        let hash = crate::replay::state_hash(&engine);
+        let presentation = PresentationEngine::new(&engine);
+        for view in [engine.presentation_view(), presentation.view()] {
+            assert_eq!(view.frame_counter(), engine.frame_counter());
+            assert_eq!(view.pc_ids(), engine.pc_ids());
+            assert_eq!(view.npc_ids(), engine.npc_ids());
+            assert_eq!(view.displayed_pc_ids(), engine.displayed_pc_ids());
+            assert_eq!(view.sort_for_minimap(), engine.sort_for_minimap());
+            assert_eq!(view.fog_entity_visible(pc), engine.fog_entity_visible(pc));
+            assert_eq!(
+                view.fog_entity_is_hostile(pc),
+                engine.fog_entity_is_hostile(pc)
+            );
+            assert_eq!(
+                view.has_mission_geometry(),
+                engine.mission_script().is_some()
+            );
+            assert_eq!(view.mission_won(), engine.mission().mission_won);
+            assert_eq!(
+                view.more_combat_gestures(),
+                engine.sim_config().more_combat_gestures
+            );
+            assert_eq!(
+                view.timed_missions_enabled(),
+                engine.sim_config().enable_timed_missions
+            );
+            assert_eq!(
+                view.uses_original_rng_replay(),
+                engine.original_rng_replay_cursor().is_some()
+            );
+            assert_eq!(
+                view.get_entity(pc).unwrap().element_data().position(),
+                engine.get_entity(pc).unwrap().element_data().position()
+            );
+            assert_eq!(
+                view.active_entity_positions().collect::<Vec<_>>(),
+                engine.active_entity_positions().collect::<Vec<_>>()
+            );
+            assert_eq!(
+                view.hero_selection(PlayerId::HOST),
+                engine.hero_selection(PlayerId::HOST)
+            );
+            assert_eq!(
+                view.tactical_selection(PlayerId::HOST),
+                engine.tactical_selection(PlayerId::HOST)
+            );
+            assert_eq!(
+                view.selected_action_for_seat(PlayerId::HOST),
+                engine.selected_action_for_seat(PlayerId::HOST)
+            );
+            assert_eq!(
+                view.planned_action_for_seat(PlayerId::HOST),
+                engine.planned_action_for_seat(PlayerId::HOST)
+            );
+            assert_eq!(
+                view.compute_display_order().ids,
+                engine.compute_display_order().ids
+            );
+            assert_eq!(
+                format!("{:?}", view.minimap_dot_info(pc, &assets)),
+                format!("{:?}", engine.minimap_dot_info(pc, &assets))
+            );
+            assert_eq!(
+                view.compute_display_order().depths,
+                engine.compute_display_order().depths
+            );
+            assert_eq!(
+                serde_json::to_value(view.campaign()).unwrap(),
+                serde_json::to_value(engine.campaign()).unwrap()
+            );
+        }
+        assert_eq!(engine.encode_native_snapshot(), snapshot);
+        assert_eq!(crate::replay::state_hash(&engine), hash);
     }
 
     fn adjacent_select_and_cancel(pc_id: EntityId) -> Vec<SimCommand> {

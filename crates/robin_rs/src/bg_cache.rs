@@ -118,16 +118,22 @@ mod tests {
     #[test]
     fn level_reset_reconstructs_order_without_stale_entries() {
         let mut frontend = crate::host::HostFrontend::default();
-        frontend.background_decals.insert(id(1), decal(1));
-        frontend.background_decals.insert(id(2), decal(2));
+        frontend.resources.background_decals.insert(id(1), decal(1));
+        frontend.resources.background_decals.insert(id(2), decal(2));
 
-        frontend.clear_background_decals();
-        assert!(frontend.background_decals.is_empty());
-        assert!(banks(&frontend.background_decals).is_empty());
+        frontend.resources.clear_background_decals();
+        assert!(frontend.resources.background_decals.is_empty());
+        assert!(banks(&frontend.resources.background_decals).is_empty());
 
-        frontend.background_decals.insert(id(2), decal(12));
-        frontend.background_decals.insert(id(1), decal(11));
-        assert_eq!(banks(&frontend.background_decals), [12, 11]);
+        frontend
+            .resources
+            .background_decals
+            .insert(id(2), decal(12));
+        frontend
+            .resources
+            .background_decals
+            .insert(id(1), decal(11));
+        assert_eq!(banks(&frontend.resources.background_decals), [12, 11]);
     }
 
     #[test]

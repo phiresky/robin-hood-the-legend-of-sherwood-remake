@@ -5,7 +5,8 @@
 //! respective defaulting rules.
 
 use super::{
-    HttpPayload, NativeCall, PlayerCommand, ScreenshotRequest, StepModalPolicy, StepRequest,
+    HttpPayload, NativeCall, PlayerCommand, RpcError, ScreenshotRequest, StepModalPolicy,
+    StepRequest,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -99,16 +100,14 @@ enum Parameters<'a> {
 }
 
 impl Parameters<'_> {
-    fn decode<T: DeserializeOwned>(self) -> Result<T, String> {
+    fn decode<T: DeserializeOwned>(self) -> Result<T, RpcError> {
         match self {
             #[cfg(any(test, not(target_arch = "wasm32")))]
-            Self::Json(bytes) => {
-                serde_json::from_slice(bytes).map_err(|e| format!("bad json: {e}"))
-            }
+            Self::Json(bytes) => serde_json::from_slice(bytes)
+                .map_err(|e| RpcError::invalid_request(format!("bad json: {e}"))),
             #[cfg(any(test, target_arch = "wasm32"))]
-            Self::Browser { method, value } => {
-                serde_json::from_value(value).map_err(|e| format!("{method} params: {e}"))
-            }
+            Self::Browser { method, value } => serde_json::from_value(value)
+                .map_err(|e| RpcError::invalid_request(format!("{method} params: {e}"))),
         }
     }
 
@@ -134,7 +133,7 @@ impl Parameters<'_> {
 }
 
 #[cfg(any(test, not(target_arch = "wasm32")))]
-pub(super) fn decode_json(kind: RequestKind, body: &[u8]) -> Result<HttpPayload, String> {
+pub(super) fn decode_json(kind: RequestKind, body: &[u8]) -> Result<HttpPayload, RpcError> {
     decode(kind, Parameters::Json(body))
 }
 
@@ -142,13 +141,13 @@ pub(super) fn decode_json(kind: RequestKind, body: &[u8]) -> Result<HttpPayload,
 pub(super) fn decode_browser(
     method: &str,
     value: serde_json::Value,
-) -> Result<HttpPayload, String> {
-    let kind =
-        RequestKind::from_method(method).ok_or_else(|| format!("unknown method: {method}"))?;
+) -> Result<HttpPayload, RpcError> {
+    let kind = RequestKind::from_method(method)
+        .ok_or_else(|| RpcError::unavailable_capability(format!("unknown method: {method}")))?;
     decode(kind, Parameters::Browser { method, value })
 }
 
-fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, String> {
+fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, RpcError> {
     Ok(match kind {
         RequestKind::Script => HttpPayload::Script,
         RequestKind::State => HttpPayload::State,
@@ -186,7 +185,7 @@ fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, Stri
                 params.decode()?
             };
             if request.n == 0 {
-                return Err("n must be >= 1".into());
+                return Err(RpcError::invalid_request("n must be >= 1"));
             }
             match kind {
                 RequestKind::StepForward => HttpPayload::StepForward { request },
@@ -209,7 +208,7 @@ fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, Stri
                 &body.data,
                 &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
             )
-            .map_err(|error| format!("invalid compact replay: {error}"))?;
+            .map_err(|error| RpcError::replay_format("invalid compact replay", error))?;
             HttpPayload::LoadReplay {
                 data: body.data,
                 paused: body.paused,
@@ -221,6 +220,32 @@ fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn malformed_parameters_and_unknown_methods_have_explicit_categories() {
+        let error = decode_browser("step-forward", serde_json::json!({"n": 0}))
+            .err()
+            .expect("zero steps rejected");
+        assert_eq!(error.kind, super::super::RpcErrorKind::InvalidRequest);
+        assert_eq!(
+            error.wire_body(),
+            serde_json::json!({"error": "n must be >= 1"})
+        );
+        let error = decode_browser("engine-dump", serde_json::Value::Null)
+            .err()
+            .expect("native-only method rejected");
+        assert_eq!(
+            error.kind,
+            super::super::RpcErrorKind::UnavailableCapability
+        );
+        assert_eq!(error.message, "unknown method: engine-dump");
+        let error = decode_json(RequestKind::Console, b"{")
+            .err()
+            .expect("malformed JSON rejected");
+        assert_eq!(error.kind, super::super::RpcErrorKind::InvalidRequest);
+        assert!(error.message.starts_with("bad json: "));
+    }
 
     fn payload_fields(payload: HttpPayload) -> serde_json::Value {
         match payload {

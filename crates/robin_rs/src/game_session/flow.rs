@@ -147,7 +147,7 @@ impl InteractiveMission {
 
                 tracing::info!("Mission-start map: revealed all blipped NPCs");
             }
-            host.frontend.draw_order = manager.engine.compute_display_order();
+            host.frontend.presentation.draw_order = manager.engine.compute_display_order();
             hud.corner_layout = CornerHudLayout::for_resolution(
                 presentation.renderer.screen_width() as u32,
                 presentation.renderer.screen_height() as u32,
@@ -177,7 +177,7 @@ impl InteractiveMission {
             if !args.mission_start_viewport_capture {
                 host.frontend.input.feedback.mouse_opacity = 0;
             }
-            let display_snapshot = host.frontend.engine_display.clone();
+            let display_snapshot = host.frontend.presentation.engine_display.clone();
             let capture_result = {
                 presentation.prepare_zoom(engine, host, hud, input);
                 let mut render_ctx = presentation.render_context(
@@ -199,7 +199,7 @@ impl InteractiveMission {
                     ..Default::default()
                 };
                 capture_screenshot_to_path(
-                    engine,
+                    &engine.presentation_view(),
                     &display_snapshot,
                     host,
                     assets,
@@ -296,7 +296,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         runtime.trace(FrameContractStage::Presentation);
         let warming_up_map_export = args.mission_start_map_output.is_some()
             && runtime.frame_number() <= args.mission_start_map_frame;
-        let should_draw = !world.view().host.frontend.skip_render
+        let should_draw = !world.view().host.frontend.presentation.skip_render
             && !modal_rendered_this_frame
             && !warming_up_map_export;
         if should_draw {
@@ -352,7 +352,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let mut fixed_tick_presented = false;
         if should_draw {
             super::render::prepare_fixed_tick_hud(
-                engine,
+                &engine.presentation_view(),
                 host,
                 assets,
                 game,
@@ -385,11 +385,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             // the offscreen target, reads the pixels back, and clears
             // the target for the next render.  Runs BEFORE the live
             // frame so `present()` still blits the real frame last.
-            let display_snapshot = host.frontend.engine_display.clone();
+            let display_snapshot = host.frontend.presentation.engine_display.clone();
             drain_screenshots(
                 http,
                 runtime.frame_number(),
-                engine,
+                &engine.presentation_view(),
                 &display_snapshot,
                 host,
                 assets,
@@ -397,24 +397,24 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 &mut render_ctx,
             );
 
-            if host.frontend.pending_print_screen == Some(PrintScreenRequest::WideSnapshot) {
-                host.frontend.pending_print_screen = None;
-                let display_snapshot = host.frontend.engine_display.clone();
+            if host.frontend.take_wide_snapshot_request() {
+                let display_snapshot = host.frontend.presentation.engine_display.clone();
                 if !drain_wide_print_screen(
-                    engine,
+                    &engine.presentation_view(),
                     &display_snapshot,
                     host,
                     assets,
                     dev,
                     &mut render_ctx,
                 ) {
-                    host.frontend.pending_print_screen = Some(PrintScreenRequest::Plain);
+                    host.frontend
+                        .request_print_screen(PrintScreenRequest::Plain);
                 }
             }
 
-            let display_snapshot = host.frontend.engine_display.clone();
+            let display_snapshot = host.frontend.presentation.engine_display.clone();
             let saved_camera = CameraPresentationPose::capture(host.frontend);
-            let saved_draw_order = host.frontend.draw_order.clone();
+            let saved_draw_order = host.frontend.presentation.draw_order.clone();
             let interpolation_enabled = host.frontend.preferences().native_refresh_presentation()
                 && !args.fast_forward
                 && !engine.is_fast_forward()
@@ -429,14 +429,16 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 .sample(crate::window::process_uptime_ms())
                 .unwrap_or(saved_camera);
             sampled_camera.apply(host.frontend);
-            let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
-            host.frontend.draw_order = render_engine.compute_display_order();
+            let render_engine = native_refresh_interpolation
+                .engine()
+                .unwrap_or_else(|| engine.presentation_view());
+            host.frontend.presentation.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
             if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
                 super::render::prepare_display_info(host, crate::window::process_uptime_ms());
             }
             render_frame(
-                render_engine,
+                &render_engine,
                 &display_snapshot,
                 &host.draw(),
                 assets,
@@ -449,7 +451,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             // resets the target.  Writes to
             // `<save-root>/screen%03u.png`, picking the first free
             // slot in `000..1000`.
-            if let Some(request) = host.frontend.pending_print_screen.take() {
+            if let Some(request) = host.frontend.take_print_screen() {
                 drain_print_screen_request(render_ctx.renderer, request);
             }
 
@@ -484,7 +486,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 }
             }
             saved_camera.apply(host.frontend);
-            host.frontend.draw_order = saved_draw_order;
+            host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
             post_render_engine_cleanup(&mut frame, host.local_seat);
         } else {
@@ -565,7 +567,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             dev,
         } = world.presentation_phase();
         let host = &mut presentation_host;
-        let display_snapshot = host.frontend.engine_display.clone();
+        let display_snapshot = host.frontend.presentation.engine_display.clone();
         let render_view_state = RenderViewState {
             shift_held,
             rewind_active,
@@ -583,9 +585,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 .engine()
                 .expect("sampled native-refresh interpolation has a working engine");
             let saved_camera = CameraPresentationPose::capture(host.frontend);
-            let saved_draw_order = host.frontend.draw_order.clone();
+            let saved_draw_order = host.frontend.presentation.draw_order.clone();
             sampled_camera.apply(host.frontend);
-            host.frontend.draw_order = render_engine.compute_display_order();
+            host.frontend.presentation.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
@@ -593,7 +595,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 super::render::prepare_display_info(host, now_ms);
             }
             render_frame(
-                render_engine,
+                &render_engine,
                 &display_snapshot,
                 &host.draw(),
                 assets,
@@ -602,7 +604,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             );
             render_ctx.present();
             saved_camera.apply(host.frontend);
-            host.frontend.draw_order = saved_draw_order;
+            host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
             true
         })
@@ -615,15 +617,19 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 presentation.sprites.cursor_renderer.advance_animation();
             }
             if host.frontend.input.is_dragging()
-                && crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat)
+                && crate::game_input::is_selected_unit_swordfighting(
+                    &engine.presentation_view(),
+                    host.local_seat,
+                )
                 && !host.frontend.mouse_way().is_empty()
                 && let Some(trail) = presentation.sprites.mouse_trail_renderer.as_ref()
             {
                 host.frontend.advance_gesture_trail(trail);
             }
             host.frontend.input.feedback.marked_pc_ids.clear();
-            if let Some(mut fade) = host.frontend.fade_to_black {
-                host.frontend.fade_to_black = fade.advance_presented_frame().then_some(fade);
+            if let Some(mut fade) = host.frontend.presentation.fade_to_black {
+                host.frontend.presentation.fade_to_black =
+                    fade.advance_presented_frame().then_some(fade);
             }
         }
         if game.message_delay > 0 {
@@ -1002,7 +1008,7 @@ async fn pace_interactive_frame(
     if remaining_wait_ms > 0 {
         let refresh_presentation = host.frontend.preferences().native_refresh_presentation()
             && target >= engine_api::FRAME_TIME_MS
-            && !host.frontend.skip_render;
+            && !host.frontend.presentation.skip_render;
         if refresh_presentation {
             // FIFO back-pressure is the refresh-rate clock. Each callback
             // recomposes an absolute interpolation sample from immutable

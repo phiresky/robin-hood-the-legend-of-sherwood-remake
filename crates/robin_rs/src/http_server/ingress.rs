@@ -45,13 +45,13 @@ impl RequestRouter {
         for request in self.idle.drain(..) {
             request
                 .response_tx
-                .send(Err("HTTP transport stopped".into()));
+                .send(Err(RpcError::retired("HTTP transport stopped")));
         }
         if let Some(active) = self.active.upgrade() {
             for request in active.lock().expect("session RPC queue poisoned").drain(..) {
                 request
                     .response_tx
-                    .send(Err("HTTP transport stopped".into()));
+                    .send(Err(RpcError::retired("HTTP transport stopped")));
             }
         }
     }
@@ -63,7 +63,7 @@ impl RequestRouter {
         if self.retired {
             request
                 .response_tx
-                .send(Err("HTTP transport stopped".into()));
+                .send(Err(RpcError::retired("HTTP transport stopped")));
         } else if let Some(active) = self.active.upgrade() {
             active
                 .lock()
@@ -76,9 +76,11 @@ impl RequestRouter {
             // Replay import/export intentionally works between missions.
             self.idle.push_back(request);
         } else {
-            request.response_tx.send(Err(
-                "engine not ready — no active mission RPC session".into()
-            ));
+            request
+                .response_tx
+                .send(Err(RpcError::unavailable_capability(
+                    "engine not ready — no active mission RPC session",
+                )));
         }
     }
 }
@@ -126,6 +128,19 @@ impl SessionIngress {
     #[cfg(test)]
     pub(crate) fn detached_for_test() -> Self {
         Self::with_router(None)
+    }
+
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(super) fn enqueue_for_test(&mut self, payload: HttpPayload) -> request_lifetime::ReplyWait {
+        let (response_tx, receiver) = Responder::channel();
+        self.requests
+            .lock()
+            .expect("test inbox poisoned")
+            .push_back(HttpRequest {
+                payload,
+                response_tx,
+            });
+        receiver
     }
 
     fn with_router(router: Option<Queue>) -> Self {
@@ -197,9 +212,9 @@ impl SessionIngress {
                         response_tx,
                     });
                 } else {
-                    response_tx.send(Err(
-                        "screenshots are unavailable in a headless runner".into()
-                    ));
+                    response_tx.send(Err(RpcError::unavailable_capability(
+                        "screenshots are unavailable in a headless runner",
+                    )));
                 }
                 return;
             }
@@ -265,10 +280,10 @@ impl SessionIngress {
             .is_some_and(|router| router.lock().expect("RPC router poisoned").is_retired())
         {
             for step in self.steps.drain(..) {
-                step.respond_err("HTTP transport stopped");
+                step.respond_err(RpcError::retired("HTTP transport stopped"));
             }
             for screenshot in self.screenshots.drain(..) {
-                screenshot.respond_err("HTTP transport stopped");
+                screenshot.respond_err(RpcError::retired("HTTP transport stopped"));
             }
         }
     }
@@ -283,13 +298,13 @@ impl Drop for SessionIngress {
         }
         let message = "mission ended before RPC request completed";
         for request in self.take_requests() {
-            request.response_tx.send(Err(message.into()));
+            request.response_tx.send(Err(RpcError::retired(message)));
         }
         for step in self.steps.drain(..) {
-            step.respond_err(message);
+            step.respond_err(RpcError::retired(message));
         }
         for screenshot in self.screenshots.drain(..) {
-            screenshot.respond_err(message);
+            screenshot.respond_err(RpcError::retired(message));
         }
     }
 }
@@ -315,7 +330,9 @@ mod tests {
         let reply = rx
             .try_recv()
             .expect("response must complete, not disconnect or wait");
-        assert!(matches!(reply, Err(error) if error.contains("mission ended")));
+        assert!(
+            matches!(reply, Err(error) if error.kind == RpcErrorKind::Retired && error.message.contains("mission ended"))
+        );
     }
 
     fn router() -> Queue {
@@ -430,10 +447,10 @@ mod tests {
         assert!(ingress.take_pending_steps().is_empty());
         assert!(ingress.take_pending_screenshots(900).is_empty());
         assert!(
-            matches!(step_reply.try_recv().unwrap(), Err(error) if error == "HTTP transport stopped")
+            matches!(step_reply.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::Retired && error.message == "HTTP transport stopped")
         );
         assert!(
-            matches!(shot_reply.try_recv().unwrap(), Err(error) if error == "HTTP transport stopped")
+            matches!(shot_reply.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::Retired && error.message == "HTTP transport stopped")
         );
     }
 
@@ -478,7 +495,7 @@ mod tests {
         let (state, state_reply) = request(HttpPayload::State);
         router.lock().unwrap().push_back(state);
         assert!(
-            matches!(state_reply.try_recv().unwrap(), Err(error) if error.contains("engine not ready"))
+            matches!(state_reply.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::UnavailableCapability && error.message.contains("engine not ready"))
         );
         let (replay, replay_reply) = request(HttpPayload::GetReplay);
         router.lock().unwrap().push_back(replay);
@@ -567,20 +584,20 @@ mod tests {
         assert_eq!(ui.len(), 1);
         assert_eq!(ui[0].request().width, Some(3));
         for shot in ui {
-            shot.respond_err("captured UI");
+            shot.respond_err(RpcError::internal("captured UI"));
         }
         let scene = session.take_pending_scene_screenshots(10);
         assert_eq!(scene.len(), 1);
         assert_eq!(scene[0].request().width, Some(2));
         for shot in scene {
-            shot.respond_err("captured scene");
+            shot.respond_err(RpcError::internal("captured scene"));
         }
         assert!(session.take_pending_screenshots(19).is_empty());
         let future = session.take_pending_screenshots(20);
         assert_eq!(future.len(), 1);
         assert_eq!(future[0].request().width, Some(1));
         for shot in future {
-            shot.respond_err("captured future");
+            shot.respond_err(RpcError::internal("captured future"));
         }
         assert!(
             replies
@@ -589,7 +606,9 @@ mod tests {
         );
         let (request, reply) = request(HttpPayload::Screenshot(ScreenshotRequest::default()));
         session.defer(request, false);
-        assert!(matches!(reply.try_recv().unwrap(), Err(error) if error.contains("headless")));
+        assert!(
+            matches!(reply.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::UnavailableCapability && error.message.contains("headless"))
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -382,7 +382,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         #[cfg(feature = "client")]
         {
             loaded.apply_display_to(&mut display);
-            loaded.apply_display_to(&mut host.frontend.engine_display);
+            loaded.apply_display_to(&mut host.frontend.presentation.engine_display);
             selected_view_element = loaded.selected_view_element();
             host.frontend
                 .set_selected_view_element(selected_view_element);
@@ -1209,11 +1209,11 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         if !differences.is_empty() {
             #[cfg(feature = "client")]
             if let Some(step) = active_http_step.take() {
-                step.request.respond_err(format!(
+                step.request.respond_err(RpcError::internal(format!(
                     "parity divergence after frame {}: {} differences",
                     frame.frame_after,
                     differences.len()
-                ));
+                )));
             }
             divergent_frames += 1;
             for difference in &differences {
@@ -1395,11 +1395,12 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
 
     #[cfg(feature = "client")]
     if let Some(step) = active_http_step.take() {
-        step.request.respond_err(format!(
-            "trace ended at frame {} with {} requested frames still pending",
-            engine.frame_counter(),
-            step.remaining
-        ));
+        step.request
+            .respond_err(RpcError::unavailable_capability(format!(
+                "trace ended at frame {} with {} requested frames still pending",
+                engine.frame_counter(),
+                step.remaining
+            )));
     }
     result.processed_frames = u64::try_from(line_index).expect("frame count exceeds u64");
     result.final_frame = u64::from(engine.frame_counter());

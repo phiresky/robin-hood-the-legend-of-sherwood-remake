@@ -91,7 +91,7 @@ fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
 
 //
 // The consumer lives in `engine/tick.rs` (the message handler
-// populates `host.frontend.pc_info_overlay`) and `ui_panel::draw_pc_info_overlay`
+// populates `host.frontend.presentation.pc_info_overlay`) and `ui_panel::draw_pc_info_overlay`
 // (which reads the PC's sword/bow capacity from the campaign
 // `HumanStatus` each frame and renders the pip overlay).
 pub fn update_pc_popup_information(
@@ -118,10 +118,10 @@ pub fn update_pc_popup_information(
     // the `visible` / `pc_id` pair here.
     match focused_pc {
         Some(pc_id) => {
-            host.frontend.pc_info_overlay.visible = true;
-            host.frontend.pc_info_overlay.pc_id = Some(pc_id);
+            host.frontend.presentation.pc_info_overlay.visible = true;
+            host.frontend.presentation.pc_info_overlay.pc_id = Some(pc_id);
         }
-        None => host.frontend.pc_info_overlay.hide(),
+        None => host.frontend.presentation.pc_info_overlay.hide(),
     }
 }
 
@@ -145,7 +145,10 @@ pub fn choose_mouse_pointer_for_no_action(
     let selected = engine.hero_selection(local_seat);
 
     if host.frontend.input.left_mouse_down()
-        && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+        && crate::game_input::is_selected_unit_swordfighting(
+            &engine.presentation_view(),
+            local_seat,
+        )
     {
         return RHMOUSE_SWORDFIGHT_YES;
     }
@@ -166,7 +169,7 @@ pub fn choose_mouse_pointer_for_no_action(
     if num_selected == 0 {
         let focused = engine.find_focusable_entity(
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             mouse_map,
             Focus::Select,
         );
@@ -183,14 +186,15 @@ pub fn choose_mouse_pointer_for_no_action(
     }
 
     // Iterate display order checking select/use/sword.
-    let is_swordfighting = crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
+    let is_swordfighting =
+        crate::game_input::is_selected_unit_swordfighting(&engine.presentation_view(), local_seat);
     let selected_pc = selected.first().copied();
     let recording_macro = engine.is_recording_macro();
 
     // Clone the id list (cheap) so the iteration doesn't hold an
     // immutable borrow of `host` while the loop body mutates
     // `host.frontend.input`.
-    let draw_order_ids = host.frontend.draw_order.ids.clone();
+    let draw_order_ids = host.frontend.presentation.draw_order.ids.clone();
     for &eid in draw_order_ids.iter().rev() {
         // Borrow entity for read-only checks, then drop the borrow
         // before mutating host.frontend.input.
@@ -915,7 +919,7 @@ fn cursor_for_bow(
             host.frontend.input.feedback.mouse_shadow_color = 0;
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
-                &host.frontend.draw_order.ids,
+                &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
                 Focus::Bow,
             ) {
@@ -944,7 +948,7 @@ fn cursor_for_bow(
             host.frontend.input.feedback.mouse_shadow_color = 0;
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
-                &host.frontend.draw_order.ids,
+                &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
                 Focus::Bow,
             ) {
@@ -971,7 +975,7 @@ fn cursor_for_bow(
 
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
-                &host.frontend.draw_order.ids,
+                &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
                 Focus::Bow,
             ) {
@@ -1095,7 +1099,7 @@ fn cursor_for_hit(
     {
         let focused = engine.find_focusable_entity(
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             mouse_map_pt,
             Focus::Hit,
         );
@@ -1127,7 +1131,7 @@ fn cursor_for_apple(
         if shift_held || !engine.is_selected_pc_in_restricted_sector() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
-                &host.frontend.draw_order.ids,
+                &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
                 Focus::Apple,
             ) {
@@ -1235,7 +1239,7 @@ fn cursor_for_stone(
         if shift_held || !engine.is_selected_pc_in_restricted_sector() {
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
-                &host.frontend.draw_order.ids,
+                &host.frontend.presentation.draw_order.ids,
                 mouse_map_pt,
                 Focus::Stone,
             ) {
@@ -1444,7 +1448,7 @@ fn cursor_for_heal(
     {
         let focused = engine.find_focusable_entity(
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             mouse_map_pt,
             Focus::Heal,
         );
@@ -1784,7 +1788,7 @@ fn cursor_for_lever(
     {
         let focused = engine.find_focusable_entity(
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             mouse_map_pt,
             Focus::Lever,
         );
@@ -1850,7 +1854,7 @@ fn cursor_for_strangle(
     {
         let focused = engine.find_focusable_entity(
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             mouse_map_pt,
             Focus::Strangle,
         );

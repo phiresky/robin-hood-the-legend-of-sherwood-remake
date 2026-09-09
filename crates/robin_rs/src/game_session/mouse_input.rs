@@ -197,7 +197,12 @@ pub(super) fn handle_mouse_input(
 /// minimap, or dispatch a world click when a second finger takes over.
 fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
     if host.frontend.pointer_capture().minimap_drag_active()
-        || host.frontend.engine_display.minimap().drag_start()
+        || host
+            .frontend
+            .presentation
+            .engine_display
+            .minimap()
+            .drag_start()
     {
         dispatch_local_command(
             &host.transport,
@@ -232,16 +237,17 @@ fn on_left_mouse_down(
         let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
         let on_minimap = host
             .frontend
+            .presentation
             .engine_display
             .minimap()
             .is_over_widget(click_pt);
 
         if on_minimap {
-            let center = host.frontend.engine_display.resolve_minimap_center(
-                click_pt,
-                true,
-                host.frontend.viewport.level_size,
-            );
+            let center = host
+                .frontend
+                .presentation
+                .engine_display
+                .resolve_minimap_center(click_pt, true, host.frontend.viewport.level_size);
             // Commands are queued until the simulation tick. Capture locally
             // so a move in this same event batch cannot hit the world.
             host.frontend.begin_minimap_drag(center.is_some());
@@ -258,7 +264,12 @@ fn on_left_mouse_down(
             // minimap is inherently "entered nicely".
             let cmd = PlayerCommand::MinimapMouseDown {
                 click_pt,
-                continuing_drag: host.frontend.engine_display.minimap().drag_start(),
+                continuing_drag: host
+                    .frontend
+                    .presentation
+                    .engine_display
+                    .minimap()
+                    .drag_start(),
             };
             dispatch_local_command(&host.transport, frame_cmds, &cmd);
             // Don't start multi-selection when clicking minimap
@@ -283,8 +294,10 @@ fn on_left_mouse_down(
             } else {
                 engine.selected_action_for_seat(local_seat)
             };
-            let is_swordfighting =
-                crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
+            let is_swordfighting = crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            );
             match selected_action {
                 Action::HelpToClimb => {
                     let posture_ok = engine
@@ -350,7 +363,10 @@ fn on_right_mouse_down(
         let cancelling_planned_action =
             planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
         let guard_ok = !cancelling_planned_action
-            && !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+            && !crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            )
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !engine.is_alt_effective(&host.frontend.input)
             && !engine.view_locked()
@@ -392,7 +408,10 @@ fn on_mouse_move(
             && !host.frontend.pointer_capture().minimap_drag_active()
             && !engine.is_alt_effective(&host.frontend.input)
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
-            && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
+            && crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            )
         {
             host.frontend.add_gesture_point(mouse_pt);
         }
@@ -404,17 +423,22 @@ fn on_mouse_move(
             mouse_pt,
             left_mouse_down: host.frontend.input.left_mouse_down(),
             continuing_drag: host.frontend.input.left_mouse_down()
-                && host.frontend.engine_display.minimap().drag_start(),
+                && host
+                    .frontend
+                    .presentation
+                    .engine_display
+                    .minimap()
+                    .drag_start(),
         };
         dispatch_local_command(&host.transport, frame_cmds, &cmd);
 
         if host.frontend.input.left_mouse_down()
             && host.frontend.pointer_capture().minimap_camera_drag_active()
-            && let Some(point) = host.frontend.engine_display.resolve_minimap_center(
-                mouse_pt,
-                true,
-                host.frontend.viewport.level_size,
-            )
+            && let Some(point) = host
+                .frontend
+                .presentation
+                .engine_display
+                .resolve_minimap_center(mouse_pt, true, host.frontend.viewport.level_size)
         {
             host.frontend.viewport.center_on_point(point);
         }
@@ -426,7 +450,12 @@ fn on_mouse_move(
         // update either way; keep the guard for safety.
         if host.frontend.input.left_mouse_down()
             && !host.frontend.pointer_capture().minimap_drag_active()
-            && !host.frontend.engine_display.minimap().drag_start()
+            && !host
+                .frontend
+                .presentation
+                .engine_display
+                .minimap()
+                .drag_start()
             && host.frontend.input.multi_selection_active()
             && !host.frontend.input.ignore_next_drag()
             && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
@@ -454,7 +483,12 @@ fn on_mouse_move(
         if !planning_held
             && host.frontend.input.left_mouse_down()
             && !host.frontend.pointer_capture().minimap_drag_active()
-            && !host.frontend.engine_display.minimap().drag_start()
+            && !host
+                .frontend
+                .presentation
+                .engine_display
+                .minimap()
+                .drag_start()
             && !host.frontend.input.ignore_next_drag()
             && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
         {
@@ -505,19 +539,25 @@ fn on_left_mouse_up(
         let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
         let on_minimap = host
             .frontend
+            .presentation
             .engine_display
             .minimap()
             .is_over_widget(click_pt);
         let minimap_handled = on_minimap
             || host.frontend.pointer_capture().minimap_drag_active()
-            || host.frontend.engine_display.minimap().drag_start();
+            || host
+                .frontend
+                .presentation
+                .engine_display
+                .minimap()
+                .drag_start();
         host.frontend.end_minimap_drag();
         if minimap_handled {
-            let center_on = host.frontend.engine_display.resolve_minimap_center(
-                click_pt,
-                on_minimap,
-                host.frontend.viewport.level_size,
-            );
+            let center_on = host
+                .frontend
+                .presentation
+                .engine_display
+                .resolve_minimap_center(click_pt, on_minimap, host.frontend.viewport.level_size);
             let cmd = PlayerCommand::MinimapMouseUp { on_minimap };
             dispatch_local_command(&host.transport, frame_cmds, &cmd);
             if let Some(point) = center_on {
@@ -571,16 +611,17 @@ fn on_left_mouse_up(
             // If a swordfight gesture drag was being recorded, the LMB-up
             // commits that gesture — skip portrait hit-testing so a release
             // over a portrait doesn't accidentally select that PC.
-            let swordfight_drag =
-                crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
-                    && !host.frontend.mouse_way().is_empty();
+            let swordfight_drag = crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                local_seat,
+            ) && !host.frontend.mouse_way().is_empty();
 
             // Check portrait panel first (detailed sub-area hit-test).
             let portrait_hit = if swordfight_drag {
                 None
             } else {
                 ui_panel::hit_test_portrait_detailed(
-                    engine,
+                    &engine.presentation_view(),
                     local_seat,
                     portrait_cache,
                     screen_width,
@@ -1257,9 +1298,15 @@ fn on_right_mouse_up(
             host.frontend.input.cancel_multi_unselection();
 
             // Right-click on minimap closes it.
-            if host.frontend.engine_display.minimap().is_displayed()
+            if host
+                .frontend
+                .presentation
+                .engine_display
+                .minimap()
+                .is_displayed()
                 && host
                     .frontend
+                    .presentation
                     .engine_display
                     .minimap()
                     .is_over_widget(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
@@ -1267,7 +1314,7 @@ fn on_right_mouse_up(
                 let cmd = PlayerCommand::MinimapRightClick;
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
             } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
-                engine,
+                &engine.presentation_view(),
                 local_seat,
                 portrait_cache,
                 screen_width,
@@ -2264,7 +2311,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     sherwood_campaign_map,
                     menu_resources.as_mut(),
                     text_res,
-                    host.frontend.shipping.as_deref(),
+                    host.frontend.resources.shipping.as_deref(),
                     pseudo_debrief_pending,
                     campaign_view_config.campaign_presentation,
                     campaign_view_config.show_achievement_badges,
@@ -2339,7 +2386,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     let last_id = engine.campaign().last_pseudo_mission_id;
                     let pseudo_red = crate::mission_descriptors::for_presentation(
                         host.application_context(),
-                        host.frontend.shipping.as_deref(),
+                        host.frontend.resources.shipping.as_deref(),
                         last_id,
                     );
                     let per_mission_text = pseudo_red.as_ref().and_then(|desc| {
@@ -2413,7 +2460,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         let mission_id = mission.profile(&assets.profile_manager).id;
                         crate::mission_descriptors::for_presentation(
                             host.application_context(),
-                            host.frontend.shipping.as_deref(),
+                            host.frontend.resources.shipping.as_deref(),
                             mission_id,
                         )
                     };

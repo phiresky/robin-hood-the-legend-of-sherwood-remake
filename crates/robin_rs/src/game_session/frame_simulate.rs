@@ -570,7 +570,7 @@ fn drain_deferred_save_load_after_zoom(
 ) {
     if !manager
         .engine
-        .is_zoom_possible(&host.frontend.engine_display)
+        .is_zoom_possible(&host.frontend.presentation.engine_display)
     {
         return;
     }
@@ -790,7 +790,7 @@ impl InteractiveFrameSimulation {
                     shift_held,
                     &mut hud.last_cursor_id,
                 );
-                let display_snapshot = host.frontend.engine_display.clone();
+                let display_snapshot = host.frontend.presentation.engine_display.clone();
                 presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
                 let mut render_context = presentation.render_context(
                     resources,
@@ -810,7 +810,7 @@ impl InteractiveFrameSimulation {
                 );
                 drain_screenshot_requests(
                     scene_screenshots,
-                    &manager.engine,
+                    &manager.engine.presentation_view(),
                     &display_snapshot,
                     &mut host.presentation(),
                     assets.as_ref(),
@@ -1115,7 +1115,7 @@ impl InteractiveFrameSimulation {
                             game.set_resolution(width_u16, height_u16);
                             input.resize(logical_width, logical_height, &result.key_config);
                             hud.resize(logical_width, logical_height);
-                            if host.frontend.mission_surfaces.corner_size().x > 0.0 {
+                            if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
                                 dispatch_local_command(
                                     &host.transport,
                                     &mut frame.stage_post_commands(),
@@ -1124,7 +1124,11 @@ impl InteractiveFrameSimulation {
                                             width - 83.0,
                                             38.0,
                                         ),
-                                        corner_size: host.frontend.mission_surfaces.corner_size(),
+                                        corner_size: host
+                                            .frontend
+                                            .resources
+                                            .mission_surfaces
+                                            .corner_size(),
                                     },
                                 );
                             }

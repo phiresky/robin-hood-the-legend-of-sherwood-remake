@@ -140,7 +140,7 @@ async fn respond(
             let (status, body) = super::native_routes::dispatch(request, queue, port).await;
             response(status, body)
         }
-        Err((status, error)) => response(status, serde_json::json!({"error": error}).into()),
+        Err((status, error)) => response(status, error.wire_body().into()),
     }
 }
 
@@ -148,12 +148,15 @@ async fn acquire(
     request: hyper::Request<Incoming>,
     port: u16,
     policy: ResourcePolicy,
-) -> Result<NativeRequest, (u16, String)> {
+) -> Result<NativeRequest, (u16, RpcError)> {
     let (parts, body) = request.into_parts();
     for (name, value) in &parts.headers {
-        value
-            .to_str()
-            .map_err(|_| (400, format!("invalid HTTP header: {name}")))?;
+        value.to_str().map_err(|_| {
+            (
+                400,
+                RpcError::invalid_request(format!("invalid HTTP header: {name}")),
+            )
+        })?;
     }
     let header = |name: &str| {
         parts
@@ -167,21 +170,28 @@ async fn acquire(
         header("host"),
         port,
     ) {
-        return Err((403, reason.to_owned()));
+        return Err((403, RpcError::invalid_request(reason)));
     }
     // Resolve the route before polling Incoming: unknown endpoints must not
     // acquire replay-sized bodies (or wait for a client to finish one).
     let limit = super::native_routes::body_limit(&parts.method, parts.uri.path())
-        .ok_or_else(|| (404, "not found".to_owned()))?;
+        .ok_or_else(|| (404, RpcError::unavailable_capability("not found")))?;
     let declared_length = header("content-length")
         .map(|value| value.parse::<usize>())
         .transpose()
-        .map_err(|error| (400, format!("invalid Content-Length: {error}")))?;
+        .map_err(|error| {
+            (
+                400,
+                RpcError::invalid_request(format!("invalid Content-Length: {error}")),
+            )
+        })?;
     if let Some(length) = declared_length {
         if length > limit {
             return Err((
                 400,
-                format!("HTTP body observed {length} bytes, limit is {limit}"),
+                RpcError::capacity(format!(
+                    "HTTP body observed {length} bytes, limit is {limit}"
+                )),
             ));
         }
     }
@@ -203,8 +213,21 @@ async fn acquire(
     }
     let body = tokio::time::timeout(policy.body, Limited::new(body, limit).collect())
         .await
-        .map_err(|_| (408, "HTTP body acquisition deadline exceeded".to_owned()))?
-        .map_err(|error| (400, format!("HTTP body acquisition: {error}")))?
+        .map_err(|_| {
+            (
+                408,
+                RpcError::deadline("HTTP body acquisition deadline exceeded"),
+            )
+        })?
+        .map_err(|error| {
+            let message = format!("HTTP body acquisition: {error}");
+            let error = if error.is::<http_body_util::LengthLimitError>() {
+                RpcError::capacity(message)
+            } else {
+                RpcError::invalid_request(message)
+            };
+            (400, error)
+        })?
         .to_bytes();
     request.body = body;
     Ok(request)
@@ -232,6 +255,28 @@ fn response(status: u16, body: ReplyBody) -> Response {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn typed_error_categories_do_not_change_http_status_or_json_shape() {
+        for (status, error) in [
+            (400, RpcError::invalid_request("bad input")),
+            (404, RpcError::unavailable_capability("not found")),
+            (
+                408,
+                RpcError::deadline("HTTP body acquisition deadline exceeded"),
+            ),
+            (400, RpcError::capacity("body too large")),
+            (400, RpcError::retired("mission ended")),
+            (400, RpcError::internal("export failed")),
+        ] {
+            let response = response(status, error.wire_body().into());
+            assert_eq!(response.status().as_u16(), status);
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(value, serde_json::json!({"error": error.message}));
+            assert!(value.get("kind").is_none());
+        }
+    }
 
     fn policy() -> ResourcePolicy {
         ResourcePolicy {
