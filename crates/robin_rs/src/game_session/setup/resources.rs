@@ -521,32 +521,33 @@ mod tests {
 
     #[test]
     fn optional_mission_archives_distinguish_absence_from_malformed_content() {
-        use robin_util::asset_fs::{AssetVfs, Bundle};
+        use robin_util::asset_fs::AssetVfs;
         use std::sync::Arc;
         for malformed in [false, true] {
             let vfs = Arc::new(AssetVfs::new());
             if malformed {
-                vfs.mount_bundle_first(Arc::new(Bundle::from([
-                    (
-                        "Data/Text/Level.res".into(),
-                        b"invalid archive".to_vec().into(),
-                    ),
-                    (
-                        "Data/Interface/DEFAULT.RES".into(),
-                        b"invalid archive".to_vec().into(),
-                    ),
-                ])))
-                .unwrap();
+                // Raw Bundle keys must already be canonical (lowercase,
+                // without Data/). Use the public preloader so this fixture
+                // genuinely registers malformed bytes under the read path.
+                for path in ["Data/Text/Level.res", "Data/Interface/DEFAULT.RES"] {
+                    vfs.install_preloaded_asset(path, b"invalid archive".to_vec())
+                        .unwrap();
+                }
             }
             let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
+            assert_eq!(files.try_exists("Data/Text/Level.res").unwrap(), malformed);
             let mut probe = ResourceManager::with_files(files.clone());
             assert!(probe.attach_resource_file("Data/Text/Level.res").is_err());
             let loaded = MissionEngineResources::load_archives(files, None);
             if malformed {
-                assert!(matches!(
-                    loaded,
-                    Err(ResourcePreparationError::Malformed { .. })
-                ));
+                let error = match loaded {
+                    Err(error) => error,
+                    Ok(_) => panic!("registered malformed archive unexpectedly loaded"),
+                };
+                assert!(
+                    matches!(error, ResourcePreparationError::Malformed { .. }),
+                    "wrong archive failure classification: {error:?}"
+                );
             } else {
                 let loaded = loaded.unwrap();
                 assert!(loaded.text.is_empty());
