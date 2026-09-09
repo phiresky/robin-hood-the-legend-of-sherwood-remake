@@ -138,7 +138,7 @@ pub fn choose_mouse_pointer_for_no_action(
     use robin_engine::resource_ids::*;
 
     // Door hover UI enabled by default in this function.
-    host.frontend.input.display_door = true;
+    host.frontend.input.feedback.display_door = true;
 
     // Dragging while swordfighting → swordfight cursor.
     let local_seat = host.transport.local_seat();
@@ -171,7 +171,7 @@ pub fn choose_mouse_pointer_for_no_action(
             Focus::Select,
         );
         if let Some(eid) = focused {
-            host.frontend.input.focused_entity_id = focused;
+            host.frontend.input.feedback.focused_entity_id = focused;
             // With no PC selected, the only meaningful branch in the
             // PC mouse-focus dispatch returns the default cursor (the
             // SHORT_LEG override needs a JUMP-capable selected PC,
@@ -248,8 +248,8 @@ pub fn choose_mouse_pointer_for_no_action(
         // must not fire while swordfighting.  Gate on
         // `!is_swordfighting`.
         if recording_macro && !is_swordfighting && is_human && interact_ok {
-            host.frontend.input.focused_entity_id = Some(eid);
-            host.frontend.input.display_door = false;
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.display_door = false;
             return if is_pc {
                 RHMOUSE_INTERRACT_PC
             } else {
@@ -264,8 +264,8 @@ pub fn choose_mouse_pointer_for_no_action(
         // HelpingToClimb posture and the selected PC has the Jump
         // contextual action.
         if select_ok && is_pc && !selected.contains(&eid) {
-            host.frontend.input.focused_entity_id = Some(eid);
-            host.frontend.input.display_door = false;
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.display_door = false;
             return engine.choose_select_cursor(assets, eid, selected_pc);
         }
 
@@ -284,9 +284,9 @@ pub fn choose_mouse_pointer_for_no_action(
             // flag; hover rendering must not mutate engine state.
             let cursor_marks = !matches!(cursor, RHMOUSE_PAY_NO | RHMOUSE_GET_NO);
             if cursor_marks {
-                host.frontend.input.focused_entity_id = Some(eid);
+                host.frontend.input.feedback.focused_entity_id = Some(eid);
             }
-            host.frontend.input.display_door = false;
+            host.frontend.input.feedback.display_door = false;
             return cursor;
         }
 
@@ -299,7 +299,7 @@ pub fn choose_mouse_pointer_for_no_action(
             // under the cursor for one frame — both in the
             // VIP-not-Robin (CANTGOTHERE) branch and the regular
             // (SWORDFIGHT_YES) branch.  Set unconditionally.
-            host.frontend.input.double_status_bar_entity_id = Some(eid);
+            host.frontend.input.feedback.double_status_bar_entity_id = Some(eid);
             // Override the sword cursor with the inaccessible-target cursor
             // when the target is a VIP and the selected PC isn't
             // Robin — only Robin can fight VIPs.  Only the non-VIP
@@ -317,8 +317,8 @@ pub fn choose_mouse_pointer_for_no_action(
             }
             // The per-seat focus flag drives the selection-display pass
             // directly so hover rendering stays outside engine state.
-            host.frontend.input.focused_entity_id = Some(eid);
-            host.frontend.input.display_door = false;
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.display_door = false;
             return RHMOUSE_SWORDFIGHT_YES;
         }
     }
@@ -340,9 +340,11 @@ pub fn choose_mouse_pointer_for_no_action(
     let mouse_sector_result = engine.fast_grid().get_sector_screen(mouse_map, pc_pos);
     let pc_sector_hit = engine.fast_grid().get_sector(pc_pos, pc_pos, pc_layer);
 
-    if let Some(door_idx) = host.frontend.input.hovered_door_idx {
-        host.frontend.input.increment_cursor_animation = false;
-        host.frontend.input.selected_layer = mouse_sector_result.layer;
+    if let Some(door_idx) = host.frontend.input.spatial_hit().hovered_door_idx {
+        host.frontend.input.feedback.increment_cursor_animation = false;
+        host.frontend
+            .input
+            .select_door_cursor_layer(mouse_sector_result.layer);
         host.frontend.reject_trajectory_hit();
         return engine.choose_door_cursor(Some(door_idx), None);
     }
@@ -369,8 +371,10 @@ pub fn choose_mouse_pointer_for_no_action(
                 .and_then(|_| engine.patches().get(patch_idx as usize))
                 .and_then(|p| p.door_indices.first().copied());
             // Door-cursor pointer freezes the cursor animation.
-            host.frontend.input.increment_cursor_animation = false;
-            host.frontend.input.selected_layer = mouse_sector_result.layer;
+            host.frontend.input.feedback.increment_cursor_animation = false;
+            host.frontend
+                .input
+                .select_door_cursor_layer(mouse_sector_result.layer);
             return engine.choose_door_cursor(first_door, Some(patch_idx));
         }
     }
@@ -478,9 +482,11 @@ pub fn choose_mouse_pointer_for_no_action(
                 // Door sector.
                 if st.is_door() {
                     // Update selected layer for door.
-                    host.frontend.input.selected_layer = mouse_sector_result.layer;
+                    host.frontend
+                        .input
+                        .select_door_cursor_layer(mouse_sector_result.layer);
                     // Door-cursor pointer freezes the cursor animation.
-                    host.frontend.input.increment_cursor_animation = false;
+                    host.frontend.input.feedback.increment_cursor_animation = false;
                     host.frontend.reject_trajectory_hit();
                     // Snapshot door index before further borrows.
                     let door_idx = sector.door_index;
@@ -609,10 +615,10 @@ pub fn choose_mouse_pointer_for_no_action(
                             // state that reads the selected sector
                             // sees the underlying motion area, not
                             // the overlaying jump polygon.  Overwrite
-                            // `host.frontend.input.selected_sector_idx` before
+                            // `host.frontend.input.spatial_hit().selected_sector_idx` before
                             // the next iteration picks up.
                             idx_opt = sector.underlying_sector;
-                            host.frontend.input.selected_sector_idx = idx_opt;
+                            host.frontend.input.select_jump_fallback_sector(idx_opt);
                             continue;
                         }
                     }
@@ -659,9 +665,9 @@ pub fn choose_mouse_pointer_for_no_action(
 /// Compute the mouse cursor ID for the current frame.
 ///
 /// Called each frame with mouse position in map space and modifier
-/// key state.  Also sets `host.frontend.input.mouse_opacity`,
-/// `host.frontend.input.mouse_shadow_color`, and
-/// `host.frontend.input.double_status_bar_entity_id`.
+/// key state.  Also sets `host.frontend.input.feedback.mouse_opacity`,
+/// `host.frontend.input.feedback.mouse_shadow_color`, and
+/// `host.frontend.input.feedback.double_status_bar_entity_id`.
 pub fn update_mouse(
     engine: &Engine,
     host: &mut Host,
@@ -700,12 +706,9 @@ pub fn update_mouse(
     host.frontend.advance_hover_markers(TIME_TRAJECTORY_DISPLAY);
 
     // Clear per-frame focus state.
-    host.frontend.input.focused_entity_id = None;
-    host.frontend.input.double_status_bar_entity_id = None;
-    host.frontend.input.mouse_opacity = MOUSE_OPACITY_DEFAULT;
-    host.frontend.input.mouse_shadow_color = 0;
-    host.frontend.input.increment_cursor_animation = true;
-    host.frontend.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
+    host.frontend
+        .input
+        .begin_cursor_feedback(MOUSE_OPACITY_DEFAULT);
 
     let mouse_map_pt = mouse_map;
 
@@ -766,17 +769,13 @@ pub fn update_mouse(
         } else {
             (None, sector_hit.layer, None)
         };
-    host.frontend.input.selected_map_point = mouse_map_pt;
-    host.frontend.input.selected_sector_idx = final_sector_idx;
-    host.frontend.input.selected_layer = final_layer;
-    host.frontend.input.selected_patch_idx = selected_patch_idx;
-    host.frontend.input.hovered_door_idx = door_click_polygon_at(engine, mouse_map_pt);
+    let hovered_door_idx = door_click_polygon_at(engine, mouse_map_pt);
 
     // `valid_position_for_move` is true when the hovered patch is
     // set, or the selected sector is a motion-area / door / jump
     // sector.  Gate move-command dispatch on this.
-    host.frontend.input.valid_position_for_move = host.frontend.input.selected_patch_idx.is_some()
-        || host.frontend.input.hovered_door_idx.is_some()
+    let valid_position_for_move = selected_patch_idx.is_some()
+        || hovered_door_idx.is_some()
         || sector_hit.sector_idx.is_some_and(|idx| {
             engine
                 .fast_grid()
@@ -791,6 +790,17 @@ pub fn update_mouse(
                 })
         });
 
+    host.frontend
+        .input
+        .publish_spatial_hit(robin_engine::engine::SpatialHit {
+            selected_map_point: mouse_map_pt,
+            selected_sector_idx: final_sector_idx,
+            selected_layer: final_layer,
+            selected_patch_idx,
+            hovered_door_idx,
+            valid_position_for_move,
+        });
+
     // Alt → view cursor.
     if alt_held {
         let focus_id = engine
@@ -803,7 +813,7 @@ pub fn update_mouse(
                 }
             });
         if let Some(id) = focus_id {
-            host.frontend.input.focused_entity_id = Some(id);
+            host.frontend.input.feedback.focused_entity_id = Some(id);
             // EZEKIEL_2517 cheat swallows the gesture and instakills
             // the target instead of highlighting its vision cone.
             // Non-cheat path is pure host UI state —
@@ -824,7 +834,7 @@ pub fn update_mouse(
     // clicking snaps the camera to track it.
     if engine.view_locked() {
         if let Some(id) = engine.find_focusable_npc(assets, mouse_map_pt, Focus::View) {
-            host.frontend.input.focused_entity_id = Some(id);
+            host.frontend.input.feedback.focused_entity_id = Some(id);
         }
         return RHMOUSE_VIEW;
     }
@@ -901,15 +911,15 @@ fn cursor_for_bow(
         // equip/aim state, because selecting the planned action deliberately
         // leaves the real PC untouched.
         if shift_held {
-            host.frontend.input.mouse_opacity = 0;
-            host.frontend.input.mouse_shadow_color = 0;
+            host.frontend.input.feedback.mouse_opacity = 0;
+            host.frontend.input.feedback.mouse_shadow_color = 0;
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.frontend.draw_order.ids,
                 mouse_map_pt,
                 Focus::Bow,
             ) {
-                host.frontend.input.focused_entity_id = Some(target_id);
+                host.frontend.input.feedback.focused_entity_id = Some(target_id);
                 const TIME_TRAJECTORY_DISPLAY: u32 = 1;
                 if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
                     && !host.frontend.trajectory_preview().is_valid()
@@ -930,15 +940,15 @@ fn cursor_for_bow(
         // are cleared.
         if engine.is_recording_macro() {
             host.frontend.reject_trajectory_hit();
-            host.frontend.input.mouse_opacity = 0;
-            host.frontend.input.mouse_shadow_color = 0;
+            host.frontend.input.feedback.mouse_opacity = 0;
+            host.frontend.input.feedback.mouse_shadow_color = 0;
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
                 &host.frontend.draw_order.ids,
                 mouse_map_pt,
                 Focus::Bow,
             ) {
-                host.frontend.input.focused_entity_id = Some(target_id);
+                host.frontend.input.feedback.focused_entity_id = Some(target_id);
                 cursor = RHMOUSE_BOW_YES;
             }
             return cursor;
@@ -965,7 +975,7 @@ fn cursor_for_bow(
                 mouse_map_pt,
                 Focus::Bow,
             ) {
-                host.frontend.input.focused_entity_id = Some(target_id);
+                host.frontend.input.feedback.focused_entity_id = Some(target_id);
 
                 // Get shoot type and bow target.
                 let (bow_target, shoot_mode) =
@@ -1022,7 +1032,8 @@ fn cursor_for_bow(
                             // same camp → stays BOW_NO
 
                             if cursor != RHMOUSE_BOW_NO {
-                                host.frontend.input.double_status_bar_entity_id = Some(target_id);
+                                host.frontend.input.feedback.double_status_bar_entity_id =
+                                    Some(target_id);
                             }
                         } else if is_fx_target {
                             cursor = if is_long {
@@ -1066,8 +1077,8 @@ fn cursor_for_bow(
             host.frontend.reject_trajectory_hit();
         }
 
-        host.frontend.input.mouse_opacity = opacity;
-        host.frontend.input.mouse_shadow_color = shadow_color;
+        host.frontend.input.feedback.mouse_opacity = opacity;
+        host.frontend.input.feedback.mouse_shadow_color = shadow_color;
         cursor
     }
 }
@@ -1089,7 +1100,7 @@ fn cursor_for_hit(
             Focus::Hit,
         );
         if let Some(eid) = focused {
-            host.frontend.input.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
             RHMOUSE_HIT_YES
         } else {
             RHMOUSE_HIT_NO
@@ -1136,7 +1147,7 @@ fn cursor_for_apple(
                     });
 
                 if in_range {
-                    host.frontend.input.focused_entity_id = Some(target_id);
+                    host.frontend.input.feedback.focused_entity_id = Some(target_id);
                     cursor = RHMOUSE_APPLE_YES;
 
                     // Compute the trajectory preview after a brief
@@ -1243,7 +1254,7 @@ fn cursor_for_stone(
                     });
 
                 if in_range {
-                    host.frontend.input.focused_entity_id = Some(target_id);
+                    host.frontend.input.feedback.focused_entity_id = Some(target_id);
                     let is_npc = engine
                         .get_entity(target_id)
                         .map(|t| t.is_npc())
@@ -1253,7 +1264,7 @@ fn cursor_for_stone(
                     // recording-macro branch suppresses the
                     // double-status overlay).
                     if is_npc && !engine.is_recording_macro() {
-                        host.frontend.input.double_status_bar_entity_id = Some(target_id);
+                        host.frontend.input.feedback.double_status_bar_entity_id = Some(target_id);
                     }
                     cursor = RHMOUSE_STONE_YES;
 
@@ -1438,7 +1449,7 @@ fn cursor_for_heal(
             Focus::Heal,
         );
         if let Some(eid) = focused {
-            host.frontend.input.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
             RHMOUSE_HEAL_YES
         } else {
             RHMOUSE_HEAL_NO
@@ -1594,7 +1605,7 @@ fn cursor_for_shield(
         if choosing_protectee {
             let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
             if let Some(eid) = focused {
-                host.frontend.input.focused_entity_id = Some(eid);
+                host.frontend.input.feedback.focused_entity_id = Some(eid);
                 if is_big {
                     RHMOUSE_BIG_SHIELD_YES
                 } else {
@@ -1778,7 +1789,7 @@ fn cursor_for_lever(
             Focus::Lever,
         );
         if let Some(eid) = focused {
-            host.frontend.input.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
             RHMOUSE_LEVER_YES
         } else {
             RHMOUSE_LEVER_NO
@@ -1844,7 +1855,7 @@ fn cursor_for_strangle(
             Focus::Strangle,
         );
         if let Some(eid) = focused {
-            host.frontend.input.focused_entity_id = Some(eid);
+            host.frontend.input.feedback.focused_entity_id = Some(eid);
             RHMOUSE_STRANGLE_YES
         } else {
             RHMOUSE_STRANGLE_NO
@@ -1973,7 +1984,7 @@ mod tests {
             false,
         );
         assert_eq!(cursor, RHMOUSE_HIT_NO);
-        assert_eq!(host.frontend.input.focused_entity_id, None);
+        assert_eq!(host.frontend.input.feedback.focused_entity_id, None);
     }
 
     #[test]

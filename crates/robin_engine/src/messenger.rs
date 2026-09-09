@@ -339,7 +339,7 @@ pub(crate) struct LegacyV48MessengerState {
     pub(crate) watch_timer: u16,
     pub(crate) action: crate::profiles::Action,
     /// Presentation-only debug toggle. Retained here for save compatibility;
-    /// the host synchronizes its `InputState::draw_hidden` after load.
+    /// the host synchronizes its `robin_engine::engine::CursorFeedback::draw_hidden` after load.
     pub(crate) draw_hidden: bool,
 }
 

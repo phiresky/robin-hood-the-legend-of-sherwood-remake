@@ -6396,7 +6396,7 @@ impl EngineInner {
                     // Forward `MSG_SWITCH_MASKED_DISPLAY` when the
                     // state actually changes.  The rendering side
                     // (`game_render.rs:814` et al.) already reads
-                    // `host.input.draw_hidden` to switch entities into
+                    // `host.input.feedback.draw_hidden` to switch entities into
                     // the masked/outline draw mode.
                     self.feedback.pending_side_effects.set_draw_hidden = Some(show);
                 }

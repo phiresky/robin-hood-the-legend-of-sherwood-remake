@@ -147,7 +147,7 @@ pub(super) fn prepare_fixed_tick_hud(
         ..Default::default()
     };
 
-    if !host.frontend.input.draw_hidden
+    if !host.frontend.input.feedback.draw_hidden
         && host
             .frontend
             .selected_view_element()
@@ -189,7 +189,7 @@ pub(super) fn prepare_fixed_tick_hud(
                 engine.collect_pcs_with_action(
                     assets,
                     *action,
-                    &mut host.frontend.input.marked_pc_ids,
+                    &mut host.frontend.input.feedback.marked_pc_ids,
                 );
             }
         }
@@ -222,7 +222,7 @@ pub(super) fn prepare_fixed_tick_hud(
         && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(hit.pc_id)
         && let Some(guard_id) = pc.pc.guard
     {
-        host.frontend.input.marked_pc_ids.push(guard_id);
+        host.frontend.input.feedback.marked_pc_ids.push(guard_id);
     }
     crate::game_render::prepare_multi_selection_box(host, engine);
     if has_hud_fonts {
@@ -1271,7 +1271,7 @@ pub(super) fn render_frame(
     // Pre-update captures may still hold a stale selection. Filter their
     // presentation without committing live selected-view state.
     let selected_view_element = host.frontend.selected_view_element().filter(|&id| {
-        host.frontend.input.draw_hidden
+        host.frontend.input.feedback.draw_hidden
             || (engine.get_entity(id).is_some() && engine.fog_entity_visible(id))
     });
     // Queue the GPU background texture for the current camera view.
@@ -1987,8 +1987,8 @@ pub(super) fn render_frame(
         (MOUSE_OPACITY_DEFAULT, 0)
     } else {
         (
-            host.frontend.input.mouse_opacity,
-            host.frontend.input.mouse_shadow_color,
+            host.frontend.input.feedback.mouse_opacity,
+            host.frontend.input.feedback.mouse_shadow_color,
         )
     };
     // The renderer owns pulse timing independently of simulation and replay time.

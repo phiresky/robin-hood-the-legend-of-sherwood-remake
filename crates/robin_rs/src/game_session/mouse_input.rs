@@ -84,10 +84,10 @@ pub(super) fn handle_mouse_input(
 ) {
     // ── Portrait action countdown ──
     // Decrements once per frame. MakeFast fires on double-click within window.
-    if host.frontend.input.portrait_action_countdown > 0 {
-        host.frontend.input.portrait_action_countdown -= 1;
-        if host.frontend.input.portrait_action_countdown == 0 {
-            host.frontend.input.portrait_action_pc = None;
+    if host.frontend.input.gestures.portrait_action_countdown > 0 {
+        host.frontend.input.gestures.portrait_action_countdown -= 1;
+        if host.frontend.input.gestures.portrait_action_countdown == 0 {
+            host.frontend.input.gestures.portrait_action_pc = None;
         }
     }
 
@@ -99,7 +99,7 @@ pub(super) fn handle_mouse_input(
     // `has_focus` guards on the LMB/RMB arms below).  Resetting at
     // the top of `handle_mouse_input` lets the very first mouse
     // event each frame land normally.
-    host.frontend.input.has_focus = true;
+    host.frontend.input.controls.has_focus = true;
 
     for event in events {
         if matches!(event, GameEvent::WindowFocusChanged(false)) {
@@ -263,7 +263,7 @@ fn on_left_mouse_down(
             dispatch_local_command(&host.transport, frame_cmds, &cmd);
             // Don't start multi-selection when clicking minimap
         } else if !host.frontend.input.ignore_next_drag()
-            && host.frontend.input.has_focus
+            && host.frontend.input.controls.has_focus
             && let Some(map_pt) = host.frontend.viewport.screen_to_map(click_pt)
         {
             // Left-drag dispatch:
@@ -354,7 +354,7 @@ fn on_right_mouse_down(
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
             && !engine.is_alt_effective(&host.frontend.input)
             && !engine.view_locked()
-            && host.frontend.input.has_focus;
+            && host.frontend.input.controls.has_focus;
         if guard_ok
             && let Some(map_pt) = host
                 .frontend
@@ -433,7 +433,7 @@ fn on_mouse_move(
         {
             host.frontend.input.update_multi_selection(map_pt);
         }
-        if host.frontend.input.right_mouse_down
+        if host.frontend.input.controls.right_mouse_down
             && host.frontend.input.multi_unselection_active()
             && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
         {
@@ -533,7 +533,7 @@ fn on_left_mouse_up(
 
         if minimap_handled {
             // Consumed by minimap — skip normal picking
-        } else if !host.frontend.input.has_focus {
+        } else if !host.frontend.input.controls.has_focus {
             // When a UI widget grabbed focus earlier this
             // frame, the engine-level left-click is
             // silently dropped. The active multi-selection
@@ -908,13 +908,13 @@ fn on_portrait_click(
             // If the action countdown is active, a
             // double-click accelerates the
             // last-dispatched action (MakeFast).
-            if host.frontend.input.portrait_action_countdown > 0 {
-                if let Some(fast_pc) = host.frontend.input.portrait_action_pc {
+            if host.frontend.input.gestures.portrait_action_countdown > 0 {
+                if let Some(fast_pc) = host.frontend.input.gestures.portrait_action_pc {
                     let cmd = PlayerCommand::MakePcFast { pc_id: fast_pc };
                     dispatch_local_command(&host.transport, frame_cmds, &cmd);
                 }
-                host.frontend.input.portrait_action_countdown = 0;
-                host.frontend.input.portrait_action_pc = None;
+                host.frontend.input.gestures.portrait_action_countdown = 0;
+                host.frontend.input.gestures.portrait_action_pc = None;
             } else if engine.is_pc_selectable(assets, pc_id) {
                 let cmd = PlayerCommand::SelectPc {
                     pc_id,
@@ -971,8 +971,8 @@ fn on_portrait_click(
                             }
                         };
                         dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                        host.frontend.input.portrait_action_countdown = 5;
-                        host.frontend.input.portrait_action_pc =
+                        host.frontend.input.gestures.portrait_action_countdown = 5;
+                        host.frontend.input.gestures.portrait_action_pc =
                             engine.hero_selection(local_seat).first().copied();
 
                         // Action-button click only arms
@@ -1129,7 +1129,7 @@ fn on_world_click(
         if !ctrl_held {
             swallow_click = true;
         } else {
-            host.frontend.input.target_drag = None;
+            host.frontend.input.gestures.target_drag = None;
         }
     }
     host.frontend.input.finish_click_dispatch();
@@ -1204,7 +1204,7 @@ fn on_right_mouse_up(
 
         // When a UI widget grabbed focus earlier this
         // frame, the engine-level right-click is dropped.
-        if !host.frontend.input.has_focus {
+        if !host.frontend.input.controls.has_focus {
             host.frontend.input.cancel_multi_unselection();
             return;
         }

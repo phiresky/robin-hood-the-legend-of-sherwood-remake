@@ -1160,7 +1160,7 @@ impl EngineInner {
 
     /// Effective alt state (physical Alt held OR the lock toggle is on).
     pub fn is_alt_effective(&self, input: &InputState) -> bool {
-        input.is_alt || self.players.seats[0].is_lock_alt
+        input.controls.is_alt || self.players.seats[0].is_lock_alt
     }
 
     /// The persistent alt-lock flag on its own, ignoring the transient

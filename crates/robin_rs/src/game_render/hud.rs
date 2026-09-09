@@ -51,7 +51,7 @@ pub(crate) fn render_mission_countdown(
 /// - Rows 1-2, value-width: darker `(r>>1, g>>1, b>>1)`.
 ///
 /// Targets:
-/// - NPC set as `host.frontend.input.double_status_bar_entity_id` by the bow /
+/// - NPC set as `host.frontend.input.feedback.double_status_bar_entity_id` by the bow /
 ///   stone mouse-hover handlers in
 ///   [`robin_engine::engine::input::update_mouse`].
 /// - Every selected PC currently swordfighting, plus every opponent on
@@ -71,7 +71,7 @@ pub(crate) fn render_combat_status_bars(
     let mut targets: HashSet<EntityId> = HashSet::new();
 
     // Mouse hover target (bow / stone cursor over an NPC).
-    if let Some(id) = host.frontend.input.double_status_bar_entity_id {
+    if let Some(id) = host.frontend.input.feedback.double_status_bar_entity_id {
         targets.insert(id);
     }
 

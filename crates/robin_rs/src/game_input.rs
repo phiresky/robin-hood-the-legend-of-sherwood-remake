@@ -166,7 +166,7 @@ pub fn resolve_left_click_with_planning(
     // Double-click repeat-interact
     if is_double
         && num_selected > 0
-        && let Some(cached) = host.frontend.input.element_old_click
+        && let Some(cached) = host.frontend.input.gestures.element_old_click
     {
         let cmds = resolve_double_click_repeat(engine, assets, cached, local_seat);
         if !cmds.is_empty() {
@@ -179,7 +179,7 @@ pub fn resolve_left_click_with_planning(
     // Done once here so the clear doesn't get sprinkled across every
     // early-exit path.  The double-click replay above still reads the
     // cached value first.
-    host.frontend.input.element_old_click = None;
+    host.frontend.input.gestures.element_old_click = None;
 
     // No PCs selected: a controlled allied group can still engage a
     // sword-focusable target, select a hero, or move.
@@ -190,7 +190,7 @@ pub fn resolve_left_click_with_planning(
             map_pt,
             Focus::Select,
         ) {
-            host.frontend.input.element_old_click = Some(pc_id);
+            host.frontend.input.gestures.element_old_click = Some(pc_id);
             let mut commands = Vec::new();
             if !shift_held && !tactical_selected.is_empty() {
                 commands.push(PlayerCommand::ClearTacticalSelection);
@@ -208,7 +208,7 @@ pub fn resolve_left_click_with_planning(
                 map_pt,
                 Focus::Sword,
             ) {
-                host.frontend.input.element_old_click = Some(target_id);
+                host.frontend.input.gestures.element_old_click = Some(target_id);
                 return tactical_selected
                     .into_iter()
                     .map(|actor| PlayerCommand::EnterSwordfight {
@@ -225,7 +225,7 @@ pub fn resolve_left_click_with_planning(
                 running: is_double,
             }];
         }
-        host.frontend.input.element_old_click = None;
+        host.frontend.input.gestures.element_old_click = None;
         return vec![];
     }
 
@@ -235,7 +235,7 @@ pub fn resolve_left_click_with_planning(
     if let Some(pc_id) = engine.find_focusable_pc(assets, map_pt, Focus::Select)
         && !selected.contains(&pc_id)
     {
-        host.frontend.input.element_old_click = Some(pc_id);
+        host.frontend.input.gestures.element_old_click = Some(pc_id);
         if ctrl_held {
             return vec![PlayerCommand::TogglePcSelection { pc_id }];
         } else {
@@ -263,7 +263,7 @@ pub fn resolve_left_click_with_planning(
         // PC; the engine-side helper `apply_scroll_read_with_seek`
         // builds the composite and prepends a seek as needed.
         if is_target_scroll_attached_npc(engine, target_id) {
-            host.frontend.input.element_old_click = Some(target_id);
+            host.frontend.input.gestures.element_old_click = Some(target_id);
             return vec![PlayerCommand::LaunchScrollRead {
                 actor: pc_id,
                 target: target_id,
@@ -271,7 +271,7 @@ pub fn resolve_left_click_with_planning(
             }];
         }
         if let Some(cmd) = determine_use_command(engine, assets, pc_id, target_id) {
-            host.frontend.input.element_old_click = Some(target_id);
+            host.frontend.input.gestures.element_old_click = Some(target_id);
             // A click on a coin forwards to the source purse when the
             // purse isn't yet taken — route the actual Take launch at
             // the purse id so its has-been-taken sweep fires on
@@ -324,7 +324,7 @@ pub fn resolve_left_click_with_planning(
     if let Some(target_id) =
         engine.find_focusable_entity(assets, &host.frontend.draw_order.ids, map_pt, Focus::Sword)
     {
-        host.frontend.input.element_old_click = Some(target_id);
+        host.frontend.input.gestures.element_old_click = Some(target_id);
         let target_is_soldier = engine
             .get_entity(target_id)
             .map(|e| e.is_soldier())
@@ -362,7 +362,7 @@ pub fn resolve_left_click_with_planning(
     //               GroupMove(pt, RUNNING); else no-op.
     //   !recording → valid sector → MakePcFast per selected PC (no
     //                patch branch, no fresh seek).
-    host.frontend.input.element_old_click = None;
+    host.frontend.input.gestures.element_old_click = None;
 
     let is_recording = engine.is_recording_macro();
 
@@ -370,8 +370,13 @@ pub fn resolve_left_click_with_planning(
     // The patch branch is intentionally ignored here — only the
     // recording arm honours the patch redirect.
     if is_double && !is_recording {
-        if host.frontend.input.valid_position_for_move
-            && host.frontend.input.selected_sector_idx.is_some()
+        if host.frontend.input.spatial_hit().valid_position_for_move
+            && host
+                .frontend
+                .input
+                .spatial_hit()
+                .selected_sector_idx
+                .is_some()
         {
             let mut commands: Vec<_> = selected
                 .iter()
@@ -399,7 +404,7 @@ pub fn resolve_left_click_with_planning(
     // Single-click path, plus the recording double-click (which
     // follows the same patch→GroupMove / sector→GroupMove ordering
     // with the running gait on double-click).
-    if let Some(patch_idx) = host.frontend.input.selected_patch_idx
+    if let Some(patch_idx) = host.frontend.input.spatial_hit().selected_patch_idx
         && let Some(patch) = engine
             .mission_script()
             .and_then(|_| engine.patches().get(patch_idx as usize))
@@ -440,7 +445,7 @@ pub fn resolve_left_click_with_planning(
             // underlying FastFindGrid sector. Original carries that
             // sector reference into group movement; retaining only the public
             // sector number is ambiguous on maps that reuse numbers.
-            goal_sector_index_override: host.frontend.input.selected_sector_idx,
+            goal_sector_index_override: host.frontend.input.spatial_hit().selected_sector_idx,
             door_route_override: None,
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
@@ -457,14 +462,19 @@ pub fn resolve_left_click_with_planning(
     }
 
     // Sector-click branch — gated on both predicates.
-    if !(host.frontend.input.valid_position_for_move
-        && host.frontend.input.selected_sector_idx.is_some())
+    if !(host.frontend.input.spatial_hit().valid_position_for_move
+        && host
+            .frontend
+            .input
+            .spatial_hit()
+            .selected_sector_idx
+            .is_some())
     {
         return vec![];
     }
 
     let actors: Vec<EntityId> = selected.to_vec();
-    let goal_sector_index = host.frontend.input.selected_sector_idx;
+    let goal_sector_index = host.frontend.input.spatial_hit().selected_sector_idx;
     let goal_override = goal_sector_index.and_then(|idx| {
         engine
             .fast_grid()
@@ -476,7 +486,10 @@ pub fn resolve_left_click_with_planning(
                 if st.is_door() || st.is_jump() {
                     None
                 } else {
-                    Some((sector.sector_number, host.frontend.input.selected_layer))
+                    Some((
+                        sector.sector_number,
+                        host.frontend.input.spatial_hit().selected_layer,
+                    ))
                 }
             })
     });
@@ -663,8 +676,8 @@ fn selected_tactical_formation(engine: &Engine, soldiers: &[EntityId]) -> Tactic
 /// this cache becomes the tripwire for the `ignore_next_left_click` /
 /// `ignore_next_drag` handshake.
 fn cache_click_and_drag_target(host: &mut Host, target_id: EntityId) {
-    host.frontend.input.element_old_click = Some(target_id);
-    host.frontend.input.target_drag = Some(target_id);
+    host.frontend.input.gestures.element_old_click = Some(target_id);
+    host.frontend.input.gestures.target_drag = Some(target_id);
 }
 
 /// Resolve action-specific left-click (bow, hit, heal, etc.).
@@ -686,7 +699,7 @@ fn resolve_action_left_click(
     let is_recording = engine.is_recording_macro();
     let is_deferred = is_recording || is_planning;
     let valid_trajectory = host.frontend.trajectory_preview().is_valid();
-    let selected_layer = host.frontend.input.selected_layer;
+    let selected_layer = host.frontend.input.spatial_hit().selected_layer;
 
     // 2D → 3D projection of the mouse-map point onto the topmost
     // projection-area surface, used by the Purse/Wasp/Net ground-
@@ -1265,7 +1278,7 @@ fn resolve_action_left_click(
 /// first drag frame where a focusable target is acquired (Apple /
 /// Stone / Hit / Hit-Hard / Heal / Lever / Strangle).
 ///
-/// Mutates `host.frontend.input.target_drag` for click-and-drag dedup, and sets
+/// Mutates `host.frontend.input.gestures.target_drag` for click-and-drag dedup, and sets
 /// `ignore_next_left_click` when a new drag target is acquired so the
 /// MouseUp doesn't re-fire the command.  When a macro is recording,
 /// additionally latches `ignore_next_drag` so subsequent drag frames
@@ -1309,7 +1322,7 @@ pub fn resolve_action_drag(
         && !valid_trajectory
         && !is_recording
     {
-        host.frontend.input.target_drag = None;
+        host.frontend.input.gestures.target_drag = None;
         return vec![];
     }
 
@@ -1319,7 +1332,7 @@ pub fn resolve_action_drag(
             None => {
                 // No focus found: clear `target_drag` so a subsequent
                 // re-hover re-fires the arm.
-                host.frontend.input.target_drag = None;
+                host.frontend.input.gestures.target_drag = None;
                 return vec![];
             }
         };
@@ -1327,12 +1340,12 @@ pub fn resolve_action_drag(
     // Dedup: when the same target is still under the cursor, skip — the
     // action only fires on the first frame a focus is acquired or when
     // it changes.
-    if host.frontend.input.target_drag == Some(target) {
+    if host.frontend.input.gestures.target_drag == Some(target) {
         return vec![];
     }
 
-    host.frontend.input.target_drag = Some(target);
-    host.frontend.input.element_old_click = Some(target);
+    host.frontend.input.gestures.target_drag = Some(target);
+    host.frontend.input.gestures.element_old_click = Some(target);
     // Block the MouseUp click so it doesn't double-fire, and (when
     // recording a macro) block further drag frames so the macro stream
     // captures exactly one action step.
@@ -1770,7 +1783,7 @@ pub fn resolve_swordfight(
                     Focus::Sword,
                 )
             {
-                host.frontend.input.element_old_click = Some(target_id);
+                host.frontend.input.gestures.element_old_click = Some(target_id);
                 cmds.push(PlayerCommand::EnterSwordfight {
                     actor: pc_id,
                     target: target_id,
@@ -1852,7 +1865,7 @@ pub fn resolve_swordfight(
                     .map(|h| h.opponents.contains(&target_id))
                     .unwrap_or(false);
 
-                host.frontend.input.element_old_click = Some(target_id);
+                host.frontend.input.gestures.element_old_click = Some(target_id);
                 if already_opponent {
                     let with_seek = sword_strike_target_is_in_same_sector(engine, pc_id, target_id);
                     cmds.push(PlayerCommand::SwordStrikeCmd {
@@ -1924,7 +1937,7 @@ pub fn resolve_swordfight(
     cmds
 }
 
-fn selected_units(engine: &Engine, local_seat: PlayerId) -> Vec<EntityId> {
+fn selected_units(engine: &engine_api::EngineInner, local_seat: PlayerId) -> Vec<EntityId> {
     engine
         .hero_selection(local_seat)
         .iter()
@@ -1936,7 +1949,10 @@ fn selected_units(engine: &Engine, local_seat: PlayerId) -> Vec<EntityId> {
 /// True when any selected hero or controllable allied soldier is currently
 /// engaged in melee. The original engine query intentionally remains PC-only;
 /// UI input uses this broader query for the optional allied-control layer.
-pub fn is_selected_unit_swordfighting(engine: &Engine, local_seat: PlayerId) -> bool {
+pub fn is_selected_unit_swordfighting(
+    engine: &engine_api::EngineInner,
+    local_seat: PlayerId,
+) -> bool {
     selected_units(engine, local_seat).into_iter().any(|id| {
         engine
             .get_entity(id)
@@ -2818,7 +2834,7 @@ mod tests {
     #[test]
     fn left_click_empty_ground_without_selection_is_noop_and_clears_cache() {
         let (engine, assets, mut host) = fixture();
-        host.frontend.input.element_old_click =
+        host.frontend.input.gestures.element_old_click =
             Some(EntityId::Pc(robin_engine::entity_id::PcId(3)));
 
         let cmds = resolve_left_click(
@@ -2832,7 +2848,7 @@ mod tests {
         );
 
         assert!(cmds.is_empty());
-        assert_eq!(host.frontend.input.element_old_click, None);
+        assert_eq!(host.frontend.input.gestures.element_old_click, None);
     }
 
     #[test]
@@ -2858,7 +2874,7 @@ mod tests {
                 append: false
             }]
         );
-        assert_eq!(host.frontend.input.element_old_click, Some(pc));
+        assert_eq!(host.frontend.input.gestures.element_old_click, Some(pc));
     }
 
     #[test]
@@ -2908,7 +2924,7 @@ mod tests {
             cmds,
             vec![PlayerCommand::TogglePcSelection { pc_id: other }]
         );
-        assert_eq!(host.frontend.input.element_old_click, Some(other));
+        assert_eq!(host.frontend.input.gestures.element_old_click, Some(other));
     }
 
     #[test]
@@ -2916,9 +2932,15 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
-        host.frontend.input.valid_position_for_move = true;
-        host.frontend.input.selected_sector_idx =
-            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+        host.frontend
+            .input
+            .publish_spatial_hit(robin_engine::engine::SpatialHit {
+                valid_position_for_move: true,
+                selected_sector_idx: Some(
+                    robin_engine::fast_find_grid::SectorIndex::new(0).unwrap(),
+                ),
+                ..Default::default()
+            });
 
         let dest = MapPoint::new(300.0, 300.0);
         let cmds = resolve_left_click(&mut host, &engine, &assets, dest, false, false, false);
@@ -2937,7 +2959,7 @@ mod tests {
                 recorded_failed_gate_routes: Vec::new(),
             }]
         );
-        assert_eq!(host.frontend.input.element_old_click, None);
+        assert_eq!(host.frontend.input.gestures.element_old_click, None);
     }
 
     #[test]
@@ -2945,9 +2967,15 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
-        host.frontend.input.valid_position_for_move = true;
-        host.frontend.input.selected_sector_idx =
-            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+        host.frontend
+            .input
+            .publish_spatial_hit(robin_engine::engine::SpatialHit {
+                valid_position_for_move: true,
+                selected_sector_idx: Some(
+                    robin_engine::fast_find_grid::SectorIndex::new(0).unwrap(),
+                ),
+                ..Default::default()
+            });
 
         let cmds = resolve_left_click(
             &mut host,
@@ -2987,9 +3015,15 @@ mod tests {
                 append: false,
             },
         );
-        host.frontend.input.valid_position_for_move = true;
-        host.frontend.input.selected_sector_idx =
-            Some(robin_engine::fast_find_grid::SectorIndex::new(0).unwrap());
+        host.frontend
+            .input
+            .publish_spatial_hit(robin_engine::engine::SpatialHit {
+                valid_position_for_move: true,
+                selected_sector_idx: Some(
+                    robin_engine::fast_find_grid::SectorIndex::new(0).unwrap(),
+                ),
+                ..Default::default()
+            });
 
         let destination = MapPoint::new(300.0, 300.0);
         let commands =
@@ -3461,13 +3495,13 @@ mod tests {
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         select(&mut engine, &assets, pc);
         arm_action(&mut engine, &assets, pc, Action::Hit);
-        host.frontend.input.target_drag = Some(pc);
+        host.frontend.input.gestures.target_drag = Some(pc);
 
         // Nothing focusable under the cursor: the stale drag target
         // must be cleared so a later re-hover can re-fire.
         let cmds = resolve_action_drag(&mut host, &engine, &assets, MapPoint::new(700.0, 700.0));
         assert!(cmds.is_empty());
-        assert_eq!(host.frontend.input.target_drag, None);
+        assert_eq!(host.frontend.input.gestures.target_drag, None);
     }
 
     // ── resolve_swordfight ──

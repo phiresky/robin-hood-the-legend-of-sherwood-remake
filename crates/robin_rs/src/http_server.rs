@@ -1545,7 +1545,7 @@ fn snapshot_host_debug(
     let bow_hover = match (
         selected_action,
         selected_pc,
-        frontend.input.focused_entity_id,
+        frontend.input.feedback.focused_entity_id,
     ) {
         (engine_profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
             let (target_status, shoot_mode) =
@@ -1576,20 +1576,20 @@ fn snapshot_host_debug(
         "trajectory_mark_count": preview.mark_count(),
         "bow_hover": bow_hover,
         "input": {
-            "focused_entity_id": frontend.input.focused_entity_id,
-            "target_drag": frontend.input.target_drag,
-            "double_status_bar_entity_id": frontend.input.double_status_bar_entity_id,
-            "selected_layer": frontend.input.selected_layer,
-            "selected_sector_idx": frontend.input.selected_sector_idx,
-            "selected_patch_idx": frontend.input.selected_patch_idx,
-            "hovered_door_idx": frontend.input.hovered_door_idx,
-            "valid_position_for_move": frontend.input.valid_position_for_move,
-            "mouse_opacity": frontend.input.mouse_opacity,
-            "mouse_shadow_color": frontend.input.mouse_shadow_color,
+            "focused_entity_id": frontend.input.feedback.focused_entity_id,
+            "target_drag": frontend.input.gestures.target_drag,
+            "double_status_bar_entity_id": frontend.input.feedback.double_status_bar_entity_id,
+            "selected_layer": frontend.input.spatial_hit().selected_layer,
+            "selected_sector_idx": frontend.input.spatial_hit().selected_sector_idx,
+            "selected_patch_idx": frontend.input.spatial_hit().selected_patch_idx,
+            "hovered_door_idx": frontend.input.spatial_hit().hovered_door_idx,
+            "valid_position_for_move": frontend.input.spatial_hit().valid_position_for_move,
+            "mouse_opacity": frontend.input.feedback.mouse_opacity,
+            "mouse_shadow_color": frontend.input.feedback.mouse_shadow_color,
             "left_mouse_down": frontend.input.left_mouse_down(),
-            "right_mouse_down": frontend.input.right_mouse_down,
+            "right_mouse_down": frontend.input.controls.right_mouse_down,
             "is_dragging": frontend.input.is_dragging(),
-            "is_alt": frontend.input.is_alt,
+            "is_alt": frontend.input.controls.is_alt,
         },
     })
 }
