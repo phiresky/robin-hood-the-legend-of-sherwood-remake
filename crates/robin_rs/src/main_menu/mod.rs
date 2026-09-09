@@ -966,9 +966,15 @@ fn render_text_layer(
 
     // ── Auto-update status (bottom-left corner) ─────────────────────
     if let Some(font) = info_font {
-        let line = update_status_line();
-        let y = MENU_H - font.height() as i32 - 4;
-        crate::ingame_menu::layout::render_text_virt_font(renderer, font, transform, &line, 8, y);
+        let status = update_status_text();
+        let line_h = font.height() as i32;
+        let top = MENU_H - status.lines().count() as i32 * line_h - 4;
+        for (i, line) in status.lines().enumerate() {
+            let y = top + i as i32 * line_h;
+            crate::ingame_menu::layout::render_text_virt_font(
+                renderer, font, transform, line, 8, y,
+            );
+        }
     }
 
     // ── Button labels ───────────────────────────────────────────────
@@ -1006,7 +1012,7 @@ fn render_text_layer(
 
 /// Human-readable version and auto-update progress for the menu's bottom-left
 /// corner.
-fn update_status_line() -> String {
+fn update_status_text() -> String {
     let version = crate::version::version_label();
     #[cfg(all(
         feature = "auto-update",
@@ -1018,14 +1024,14 @@ fn update_status_line() -> String {
             Some(UpdateStatus::Downloading {
                 version: update_version,
             }) => {
-                format!("{version} - Downloading update v{update_version}...")
+                format!("{version}\nDownloading update v{update_version}...")
             }
             Some(UpdateStatus::ReadyOnExit {
                 version: update_version,
             }) => {
-                format!("{version} - Update v{update_version} will install on exit")
+                format!("{version}\nUpdate v{update_version} will install on exit")
             }
-            None => format!("{version} - Up to date"),
+            None => format!("{version}\nUp to date"),
         }
     }
     #[cfg(not(all(
@@ -1275,14 +1281,17 @@ mod tests {
     }
 
     #[test]
-    fn update_line_matches_the_available_update_integration() {
-        let line = update_status_line();
+    fn update_text_matches_the_available_update_integration() {
+        let line = update_status_text();
         assert!(line.starts_with(&crate::version::version_label()));
         #[cfg(all(
             feature = "auto-update",
             any(target_os = "windows", target_os = "linux", target_os = "macos")
         ))]
-        assert!(line.ends_with("Up to date"));
+        assert_eq!(
+            line,
+            format!("{}\nUp to date", crate::version::version_label())
+        );
         #[cfg(not(all(
             feature = "auto-update",
             any(target_os = "windows", target_os = "linux", target_os = "macos")
