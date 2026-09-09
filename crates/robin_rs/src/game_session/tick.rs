@@ -596,6 +596,57 @@ pub(super) fn run_forward_ticks(
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ManualHistory {
+    Append,
+    Retained,
+}
+
+/// An admitted manual tick owns exactly one input source. Replay takes
+/// precedence over retained input, but can still reuse an existing rewind
+/// slot. Only the live variant can synthesize input or start a disk record.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+enum ManualFrameSource {
+    Live,
+    Buffered(engine_api::SimulationFrameInput),
+    Replay {
+        input: engine_api::SimulationFrameInput,
+        after: super::runtime::TimelineFrame,
+        history: ManualHistory,
+    },
+}
+
+impl ManualFrameSource {
+    fn records_live_input(&self) -> bool {
+        matches!(self, Self::Live)
+    }
+
+    fn history(&self) -> ManualHistory {
+        match self {
+            Self::Live => ManualHistory::Append,
+            Self::Buffered(_) => ManualHistory::Retained,
+            Self::Replay { history, .. } => *history,
+        }
+    }
+
+    fn replay_after(&self) -> Option<super::runtime::TimelineFrame> {
+        match self {
+            Self::Replay { after, .. } => Some(*after),
+            _ => None,
+        }
+    }
+
+    fn into_input(
+        self,
+        live: impl FnOnce() -> engine_api::SimulationFrameInput,
+    ) -> engine_api::SimulationFrameInput {
+        match self {
+            Self::Live => live(),
+            Self::Buffered(input) | Self::Replay { input, .. } => input,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_forward_ticks_with_session_modals(
     manager: &mut engine_manager_api::EngineManager,
@@ -643,10 +694,11 @@ pub(super) fn run_forward_ticks_with_session_modals(
         };
 
         let mut recorded_modals = super::session_policy::ReplayModalDismissals::default();
-        let (replay_input, replay_timeline_after) = match timeline
-            .consume_replay_frame_for_step()?
-        {
-            super::runtime::ReplayStepAdmission::NoActiveReplay => (None, None),
+        let source = match timeline.consume_replay_frame_for_step()? {
+            super::runtime::ReplayStepAdmission::NoActiveReplay => match buffered_frame {
+                Some(input) => ManualFrameSource::Buffered(input),
+                None => ManualFrameSource::Live,
+            },
             super::runtime::ReplayStepAdmission::Recorded(recorded) => {
                 // A session adapter retains active batch ownership during
                 // recorded forward steps. Graphical debugger scrubbing keeps
@@ -671,12 +723,15 @@ pub(super) fn run_forward_ticks_with_session_modals(
                         recorded.timeline_before, frame
                     ));
                 }
-                (
-                    Some(recorded.input),
-                    Some(super::runtime::TimelineFrame::from_wire(
-                        recorded.timeline_after,
-                    )),
-                )
+                ManualFrameSource::Replay {
+                    input: recorded.input,
+                    after: super::runtime::TimelineFrame::from_wire(recorded.timeline_after),
+                    history: if buffered_frame.is_some() {
+                        ManualHistory::Retained
+                    } else {
+                        ManualHistory::Append
+                    },
+                }
             }
             super::runtime::ReplayStepAdmission::Finished {
                 ordinal,
@@ -692,8 +747,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // so each admitted tick needs its own pre-tick checkpoints. Detect a
         // replay EOF before opening either transaction.
         let engine = &mut manager.engine;
-        let mut transaction =
-            timeline.open_manual_frame(engine, buffered_frame.is_none() && replay_input.is_none());
+        let mut transaction = timeline.open_manual_frame(engine, source.records_live_input());
         transaction.run_hourglass &= game.should_run_hourglass(
             false,
             !game
@@ -707,20 +761,16 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // rewind_active gating — stepping while paused is the whole
         // point of the endpoint.
         let mut display = std::mem::take(&mut host.frontend.engine_display);
-        let simulation_frame = match (buffered_frame.clone(), replay_input) {
-            (_, Some(recorded)) => recorded,
-            (Some(buffered), None) => buffered,
-            (None, None) => transaction.authoritative_input(),
-        };
+        let record_live_input = source.records_live_input();
+        let append_history = source.history() == ManualHistory::Append;
+        let replay_timeline_after = source.replay_after();
+        let simulation_frame = source.into_input(|| transaction.authoritative_input());
         transaction.adopt_authoritative_input(simulation_frame.clone());
         // Buffered scrubbing is not a new live record. The linear recorder
         // stays at its frontier until that retained future has been replayed.
         // TODO: recording a new branch while rewound requires an explicit
         // raw-checkpoint transition, not the save/load projection protocol.
-        timeline.begin_recording(
-            &mut transaction,
-            timeline.replay_player.is_none() && buffered_frame.is_none(),
-        );
+        timeline.begin_recording(&mut transaction, record_live_input);
         game.run_engine_tick(
             host,
             &mut display,
@@ -733,7 +783,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         );
         host.frontend.engine_display = display;
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
-        if buffered_frame.is_none() && after.number() > frame {
+        if append_history && after.number() > frame {
             timeline.rewind_buffer.end_frame_input(simulation_frame);
             if let Some(checker) = timeline.rollback_checker.as_mut() {
                 checker.check_after_commit(host, &timeline.rewind_buffer, engine);
@@ -1124,6 +1174,42 @@ mod tests {
             Game::default(),
             timeline,
         )
+    }
+
+    #[test]
+    fn manual_input_owner_couples_recording_history_and_authoritative_input() {
+        use super::super::runtime::TimelineFrame;
+        use super::{ManualFrameSource, ManualHistory};
+        let retained = engine_api::SimulationFrameInput::no_hourglass();
+        let buffered = ManualFrameSource::Buffered(retained.clone());
+        assert!(!buffered.records_live_input());
+        assert_eq!(buffered.history(), ManualHistory::Retained);
+        assert_eq!(buffered.replay_after(), None);
+        assert!(
+            !buffered
+                .into_input(|| panic!("buffered input is authoritative"))
+                .run_hourglass
+        );
+        for history in [ManualHistory::Append, ManualHistory::Retained] {
+            let replay = ManualFrameSource::Replay {
+                input: retained.clone(),
+                after: TimelineFrame::ZERO,
+                history,
+            };
+            assert!(!replay.records_live_input());
+            assert_eq!(replay.history(), history);
+            assert_eq!(replay.replay_after(), Some(TimelineFrame::ZERO));
+            assert!(
+                !replay
+                    .into_input(|| panic!("replay input is authoritative"))
+                    .run_hourglass
+            );
+        }
+        let live = ManualFrameSource::Live;
+        assert!(live.records_live_input());
+        assert_eq!(live.history(), ManualHistory::Append);
+        assert_eq!(live.replay_after(), None);
+        assert!(live.into_input(Default::default).run_hourglass);
     }
 
     #[test]
