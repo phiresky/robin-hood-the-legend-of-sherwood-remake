@@ -16,10 +16,11 @@ thiserror.workspace = true
 nonmax.workspace = true
 enum-map.workspace = true
 indexmap.workspace = true
+serde_json.workspace = true
+serde-value = "0.7"
 
 [dev-dependencies]
 tempfile.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

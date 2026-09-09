@@ -20,10 +20,10 @@ bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"]
 fs2 = "0.4"
 png = "0.18"
 robin_assets.workspace = true
+robin_util.workspace = true
 robin_engine = { workspace = true, features = ["original-parity"] }
 robin_rs = { path = "../robin_rs", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-serde-value = "0.7"
 serde_json.workspace = true
 sha2 = "0.11"
 tempfile.workspace = true

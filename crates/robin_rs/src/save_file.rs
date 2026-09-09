@@ -159,7 +159,7 @@ fn replay_identity_digest<T: Serialize + ?Sized>(value: &T) -> Result<ReplaySave
     // Engine state contains maps keyed by domain types. Reuse the same
     // JSON-compatible serde conversion as the engine-dump endpoints so those
     // keys receive their stable string representation before JSON encoding.
-    let value = crate::json_value::to_json_value(value)
+    let value = robin_util::json_value::to_json_value(value)
         .context("converting replay save identity to string-keyed JSON")?;
     let bytes = serde_json::to_vec(&value).context("serializing replay save identity")?;
     Ok(ReplaySaveIdentity::Payload(Sha256::digest(bytes).into()))
