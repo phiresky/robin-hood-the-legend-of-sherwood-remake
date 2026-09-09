@@ -3424,10 +3424,28 @@ mod tests {
             .expect("fixture ground geometry");
         assert_eq!(ground.frame_sizes, vec![(2, 1)]);
         assert_eq!(ground.per_frame_offsets, vec![(1, 0)]);
-        assert_eq!(
-            serde_json::to_value(graphical_metadata).unwrap(),
-            serde_json::to_value(headless_metadata).unwrap()
-        );
+        let headless_ground = headless_metadata
+            .0
+            .as_ref()
+            .expect("headless ground geometry");
+        assert_eq!(ground.half_w, headless_ground.half_w);
+        assert_eq!(ground.half_h, headless_ground.half_h);
+        assert_eq!(ground.frame_sizes, headless_ground.frame_sizes);
+        assert_eq!(ground.per_frame_offsets, headless_ground.per_frame_offsets);
+        assert_eq!(graphical_metadata.1, headless_metadata.1);
+        match (graphical_metadata.2, headless_metadata.2) {
+            (Some(graphical), Some(headless)) => {
+                assert_eq!(graphical.corner_size, headless.corner_size);
+                // HitMask already has a persisted representation, including
+                // its private dimensions and every opacity bit.
+                assert_eq!(
+                    serde_json::to_value(graphical.button_hit_mask).unwrap(),
+                    serde_json::to_value(headless.button_hit_mask).unwrap()
+                );
+            }
+            (None, None) => {}
+            _ => panic!("graphical and headless minimap presence differs"),
+        }
     }
 
     #[test]
