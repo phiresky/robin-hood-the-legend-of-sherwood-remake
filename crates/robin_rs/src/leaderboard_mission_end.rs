@@ -1527,27 +1527,27 @@ impl MissionEndReplayExporter for ActiveMissionReplayExporter {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            std::thread::Builder::new()
-                .name("leaderboard-replay-export".to_owned())
-                .spawn(move || {
-                    let result = snapshot
-                        .compact_sync()
-                        .map(|compact| Arc::<[u8]>::from(compact.into_bytes()));
-                    let _ = sender.send(result);
-                })
-                .map_err(|error| format!("spawn ranked replay export worker: {error}"))?;
+            self.exports.export_snapshot(
+                snapshot,
+                Box::new(move |result| {
+                    let _ =
+                        sender.send(result.map(|compact| Arc::<[u8]>::from(compact.into_bytes())));
+                }),
+            );
             Ok(Box::new(NativeReplayExportTask(receiver)))
         }
         #[cfg(target_arch = "wasm32")]
         {
             let (sender, receiver) = async_channel::bounded(1);
-            wasm_bindgen_futures::spawn_local(async move {
-                gloo_timers::future::TimeoutFuture::new(0).await;
-                let result = snapshot
-                    .compact_sync()
-                    .map(|compact| Arc::<[u8]>::from(compact.into_bytes()));
-                let _ = sender.send(result).await;
-            });
+            self.exports.export_snapshot(
+                snapshot,
+                Box::new(move |result| {
+                    // Exactly one result is produced for this bounded channel;
+                    // failure only means the mission-end consumer was dropped.
+                    let _ = sender
+                        .try_send(result.map(|compact| Arc::<[u8]>::from(compact.into_bytes())));
+                }),
+            );
             Ok(Box::new(BrowserReplayExportTask(receiver)))
         }
     }
