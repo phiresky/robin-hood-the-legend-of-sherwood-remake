@@ -633,6 +633,7 @@ fn start_host_submission_signature_task(
 }
 
 pub(super) struct MultiplayerPeerCoSigner {
+    replay_exports: crate::replay_service::ReplayExports,
     port: crate::multiplayer::RankedMultiplayerPort,
     client: crate::leaderboard_ranked_session::RankedSessionClientV1,
     scope_request: ScopeRequestV1,
@@ -657,6 +658,7 @@ impl MultiplayerPeerCoSigner {
         signed: &SignedRankedMissionAdmission,
         mission_id: String,
         starting_campaign_bytes: Arc<[u8]>,
+        replay_exports: crate::replay_service::ReplayExports,
     ) -> Result<Self, String> {
         if port.role() != crate::multiplayer::RankedMultiplayerRole::Client
             || port.local_seat() == robin_engine::player_command::PlayerId::HOST
@@ -684,6 +686,7 @@ impl MultiplayerPeerCoSigner {
         Ok(Self {
             port,
             client,
+            replay_exports,
             scope_request: signed.scope_request.clone(),
             requested_metrics: signed.requested_metrics.clone(),
             campaign_controller_public_key: signed.campaign_controller_public_key,
@@ -717,14 +720,20 @@ impl MultiplayerPeerCoSigner {
             return Ok(true);
         }
         if self.replay_task.is_none() {
-            self.replay_task = Some(ActiveMissionReplayExporter.begin()?);
+            self.replay_task =
+                Some(ActiveMissionReplayExporter::new(self.replay_exports.clone()).begin()?);
         }
         let Some(result) = self.replay_task.as_mut().and_then(|task| task.try_take()) else {
             return Ok(false);
         };
         self.replay_task = None;
         let bytes = result?;
-        let replay = crate::replay_service::process().snapshot()?.parse_sync()?;
+        // Verify the exact frozen artifact we will co-sign, not a second live
+        // snapshot that may belong to a newer recording generation.
+        let compact = std::str::from_utf8(&bytes)
+            .map_err(|error| format!("ranked replay export is not UTF-8: {error}"))?;
+        let (_, replay) = robin_replay_format::decode_compact(compact)
+            .map_err(|error| format!("decode ranked replay export: {error}"))?;
         self.replay_bytes = Some(bytes);
         self.local_replay = Some(replay);
         Ok(true)

@@ -5,6 +5,119 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn mission_journals_and_sprite_publication_are_private() {
+    for (source, owner_name, fields) in [
+        (
+            include_str!("../../src/game_session/runtime.rs"),
+            "MissionFrame",
+            &[
+                "commands",
+                "post_commands",
+                "external_actions",
+                "post_external_actions",
+                "external_facts",
+            ][..],
+        ),
+        (
+            include_str!("../../src/host.rs"),
+            "HostFrontend",
+            &["frame_holder"][..],
+        ),
+    ] {
+        let syntax = syn::parse_file(source).unwrap();
+        let owner = syntax
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == owner_name => Some(item),
+                _ => None,
+            })
+            .expect("capability owner");
+        for name in fields {
+            let field = owner
+                .fields
+                .iter()
+                .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+                .unwrap_or_else(|| panic!("missing {owner_name}.{name}"));
+            assert!(
+                matches!(field.vis, syn::Visibility::Inherited),
+                "{owner_name}.{name} must remain private"
+            );
+        }
+    }
+}
+
+#[test]
+fn ordinary_tick_effects_do_not_receive_aggregate_host_authority() {
+    struct TickSignatures(usize);
+    impl<'ast> Visit<'ast> for TickSignatures {
+        fn visit_signature(&mut self, signature: &'ast syn::Signature) {
+            if [
+                "run_engine_frame_core",
+                "run_engine_tick_core",
+                "run_engine_tick",
+                "run_post_initialize_stage",
+                "run_post_initialize_stage_with_actions",
+            ]
+            .iter()
+            .any(|name| signature.ident == name)
+            {
+                self.0 += 1;
+                struct Arguments;
+                impl<'ast> Visit<'ast> for Arguments {
+                    fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+                        for segment in &ty.path.segments {
+                            assert!(
+                                !["Host", "HostTransport", "EngineManager"]
+                                    .iter()
+                                    .any(|name| segment.ident == name),
+                                "ordinary effects must receive disjoint presentation authority"
+                            );
+                        }
+                        visit::visit_type_path(self, ty);
+                    }
+                }
+                for input in &signature.inputs {
+                    Arguments.visit_fn_arg(input);
+                }
+            }
+            visit::visit_signature(self, signature);
+        }
+    }
+    let mut signatures = TickSignatures(0);
+    for source in [
+        include_str!("../../src/sim_timeline.rs"),
+        include_str!("../../src/game.rs"),
+    ] {
+        signatures.visit_file(&syn::parse_file(source).unwrap());
+    }
+    assert_eq!(signatures.0, 5);
+}
+
+#[test]
+fn replay_authority_has_no_process_singleton() {
+    struct ReplayStatics;
+    impl<'ast> Visit<'ast> for ReplayStatics {
+        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
+            // A test-only serialization lock carries no replay authority.
+            assert_eq!(
+                item.ident, "LOCK",
+                "replay authority must be application-owned, not static"
+            );
+        }
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            assert_ne!(
+                item.sig.ident, "process",
+                "do not restore singleton replay authority"
+            );
+            visit::visit_item_fn(self, item);
+        }
+    }
+    ReplayStatics
+        .visit_file(&syn::parse_file(include_str!("../../src/replay_service.rs")).unwrap());
+}
+
+#[test]
 fn timeline_reconciliation_and_history_are_private_owners() {
     let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
     let owner = runtime

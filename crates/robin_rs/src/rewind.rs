@@ -356,7 +356,7 @@ mod tests {
     fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {
         use crate::sim_timeline::{run_engine_tick_core, run_post_initialize_stage};
         use robin_engine::campaign::Campaign;
-        use robin_engine::engine::{DevState, EngineStateRequest, HostDisplayState};
+        use robin_engine::engine::{DevState, EngineStateRequest};
         use robin_engine::messenger::SimpleMessage;
         use robin_engine::player_command::PlayerCommand;
 
@@ -370,7 +370,7 @@ mod tests {
             4096.0,
         )
         .expect("fixture engine");
-        let mut display = HostDisplayState::default();
+        let mut host = crate::host::Host::default();
         engine
             .advance_frame(
                 &assets,
@@ -380,7 +380,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("zoom command admission");
-        assert!(engine.is_zoom_up_in_progress(&display));
+        assert!(engine.is_zoom_up_in_progress(&host.frontend.engine_display));
 
         // LockAlt is handled after the zoom gate in the simulation tick. It
         // therefore remains pending throughout these active transition
@@ -397,22 +397,44 @@ mod tests {
             .expect("LockAlt message admission");
 
         let mut rewind = RewindBuffer::new();
-        let mut host = crate::host::Host::default();
+        let application_context = host.application_context().clone();
         let mut dev = DevState::default();
         for frame in 0..3 {
             rewind.begin_frame(frame, &engine, &assets);
 
             // Deliberately keep host scratch contradictory. The Engine-owned
             // camera transition is the only gameplay gate.
-            display.background_transform.zoom_to_up = false;
-            display.background_transform.zoom_to_down = true;
-            run_engine_tick_core(&mut host, &mut display, &assets, &mut engine, &mut dev);
-            run_post_initialize_stage(&mut host, &mut display, &assets, &mut engine, &mut dev, &[]);
+            host.frontend.engine_display.background_transform.zoom_to_up = false;
+            host.frontend
+                .engine_display
+                .background_transform
+                .zoom_to_down = true;
+            run_engine_tick_core(
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                host.transport.local_seat(),
+                &assets,
+                &mut engine,
+                &mut dev,
+            );
+            run_post_initialize_stage(
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                host.transport.local_seat(),
+                &assets,
+                &mut engine,
+                &mut dev,
+                &[],
+            );
 
             rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
 
-        assert!(engine.is_zoom_up_in_progress(&display));
+        assert!(engine.is_zoom_up_in_progress(&host.frontend.engine_display));
         assert!(!engine.is_lock_alt());
 
         let rewound = rewind

@@ -131,9 +131,10 @@ fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
 /// Start a separate artifact after restoring the exact bootstrap checkpoint.
 /// Never overwrite the terminal attempt, including an explicit --record path.
 pub(super) fn restart_recording(
+    control: &crate::replay_service::ReplayRecordingControl,
     header: robin_engine::replay::ReplayHeader,
 ) -> std::io::Result<ReplayRecorder> {
-    let mirror = crate::replay_service::process().begin_recording();
+    let mirror = control.begin_recording();
     #[cfg(all(not(target_arch = "wasm32"), not(test)))]
     let primary: Box<dyn std::io::Write + Send> = {
         let default_path = std::path::PathBuf::from(default_replay_path());
@@ -163,6 +164,7 @@ pub(super) fn restart_recording(
 /// [`init_replay_and_rollback`] — replay recorder, replay player,
 /// rollback checker, and the hold-to-rewind snapshot buffer.
 pub(super) struct ReplayAndRollback {
+    pub(super) recording_control: crate::replay_service::ReplayRecordingControl,
     pub(super) recorder: Option<ReplayRecorder>,
     pub(super) player: Option<ReplayPlayer>,
     pub(super) rollback_checker: Option<RollbackChecker>,
@@ -204,7 +206,10 @@ pub(super) fn init_replay_and_rollback(
     // mission construction. Reseeding an already-built Engine cannot recreate
     // random draws performed during level initialization.
     assert!(
-        crate::replay_service::process().pending_mission().is_none(),
+        args.global_options
+            .replay_launches()
+            .pending_mission()
+            .is_none(),
         "pending replay must be consumed and supplied before mission Engine construction"
     );
     let pending_paused = false;
@@ -221,7 +226,7 @@ pub(super) fn init_replay_and_rollback(
     let replay_path: Option<String> = None;
     // A fresh mission gets a fresh generation of the bounded spool. The
     // returned sole writer publishes only complete recorder flush boundaries.
-    let rpc_spool = crate::replay_service::process().begin_recording();
+    let rpc_spool = args.global_options.replay_recording().begin_recording();
     // One-shot mission-map rendering exits before the first simulation
     // frame, so producing an empty replay (and its debug log) would only be
     // an unrelated filesystem side effect of the capture tool.
@@ -414,6 +419,7 @@ pub(super) fn init_replay_and_rollback(
     let rewind_buffer = RewindBuffer::new();
 
     ReplayAndRollback {
+        recording_control: args.global_options.replay_recording(),
         recorder,
         player,
         rollback_checker,
@@ -428,10 +434,6 @@ mod tests {
     use std::io::Write as _;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
-
-    fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::replay_service::replay_spool_test_lock()
-    }
 
     struct ControlledPrimary {
         bytes: Arc<Mutex<Vec<u8>>>,
@@ -464,7 +466,7 @@ mod tests {
 
     #[test]
     fn tee_mirrors_exact_primary_short_write_prefixes() {
-        let _serial = replay_spool_test_lock();
+        let service = crate::replay_service::ReplayService::default();
         let primary_bytes = Arc::new(Mutex::new(Vec::new()));
         let mut tee = TeeWriter {
             primary: Box::new(ControlledPrimary {
@@ -473,7 +475,7 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(false)),
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
-            mirror: crate::replay_service::process().begin_recording(),
+            mirror: service.begin_recording(),
         };
         tee.write_all(b"complete replay record\n").unwrap();
         tee.flush().unwrap();
@@ -485,7 +487,7 @@ mod tests {
             b"complete replay record\n"
         );
         assert_eq!(
-            crate::replay_service::process().snapshot_bytes().unwrap(),
+            service.snapshot_bytes().unwrap(),
             b"complete replay record\n"
         );
     }
@@ -512,7 +514,7 @@ mod tests {
 
     #[test]
     fn tee_never_publishes_primary_write_or_flush_failures() {
-        let _serial = replay_spool_test_lock();
+        let service = crate::replay_service::ReplayService::default();
         let primary_bytes = Arc::new(Mutex::new(Vec::new()));
         let mut tee = TeeWriter {
             primary: Box::new(ControlledPrimary {
@@ -521,12 +523,10 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(true)),
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
-            mirror: crate::replay_service::process().begin_recording(),
+            mirror: service.begin_recording(),
         };
         assert!(tee.write_all(b"rejected\n").is_err());
-        let error = crate::replay_service::process()
-            .snapshot_bytes()
-            .unwrap_err();
+        let error = service.snapshot_bytes().unwrap_err();
         assert!(error.contains("primary replay write failed"), "{error}");
         assert!(
             primary_bytes
@@ -542,12 +542,10 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(false)),
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
-            mirror: crate::replay_service::process().begin_recording(),
+            mirror: service.begin_recording(),
         };
         assert!(tee.write_all(b"zero progress\n").is_err());
-        let error = crate::replay_service::process()
-            .snapshot_bytes()
-            .unwrap_err();
+        let error = service.snapshot_bytes().unwrap_err();
         assert!(error.contains("made no progress"), "{error}");
         assert!(
             primary_bytes
@@ -563,7 +561,7 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(false)),
                 fail_flush: Arc::new(AtomicBool::new(true)),
             }),
-            mirror: crate::replay_service::process().begin_recording(),
+            mirror: service.begin_recording(),
         };
         tee.write_all(b"accepted by primary\n").unwrap();
         assert!(tee.flush().is_err());
@@ -574,9 +572,7 @@ mod tests {
                 .as_slice(),
             b"accepted by primary\n"
         );
-        let error = crate::replay_service::process()
-            .snapshot_bytes()
-            .unwrap_err();
+        let error = service.snapshot_bytes().unwrap_err();
         assert!(error.contains("primary replay flush failed"), "{error}");
         assert!(tee.flush().is_err(), "poisoned mirror must not recover");
     }

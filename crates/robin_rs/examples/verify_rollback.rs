@@ -66,10 +66,14 @@ fn main() {
         robin_rs::game_session::load_peasant_name_pool(&mut text_res);
     assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res);
     let mut host = Host::scratch(1024.0, 768.0);
-    if let Err(e) = host.frontend.frame_holder_mut().initialize_sprite_bank(".") {
+    if let Err(e) = host
+        .frontend
+        .frame_holder_before_publication_mut()
+        .initialize_sprite_bank(".")
+    {
         tracing::warn!("sprite bank: {e}");
     }
-    assets.bank_signature = host.frontend.frame_holder.signature();
+    assets.bank_signature = host.frontend.frame_holder().signature();
 
     // Load the mission script before level init so the level loader can
     // resolve `current_mission_idx`'s script from LevelAssets.

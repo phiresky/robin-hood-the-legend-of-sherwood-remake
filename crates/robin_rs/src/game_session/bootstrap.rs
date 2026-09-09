@@ -1314,7 +1314,10 @@ impl HeadlessMissionBuilder {
     ) -> HeadlessBuildOutcome {
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
-            crate::replay_service::process().pending_mission().is_some(),
+            args.global_options
+                .replay_launches()
+                .pending_mission()
+                .is_some(),
         ) {
             return HeadlessBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
@@ -1438,7 +1441,10 @@ impl InteractiveMissionBuilder {
 
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
-            crate::replay_service::process().pending_mission().is_some(),
+            args.global_options
+                .replay_launches()
+                .pending_mission()
+                .is_some(),
         ) {
             return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
@@ -2046,6 +2052,7 @@ mod tests {
         .unwrap();
         let args = crate::main_entry::CliArgs {
             replay_data: Some(replay),
+            global_options: callbacks.application_context().clone(),
             ..Default::default()
         };
         let profiles = std::sync::Arc::clone(&bootstrap.loaded.assets.profile_manager);

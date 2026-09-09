@@ -976,7 +976,7 @@ pub(crate) async fn run_session(
     let mut replay_restart: Option<crate::replay_service::PendingReplay> = None;
     loop {
         let pending_replay = choose_pending_replay(
-            crate::replay_service::process().take_pending(),
+            args.global_options.replay_launches().take_pending(),
             &mut replay_restart,
         );
         let mut mission_args_storage = None;
@@ -1535,7 +1535,7 @@ pub(crate) async fn run_mission(
             .replay_data
             .as_ref()
             .map(|_| (campaign.clone(), rng_seed, sim_config));
-        let mut pending_replay = crate::replay_service::process().take_pending();
+        let mut pending_replay = args.global_options.replay_launches().take_pending();
         loop {
             match prepare_pending_direct_replay(
                 &mut pending_replay,
@@ -1575,7 +1575,7 @@ pub(crate) async fn run_mission(
             );
             let outcome_sim_config = outcome.sim_config;
             campaign = outcome.campaign;
-            pending_replay = crate::replay_service::process().take_pending();
+            pending_replay = args.global_options.replay_launches().take_pending();
             if pending_replay.is_some() {
                 // A newly admitted replay owns the next cold construction. Do not
                 // restore the previous mission checkpoint or reuse its selection.

@@ -1538,7 +1538,9 @@ pub(super) fn prepare_mission(
         let asset_cache =
             cache_owner.get_or_build(host.frontend.shipping.as_deref(), profiles, files.clone());
         match asset_cache.sprite_bank.as_ref() {
-            Some(bank) => *host.frontend.frame_holder_mut() = bank.clone(),
+            Some(bank) => host
+                .frontend
+                .install_frame_holder_before_publication(bank.clone()),
             None => tracing::warn!("Sprite bank unavailable in application asset cache"),
         }
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -1550,7 +1552,7 @@ pub(super) fn prepare_mission(
             Err(error) => return Err(MissionLoadError::new(campaign, error.to_string())),
         };
     if let Err(error) = custom_sprites.install(
-        host.frontend.frame_holder_mut(),
+        host.frontend.frame_holder_before_publication_mut(),
         assets.sprite_scriptor_mut(),
     ) {
         return Err(MissionLoadError::new(campaign, error.to_string()));
@@ -1558,7 +1560,7 @@ pub(super) fn prepare_mission(
     timer.step("hackable character preload");
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
-    assets.bank_signature = host.frontend.frame_holder.signature();
+    assets.bank_signature = host.frontend.frame_holder().signature();
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
@@ -1909,7 +1911,7 @@ pub(super) fn prepare_mission(
     let (night_r, night_g, night_b) = presentation_initial_ambiance.night_color_rgb();
     let initial_shadow_key = robin_util::color::rgb565(night_r, night_g, night_b);
     host.frontend
-        .frame_holder_mut()
+        .frame_holder_before_publication_mut()
         .apply_arno_law(initial_shadow_key);
     assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
     timer.step("initial sprite shadow and opacity publication");

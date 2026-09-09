@@ -47,16 +47,22 @@ impl<'de> Deserialize<'de> for ReplayService {
     }
 }
 
-/// The application composition root's process-lived service. Domain consumers
-/// depend on this service, never on HTTP's transport or responder types.
-/// TODO: inject scoped service references through startup/session ownership so
-/// independently hosted clients can coexist without this singleton adapter.
-pub fn process() -> &'static ReplayService {
-    static SERVICE: OnceLock<ReplayService> = OnceLock::new();
-    SERVICE.get_or_init(ReplayService::default)
+impl std::fmt::Debug for ReplayService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ReplayService { live authority }")
+    }
 }
 
 impl ReplayService {
+    pub fn recording(self: &Arc<Self>) -> ReplayRecordingControl {
+        ReplayRecordingControl(self.clone())
+    }
+    pub fn exports(self: &Arc<Self>) -> ReplayExports {
+        ReplayExports(self.clone())
+    }
+    pub fn launches(self: &Arc<Self>) -> ReplayLaunches {
+        ReplayLaunches(self.clone())
+    }
     /// Single-slot admission is first-accepted-wins until the launch is consumed.
     /// A rejected request never displaces an already acknowledged launch.
     pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
@@ -155,6 +161,70 @@ impl ReplayService {
             gloo_timers::future::TimeoutFuture::new(0).await;
             complete(snapshot.compact_sync());
         });
+    }
+}
+
+macro_rules! replay_capability {
+    ($name:ident) => {
+        #[derive(Clone, Debug)]
+        pub struct $name(Arc<ReplayService>);
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(concat!("live ", stringify!($name)))
+            }
+        }
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+                Err(serde::de::Error::custom(
+                    "replay capabilities must be injected by their application owner",
+                ))
+            }
+        }
+    };
+}
+replay_capability!(ReplayRecordingControl);
+replay_capability!(ReplayExports);
+replay_capability!(ReplayLaunches);
+
+/// Recording authority does not include export or replay admission.
+/// ```compile_fail
+/// fn export(control: robin_rs::replay_service::ReplayRecordingControl) {
+///     control.snapshot_bytes();
+/// }
+/// ```
+/// ```compile_fail
+/// fn escalate(control: robin_rs::replay_service::ReplayRecordingControl) {
+///     let root = control.0;
+/// }
+/// ```
+impl ReplayRecordingControl {
+    pub fn begin_recording(&self) -> ReplaySpoolWriter {
+        self.0.begin_recording()
+    }
+    pub(crate) fn invalidate(&self, reason: impl Into<String>) {
+        self.0.invalidate(reason);
+    }
+}
+impl ReplayExports {
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
+        self.0.snapshot_bytes()
+    }
+    pub(crate) fn snapshot(&self) -> Result<ReplaySnapshot, String> {
+        self.0.snapshot()
+    }
+    pub(crate) fn export(&self, complete: ExportCompletion) {
+        self.0.export(complete);
+    }
+}
+impl ReplayLaunches {
+    pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
+        self.0.admit_pending(replay)
+    }
+    pub fn take_pending(&self) -> Option<PendingReplay> {
+        self.0.take_pending()
+    }
+    pub fn pending_mission(&self) -> Option<String> {
+        self.0.pending_mission()
     }
 }
 
@@ -419,6 +489,53 @@ impl ReplaySnapshot {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn injected_capabilities_share_only_their_application_lifecycle() {
+        let first = Arc::new(ReplayService::default());
+        let second = Arc::new(ReplayService::default());
+        let recording = first.recording();
+        let exports = first.exports();
+        let launches = first.launches();
+        let mut writer = recording.begin_recording();
+        writer.write_all(b"isolated\n").unwrap();
+        writer.flush().unwrap();
+        launches.admit_pending(pending("first", true)).unwrap();
+        assert_eq!(exports.snapshot_bytes().unwrap(), b"isolated\n");
+        assert!(second.exports().snapshot_bytes().unwrap().is_empty());
+        assert!(second.launches().take_pending().is_none());
+        drop(first);
+        assert_eq!(
+            launches.take_pending().unwrap().data.header().mission_id,
+            "first"
+        );
+        recording.invalidate("retired");
+        assert!(exports.snapshot_bytes().unwrap_err().contains("retired"));
+        assert!(writer.flush().is_err());
+    }
+
+    #[test]
+    fn capability_diagnostics_cannot_reconstitute_authority() {
+        let service = Arc::new(ReplayService::default());
+        assert!(
+            serde_json::from_value::<ReplayRecordingControl>(
+                serde_json::to_value(service.recording()).unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ReplayExports>(
+                serde_json::to_value(service.exports()).unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ReplayLaunches>(
+                serde_json::to_value(service.launches()).unwrap()
+            )
+            .is_err()
+        );
+    }
 
     fn pending(mission: &str, paused: bool) -> PendingReplay {
         let spool = ReplaySpool::new(2 * 1024 * 1024);

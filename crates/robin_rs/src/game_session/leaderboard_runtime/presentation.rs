@@ -53,7 +53,8 @@ impl MissionEndLeaderboardTaskState {
     ) -> MissionEndLeaderboardTaskProgress {
         match &mut self.phase {
             MissionEndLeaderboardTaskPhase::Preparing(preparation) => {
-                let Some(result) = preparation.poll_bundle() else {
+                let replay_exports = self.application_context.replay_exports();
+                let Some(result) = preparation.poll_bundle(&replay_exports) else {
                     render_preparing(renderer, resources, cursor);
                     return MissionEndLeaderboardTaskProgress::Pending;
                 };
@@ -100,6 +101,7 @@ impl MissionEndLeaderboardTaskState {
                         signed,
                         preparation.mission_id.clone(),
                         preparation.starting_campaign_bytes.clone(),
+                        replay_exports.clone(),
                     ) {
                         Ok(peer) => {
                             let receipt_controller_public_key =
@@ -147,6 +149,7 @@ impl MissionEndLeaderboardTaskState {
                         Box::new(HttpMissionEndLeaderboardBackend::new(api)),
                         peer,
                         receipt_controller_public_key,
+                        replay_exports,
                     )
                 } else {
                     MissionEndLeaderboardController::new(
@@ -154,7 +157,7 @@ impl MissionEndLeaderboardTaskState {
                         preferences,
                         Box::new(HttpMissionEndLeaderboardBackend::new(api)),
                         authorizer,
-                        Box::new(ActiveMissionReplayExporter),
+                        Box::new(ActiveMissionReplayExporter::new(replay_exports)),
                     )
                 };
                 let mut controller = match controller {

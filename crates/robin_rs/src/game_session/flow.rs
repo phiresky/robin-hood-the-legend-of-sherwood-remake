@@ -129,10 +129,13 @@ impl InteractiveMission {
         // PostInitialize dispatch around lines 1835-1841).
         if let Some(output_path) = args.mission_start_map_output.as_deref() {
             if args.mission_start_reveal_all {
-                let mut display = std::mem::take(&mut host.frontend.engine_display);
+                let application_context = host.application_context().clone();
                 crate::sim_timeline::run_engine_frame_core(
-                    host,
-                    &mut display,
+                    &mut host.frontend,
+                    &mut host.audio,
+                    &mut host.effects,
+                    &application_context,
+                    host.transport.local_seat(),
                     assets,
                     &mut manager.engine,
                     dev,
@@ -141,7 +144,7 @@ impl InteractiveMission {
                     ])
                     .with_hourglass(false),
                 );
-                host.frontend.engine_display = display;
+
                 tracing::info!("Mission-start map: revealed all blipped NPCs");
             }
             host.frontend.draw_order = manager.engine.compute_display_order();
@@ -304,7 +307,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 engine,
                 assets,
                 dev,
-                external_actions,
+                mut external_actions,
                 ..
             } = world.post_tick_input_phase(&mut frame);
             pre_render_engine_setup(host);
@@ -313,7 +316,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 host,
                 assets,
                 dev,
-                external_actions,
+                &mut external_actions,
                 &mut frontend.presentation.renderer,
                 &mut frontend.resources.cursor,
                 &mut frontend.presentation.sprites.cursor_renderer,
@@ -799,21 +802,24 @@ fn run_interactive_post_initialize(
     dev: &mut robin_engine::engine::DevState,
     frame: &mut MissionFrame,
 ) {
-    let mut display = std::mem::take(&mut host.frontend.engine_display);
+    let application_context = host.application_context().clone();
     let post_initialized = runtime.cross_post_initialize(|| {
         crate::sim_timeline::run_post_initialize_stage_with_actions(
-            host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             assets,
             &mut manager.engine,
             dev,
             frame.unapplied_post_external_actions(),
-            &frame.post_commands.commands,
+            frame.post_commands(),
             frame.run_post_initialize,
         )
     });
     frame.run_post_initialize = post_initialized;
-    host.frontend.engine_display = display;
+
     if post_initialized
         && let Some(net) = host.transport.net()
         && host.transport.local_seat() == engine_player_command::PlayerId::HOST

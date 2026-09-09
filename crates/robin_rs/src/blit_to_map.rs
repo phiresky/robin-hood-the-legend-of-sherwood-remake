@@ -57,7 +57,7 @@ pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::r
         }
 
         let Some((_sw, _sh)) = renderer.ensure_sprite_cached(
-            &frontend.frame_holder,
+            frontend.frame_holder(),
             decal.bank_id,
             SpriteVariant::Day,
             decal.shadow_color,
@@ -96,8 +96,8 @@ fn build_background_decal(
     snapshot: Option<PendingBgBlitDecal>,
 ) -> Option<BackgroundDecal> {
     if let Some(snapshot) = snapshot {
-        let width = frontend.frame_holder.sprite_width(snapshot.bank_id) as u32;
-        let height = frontend.frame_holder.sprite_height(snapshot.bank_id) as u32;
+        let width = frontend.frame_holder().sprite_width(snapshot.bank_id) as u32;
+        let height = frontend.frame_holder().sprite_height(snapshot.bank_id) as u32;
         if width == 0 || height == 0 || (width == 1 && height == 1) {
             tracing::warn!(
                 ?entity_id,
@@ -114,7 +114,7 @@ fn build_background_decal(
             width,
             height,
             shadow_color: snapshot.shadow_color,
-            shadow_level: frontend.frame_holder.global_shadow(),
+            shadow_level: frontend.frame_holder().global_shadow(),
         });
     }
 
