@@ -52,20 +52,6 @@ pub enum GamePadButton {
 }
 
 impl GamePadButton {
-    /// All defined button variants, for iteration.
-    pub const ALL: &[GamePadButton] = &[
-        Self::ActionB,
-        Self::ActionA,
-        Self::ActionC,
-        Self::CancelParade,
-        Self::SelectPrevCharacter,
-        Self::AltChoice,
-        Self::SelectNextCharacter,
-        Self::QaManage,
-        Self::CrouchChinese,
-        Self::SimulatedLeftMouse,
-    ];
-
     pub fn index(self) -> usize {
         self as usize
     }
@@ -137,21 +123,6 @@ impl Default for JoystickState {
             buttons: [0; MAX_BUTTONS],
         }
     }
-}
-
-// ── Button edge detection ───────────────────────────────────────────
-
-/// Edge-detection result for a button between two frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonEdge {
-    /// Button is up in both frames.
-    Up,
-    /// Button transitioned from up to down (just pushed).
-    Pushed,
-    /// Button is held down in both frames.
-    Held,
-    /// Button transitioned from down to up (just released).
-    Released,
 }
 
 // ── GamePadState — current + previous for edge detection ────────────
@@ -409,34 +380,27 @@ impl GamePadState {
         self.current.buttons[button.index()] == 0 && self.previous.buttons[button.index()] != 0
     }
 
-    /// Full edge-detection for a button.
-    pub fn button_edge(&self, button: GamePadButton) -> ButtonEdge {
-        let cur = self.current.buttons[button.index()] != 0;
-        let prev = self.previous.buttons[button.index()] != 0;
-        match (prev, cur) {
-            (false, false) => ButtonEdge::Up,
-            (false, true) => ButtonEdge::Pushed,
-            (true, true) => ButtonEdge::Held,
-            (true, false) => ButtonEdge::Released,
-        }
-    }
-
     // ── Axis queries ────────────────────────────────────────────
-
-    /// Main stick X axis (raw).
-    pub fn axis_x(&self) -> i32 {
-        self.current.x
-    }
 
     /// Main stick as `(x, y)` floats.
     pub fn main_stick(&self) -> (f32, f32) {
         (self.current.x as f32, self.current.y as f32)
     }
 
-    /// Whether the main stick magnitude exceeds the run threshold.
-    pub fn is_running(&self) -> bool {
+    /// Per-cadence movement displacement and gait. A centered stick emits no move.
+    fn movement_offset(&self) -> Option<(f32, f32, bool)> {
         let (x, y) = self.main_stick();
-        (x * x + y * y).sqrt() > RUN_THRESHOLD
+        if x == 0.0 && y == 0.0 {
+            return None;
+        }
+        let norm = (x * x + y * y).sqrt();
+        let running = norm > RUN_THRESHOLD;
+        let scale = if running {
+            3.0 * MOVE_UNIT / norm
+        } else {
+            MOVE_UNIT / norm
+        };
+        Some((x * scale, y * scale, running))
     }
 
     /// Simulated mouse delta from Rz and Slider\[0\], centered at
@@ -452,11 +416,6 @@ impl GamePadState {
     /// POV hat 0 direction.
     pub fn pov(&self) -> PovDirection {
         PovDirection::from_raw(self.current.povs[0])
-    }
-
-    /// Current joystick state (read-only).
-    pub fn current(&self) -> &JoystickState {
-        &self.current
     }
 
     // ── Gamepad event folding ─────────────────────────────────────
@@ -629,19 +588,10 @@ impl GamePadState {
             .and_then(|e| e.human_data())
             .is_some_and(|h| !h.opponents.is_empty());
 
-        let (x, y) = self.main_stick();
-        if (x != 0.0 || y != 0.0) && engine.frame_counter().is_multiple_of(5) {
-            let norm = (x * x + y * y).sqrt();
-            let running = norm > RUN_THRESHOLD;
-            let scale = if running {
-                3.0 * MOVE_UNIT / norm
-            } else {
-                MOVE_UNIT / norm
-            };
-            let dest = engine_coordinates::MapPoint::new(
-                leader_pos.x + x * scale,
-                leader_pos.y + y * scale,
-            );
+        if engine.frame_counter().is_multiple_of(5)
+            && let Some((dx, dy, running)) = self.movement_offset()
+        {
+            let dest = engine_coordinates::MapPoint::new(leader_pos.x + dx, leader_pos.y + dy);
 
             // Validity check: probe the destination and only dispatch
             // the move when the sector is a patch (auto-valid after the
@@ -1228,14 +1178,6 @@ fn vector_to_sector_0_to_15(x: f32, y: f32) -> u16 {
     ((degrees / 22.5).round() as u16) % 16
 }
 
-// ── Re-exported constants for use by other modules ──────────────────
-
-pub const MOUSE_CONVERSION_FACTOR: f32 = MOUSE_CONVERSION;
-pub const MOVEMENT_UNIT: f32 = MOVE_UNIT;
-pub const RUN_THRESHOLD_VALUE: f32 = RUN_THRESHOLD;
-pub const HIT_THRESHOLD_VALUE: f32 = HIT_THRESHOLD;
-pub const QA_TIMER_LIMIT_MS: u32 = QA_TIMER_LIMIT;
-
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1299,7 +1241,6 @@ mod tests {
         let mut pad = GamePadState::new();
 
         // Initially up
-        assert_eq!(pad.button_edge(GamePadButton::ActionA), ButtonEdge::Up);
         assert!(!pad.is_down(GamePadButton::ActionA));
         assert!(!pad.is_pushed(GamePadButton::ActionA));
         assert!(!pad.is_released(GamePadButton::ActionA));
@@ -1308,7 +1249,6 @@ mod tests {
         let mut state = JoystickState::default();
         state.buttons[GamePadButton::ActionA.index()] = 1;
         pad.update(state);
-        assert_eq!(pad.button_edge(GamePadButton::ActionA), ButtonEdge::Pushed);
         assert!(pad.is_down(GamePadButton::ActionA));
         assert!(pad.is_pushed(GamePadButton::ActionA));
         assert!(!pad.is_released(GamePadButton::ActionA));
@@ -1317,24 +1257,21 @@ mod tests {
         let mut state = JoystickState::default();
         state.buttons[GamePadButton::ActionA.index()] = 1;
         pad.update(state);
-        assert_eq!(pad.button_edge(GamePadButton::ActionA), ButtonEdge::Held);
         assert!(pad.is_down(GamePadButton::ActionA));
         assert!(!pad.is_pushed(GamePadButton::ActionA));
         assert!(!pad.is_released(GamePadButton::ActionA));
 
         // Release → Released
         pad.update(JoystickState::default());
-        assert_eq!(
-            pad.button_edge(GamePadButton::ActionA),
-            ButtonEdge::Released
-        );
         assert!(!pad.is_down(GamePadButton::ActionA));
         assert!(!pad.is_pushed(GamePadButton::ActionA));
         assert!(pad.is_released(GamePadButton::ActionA));
 
         // Back to Up
         pad.update(JoystickState::default());
-        assert_eq!(pad.button_edge(GamePadButton::ActionA), ButtonEdge::Up);
+        assert!(!pad.is_down(GamePadButton::ActionA));
+        assert!(!pad.is_pushed(GamePadButton::ActionA));
+        assert!(!pad.is_released(GamePadButton::ActionA));
     }
 
     #[test]
@@ -1361,26 +1298,31 @@ mod tests {
     }
 
     #[test]
-    fn is_running_threshold() {
+    fn movement_offset_preserves_neutral_threshold_gait_and_direction() {
         let mut pad = GamePadState::new();
-
-        // Below threshold
-        let state = JoystickState {
-            x: 10000,
-            y: 10000,
-            ..Default::default()
-        };
-        pad.update(state);
-        assert!(!pad.is_running());
-
-        // Above threshold
-        let state = JoystickState {
-            x: 25000,
-            y: 25000,
-            ..Default::default()
-        };
-        pad.update(state);
-        assert!(pad.is_running());
+        assert_eq!(pad.movement_offset(), None);
+        for (x, y, expected_running) in [
+            (1, 0, false),
+            (28000, 0, false),
+            (28001, 0, true),
+            (-28000, 0, false),
+            (0, -28001, true),
+            (10000, 10000, false),
+            (-25000, 25000, true),
+        ] {
+            pad.update(JoystickState {
+                x,
+                y,
+                ..Default::default()
+            });
+            let (dx, dy, running) = pad.movement_offset().unwrap();
+            assert_eq!(running, expected_running, "stick ({x}, {y})");
+            let distance = (dx * dx + dy * dy).sqrt();
+            let expected_distance = if running { 3.0 * MOVE_UNIT } else { MOVE_UNIT };
+            assert!((distance - expected_distance).abs() < 0.001);
+            assert_eq!(dx.signum(), (x as f32).signum());
+            assert_eq!(dy.signum(), (y as f32).signum());
+        }
     }
 
     #[test]
@@ -1497,7 +1439,7 @@ mod tests {
 
         let json = serde_json::to_string(&pad).unwrap();
         let restored: GamePadState = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.axis_x(), 1234);
+        assert_eq!(restored.current.x, 1234);
         assert!(restored.is_down(GamePadButton::ActionB));
     }
 
@@ -1740,6 +1682,6 @@ mod tests {
         pad.apply_axis_event(0, 15000);
         let engine = empty_engine();
         let _ = pad.process_gamepad_input(0, &engine, &mut threaded);
-        assert_eq!(pad.current().x, 15000);
+        assert_eq!(pad.current.x, 15000);
     }
 }
