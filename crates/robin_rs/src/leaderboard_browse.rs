@@ -4,7 +4,7 @@
 //! events are emitted only after MIME, length, digest, bounded compact decode,
 //! current engine identity, and canonical re-encoding all succeed.
 
-use crate::leaderboard_http::{HttpTask, HttpTransportError};
+use crate::leaderboard_http::HttpTask;
 use crate::leaderboard_service::{
     CanonicalReplayDownload, LeaderboardApi, LeaderboardServiceError, decode_board,
     decode_campaign_session_detail, decode_metadata, decode_replay_download, decode_run_detail,
@@ -285,13 +285,6 @@ fn browser_download_error(value: wasm_bindgen::JsValue) -> String {
     value
         .as_string()
         .unwrap_or_else(|| "browser rejected replay download".to_owned())
-}
-
-#[allow(dead_code)]
-fn _transport_result_type(
-    result: Result<crate::leaderboard_http::HttpResponse, HttpTransportError>,
-) -> Result<crate::leaderboard_http::HttpResponse, HttpTransportError> {
-    result
 }
 
 #[cfg(test)]

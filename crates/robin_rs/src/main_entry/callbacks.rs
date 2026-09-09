@@ -4,7 +4,7 @@ use crate::app_effect::{AppEffect, AppEffectExecutionError, AppEffectQueue};
 use crate::autosave::{AutosaveCoordinator, AutosavePollResult, AutosaveReason};
 use crate::host::ApplicationContext;
 use crate::leaderboard_mission_end::{
-    MissionEndLeaderboardBackground, MissionEndLeaderboardController, MissionSubmissionState,
+    MissionEndLeaderboardBackground, MissionEndLeaderboardController,
 };
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
@@ -376,11 +376,6 @@ impl RustCallbacks {
 
     pub(crate) fn application_context(&self) -> ApplicationContext {
         self.application_context.clone()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn take_leaderboard_submission_notice(&mut self) -> Option<MissionSubmissionState> {
-        self.leaderboard_background.take_completed()
     }
 
     pub(crate) fn autosave_enabled(&self) -> bool {

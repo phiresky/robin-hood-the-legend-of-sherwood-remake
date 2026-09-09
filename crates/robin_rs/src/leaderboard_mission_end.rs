@@ -28,7 +28,6 @@ use robin_run_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -619,12 +618,9 @@ pub struct MissionEndLeaderboardController {
 #[derive(Default)]
 pub struct MissionEndLeaderboardBackground {
     active: Vec<MissionEndLeaderboardController>,
-    completed: VecDeque<MissionSubmissionState>,
 }
 
 impl MissionEndLeaderboardBackground {
-    const MAX_COMPLETED_NOTICES: usize = 16;
-
     pub fn adopt(&mut self, controller: MissionEndLeaderboardController) {
         assert!(
             controller.is_closed(),
@@ -662,8 +658,7 @@ impl MissionEndLeaderboardBackground {
             }
             if self.active[index].can_retire_after_close() {
                 let controller = self.active.swap_remove(index);
-                let state = controller.submission_state().clone();
-                match &state {
+                match controller.submission_state() {
                     MissionSubmissionState::Queued(accepted) => tracing::info!(
                         submission_id = %accepted.submission_id,
                         "background leaderboard submission was accepted"
@@ -676,10 +671,6 @@ impl MissionEndLeaderboardBackground {
                         "background leaderboard controller retired in an unexpected state"
                     ),
                 }
-                if self.completed.len() == Self::MAX_COMPLETED_NOTICES {
-                    self.completed.pop_front();
-                }
-                self.completed.push_back(state);
             } else {
                 index += 1;
             }
@@ -688,11 +679,6 @@ impl MissionEndLeaderboardBackground {
 
     pub fn active_count(&self) -> usize {
         self.active.len()
-    }
-
-    /// Preserve completion/failure for a later UI notification consumer.
-    pub fn take_completed(&mut self) -> Option<MissionSubmissionState> {
-        self.completed.pop_front()
     }
 }
 
@@ -1720,6 +1706,7 @@ mod tests {
         SpeechTimingAuthorityV1, SubmissionLifecycleV1,
     };
     use std::collections::BTreeMap;
+    use std::collections::VecDeque;
     use std::sync::Mutex;
 
     #[test]
@@ -2511,20 +2498,23 @@ mod tests {
         let mut background = MissionEndLeaderboardBackground::default();
         background.adopt(controller);
         assert_eq!(background.active_count(), 1);
-        assert!(background.take_completed().is_none());
+        let mut handed_off = 0;
 
         // Foreground presentation/mission state has already relinquished the
         // controller. Several later frames may pass before HTTP completes.
         for _ in 0..4 {
-            background.poll_with_receipt_sink(|_| Ok(true));
+            background.poll_with_receipt_sink(|_| {
+                handed_off += 1;
+                Ok(true)
+            });
             assert_eq!(background.active_count(), 1);
         }
-        background.poll_with_receipt_sink(|_| Ok(true));
+        background.poll_with_receipt_sink(|_| {
+            handed_off += 1;
+            Ok(true)
+        });
         assert_eq!(background.active_count(), 0);
-        assert!(matches!(
-            background.take_completed(),
-            Some(MissionSubmissionState::Queued(_))
-        ));
+        assert_eq!(handed_off, 1);
         assert_eq!(calls.lock().unwrap().uploads, 1);
     }
 

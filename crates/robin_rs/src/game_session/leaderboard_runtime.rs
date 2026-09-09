@@ -98,11 +98,6 @@ impl RankedMissionAdmission {
         Self::BrowseOnly { reason }
     }
 
-    #[allow(dead_code)]
-    pub(super) fn authorized(input: MissionEndSubmissionInput) -> Self {
-        Self::Authorized(input)
-    }
-
     fn materialize_terminal(
         &mut self,
         mission_id: &str,
