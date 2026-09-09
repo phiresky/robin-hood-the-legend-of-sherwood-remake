@@ -154,6 +154,23 @@ pub fn load_replay_spec(spec: &str) -> Result<robin_engine::replay::ReplayData, 
     {
         // JSONL is a visibly named, trusted local developer lane. It is never
         // auto-detected from bytes and is unavailable to network admission.
+        let path = std::path::Path::new(spec);
+        let archive = if path.is_dir() {
+            Some(path)
+        } else {
+            path.parent()
+                .filter(|parent| parent.join("mission.json").is_file())
+        };
+        if let Some(directory) = archive {
+            let replay = if path.is_dir() {
+                crate::replay_archive::load_directory(directory)
+            } else {
+                crate::replay_archive::load_through_chunk(path)
+            }
+            .map_err(|error| ReplayLoadError::LocalJsonl(format!("{error:#}")))?;
+            validate_replay_data(&replay)?;
+            return Ok(replay);
+        }
         if spec.ends_with(".rhrec.jsonl") {
             let replay = robin_engine::replay::ReplayData::from_file(spec)
                 .map_err(ReplayLoadError::LocalJsonl)?;

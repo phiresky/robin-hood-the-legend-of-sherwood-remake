@@ -38,12 +38,46 @@ fn replay_attempt_identity(
     use robin_engine::player_command::PlayerCommand;
     let campaign: robin_engine::campaign::Campaign =
         bitcode::decode(&data.header().campaign).map_err(|e| e.to_string())?;
+    let mut run = campaign.history_run_id();
+    let mut sequence = campaign
+        .latest_mission_attempt()
+        .map_or(0, |attempt| attempt.sequence())
+        .checked_add(1)
+        .ok_or("Attempt sequence overflow")?;
     let mut terminal_nonce = None;
     let mut terminal_count = 0;
     let mut completed_at = None;
-    for frame in
-        (0..data.frame_count()).map(|i| data.frame(i).expect("validated replay has every frame"))
-    {
+    let mut markers = std::collections::BTreeMap::new();
+    for ordinal in 0..data.frame_count() {
+        if data.save_marker_for_frame(ordinal).is_some() {
+            markers.insert(
+                ordinal,
+                (run, sequence, terminal_nonce, terminal_count, completed_at),
+            );
+        }
+        if let Some(load) = data.load_back_for_frame(ordinal) {
+            if let Some(snapshot) = &load.snapshot {
+                let save: crate::save_file::GameSaveFile =
+                    serde_json::from_slice(&snapshot.payload).map_err(|error| error.to_string())?;
+                let campaign = save.engine.campaign();
+                run = campaign.history_run_id();
+                sequence = campaign
+                    .latest_mission_attempt()
+                    .map_or(0, |attempt| attempt.sequence())
+                    .checked_add(1)
+                    .ok_or("Attempt sequence overflow")?;
+                terminal_nonce = None;
+                terminal_count = 0;
+                completed_at = None;
+            } else {
+                (run, sequence, terminal_nonce, terminal_count, completed_at) = *markers
+                    .get(&load.to_frame)
+                    .ok_or("attempt identity references a missing save marker")?;
+            }
+        }
+        let frame = data
+            .frame(ordinal)
+            .expect("validated replay has every frame");
         for input in frame
             .input
             .commands
@@ -65,15 +99,9 @@ fn replay_attempt_identity(
     if terminal_count != 1 {
         return Ok(None);
     }
-    let run = campaign
-        .history_run_id()
+    let run = run
         .or(terminal_nonce)
         .ok_or("Recording has no campaign identity")?;
-    let sequence = campaign
-        .latest_mission_attempt()
-        .map_or(0, |attempt| attempt.sequence())
-        .checked_add(1)
-        .ok_or("Attempt sequence overflow")?;
     Ok(Some((
         MissionAttemptKey {
             campaign_run_id: run,
@@ -97,12 +125,13 @@ fn backfill() -> Result<(), Box<dyn std::error::Error>> {
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        if !path.to_string_lossy().ends_with(".rhrec.jsonl")
+        if !(path.to_string_lossy().ends_with(".rhrec.jsonl")
+            || path.join("mission.json").is_file())
             || entry.metadata()?.len() > 64 * 1024 * 1024
         {
             continue;
         }
-        let data = match robin_engine::replay::ReplayData::from_file(
+        let data = match crate::replay_format::load_replay_spec(
             path.to_str().ok_or("Non-UTF8 recording path")?,
         ) {
             Ok(data) => data,
@@ -224,7 +253,9 @@ pub(crate) fn find(key: MissionAttemptKey, completed_at: Option<i64>) -> Option<
         };
         match serde_json::from_slice::<RecordingLink>(&bytes) {
             Ok(link)
-                if link.key == key && link.completed_at == completed_at && link.path.is_file() =>
+                if link.key == key
+                    && link.completed_at == completed_at
+                    && (link.path.is_file() || link.path.join("mission.json").is_file()) =>
             {
                 return Some(link.path);
             }
@@ -243,7 +274,7 @@ pub(crate) fn watch(
 ) -> Result<(), String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if !path.is_file() {
+        if !path.is_file() && !path.join("mission.json").is_file() {
             return Err("The recording file is no longer available.".into());
         }
         let data = crate::replay_format::load_replay_spec(
@@ -353,6 +384,61 @@ mod tests {
                 campaign_run_id: 77,
                 sequence: 2
             })
+        );
+    }
+
+    #[test]
+    fn recording_identity_follows_reload_instead_of_counting_abandoned_terminals() {
+        let first = recording(&Campaign::default(), &[41]);
+        let mut file = robin_engine::replay::ReplayFile::from(&first);
+        file.header.total_frames = 3;
+        file.save_markers.insert(
+            0,
+            robin_engine::replay::ReplaySaveMarker {
+                state_hash: 1,
+                timeline_frame: 0,
+            },
+        );
+        file.load_backs.insert(
+            1,
+            robin_engine::replay::ReplayLoadBack {
+                to_frame: 0,
+                is_continue: false,
+                snapshot: None,
+            },
+        );
+        file.frames.insert(
+            1,
+            robin_engine::replay::ReplayFrame {
+                timeline_before: 0,
+                timeline_after: 0,
+                input: robin_engine::engine::SimulationFrameInput::default().with_hourglass(false),
+                host_controls: Vec::new(),
+            },
+        );
+        let final_attempt = recording(&Campaign::default(), &[42]);
+        file.frames
+            .insert(2, final_attempt.frame(0).unwrap().clone());
+        let data = file.try_into().unwrap();
+        assert_eq!(
+            replay_attempt_identity(&data).unwrap(),
+            Some((
+                MissionAttemptKey {
+                    campaign_run_id: 42,
+                    sequence: 1
+                },
+                Some(100)
+            ))
+        );
+        assert_eq!(
+            replay_attempt_identity(&first).unwrap(),
+            Some((
+                MissionAttemptKey {
+                    campaign_run_id: 41,
+                    sequence: 1
+                },
+                Some(100)
+            ))
         );
     }
 

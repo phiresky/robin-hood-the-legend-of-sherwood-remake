@@ -291,6 +291,7 @@ pub(super) async fn process_operation_and_save(
         if save_load.processed() {
             runtime.reset_rollback_checker();
         }
+        runtime.synchronize_save_boundary(&mut frame, &manager.engine);
         if let Some(event) = save_load.event.take() {
             runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
         }
@@ -330,6 +331,7 @@ pub(super) async fn process_operation_and_save(
     if save_load.processed() {
         runtime.reset_rollback_checker();
     }
+    runtime.synchronize_save_boundary(&mut frame, &manager.engine);
     if let Some(event) = save_load.event.take() {
         runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
     }

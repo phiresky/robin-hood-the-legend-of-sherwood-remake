@@ -15,15 +15,12 @@ use robin_engine::replay as engine_replay;
 /// a handler at the OS level.
 pub const RHREC_EXT: &str = ".rhrec.jsonl";
 
-/// clap `value_parser` for `--record`: rejects anything that doesn't
-/// end in `.rhrec.jsonl`. Recording always goes to the legacy JSONL
-/// streaming format for crash-safety; the compact sharing format is
-/// produced on demand from a finished recording.
+/// Mission directories contain append-only replay chunks and their chronology.
 fn parse_record_path(s: &str) -> Result<String, String> {
-    if s.ends_with(RHREC_EXT) {
-        Ok(s.to_string())
+    if s.trim().is_empty() {
+        Err("record directory must not be empty".into())
     } else {
-        Err(format!("record path must end in `{RHREC_EXT}` (got `{s}`)"))
+        Ok(s.to_owned())
     }
 }
 
@@ -102,13 +99,14 @@ pub struct CliArgs {
     #[arg(long)]
     pub debug_surfaces: bool,
 
-    /// Record a replay to the given file path (must end in `.rhrec.jsonl`)
+    /// Record this mission in a new directory containing replay chunks
     #[arg(long, value_parser = parse_record_path)]
     pub record: Option<String>,
 
     /// Play back a replay. Accepts any of:
     ///   - an inline `rhrec-…` compact string (the sharing format),
     ///   - a file containing a `rhrec-…` string,
+    ///   - a mission recording directory (or any chunk within it),
     ///   - a legacy `*.rhrec.jsonl` recording.
     ///
     /// The replay's header picks the mission to load.

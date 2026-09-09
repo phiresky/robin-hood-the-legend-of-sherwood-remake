@@ -544,7 +544,7 @@ mod tests {
                 recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
                 )
                 .recording(),
-                recorder: Some(recorder),
+                recorder: Some(recorder.into()),
                 player: None,
                 rollback_checker: None,
                 rewind_buffer: RewindBuffer::new(),

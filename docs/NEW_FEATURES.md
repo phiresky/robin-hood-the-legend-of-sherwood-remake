@@ -688,16 +688,30 @@ A list of which additional features we have added, which ones we might still wan
   serialized-stream labels and a separately typed seed-derived authoritative
   peasant-name generator, plus a structural source test, reject unreviewed
   gameplay RNG additions.
-  Recordings stay one linear timeline across in-mission saves and loads: a
-  save at a clean frame boundary writes a save-marker record (`sv`, the
-  state hash at capture), and loading a save made in the same session writes
-  a load-back record (`lb`) pointing at that marker's frame. Playback pins
-  the complete engine, sound, host-input, and persistent game state at each
-  marker and restores it through the normal post-load path, so
-  quicksave/quickload and script-triggered restarts replay bit-exactly
-  without embedding save payloads. Loads of saves from other sessions cannot
-  be expressed this way and log a warning that the recording is no longer
-  linearly replayable.
+  Each mission recording is a directory of append-only JSONL chunks, indexed
+  by `mission.json`. Every save capture (including background autosaves and
+  Restart) writes and flushes a marker before the save can be published. Saves
+  reference the directory, chunk, and marker, binding the reference to the
+  complete captured payload. Markers occupy host-only records: queued gameplay
+  commands execute afterward, without a fabricated simulation tick.
+  Every load starts a new chunk with both a chronological predecessor and the
+  restored save reference. Mission-wide ordinals preserve all abandoned gameplay,
+  saves, and reloads, including when the application is restarted. Export and
+  leaderboard submission use one self-contained artifact assembled from the
+  complete chronology; playback needs no original save files. An individual
+  chunk path replays history through that chunk, so earlier attempts remain
+  watchable after subsequent loads. `--record <directory>` creates a new mission
+  directory; `--replay <directory>` plays its complete history. Existing
+  standalone JSONL and compact replay files remain supported.
+  Current native save schema is 75 and replay schema is 33. Missing or invalid
+  referenced history is reported explicitly; it cannot become leaderboard
+  evidence. Fully verified marker restores qualify for the normal leaderboard:
+  verification executes abandoned gameplay too, and restores only states derived
+  from verified save markers. The mission directory retains the original signed
+  admission for resumes across application restarts. Release rules permit these
+  complete histories; embedded foreign snapshots remain ineligible. Browser
+  chunks persist in localStorage, with explicit storage/quota failures; moving
+  this storage to IndexedDB remains a performance and capacity improvement.
 
 - **Original-game parity traces**
   (`crates/robin_parity/src/original_parity_replay.rs`). A diagnostic runner

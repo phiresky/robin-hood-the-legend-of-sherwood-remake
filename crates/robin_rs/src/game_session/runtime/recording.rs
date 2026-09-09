@@ -3,7 +3,9 @@
 
 use super::{BootstrapSaveBoundary, MissionFrame, ReplayFrameOrdinal, TimelineFrame};
 use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
-use robin_engine::replay::{ReplayHeader, ReplayPlayer, ReplayRecorder, ReplaySaveMarker};
+#[cfg(test)]
+use robin_engine::replay::ReplayRecorder;
+use robin_engine::replay::{ReplayHeader, ReplayPlayer, ReplaySaveMarker};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 
@@ -14,7 +16,7 @@ pub(super) enum RecordingValidity {
 }
 
 pub(super) struct ReplayLifecycle {
-    recorder: Option<ReplayRecorder>,
+    recorder: Option<crate::replay_recording::SharedReplayRecorder>,
     sealed_header: Option<ReplayHeader>,
     validity: RecordingValidity,
     bootstrap_save: Option<(ReplaySaveIdentity, ReplaySaveMarker)>,
@@ -26,7 +28,7 @@ pub(super) struct ReplayLifecycle {
 
 impl ReplayLifecycle {
     pub(super) fn new(
-        recorder: Option<ReplayRecorder>,
+        recorder: Option<crate::replay_recording::SharedReplayRecorder>,
         player: Option<ReplayPlayer>,
         control: crate::replay_service::ReplayRecordingControl,
     ) -> Self {
@@ -40,6 +42,47 @@ impl ReplayLifecycle {
             pinned_saves: BTreeMap::new(),
             control,
         }
+    }
+
+    pub(super) fn next_ordinal(&self) -> Option<u32> {
+        self.recorder
+            .as_ref()
+            .map(|recorder| recorder.next_ordinal())
+    }
+
+    pub(super) fn commit_restore_boundary(
+        &self,
+        timeline: TimelineFrame,
+        hash: u64,
+    ) -> Result<u32, String> {
+        self.recorder
+            .as_ref()
+            .expect("active archive restore")
+            .commit_restore_boundary(timeline.number(), hash)
+            .map_err(|error| format!("{error:#}"))
+    }
+
+    pub(super) fn restore_archive(
+        &mut self,
+        snapshot: &[u8],
+    ) -> Result<Option<(u32, u32, Option<u32>)>, String> {
+        let recorder = self
+            .recorder
+            .clone()
+            .or_else(|| self.control.capture_recorder());
+        let Some(recorder) = recorder.filter(|recorder| recorder.has_archive()) else {
+            return Ok(None);
+        };
+        let save: crate::save_file::GameSaveFile =
+            serde_json::from_slice(snapshot).map_err(|error| error.to_string())?;
+        let boundary = recorder
+            .restore(&save, &self.control)
+            .map_err(|error| format!("{error:#}"))?;
+        self.recorder = Some(recorder);
+        self.sealed_header = None;
+        self.validity = RecordingValidity::Linear;
+        self.saved_frames.clear();
+        Ok(Some(boundary))
     }
 
     pub(super) fn is_recording(&self) -> bool {
@@ -153,7 +196,16 @@ impl ReplayLifecycle {
         &self,
         identity: ReplaySaveIdentity,
     ) -> Option<(ReplayFrameOrdinal, TimelineFrame)> {
-        self.saved_frames.get(&identity).copied()
+        self.recorder
+            .as_ref()
+            .and_then(|recorder| recorder.captured_frame(identity))
+            .map(|(ordinal, timeline)| {
+                (
+                    ReplayFrameOrdinal::from_wire(ordinal),
+                    TimelineFrame::from_wire(timeline),
+                )
+            })
+            .or_else(|| self.saved_frames.get(&identity).copied())
     }
 
     pub(super) fn record_save(
@@ -237,6 +289,7 @@ impl ReplayLifecycle {
     }
 
     pub(super) fn seal(&mut self) {
+        self.control.checkpoint_ranked_input();
         if let Some(recorder) = self.recorder.take() {
             self.sealed_header = Some(recorder.into_recording_header());
         }
@@ -271,7 +324,7 @@ impl ReplayLifecycle {
                 if let Some((_, marker)) = bootstrap {
                     recorder.write_save_marker(0, marker);
                 }
-                self.recorder = Some(recorder);
+                self.recorder = Some(recorder.into());
                 self.validity = RecordingValidity::Linear;
                 self.sealed_header = None;
                 self.saved_frames.clear();
@@ -307,6 +360,13 @@ impl ReplayLifecycle {
             ReplayFrameOrdinal::ZERO,
             "bootstrap save must be registered before the first recorded frame"
         );
+        if let Some(recorder) = &self.recorder {
+            if recorder.has_archive() {
+                // The central capture hook already wrote the durable frame-zero marker.
+                self.bootstrap_save = Some((identity, marker));
+                return;
+            }
+        }
         self.record_save(identity, ordinal, TimelineFrame::ZERO, marker.state_hash);
         self.bootstrap_save = Some((identity, marker));
     }
@@ -316,7 +376,7 @@ impl ReplayLifecycle {
         assert!(self.recorder.is_none());
         assert!(self.sealed_header.is_none());
         assert!(self.saved_frames.is_empty());
-        self.recorder = Some(recorder);
+        self.recorder = Some(recorder.into());
     }
 
     #[cfg(test)]
@@ -388,7 +448,7 @@ mod tests {
             &Default::default(),
         )
         .unwrap();
-        ReplayLifecycle::new(Some(recorder), None, service.recording())
+        ReplayLifecycle::new(Some(recorder.into()), None, service.recording())
     }
 
     #[test]

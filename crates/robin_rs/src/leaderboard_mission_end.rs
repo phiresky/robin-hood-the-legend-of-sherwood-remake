@@ -89,7 +89,7 @@ pub struct MissionEndSubmissionInput {
 }
 
 impl MissionEndSubmissionInput {
-    fn validate(&self) -> Result<(), MissionEndLeaderboardError> {
+    pub(crate) fn validate(&self) -> Result<(), MissionEndLeaderboardError> {
         self.offer_request
             .validate()
             .map_err(invalid_bundle_protocol)?;

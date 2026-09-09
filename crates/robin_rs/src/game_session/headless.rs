@@ -199,12 +199,25 @@ impl HeadlessMission {
         self.runtime
             .timeline
             .trace(FrameContractStage::Presentation);
-        let (exit_code, exit) = if let Some(code) = tick_exit_code {
-            if self.runtime.timeline.playback().is_some() {
-                super::session_policy::TerminalAdapter::ReadOnlyReplay
-                    .admit_campaign_transition()
-                    .unwrap_or_else(|error| panic!("{error}; engine exit={code:?}"));
-            }
+        let replaying = self.runtime.timeline.playback().is_some();
+        if replaying && let Some(code) = tick_exit_code {
+            // Playback already applied the recorded campaign update. A terminal
+            // in an abandoned attempt must not retire the mission before its lb.
+            let recorded = frame
+                .post_commands()
+                .iter()
+                .filter_map(|input| match input.command {
+                    PlayerCommand::ApplyQuitMissionUpdates { exit_code, .. } => Some(exit_code),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                recorded,
+                vec![code],
+                "replay terminal must match its recorded campaign update"
+            );
+        }
+        let (exit_code, exit) = if let Some(code) = tick_exit_code.filter(|_| !replaying) {
             (Some(code), Some(HeadlessFrameExit::Mission))
         } else if self.policy.exit_when_replay_finishes && replay_finished {
             (
@@ -400,6 +413,137 @@ mod tests {
 
         assert!(policy.auto_dismiss_modals);
         assert!(policy.exit_when_replay_finishes);
+    }
+
+    #[test]
+    fn replay_keeps_abandoned_terminal_and_continues_through_restore() {
+        use robin_engine::engine::SimulationFrameInput;
+        use robin_engine::game_operation::GameCode;
+        use robin_engine::replay::{
+            REPLAY_SCHEMA_VERSION, ReplayFile, ReplayFrame, ReplayHeader, ReplayLoadBack,
+            ReplayPlayer, ReplaySaveMarker, state_hash,
+        };
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets).unwrap();
+        let hash = state_hash(&engine);
+        let stationary = SimulationFrameInput::no_hourglass().with_simulation_body_allowed(false);
+        let mut terminal = SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+            PlayerCommand::QuitMissionRequested,
+        )]);
+        terminal.post_commands.push(
+            PlayerInput::host(PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: GameCode::LevelInterrupted,
+                difficulty: engine.sim_config().difficulty,
+                completed_at_unix_seconds: None,
+                campaign_run_nonce: Some(1),
+            })
+            .into(),
+        );
+        let replay = ReplayFile {
+            header: ReplayHeader {
+                mission_id: "headless-history".into(),
+                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                    "headless-history",
+                    "headless-history",
+                    "headless-history",
+                )
+                .unwrap(),
+                rng_seed: 0,
+                sim_config: engine.sim_config(),
+                spellforge_package: None,
+                version: REPLAY_SCHEMA_VERSION,
+                total_frames: 4,
+                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
+                campaign: bitcode::encode(engine.campaign()),
+            },
+            frames: [stationary.clone(), terminal.clone(), stationary, terminal]
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, input)| {
+                    (
+                        ordinal as u32,
+                        ReplayFrame {
+                            timeline_before: 0,
+                            timeline_after: u32::from(ordinal % 2 == 1),
+                            input,
+                            host_controls: Vec::new(),
+                        },
+                    )
+                })
+                .collect(),
+            hashes: [(0, hash)].into(),
+            save_markers: [(
+                0,
+                ReplaySaveMarker {
+                    state_hash: hash,
+                    timeline_frame: 0,
+                },
+            )]
+            .into(),
+            load_backs: [(
+                2,
+                ReplayLoadBack {
+                    to_frame: 0,
+                    is_continue: false,
+                    snapshot: None,
+                },
+            )]
+            .into(),
+        }
+        .try_into()
+        .unwrap();
+        let manager = EngineManager::new(engine);
+        let control = MissionControl::new(
+            false,
+            manager.engine.weather().night_color,
+            manager.engine.weather().ambiance,
+        );
+        let timeline = TimelineRuntime::new(
+            ReplayAndRollback {
+                recording_control: Arc::<crate::replay_service::ReplayService>::default()
+                    .recording(),
+                recorder: None,
+                player: Some(ReplayPlayer::new(replay)),
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Headless,
+            false,
+            true,
+        );
+        let runtime = MissionRuntime::new(
+            crate::http_server::SessionIngress::detached_for_test(),
+            MissionWorld::new(
+                Host::scratch(640.0, 480.0),
+                Game::default(),
+                manager,
+                Arc::new(assets),
+                DevState::default(),
+            ),
+            timeline,
+            control,
+            None,
+        );
+        let mut mission = HeadlessMission {
+            runtime,
+            policy: HeadlessPolicy::replay_runner(),
+            modals: SessionModalScheduler::default(),
+        };
+        for _ in 0..3 {
+            assert_eq!(
+                mission
+                    .run_frame(&crate::main_entry::CliArgs::default())
+                    .exit,
+                None
+            );
+        }
+        assert_eq!(
+            mission
+                .run_frame(&crate::main_entry::CliArgs::default())
+                .exit,
+            Some(super::HeadlessFrameExit::ReplayComplete)
+        );
     }
 
     #[test]
