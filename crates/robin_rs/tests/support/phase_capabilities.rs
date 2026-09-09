@@ -5,6 +5,42 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/interactive.rs")).unwrap();
+    let owner = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "NativeRefreshInterpolation" => Some(item),
+            _ => None,
+        })
+        .expect("native interpolation owner");
+    struct Storage {
+        presentation_count: usize,
+    }
+    impl<'ast> Visit<'ast> for Storage {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            for segment in &path.path.segments {
+                assert_ne!(
+                    segment.ident, "Engine",
+                    "interpolation must not own a runnable authoritative engine"
+                );
+                self.presentation_count += usize::from(segment.ident == "PresentationEngine");
+            }
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut storage = Storage {
+        presentation_count: 0,
+    };
+    storage.visit_item_struct(owner);
+    assert_eq!(
+        storage.presentation_count, 1,
+        "retain one presentation owner"
+    );
+}
+
+#[test]
 fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
     let syntax = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
     let frame = syntax
