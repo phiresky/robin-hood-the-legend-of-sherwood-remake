@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **127 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **133 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -48,6 +48,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Cheater.cz — Miky’s Czech walkthrough](guides/cheater-miky-czech.md) | Czech | No |
 | [GOG — accessing castle-recapture missions](guides/gog-castle-recapture.md) | English | No |
 | [Sina / 怡采强档 — Chinese campaign walkthrough continuation](guides/sina-yicai-chinese.md) | Simplified Chinese | Substantial indexed mission passages inspected; direct retrieval failed. |
+| [GOG — camp production and the results parchment](guides/gog-production-parchment.md) | English | No |
 
 ## Reviews and player impressions
 
@@ -88,6 +89,8 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Macworld — Men in Tights](reviews/macworld.md) | English | Substantial indexed article text inspected. |
 | [VidaExtra — Spanish retrospective](reviews/vidaextra-spanish.md) | Spanish | Article body and verdict inspected. |
 | [GameFAQs — A Great Strategy game!](reviews/gamefaqs-rios-always.md) | English | Review text inspected; PC URL used to avoid platform-mirror ambiguity. |
+| [Sector — Painkiller’s player review](reviews/sector-painkiller.md) | Slovak | No |
+| [Sector — agent1’s player review](reviews/sector-agent1.md) | Slovak | No |
 
 ## Compatibility and configuration
 
@@ -151,6 +154,9 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [GOG — March 2012 release announcement](history/gog-2012-launch.md) | English | No |
 | [Macworld — Mac conversion reaches duplication](history/macworld-gold-master.md) | English | Full article text inspected. |
 | [amiga-news.de — Linux PowerPC availability report](history/amiga-news-linux-ppc.md) | English translation | Indexed news item inspected. |
+| [Sector — original website announcement](history/sector-website-announcement.md) | Slovak | No |
+| [Sector — October 2002 demo impressions](history/sector-demo-impressions.md) | Slovak | No |
+| [Sector — February 2002 announcement](history/sector-february-announcement.md) | Slovak | No |
 
 ## Indexes, media, and sources awaiting access
 
@@ -296,3 +302,9 @@ Added six non-Steam records, bringing the collection to 127. The [Macworld revie
 The [VidaExtra retrospective](reviews/vidaextra-spanish.md) adds a critical view of repeated maps and combat controls. The [rios_always review](reviews/gamefaqs-rios-always.md) is counted once using its PC URL; its Linux mirror does not prove Linux testing. The [Sina / 怡采强档 continuation](guides/sina-yicai-chinese.md) differs in wording and numbering from yago's Ali213 guide, but its individual author and relationship to other Chinese republications remain unverified.
 
 The Obligement review body still could not be retrieved. The Macworld magazine scan remains a comparison lead; its rating was not inferred from the missing web-page graphic. Linked port downloads were not downloaded or executed.
+
+#### Slovak player reviews, early publicity, and camp reporting
+
+Added six non-Steam records, bringing the collection to 133: two Sector player reviews, three early news items, and a GOG production discussion. The [demo impressions](history/sector-demo-impressions.md) identify observed visibility and self-defense behavior without establishing an exact build. The [February announcement](history/sector-february-announcement.md) records an early advertised mission count; the [website announcement](history/sector-website-announcement.md) supplies an archival lead for promotional assets.
+
+The [GOG reply](guides/gog-production-parchment.md) distinguishes production from what the parchment displays, but remains an unconfirmed player explanation. The two player reviews were inspected through indexed text because direct retrieval failed. No separate research-notes file was created.
