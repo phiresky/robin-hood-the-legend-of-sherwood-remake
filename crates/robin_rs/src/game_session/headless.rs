@@ -437,6 +437,9 @@ mod tests {
         let manager = EngineManager::new(engine);
         let timeline = TimelineRuntime::new(
             ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: None,
                 player: None,
                 rollback_checker: None,
@@ -510,6 +513,9 @@ mod tests {
         let manager = EngineManager::new(engine);
         let timeline = TimelineRuntime::new(
             ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: None,
                 player: None,
                 rollback_checker: None,

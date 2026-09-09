@@ -1747,6 +1747,9 @@ mod tests {
             let mut dev = DevState::default();
             let mut timeline = TimelineRuntime::new(
                 super::super::replay_init::ReplayAndRollback {
+                    recording_control:
+                        std::sync::Arc::<crate::replay_service::ReplayService>::default()
+                            .recording(),
                     recorder: None,
                     player: None,
                     rollback_checker: None,
