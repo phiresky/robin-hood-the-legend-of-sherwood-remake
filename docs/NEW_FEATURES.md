@@ -702,7 +702,9 @@ A list of which additional features we have added, which ones we might still wan
   chunk path replays history through that chunk, so earlier attempts remain
   watchable after subsequent loads. `--record <directory>` creates a new mission
   directory; `--replay <directory>` plays its complete history. Existing
-  standalone JSONL and compact replay files remain supported.
+  standalone JSONL and compact replay files remain supported. Browser and native
+  playback consume recorded terminal updates without opening live debriefing or
+  leaderboard flows, so abandoned wins/losses can be followed by another restore.
   Current native save schema is 75 and replay schema is 33. Missing or invalid
   referenced history is reported explicitly; it cannot become leaderboard
   evidence. Fully verified marker restores qualify for the normal leaderboard:

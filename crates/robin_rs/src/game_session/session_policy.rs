@@ -167,6 +167,26 @@ impl TerminalDecisionOrder {
     }
 }
 
+/// Both players consume campaign changes from the replay itself. Terminal UI
+/// belongs to live play and must not keep an abandoned attempt alive after lb.
+pub(super) fn validate_replay_terminal(
+    outcome: robin_engine::game_operation::GameCode,
+    post_commands: &[robin_engine::player_command::PlayerInput],
+) {
+    let recorded = post_commands
+        .iter()
+        .filter_map(|input| match input.command {
+            PlayerCommand::ApplyQuitMissionUpdates { exit_code, .. } => Some(exit_code),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recorded,
+        vec![outcome],
+        "replay terminal must match its recorded campaign update"
+    );
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum TerminalAdapter {
     Interactive,

@@ -201,21 +201,7 @@ impl HeadlessMission {
             .trace(FrameContractStage::Presentation);
         let replaying = self.runtime.timeline.playback().is_some();
         if replaying && let Some(code) = tick_exit_code {
-            // Playback already applied the recorded campaign update. A terminal
-            // in an abandoned attempt must not retire the mission before its lb.
-            let recorded = frame
-                .post_commands()
-                .iter()
-                .filter_map(|input| match input.command {
-                    PlayerCommand::ApplyQuitMissionUpdates { exit_code, .. } => Some(exit_code),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                recorded,
-                vec![code],
-                "replay terminal must match its recorded campaign update"
-            );
+            super::session_policy::validate_replay_terminal(code, frame.post_commands());
         }
         let (exit_code, exit) = if let Some(code) = tick_exit_code.filter(|_| !replaying) {
             (Some(code), Some(HeadlessFrameExit::Mission))
