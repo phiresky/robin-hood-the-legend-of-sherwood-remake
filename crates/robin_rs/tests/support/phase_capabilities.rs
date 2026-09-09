@@ -911,6 +911,8 @@ fn draw_capability_has_no_mutable_frontend_or_application_authority() {
     assert_eq!(
         fields,
         [
+            "viewport",
+            "draw_manager",
             "frontend",
             "sound",
             "options",
@@ -919,13 +921,15 @@ fn draw_capability_has_no_mutable_frontend_or_application_authority() {
         ]
     );
     for (field, expected) in view.fields.iter().zip([
+        "ViewportState",
+        "DrawManager",
         "HostFrontend",
         "SoundManager",
         "GlobalOptions",
         "PlayerId",
         "GraphicConfig",
     ]) {
-        if matches!(expected, "PlayerId" | "GraphicConfig") {
+        if matches!(expected, "DrawManager" | "PlayerId" | "GraphicConfig") {
             assert!(matches!(&field.ty, syn::Type::Path(path)
                 if path.path.segments.last().is_some_and(|segment| segment.ident == expected)));
         } else {
@@ -934,9 +938,27 @@ fn draw_capability_has_no_mutable_frontend_or_application_authority() {
                 "draw {expected} must be shared"
             );
         }
-        if expected == "GraphicConfig" {
+        if matches!(expected, "ViewportState" | "DrawManager" | "GraphicConfig") {
             assert!(matches!(field.vis, syn::Visibility::Inherited));
         }
+    }
+    // Capture-specific camera data is private and readable only through shared
+    // accessors; it must not introduce mutable frontend authority into drawing.
+    for (accessor, expected) in [
+        ("viewport", "ViewportState"),
+        ("draw_manager", "DrawManager"),
+    ] {
+        let method = syntax.items.iter().filter_map(|item| match item {
+            syn::Item::Impl(implementation)
+                if matches!(&*implementation.self_ty, syn::Type::Path(path)
+                    if path.path.segments.last().is_some_and(|segment| segment.ident == "HostDraw")) => Some(implementation),
+            _ => None,
+        }).flat_map(|implementation| &implementation.items).find_map(|item| match item {
+            syn::ImplItem::Fn(method) if method.sig.ident == accessor => Some(method),
+            _ => None,
+        }).expect("explicit draw camera accessor exists");
+        assert!(matches!(&method.sig.output, syn::ReturnType::Type(_, ty)
+            if readonly_reference_to(ty, expected)));
     }
     let render = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
     let draw = render
