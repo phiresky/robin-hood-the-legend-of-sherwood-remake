@@ -562,7 +562,6 @@ impl OptionsTaskState {
                     } => {
                         let row = self.rebinding.take().expect("rebind row must exist");
                         assign_key(&mut self.controller.keys, row, *key);
-                        self.controller.keys.key_type = 1;
                         self.shortcut_dirty = true;
                         self.shortcut_reserved = false;
                         self.rebuild_frame(resources);
@@ -695,9 +694,7 @@ impl OptionsTaskState {
                 self.rebuild_frame(resources);
             }
             OptionRowAction::ShortcutPreset(preset) => {
-                use crate::options_model::{
-                    ShortcutPolicy, ShortcutPreset, select_shortcut_preset,
-                };
+                use crate::options_model::{ShortcutPreset, select_shortcut_preset};
                 let preset = match preset {
                     0 => ShortcutPreset::Default,
                     1 => ShortcutPreset::Alternate,
@@ -709,7 +706,6 @@ impl OptionsTaskState {
                     &mut self.controller.custom_keys,
                     &mut self.shortcut_dirty,
                     preset,
-                    ShortcutPolicy::Cooperative,
                 );
                 self.shortcut_reserved = false;
                 self.rebuild_frame(resources);
@@ -1903,29 +1899,10 @@ fn play_button_noise(
     }
 }
 
-fn key_vec(config: &KeyConfig) -> Vec<Option<KeyCode>> {
-    let mut keys = vec![None; REAL_KEY_COUNT as usize];
-    config.get_keys_array(&mut keys);
-    keys
-}
-
-fn assign_key(config: &mut KeyConfig, target: u16, key: KeyCode) {
-    crate::options_model::assign_shortcut(
-        config,
-        target,
-        key,
-        crate::options_model::ShortcutPolicy::Cooperative,
-    );
-}
-fn promote_shortcut_edits(active: &KeyConfig, custom: &mut KeyConfig, dirty: &mut bool) {
-    crate::options_model::promote_shortcut_edits(
-        active,
-        custom,
-        dirty,
-        crate::options_model::ShortcutPolicy::Cooperative,
-    );
-}
-use crate::options_model::is_reserved_shortcut_key as is_reserved_key;
+use crate::options_model::{
+    assign_shortcut as assign_key, is_reserved_shortcut_key as is_reserved_key,
+    promote_shortcut_edits, shortcut_keys as key_vec,
+};
 
 const KEY_ACTIONS: &[&str] = &[
     "Zoom In",
@@ -2544,6 +2521,28 @@ mod tests {
         assign_key(&mut keys, 18, key);
         assert_eq!(keys.get_key_by_index(0), None);
         assert_eq!(keys.get_key_by_index(18), Some(key));
+    }
+
+    #[test]
+    fn cooperative_shortcuts_share_shift_and_clear_all_other_conflicts() {
+        use crate::key_config::PLAN_QUICK_ACTIONS_INDEX;
+        let mut keys = KeyConfig::default_preset();
+        keys.set_key_by_index(16, Some(KeyCode::ShiftLeft));
+        assign_key(&mut keys, PLAN_QUICK_ACTIONS_INDEX, KeyCode::ShiftLeft);
+        assert_eq!(keys.get_key_by_index(16), Some(KeyCode::ShiftLeft));
+        assert_eq!(
+            keys.get_key_by_index(PLAN_QUICK_ACTIONS_INDEX),
+            Some(KeyCode::ShiftLeft)
+        );
+        for index in [0, 1, 2] {
+            keys.set_key_by_index(index, Some(KeyCode::F6));
+        }
+        assign_key(&mut keys, 18, KeyCode::F6);
+        for index in [0, 1, 2] {
+            assert_eq!(keys.get_key_by_index(index), None);
+        }
+        assert_eq!(keys.get_key_by_index(18), Some(KeyCode::F6));
+        assert_eq!(keys.key_type, 1);
     }
 
     #[test]

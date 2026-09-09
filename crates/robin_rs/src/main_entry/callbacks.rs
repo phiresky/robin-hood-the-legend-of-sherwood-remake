@@ -607,12 +607,6 @@ impl crate::game::GameCallbacks for RustCallbacks {
     fn send_script_message(&mut self, target: u32, message: u32) {
         tracing::debug!("Script message: target={} msg={}", target, message);
     }
-    fn display_ingame_menu(&mut self) {
-        tracing::warn!("display_ingame_menu: stub");
-    }
-    fn display_debriefing(&mut self, won: bool) {
-        tracing::info!("Debriefing (won={}): stub", won);
-    }
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
         // Returns deterministic simulation seconds. Downstream consumers
         // (debriefing mission-length, profile `play_time` sync) all see

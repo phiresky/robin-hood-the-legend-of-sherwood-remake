@@ -278,7 +278,7 @@ pub async fn show_options(
                         let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
                             .as_mut()
                             .map(|b| &mut **b as &mut dyn AudioBackend);
-                        let changed = show_shortcuts(
+                        let accepted = show_shortcuts(
                             event_pump,
                             renderer,
                             resources,
@@ -295,7 +295,12 @@ pub async fn show_options(
                         // `KeyConfigStore` path here so editing only
                         // shortcuts does not spuriously mark the
                         // graphic/sound profile dirty.
-                        outcome.key_config_changed |= controller.accept_page(changed).keys_changed;
+                        if accepted {
+                            outcome.key_config_changed |=
+                                controller.accept_page(false).keys_changed;
+                        } else {
+                            controller.cancel_page();
+                        }
                     }
                     BUTTON_GAMEPLAY => {
                         controller.enter_page(OptionsPage::Gameplay);

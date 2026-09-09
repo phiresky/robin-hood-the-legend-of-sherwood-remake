@@ -2,7 +2,7 @@
 //! layout adapter and the cooperative mission adapter resolve controls here.
 //!
 //! The transaction controller is shared; adapters retain layout/polling and
-//! explicitly select their existing shortcut compatibility policy.
+//! share one shortcut assignment and preset policy.
 
 use robin_engine::graphic_config::{GraphicConfig, TextureEffect};
 use robin_engine::sound_config::SoundConfig;
@@ -300,9 +300,12 @@ impl OptionsController {
             PageSnapshot::Sounds(original) => {
                 effects.profile_changed = reapply || !sound_eq(original, &self.sound.working)
             }
-            PageSnapshot::Shortcuts(original, _) => {
-                effects.keys_changed =
-                    reapply || shortcut_keys(original) != shortcut_keys(&self.keys)
+            PageSnapshot::Shortcuts(original, custom) => {
+                effects.keys_changed = reapply
+                    || shortcut_keys(original) != shortcut_keys(&self.keys)
+                    || original.key_type != self.keys.key_type
+                    || shortcut_keys(custom) != shortcut_keys(&self.custom_keys)
+                    || custom.key_type != self.custom_keys.key_type;
             }
             PageSnapshot::Gameplay(original) => {
                 effects.profile_changed = reapply || *original != self.gameplay
@@ -343,16 +346,6 @@ pub(crate) fn shortcut_keys(
     keys
 }
 
-/// Explicit compatibility differences between the existing interaction styles.
-/// The original picker permits the shared Shift door/planning binding and its
-/// User Defined button discards unpromoted edits. The cooperative picker
-/// historically replaces the first conflict and promotes before any preset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ShortcutPolicy {
-    OriginalLayout,
-    Cooperative,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ShortcutPreset {
     Default,
@@ -360,29 +353,21 @@ pub(crate) enum ShortcutPreset {
     Custom,
 }
 
+/// Both layouts use the original binding rules: clear every conflicting action,
+/// except the intentional shared Shift binding for doors and quick planning.
 pub(crate) fn assign_shortcut(
     config: &mut crate::key_config::KeyConfig,
     target: u16,
     key: winit::keyboard::KeyCode,
-    policy: ShortcutPolicy,
 ) {
     use crate::key_config::{PLAN_QUICK_ACTIONS_INDEX, REAL_KEY_COUNT};
     use winit::keyboard::KeyCode;
     assert!(target < REAL_KEY_COUNT, "shortcut action index must exist");
-    if policy == ShortcutPolicy::Cooperative {
-        let previous = config.get_index_for_key(key);
-        if previous != 0xFFFF && previous != target {
-            config.set_key_by_index(previous, None);
-        }
-        config.set_key_by_index(target, Some(key));
-        return;
-    }
     for conflict in 0..REAL_KEY_COUNT {
         if conflict == target || config.get_key_by_index(conflict) != Some(key) {
             continue;
         }
-        let shared_shift = policy == ShortcutPolicy::OriginalLayout
-            && matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight)
+        let shared_shift = matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight)
             && matches!(
                 (conflict, target),
                 (16, PLAN_QUICK_ACTIONS_INDEX) | (PLAN_QUICK_ACTIONS_INDEX, 16)
@@ -392,33 +377,31 @@ pub(crate) fn assign_shortcut(
         }
     }
     config.set_key_by_index(target, Some(key));
+    config.key_type = 1;
 }
 
 pub(crate) fn promote_shortcut_edits(
     active: &crate::key_config::KeyConfig,
     custom: &mut crate::key_config::KeyConfig,
     dirty: &mut bool,
-    policy: ShortcutPolicy,
 ) {
     if *dirty {
         *custom = active.clone();
-        if policy == ShortcutPolicy::Cooperative {
-            custom.key_type = 1;
-        }
         *dirty = false;
     }
 }
 
+/// Built-in presets preserve pending edits in the custom slot. Selecting Custom
+/// restores that slot instead, intentionally discarding unpromoted edits.
 pub(crate) fn select_shortcut_preset(
     active: &mut crate::key_config::KeyConfig,
     custom: &mut crate::key_config::KeyConfig,
     dirty: &mut bool,
     preset: ShortcutPreset,
-    policy: ShortcutPolicy,
 ) {
     use crate::key_config::KeyConfig;
-    if preset != ShortcutPreset::Custom || policy == ShortcutPolicy::Cooperative {
-        promote_shortcut_edits(active, custom, dirty, policy);
+    if preset != ShortcutPreset::Custom {
+        promote_shortcut_edits(active, custom, dirty);
     }
     *active = match preset {
         ShortcutPreset::Default => KeyConfig::default_preset(),
@@ -778,30 +761,51 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_custom_preset_policies_preserve_both_existing_adapter_contracts() {
-        use super::*;
-        use winit::keyboard::KeyCode;
-        for policy in [ShortcutPolicy::OriginalLayout, ShortcutPolicy::Cooperative] {
-            let mut active = crate::key_config::KeyConfig::default_preset();
-            let mut custom = active.clone();
-            let original = shortcut_keys(&custom);
-            active.set_key_by_index(0, Some(KeyCode::F3));
-            let mut dirty = true;
-            select_shortcut_preset(
-                &mut active,
-                &mut custom,
-                &mut dirty,
-                ShortcutPreset::Custom,
-                policy,
-            );
-            assert!(!dirty);
-            match policy {
-                ShortcutPolicy::OriginalLayout => assert_eq!(shortcut_keys(&active), original),
-                ShortcutPolicy::Cooperative => {
-                    assert_eq!(active.get_key_by_index(0), Some(KeyCode::F3))
-                }
-            }
-        }
+    fn custom_preset_restores_stored_bindings_without_promoting_pending_edits() {
+        let mut active = crate::key_config::KeyConfig::default_preset();
+        let mut custom = active.clone();
+        let original = shortcut_keys(&custom);
+        assign_shortcut(&mut active, 0, winit::keyboard::KeyCode::F3);
+        let mut dirty = true;
+        select_shortcut_preset(&mut active, &mut custom, &mut dirty, ShortcutPreset::Custom);
+        assert!(!dirty);
+        assert_eq!(shortcut_keys(&active), original);
+        assert_eq!(shortcut_keys(&custom), original);
+        assert_eq!(active.key_type, 1);
+    }
+
+    #[test]
+    fn cancelling_shortcuts_restores_active_and_custom_after_preset_promotion() {
+        let mut editor = controller();
+        let active = shortcut_keys(&editor.keys);
+        let custom = shortcut_keys(&editor.custom_keys);
+        let kinds = (editor.keys.key_type, editor.custom_keys.key_type);
+        editor.enter_page(OptionsPage::Shortcuts);
+        assign_shortcut(&mut editor.keys, 0, winit::keyboard::KeyCode::F6);
+        let mut dirty = true;
+        select_shortcut_preset(
+            &mut editor.keys,
+            &mut editor.custom_keys,
+            &mut dirty,
+            ShortcutPreset::Alternate,
+        );
+        editor.cancel_page();
+        assert_eq!(shortcut_keys(&editor.keys), active);
+        assert_eq!(shortcut_keys(&editor.custom_keys), custom);
+        assert_eq!((editor.keys.key_type, editor.custom_keys.key_type), kinds);
+    }
+
+    #[test]
+    fn shortcut_commit_detects_custom_only_changes_and_clean_acceptance() {
+        let mut editor = controller();
+        editor.enter_page(OptionsPage::Shortcuts);
+        assign_shortcut(&mut editor.custom_keys, 0, winit::keyboard::KeyCode::F6);
+        assert!(editor.accept_page(false).keys_changed);
+        editor.enter_page(OptionsPage::Shortcuts);
+        assert!(!editor.accept_page(false).keys_changed);
+        editor.enter_page(OptionsPage::Shortcuts);
+        editor.keys.key_type = if editor.keys.key_type == 1 { 0 } else { 1 };
+        assert!(editor.accept_page(false).keys_changed);
     }
 
     use super::*;

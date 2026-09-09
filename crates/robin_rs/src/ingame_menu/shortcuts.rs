@@ -66,8 +66,8 @@ const ID_DEFAULT2: u32 = 2;
 const ID_USER: u32 = 3;
 const ID_CANCEL: u32 = 4;
 
-/// Display the shortcuts sub-screen.  Returns `true` on OK when any
-/// binding was edited.
+/// Display the shortcuts sub-screen. Returns `true` on OK, even if unchanged.
+/// The caller's OptionsController commits or rolls back both binding slots.
 ///
 /// `active` is the currently-applied key config.  `custom` is the
 /// user's personal custom bindings — the User Defined button restores
@@ -89,7 +89,6 @@ pub async fn show_shortcuts(
     let sh = renderer.screen_height() as i32;
     let transform = MenuTransform::centered(sw, sh);
 
-    let original = active.clone();
     let mut working = active.clone();
     // Tracks single-key edits since menu open OR last preset switch —
     // reset whenever a preset is loaded.
@@ -184,7 +183,6 @@ pub async fn show_shortcuts(
                                 row as u16,
                                 physical_key,
                             );
-                            working.key_type = 1; // UserDefined
                             working_dirty = true;
                             rebinding_row = None;
                             reserved_overlay = false;
@@ -431,18 +429,10 @@ pub async fn show_shortcuts(
     }
 
     if accepted {
-        let changed = working.get_keys_array_vec() != original.get_keys_array_vec();
-        if changed {
-            // On OK: if the user made edits, persist them to the custom
-            // slot too so a later "User Defined" click brings them back.
-            if working_dirty {
-                *custom = working.clone();
-            }
-            *active = working;
-            return true;
-        }
+        crate::options_model::promote_shortcut_edits(&working, custom, &mut working_dirty);
+        *active = working;
     }
-    false
+    accepted
 }
 
 /// Apply a Default1 / Default2 click.
@@ -459,7 +449,7 @@ fn set_to_preset(
     dirty: &mut bool,
     preset_idx: u16,
 ) {
-    use crate::options_model::{ShortcutPolicy, ShortcutPreset, select_shortcut_preset};
+    use crate::options_model::{ShortcutPreset, select_shortcut_preset};
     let preset = match preset_idx {
         0 => ShortcutPreset::Default,
         1 => ShortcutPreset::Alternate,
@@ -468,13 +458,7 @@ fn set_to_preset(
             return;
         }
     };
-    select_shortcut_preset(
-        working,
-        custom,
-        dirty,
-        preset,
-        ShortcutPolicy::OriginalLayout,
-    );
+    select_shortcut_preset(working, custom, dirty, preset);
 }
 
 fn apply_user_defined(working: &mut KeyConfig, custom: &KeyConfig, dirty: &mut bool) {
@@ -483,18 +467,12 @@ fn apply_user_defined(working: &mut KeyConfig, custom: &KeyConfig, dirty: &mut b
         &mut custom.clone(),
         dirty,
         crate::options_model::ShortcutPreset::Custom,
-        crate::options_model::ShortcutPolicy::OriginalLayout,
     );
 }
 
 fn assign_key_with_conflict_resolution(config: &mut KeyConfig, target: u16, key: Option<KeyCode>) {
     if let Some(key) = key {
-        crate::options_model::assign_shortcut(
-            config,
-            target,
-            key,
-            crate::options_model::ShortcutPolicy::OriginalLayout,
-        );
+        crate::options_model::assign_shortcut(config, target, key);
     }
 }
 
@@ -645,18 +623,6 @@ fn key_display_name(menu_text: &MenuText, key: Option<KeyCode>) -> String {
     }
 }
 
-trait KeyConfigVec {
-    fn get_keys_array_vec(&self) -> Vec<Option<KeyCode>>;
-}
-
-impl KeyConfigVec for KeyConfig {
-    fn get_keys_array_vec(&self) -> Vec<Option<KeyCode>> {
-        let mut out = vec![None; REAL_KEY_COUNT as usize];
-        self.get_keys_array(&mut out);
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,8 +648,8 @@ mod tests {
             "working should now hold the alternate preset"
         );
         assert_ne!(
-            custom.get_keys_array_vec(),
-            custom_before.get_keys_array_vec(),
+            crate::options_model::shortcut_keys(&custom),
+            crate::options_model::shortcut_keys(&custom_before),
             "custom should have been overwritten with the user's edits"
         );
         assert_eq!(
@@ -851,8 +817,8 @@ mod tests {
 
         assert!(!dirty);
         assert_eq!(
-            custom.get_keys_array_vec(),
-            custom_before.get_keys_array_vec(),
+            crate::options_model::shortcut_keys(&custom),
+            crate::options_model::shortcut_keys(&custom_before),
             "custom must not be overwritten when there are no pending edits"
         );
     }

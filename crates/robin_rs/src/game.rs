@@ -287,11 +287,7 @@ impl Game {
         // `RHGAME_LEVEL_SUCCEEDED` plays the jingle before menu mode.
         callbacks.emit_app_effect(AppEffect::PlayJingle(Jingle::MissionWon));
 
-        // Display debriefing if campaign not over.
-        if campaign.get_ares() < 10 {
-            callbacks.display_debriefing(true);
-        }
-
+        // The cooperative terminal phase owns debriefing presentation.
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
 
         Some(self.operation.get_current())
@@ -311,11 +307,7 @@ impl Game {
         // same jingle-before-menu ordering as the success branch.
         callbacks.emit_app_effect(AppEffect::PlayJingle(Jingle::MissionLost));
 
-        // Display debriefing if campaign not over.
-        if campaign.get_ares() < 10 {
-            callbacks.display_debriefing(false);
-        }
-
+        // The cooperative terminal phase owns debriefing presentation.
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
 
         if was_interrupted {
@@ -726,10 +718,6 @@ pub trait GameCallbacks {
     // ── Script ──
     fn send_script_message(&mut self, target: u32, message: u32);
 
-    // ── UI / menus ──
-    fn display_ingame_menu(&mut self);
-    fn display_debriefing(&mut self, won: bool);
-
     /// Return the mission's total elapsed simulation time in **seconds**.
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32;
 }
@@ -896,8 +884,6 @@ mod tests {
             self.effects.push(effect);
         }
         fn send_script_message(&mut self, _: u32, _: u32) {}
-        fn display_ingame_menu(&mut self) {}
-        fn display_debriefing(&mut self, _: bool) {}
         fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
             campaign.get_value(CampaignValue::MissionLength) as u32
         }

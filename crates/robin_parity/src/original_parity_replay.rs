@@ -5947,12 +5947,16 @@ fn initialize_engine(
     let ambiance = robin_engine::engine::Ambiance::from_raw(loaded.mission.header.ambiance)
         .directory()
         .to_string();
-    let background = robin_rs::level_loading_host::pre_decode_background_map(
+    // This legacy parity harness owns global file setup; capture it explicitly
+    // before entering the reader-only terrain API.
+    let terrain_files = robin_engine::sbfile::SbFile::snapshot_legacy_file_system();
+    let background = robin_rs::level_loading_host::pre_decode_background_map_with_files(
         &loaded.mission.header.map_filename,
         &ambiance,
         "Data/Levels",
         None,
         &mut |_| {},
+        &terrain_files,
     )
     .expect("decode background map")
     .expect("mission has no background map");
