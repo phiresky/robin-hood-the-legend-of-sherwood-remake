@@ -599,16 +599,8 @@ impl PortraitCache {
                     // Build pixel-level hit mask for the top scroll so clicks on
                     // transparent curved parchment edges fall through.
                     if res_id == RHID_TOP_SCROLL {
-                        let pixels: Vec<u16> = pic
-                            .data
-                            .as_chunks::<2>()
-                            .0
-                            .iter()
-                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                            .collect();
                         let tc = crate::renderer::TRANSPARENT_COLOR_KEY_16;
-                        self.top_scroll_hit_mask =
-                            Some(HitMask::from_pixels_u16(pic.width, pic.height, &pixels, tc));
+                        self.top_scroll_hit_mask = Some(picture_hit_mask(pic, tc)?);
                         tracing::info!("Built top scroll hit mask ({}x{})", pic.width, pic.height);
                     }
 
@@ -1186,6 +1178,23 @@ fn owned_picture_surface(
     let handle = owned.handle();
     owners.push(owned);
     Ok(handle)
+}
+
+fn picture_hit_mask(pic: &Picture, transparent_color: u16) -> anyhow::Result<HitMask> {
+    anyhow::ensure!(
+        pic.pixel_format == robin_assets::picture::PixelFormat::Rgb16,
+        "portrait hit mask requires an RGB565 picture"
+    );
+    let (pixels, remainder) = pic.data.as_chunks::<2>();
+    anyhow::ensure!(
+        remainder.is_empty(),
+        "portrait hit mask contains an incomplete pixel"
+    );
+    let opaque = pixels
+        .iter()
+        .map(|&bytes| u16::from_le_bytes(bytes) != transparent_color)
+        .collect();
+    HitMask::from_opacity(pic.width, pic.height, opaque).map_err(anyhow::Error::msg)
 }
 
 pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> OwnedSurface {
@@ -4009,6 +4018,49 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn picture_hit_mask_decodes_every_rgb565_word_and_validates_payloads() {
+        let mut pic = Picture {
+            width: 256,
+            height: 256,
+            pitch: 512,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: (0..=u16::MAX).flat_map(u16::to_le_bytes).collect(),
+            palette: None,
+        };
+        for transparent in [0, crate::renderer::TRANSPARENT_COLOR_KEY_16, u16::MAX] {
+            let mask = picture_hit_mask(&pic, transparent).unwrap();
+            for pixel in 0..=u16::MAX {
+                assert_eq!(
+                    mask.is_opaque(pixel % 256, pixel / 256),
+                    pixel != transparent
+                );
+            }
+        }
+        pic.data.pop();
+        assert!(
+            picture_hit_mask(&pic, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("incomplete pixel")
+        );
+        pic.data.pop();
+        assert!(
+            picture_hit_mask(&pic, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("dimensions")
+        );
+        pic.data.extend_from_slice(&[255, 255]);
+        pic.pixel_format = robin_assets::picture::PixelFormat::Rgb24;
+        assert!(
+            picture_hit_mask(&pic, 0)
+                .unwrap_err()
+                .to_string()
+                .contains("RGB565")
+        );
+    }
+
     fn queue_item(target: PortraitTarget, members: &[u32]) -> PortraitBarItem<'static> {
         let members = Cow::Owned(
             members
