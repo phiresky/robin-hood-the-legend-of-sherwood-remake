@@ -17,6 +17,7 @@ use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Entity, EntityId};
 use robin_engine::engine::{LevelAssets, PresentationView};
+use robin_engine::inventory::action_uses_ammo;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles;
 
@@ -782,24 +783,6 @@ fn format_peer_label<'a>(
     if label.is_empty() { None } else { Some(label) }
 }
 
-/// Whether an action type consumes ammunition (arrows, purses, etc.).
-/// Matches the actions handled by `PcStatus::ammo_counter_mut`.
-fn action_uses_ammo(action: profiles::Action) -> bool {
-    matches!(
-        action,
-        profiles::Action::Ale
-            | profiles::Action::Apple
-            | profiles::Action::Bow
-            | profiles::Action::Eat
-            | profiles::Action::Guzzle
-            | profiles::Action::Net
-            | profiles::Action::Stone
-            | profiles::Action::Heal
-            | profiles::Action::Purse
-            | profiles::Action::WaspNest
-    )
-}
-
 /// Whether this PC uses two-button mode (action[2] == NoAction).
 fn is_two_button_mode(assets: &LevelAssets, pc: &robin_engine::element::ActorPc) -> bool {
     assets
@@ -832,15 +815,9 @@ fn pc_ammo_quantities(
         _ => return [None; 3],
     };
 
-    let mut result = [None; 3];
-    for (i, &action) in profile.actions.iter().enumerate() {
-        let ammo = status.get_ammo(action);
-        // Show ammo count only for actions that actually consume ammunition
-        if action_uses_ammo(action) {
-            result[i] = Some(ammo);
-        }
-    }
-    result
+    profile
+        .actions
+        .map(|action| action_uses_ammo(action).then(|| status.get_ammo(action)))
 }
 
 fn render_ammo_counts_gpu(
