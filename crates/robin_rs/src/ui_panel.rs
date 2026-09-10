@@ -1232,6 +1232,24 @@ fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String>
     let mut reader = decoder
         .read_info()
         .map_err(|error| format!("decode embedded PNG header: {error}"))?;
+    let header = reader.info();
+    u16::try_from(header.width).map_err(|_| "embedded PNG width exceeds u16".to_owned())?;
+    u16::try_from(header.height).map_err(|_| "embedded PNG height exceeds u16".to_owned())?;
+    if header.bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "embedded PNG uses unsupported bit depth {:?}",
+            header.bit_depth
+        ));
+    }
+    if !matches!(
+        header.color_type,
+        png::ColorType::Rgb | png::ColorType::Rgba
+    ) {
+        return Err(format!(
+            "embedded PNG uses unsupported color type {:?}",
+            header.color_type
+        ));
+    }
     let mut buffer = vec![
         0;
         reader
@@ -1241,10 +1259,10 @@ fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String>
     let info = reader
         .next_frame(&mut buffer)
         .map_err(|error| format!("decode embedded PNG frame: {error}"))?;
-    let data = &buffer[..info.buffer_size()];
+    buffer.truncate(info.buffer_size());
     let pixels = match info.color_type {
-        png::ColorType::Rgba => data.to_vec(),
-        png::ColorType::Rgb => data
+        png::ColorType::Rgba => buffer,
+        png::ColorType::Rgb => buffer
             .as_chunks::<3>()
             .0
             .iter()
@@ -4318,6 +4336,84 @@ mod tests {
                 .expect("classic ale explanation");
         assert!(reliable_text.contains("potency 20"));
         assert!(classic_text.contains("authored beer interest"));
+    }
+
+    #[test]
+    fn embedded_png_rejects_unsupported_headers_before_decoding_pixels() {
+        for (width, height, color, depth, expected) in [
+            (
+                65_536,
+                1,
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                "width exceeds u16",
+            ),
+            (
+                1,
+                65_536,
+                png::ColorType::Rgba,
+                png::BitDepth::Eight,
+                "height exceeds u16",
+            ),
+            (
+                1,
+                1,
+                png::ColorType::Rgb,
+                png::BitDepth::Sixteen,
+                "unsupported bit depth",
+            ),
+            (
+                1,
+                1,
+                png::ColorType::Rgba,
+                png::BitDepth::Sixteen,
+                "unsupported bit depth",
+            ),
+            (
+                1,
+                1,
+                png::ColorType::Grayscale,
+                png::BitDepth::Eight,
+                "unsupported color type",
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(color);
+            encoder.set_depth(depth);
+            let mut writer = encoder.write_header().unwrap();
+            // An invalid pixel body proves header validation happens first.
+            writer.write_chunk(png::chunk::IDAT, &[]).unwrap();
+            drop(writer);
+            let error = decode_embedded_png_rgba(&bytes).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn embedded_png_preserves_rgba_and_expands_rgb() {
+        for (color, source, expected) in [
+            (
+                png::ColorType::Rgb,
+                vec![1, 2, 3, 4, 5, 6],
+                vec![1, 2, 3, 255, 4, 5, 6, 255],
+            ),
+            (
+                png::ColorType::Rgba,
+                vec![1, 2, 3, 0, 4, 5, 6, 127],
+                vec![1, 2, 3, 0, 4, 5, 6, 127],
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+            encoder.set_color(color);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&source).unwrap();
+            writer.finish().unwrap();
+            assert_eq!(decode_embedded_png_rgba(&bytes).unwrap(), (2, 1, expected));
+        }
+        assert!(decode_embedded_png_rgba(b"not a PNG").is_err());
     }
 
     #[test]
