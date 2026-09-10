@@ -6,6 +6,27 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+/// Missing payloads are expected after an interrupted publication; other read
+/// failures must remain visible. Hash in bounded storage, not a save-sized Vec.
+fn payload_digest(path: &Path) -> std::io::Result<Option<[u8; 32]>> {
+    use std::io::Read;
+    let mut input = match std::fs::File::open(path) {
+        Ok(input) => input,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 8192];
+    loop {
+        match input.read(&mut buffer) {
+            Ok(0) => return Ok(Some(digest.finalize().into())),
+            Ok(read) => digest.update(&buffer[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 pub(super) fn owned_candidate(root: &str, receipt_path: &Path) -> Result<Option<SaveGame>> {
     let bytes = match std::fs::read(receipt_path) {
         Ok(bytes) => bytes,
@@ -22,15 +43,7 @@ pub(super) fn owned_candidate(root: &str, receipt_path: &Path) -> Result<Option<
         "owned recovery receipt cannot target an autosave"
     );
     let path = Path::new(root).join(format!("{}.json", receipt.slot.filename));
-    let payload = match std::fs::read(&path) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error).context("read owned recovery payload"),
-    };
-    if payload
-        .as_ref()
-        .is_some_and(|bytes| <[u8; 32]>::from(Sha256::digest(bytes)) == receipt.digest)
-    {
+    if payload_digest(&path).context("read owned recovery payload")? == Some(receipt.digest) {
         return Ok(Some(receipt.slot));
     }
     Ok(None)
@@ -58,15 +71,9 @@ pub(super) fn quick_candidates(root: &str, receipt_path: &Path) -> Result<Option
     }
     for (slot, digest) in recovery.slots {
         let path = Path::new(root).join(format!("{}.json", slot.filename));
-        let payload = match std::fs::read(&path) {
-            Ok(payload) => payload,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(error).with_context(|| format!("reading {}", path.display()));
-            }
-        };
-        let actual: [u8; 32] = Sha256::digest(&payload).into();
-        if actual != digest {
+        let actual =
+            payload_digest(&path).with_context(|| format!("reading {}", path.display()))?;
+        if actual != Some(digest) {
             // This prospective payload was not published, or a later
             // operation replaced it. Never install stale receipt metadata.
             continue;
@@ -74,4 +81,26 @@ pub(super) fn quick_candidates(root: &str, receipt_path: &Path) -> Result<Option
         candidates.push(slot);
     }
     Ok(Some(candidates))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streamed_payload_digest_matches_whole_file_and_distinguishes_absence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("save.json");
+        assert_eq!(payload_digest(&path).unwrap(), None);
+        for size in [0, 1, 8191, 8192, 8193, 131_072] {
+            let bytes: Vec<_> = (0..size).map(|index| (index % 251) as u8).collect();
+            std::fs::write(&path, &bytes).unwrap();
+            assert_eq!(
+                payload_digest(&path).unwrap(),
+                Some(Sha256::digest(&bytes).into())
+            );
+        }
+        assert!(payload_digest(&path.join("not-a-directory")).is_err());
+        assert!(payload_digest(directory.path()).is_err());
+    }
 }
