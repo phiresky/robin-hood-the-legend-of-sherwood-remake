@@ -819,16 +819,18 @@ impl ConsoleOverlay {
         let end_idx = total.saturating_sub(self.scroll_from_bottom);
         let start_idx = end_idx.saturating_sub(avail_lines);
         let mut y = pad_y;
-        for line in self.output.iter().skip(start_idx).take(end_idx - start_idx) {
-            let (prefix, body, _color) = match line {
-                OutputLine::Echo(s) => ("> ", s.as_str(), (180, 220, 255)),
-                OutputLine::Response(s) => ("  ", s.as_str(), (200, 200, 200)),
-                OutputLine::Error(s) => ("! ", s.as_str(), (255, 160, 160)),
+        let mut combined = String::new();
+        for line in self.output.range(start_idx..end_idx) {
+            let (prefix, body) = match line {
+                OutputLine::Echo(s) => ("> ", s.as_str()),
+                OutputLine::Response(s) => ("  ", s.as_str()),
+                OutputLine::Error(s) => ("! ", s.as_str()),
             };
             // We don't have per-string colour control on the native
             // font path, so render a single string with the prefix
             // baked in.  Operator gets the cue from the leading glyph.
-            let mut combined = String::with_capacity(prefix.len() + body.len());
+            combined.clear();
+            combined.reserve(prefix.len() + body.len());
             combined.push_str(prefix);
             combined.push_str(body);
             render_text_screen_font(renderer, font, &combined, pad_x, y);
