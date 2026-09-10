@@ -58,13 +58,13 @@ fn badge_presentation(
 
 pub fn mission_badge_presentations(
     earned: robin_engine::achievement::AchievementSet,
+    available: robin_engine::achievement::AchievementSet,
     mut localize: impl FnMut(&str) -> Option<String>,
-) -> Vec<AchievementBadgePresentation> {
+) -> impl Iterator<Item = AchievementBadgePresentation> {
     AchievementId::ALL
         .into_iter()
-        .filter(|id| !id.campaign_only())
-        .map(|id| badge_presentation(id, earned, &mut localize))
-        .collect()
+        .filter(move |id| !id.campaign_only() && available.contains(*id))
+        .map(move |id| badge_presentation(id, earned, &mut localize))
 }
 
 /// Stable catalogue order without constructing labels or other presentation data.
@@ -415,9 +415,12 @@ mod tests {
         use robin_engine::achievement::{AchievementId, AchievementSet};
 
         let earned = AchievementSet::from_ids([AchievementId::Ghost]);
-        let badges = mission_badge_presentations(earned, |key| {
-            (key == "achievement.clean_hands.name").then(|| "Saubere Hände".to_string())
-        });
+        let badges: Vec<_> = mission_badge_presentations(
+            earned,
+            AchievementSet::from_ids(AchievementId::ALL),
+            |key| (key == "achievement.clean_hands.name").then(|| "Saubere Hände".to_string()),
+        )
+        .collect();
         assert_eq!(badges.len(), 10);
         assert_eq!(badges[0].label, "Saubere Hände");
         assert!(!badges[0].earned);
@@ -426,6 +429,42 @@ mod tests {
         assert_eq!(badges[2].id, AchievementId::Ruthless);
         assert_eq!(badges[3].id, AchievementId::ImOffHome);
         assert!(badges.iter().all(|badge| !badge.id.campaign_only()));
+    }
+
+    #[test]
+    fn mission_badge_filtering_precedes_localization_and_preserves_catalogue_order() {
+        use robin_engine::achievement::{AchievementId, AchievementSet};
+        let earned = AchievementSet::from_ids([AchievementId::Ghost]);
+        for available in [
+            AchievementSet::empty(),
+            AchievementSet::from_ids([
+                AchievementId::Ghost,
+                AchievementId::CleanHands,
+                AchievementId::PileOBones,
+            ]),
+            AchievementSet::from_ids(AchievementId::ALL),
+        ] {
+            let mut localized = Vec::new();
+            let badges: Vec<_> = mission_badge_presentations(earned, available, |key| {
+                localized.push(key.to_owned());
+                Some(format!("Localized {key}"))
+            })
+            .collect();
+            let expected: Vec<_> = AchievementId::ALL
+                .into_iter()
+                .filter(|id| !id.campaign_only() && available.contains(*id))
+                .collect();
+            assert_eq!(
+                badges.iter().map(|badge| badge.id).collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(localized.len(), badges.len());
+            for (badge, key) in badges.iter().zip(localized) {
+                assert_eq!(key, badge.localization_key);
+                assert_eq!(badge.label, format!("Localized {key}"));
+                assert_eq!(badge.earned, earned.contains(badge.id));
+            }
+        }
     }
 
     #[test]
