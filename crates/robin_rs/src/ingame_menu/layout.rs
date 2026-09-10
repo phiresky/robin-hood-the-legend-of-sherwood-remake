@@ -1581,8 +1581,7 @@ pub const TOOLTIP_HOVER_DELAY: std::time::Duration = std::time::Duration::from_m
 /// tracking is the simplest analogue.
 #[derive(Default)]
 pub struct TooltipState {
-    hover_widget: Option<crate::widget::WidgetId>,
-    hover_since: Option<web_time::Instant>,
+    hover: Option<(crate::widget::WidgetId, web_time::Instant)>,
 }
 
 impl TooltipState {
@@ -1596,7 +1595,7 @@ impl TooltipState {
     /// blazon-set grid) can suppress their own tooltip when a widget
     /// is already showing one.
     pub fn hover_widget(&self) -> Option<crate::widget::WidgetId> {
-        self.hover_widget
+        self.hover.map(|(id, _)| id)
     }
 
     /// Re-scan `frame` for the widget the cursor is over.  If the
@@ -1611,9 +1610,8 @@ impl TooltipState {
             .iter()
             .find(|w| w.base().is_inside(mouse_virt) && w.base().has_tooltip())
             .map(|w| w.id());
-        if hovered_now != self.hover_widget {
-            self.hover_widget = hovered_now;
-            self.hover_since = hovered_now.map(|_| web_time::Instant::now());
+        if hovered_now != self.hover_widget() {
+            self.hover = hovered_now.map(|id| (id, web_time::Instant::now()));
         }
     }
 
@@ -1627,8 +1625,7 @@ impl TooltipState {
         frame: &crate::widget::FrameWnd,
         mouse_virt: engine_coordinates::ScreenPoint,
     ) {
-        let Some(id) = self.hover_widget else { return };
-        let Some(started) = self.hover_since else {
+        let Some((id, started)) = self.hover else {
             return;
         };
         if started.elapsed() < TOOLTIP_HOVER_DELAY {
@@ -1743,6 +1740,41 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tooltip_hover_keeps_identity_and_timer_together() {
+        let mut frame = crate::ingame_menu::widget_bridge::make_button_frame(&[
+            (1, "First", 0, 0, 80, 30),
+            (2, "Second", 100, 0, 80, 30),
+        ]);
+        for id in [1, 2] {
+            frame
+                .widget_mut(id)
+                .unwrap()
+                .base_mut()
+                .set_tooltip_text("Tip");
+        }
+        let first = engine_coordinates::ScreenPoint::new(10.0, 10.0);
+        let second = engine_coordinates::ScreenPoint::new(110.0, 10.0);
+        let outside = engine_coordinates::ScreenPoint::new(300.0, 300.0);
+        let mut tooltip = TooltipState::new();
+        assert_eq!(tooltip.hover_widget(), None);
+        tooltip.update(&frame, first);
+        assert_eq!(tooltip.hover_widget(), Some(1));
+        let original = tooltip.hover.unwrap();
+        tooltip.update(&frame, first);
+        assert_eq!(tooltip.hover, Some(original));
+        tooltip.update(&frame, second);
+        assert_eq!(tooltip.hover_widget(), Some(2));
+        assert!(tooltip.hover.unwrap().1 >= original.1);
+        tooltip.update(&frame, outside);
+        assert_eq!(tooltip.hover, None);
+        tooltip.update(&frame, first);
+        assert_eq!(tooltip.hover_widget(), Some(1));
+        frame.widget_mut(1).unwrap().base_mut().set_tooltip_text("");
+        tooltip.update(&frame, first);
+        assert_eq!(tooltip.hover, None);
+    }
     #[test]
     fn text_elision_preserves_measurement_order_and_whitespace_policy() {
         for (text, budget, force, expected, measured) in [
