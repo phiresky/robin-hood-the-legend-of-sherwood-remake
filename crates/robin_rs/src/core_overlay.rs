@@ -247,10 +247,10 @@ pub fn load_validated_native_directory(root: &Path) -> Result<(CoreOverlayManife
 /// runtime search order selects the admitted bytes rather than a colliding
 /// retail or host file.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn mount_validated_native_directory(
+pub fn mount_validated_native_directory<B: AsRef<[u8]>>(
     root: &Path,
     mut mount: impl FnMut(&str) -> i32,
-    mut read_visible: impl FnMut(&str) -> Result<Vec<u8>>,
+    mut read_visible: impl FnMut(&str) -> Result<B>,
 ) -> Result<CoreOverlayManifest> {
     let (manifest, _) = load_validated_native_directory(root)?;
     let root_utf8 = root
@@ -269,7 +269,7 @@ pub fn mount_validated_native_directory(
     for entry in &manifest.files {
         let bytes = read_visible(&entry.path)
             .with_context(|| format!("probe mounted core overlay asset {}", entry.path))?;
-        validate_file(entry, &bytes).with_context(|| {
+        validate_file(entry, bytes.as_ref()).with_context(|| {
             format!(
                 "runtime lookup did not select the validated core overlay asset {}",
                 entry.path
@@ -588,7 +588,7 @@ mod tests {
             |path| file_system.add_overlay_path(path),
             |path| {
                 file_system
-                    .read_all(path)
+                    .read_shared(path)
                     .map_err(|status| anyhow!("file read error {status}"))
             },
         )
@@ -611,7 +611,9 @@ mod tests {
                     mounted.set(true);
                     SBFILE_NO_ERROR
                 },
-                |_| panic!("visibility probe must not run before a validated mount"),
+                |_| -> Result<Vec<u8>> {
+                    panic!("visibility probe must not run before a validated mount")
+                },
             )
             .unwrap_err();
             assert!(!mounted.get());
@@ -649,7 +651,7 @@ mod tests {
         let error = mount_validated_native_directory(
             overlay.path(),
             |_| -77,
-            |_| panic!("visibility probe must not run after a failed mount"),
+            |_| -> Result<Vec<u8>> { panic!("visibility probe must not run after a failed mount") },
         )
         .unwrap_err();
         assert!(error.to_string().contains("file error -77"));

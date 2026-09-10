@@ -231,7 +231,7 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
         |path| files.add_overlay_path(path),
         |path| {
             files
-                .read_all(path)
+                .read_shared(path)
                 .map_err(|status| anyhow::anyhow!("file read error {status}"))
         },
     )
