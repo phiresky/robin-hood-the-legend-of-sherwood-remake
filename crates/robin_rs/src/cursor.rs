@@ -254,7 +254,9 @@ impl CursorRenderer {
 
         // The built-in fallback arrow is drawn from plain colours; it has no
         // shadow key.
-        if let Some(frame) = upload_pixels_to_gpu_frame(w, h, &pixels, false, renderer) {
+        if let Some(frame) =
+            upload_pixels_to_gpu_frame(w, h, pixels.iter().copied(), false, renderer)
+        {
             self.frames.push(frame);
         }
     }
@@ -500,20 +502,19 @@ fn upload_picture_to_gpu_frame(
 ) -> Option<CursorFrame> {
     let w = pic.width;
     let h = pic.height;
-    let pixel_u16: Vec<u16> = pic
+    let pixel_u16 = pic
         .data
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
-    upload_pixels_to_gpu_frame(w, h, &pixel_u16, shadowed, renderer)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]));
+    upload_pixels_to_gpu_frame(w, h, pixel_u16, shadowed, renderer)
 }
 
 fn upload_pixels_to_gpu_frame(
     w: u16,
     h: u16,
-    pixels: &[u16],
+    pixels: impl ExactSizeIterator<Item = u16>,
     shadowed: bool,
     renderer: &mut Renderer,
 ) -> Option<CursorFrame> {
@@ -521,10 +522,27 @@ fn upload_pixels_to_gpu_frame(
         return None;
     }
 
+    let (color_rgba, shadow_rgba) = cursor_pixel_layers(pixels, shadowed);
+    let color = renderer.create_rgba_gpu_image(w, h, &color_rgba, "cursor color")?;
+    let shadow = shadow_rgba
+        .as_ref()
+        .and_then(|rgba| renderer.create_rgba_gpu_image(w, h, rgba, "cursor shadow"));
+    Some(CursorFrame {
+        color: Some(color),
+        shadow,
+        width: w,
+        height: h,
+    })
+}
+
+fn cursor_pixel_layers(
+    pixels: impl ExactSizeIterator<Item = u16>,
+    shadowed: bool,
+) -> (Vec<u8>, Option<Vec<u8>>) {
     let mut color_rgba = Vec::with_capacity(pixels.len() * 4);
     let mut shadow_rgba = Vec::with_capacity(pixels.len() * 4);
     let mut has_shadow = false;
-    for &px in pixels {
+    for px in pixels {
         if px == TRANSPARENT_COLOR_KEY_16 {
             color_rgba.extend_from_slice(&[0, 0, 0, 0]);
             shadow_rgba.extend_from_slice(&[0, 0, 0, 0]);
@@ -546,18 +564,7 @@ fn upload_pixels_to_gpu_frame(
         }
     }
 
-    let color = renderer.create_rgba_gpu_image(w, h, &color_rgba, "cursor color")?;
-    let shadow = if has_shadow {
-        renderer.create_rgba_gpu_image(w, h, &shadow_rgba, "cursor shadow")
-    } else {
-        None
-    };
-    Some(CursorFrame {
-        color: Some(color),
-        shadow,
-        width: w,
-        height: h,
-    })
+    (color_rgba, has_shadow.then_some(shadow_rgba))
 }
 
 fn cursor_shadow_tint(opacity: u16, shadow_color: u16, effect: CursorShadowEffect) -> [f32; 4] {
@@ -597,6 +604,34 @@ fn quick_action_pulse_value(tick: u32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_pixel_layers_preserve_every_rgb565_value_and_shadow_policy() {
+        let pixels: Vec<u16> = (0..=u16::MAX).collect();
+        for shadowed in [false, true] {
+            let (color, shadow) = cursor_pixel_layers(pixels.iter().copied(), shadowed);
+            assert_eq!(color.len(), pixels.len() * 4);
+            assert_eq!(shadow.is_some(), shadowed);
+            for (index, &pixel) in pixels.iter().enumerate() {
+                let (r, g, b) = rgb565_to_rgb8(pixel);
+                let is_shadow = shadowed && pixel == SHADOW_KEY;
+                let expected = if pixel == TRANSPARENT_COLOR_KEY_16 || is_shadow {
+                    [0, 0, 0, 0]
+                } else {
+                    [r, g, b, 255]
+                };
+                assert_eq!(&color[index * 4..index * 4 + 4], &expected);
+                if let Some(shadow) = &shadow {
+                    assert_eq!(
+                        &shadow[index * 4..index * 4 + 4],
+                        &if is_shadow { [255; 4] } else { [0; 4] }
+                    );
+                }
+            }
+        }
+        let (_, shadow) = cursor_pixel_layers([0xFFFF, TRANSPARENT_COLOR_KEY_16].into_iter(), true);
+        assert!(shadow.is_none());
+    }
 
     #[test]
     fn cursor_renderer_new_defaults() {
