@@ -126,6 +126,15 @@ impl NativeFont {
         };
 
         // ── Character info map ──────────────────────────────────────
+        // Each character record is one u16 code plus four 32-bit metrics.
+        // Reject impossible counts before reserving attacker-controlled capacity.
+        let remaining = file
+            .get_size()
+            .checked_sub(file.tell())
+            .context("font character table starts past end of file")?;
+        if u64::from(char_number) > remaining / 18 {
+            bail!("font character count {char_number} exceeds remaining data ({remaining} bytes)");
+        }
         let mut characters = HashMap::with_capacity(char_number as usize);
         for _ in 0..char_number {
             let char_code = read_u16(&mut file)?;
@@ -636,6 +645,32 @@ mod tests {
             load_font_by_name_for_locale(&native_only, "Default", &prepared).unwrap(),
             Font::Native(_)
         ));
+    }
+
+    #[test]
+    fn native_font_rejects_impossible_character_counts_before_allocation() {
+        for version in [0x100u32, 0x200] {
+            let mut bytes = SBFONT_TAG.to_vec();
+            bytes.extend_from_slice(&version.to_le_bytes());
+            bytes.extend_from_slice(&[0; FONT_NAME_LEN]);
+            for value in [0u32, 0, 1, 1, 1, u32::MAX] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            if version == 0x200 {
+                bytes.extend_from_slice(&0i32.to_le_bytes());
+            }
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            vfs.install_preloaded_asset("oversized-font.sbf", bytes)
+                .unwrap();
+            let files = SbFileSystem::new(vfs);
+            let error = NativeFont::load("oversized-font.sbf", &files)
+                .err()
+                .unwrap();
+            assert!(
+                error.to_string().contains("font character count"),
+                "{error:#}"
+            );
+        }
     }
 
     #[test]
