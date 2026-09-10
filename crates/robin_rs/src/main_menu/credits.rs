@@ -68,18 +68,21 @@ pub(crate) async fn show_credits(
     let (credit_width, credit_height) = (i32::from(credit_width), i32::from(credit_height));
 
     let bg_surface = match res.get_picture(resource_ids::RHID_BK_CREDITS, 0) {
-        Ok(pic) => Some(picture_to_surface(renderer, pic)),
+        Ok(pic) => {
+            let surface = picture_to_surface(renderer, pic);
+            let (w, h) = renderer
+                .surface_dimensions(surface.handle())
+                .expect("live credits background");
+            Some((surface, (i32::from(w), i32::from(h))))
+        }
         Err(e) => {
             tracing::info!("Credits: RHID_BK_CREDITS unavailable ({e}) — using plain black");
             None
         }
     };
-    let bg_dims = bg_surface.as_ref().map(|surface| {
-        let (w, h) = renderer
-            .surface_dimensions(surface.handle())
-            .expect("live credits background");
-        (i32::from(w), i32::from(h))
-    });
+    // Both uploads own their GPU data; the source archive and decoded pictures
+    // are no longer needed during the potentially long-running scroll.
+    drop(res);
 
     let initial_screen_h = renderer.screen_height() as i32;
 
@@ -117,8 +120,8 @@ pub(crate) async fn show_credits(
         // Background: fill with black, then blit the centered texture.
         renderer.begin_gpu_frame_clear();
         renderer.begin_ui_only_frame();
-        if let Some(bg) = &bg_surface {
-            let (bw, bh) = bg_dims.unwrap();
+        if let Some((bg, dimensions)) = &bg_surface {
+            let (bw, bh) = *dimensions;
             let bx = (screen_w - bw) / 2;
             let by = (screen_h - bh) / 2;
             let src = BBox::from_coords(0.0, 0.0, bw as f32, bh as f32);
@@ -165,7 +168,11 @@ pub(crate) async fn show_credits(
         // above remains at the original 50 pixels/second wall-clock rate.
         crate::window::sleep_ui_frame().await;
     }
-    retire_uploads(renderer, credits_surface, bg_surface);
+    retire_uploads(
+        renderer,
+        credits_surface,
+        bg_surface.map(|(surface, _)| surface),
+    );
 }
 
 /// Preserve the entering, full-screen, and trailing phases of the legacy roll.
