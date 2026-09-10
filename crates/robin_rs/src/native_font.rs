@@ -279,31 +279,30 @@ impl NativeFont {
     /// glyph — destination rect in pixel space + UV rect in 0..1
     /// atlas coordinates. Uses the same per-character spacing logic
     /// as `text_width`.
-    pub fn layout_quads(&self, text: &str, x: i32, y: i32) -> Vec<TextQuad> {
-        let mut out = Vec::new();
+    pub fn layout_quads<'a>(
+        &'a self,
+        text: &'a str,
+        x: i32,
+        y: i32,
+    ) -> impl Iterator<Item = TextQuad> + 'a {
         let aw = self.glyph_width as f32;
         let mut cx = x;
-        for ch in text.encode_utf16() {
-            if let Some(info) = self.get_char_info(ch) {
-                cx += info.pre_spacing;
-                let u0 = info.start as f32 / aw;
-                let u1 = (info.start + info.width) as f32 / aw;
-                if ch != b' ' as u16 {
-                    out.push(TextQuad {
-                        dst_x: cx,
-                        dst_y: y,
-                        dst_w: info.width,
-                        dst_h: self.height,
-                        u0,
-                        v0: 0.0,
-                        u1,
-                        v1: 1.0,
-                    });
-                }
-                cx += info.width as i32 + info.post_spacing + self.extra_spacing;
-            }
-        }
-        out
+        text.encode_utf16().filter_map(move |ch| {
+            let info = self.get_char_info(ch)?;
+            cx += info.pre_spacing;
+            let quad = (ch != b' ' as u16).then(|| TextQuad {
+                dst_x: cx,
+                dst_y: y,
+                dst_w: info.width,
+                dst_h: self.height,
+                u0: info.start as f32 / aw,
+                v0: 0.0,
+                u1: (info.start + info.width) as f32 / aw,
+                v1: 1.0,
+            });
+            cx += info.width as i32 + info.post_spacing + self.extra_spacing;
+            quad
+        })
     }
 
     /// Look up character info for a glyph. Returns `None` when the glyph
@@ -926,12 +925,32 @@ mod tests {
     #[test]
     fn layout_quads_skip_spaces_but_preserve_advance() {
         let f = make_test_font();
-        let quads = f.layout_quads("A B", 10, 20);
+        let quads: Vec<_> = f.layout_quads("A B", 10, 20).collect();
 
         assert_eq!(quads.len(), 2, "space glyphs must not be sampled");
         assert_eq!(quads[0].dst_x, 10);
         // A advances 4 px, the space advances 2 px, then B has 1 px pre-spacing.
         assert_eq!(quads[1].dst_x, 17);
+    }
+
+    #[test]
+    fn layout_quads_stream_spacing_and_skip_missing_utf16_units() {
+        let mut font = make_test_font();
+        font.extra_spacing = 2;
+        font.characters.get_mut(&(b'A' as u16)).unwrap().pre_spacing = -2;
+        let mut quads = font.layout_quads(" AZ😀 B A", -10, 7);
+        // Leading space advances 4; A starts 2 pixels before its pen.
+        let a = quads.next().unwrap();
+        assert_eq!((a.dst_x, a.dst_y, a.dst_w, a.dst_h), (-8, 7, 3, 2));
+        assert_eq!((a.u0, a.v0, a.u1, a.v1), (0.0, 0.0, 0.5, 1.0));
+        // Missing Z and both missing surrogate units have no advance.
+        let b = quads.next().unwrap();
+        assert_eq!(b.dst_x, 3);
+        assert_eq!((b.u0, b.u1), (0.5, 1.0));
+        assert_eq!(quads.next().unwrap().dst_x, 10);
+        assert!(quads.next().is_none());
+        assert!(font.layout_quads("", 0, 0).next().is_none());
+        assert!(font.layout_quads(" Z😀 ", 0, 0).next().is_none());
     }
 
     #[test]
