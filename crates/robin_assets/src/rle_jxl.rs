@@ -113,9 +113,7 @@ pub fn expand565(px: u16) -> [u8; 3] {
 }
 
 /// RGB888 -> RGB565 truncating requantization.
-pub fn quant565(r: u8, g: u8, b: u8) -> u16 {
-    (((r as u16) & 0xF8) << 8) | (((g as u16) & 0xFC) << 3) | (((b as u16) & 0xF8) >> 3)
-}
+pub use robin_util::color::rgb565 as quant565;
 
 /// Requantized visible pixels have no guarantee of avoiding the key values
 /// (0 collisions were measured over 25.5M px, but the guarantee comes from

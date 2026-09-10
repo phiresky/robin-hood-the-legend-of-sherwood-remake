@@ -129,11 +129,6 @@ pub fn rgb565_to_rgb8(px: u16) -> (u8, u8, u8) {
     )
 }
 
-#[inline]
-fn rgb8_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
-    ((r as u16 & 0xF8) << 8) | ((g as u16 & 0xFC) << 3) | ((b as u16) >> 3)
-}
-
 // ---------------------------------------------------------------------
 // Sprite/texture caches — wgpu::Texture-backed.
 // ---------------------------------------------------------------------
@@ -850,7 +845,7 @@ impl Renderer {
     }
 
     pub fn create_color_16(r: u8, g: u8, b: u8) -> u16 {
-        rgb8_to_rgb565(r, g, b)
+        robin_util::color::rgb565(r, g, b)
     }
 
     /// Upload decoded pixels and return their unique retirement authority.

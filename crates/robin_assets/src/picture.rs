@@ -673,10 +673,7 @@ impl Picture {
                 .iter_mut()
                 .zip(src_row.as_chunks::<3>().0.iter())
             {
-                let r = src[0] as u16;
-                let g = src[1] as u16;
-                let b = src[2] as u16;
-                let px: u16 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
+                let px = robin_util::color::rgb565(src[0], src[1], src[2]);
                 dst.copy_from_slice(&px.to_le_bytes());
             }
         };
@@ -776,10 +773,7 @@ impl Picture {
                 a if a < 64 => crate::frame_holder::TRANSPARENT_COLOR_16,
                 a if a < 192 => crate::frame_holder::SHADOW_KEY,
                 _ => {
-                    let r = rgba[off] as u16;
-                    let g = rgba[off + 1] as u16;
-                    let b = rgba[off + 2] as u16;
-                    let px = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
+                    let px = robin_util::color::rgb565(rgba[off], rgba[off + 1], rgba[off + 2]);
                     // A visible pixel whose lossy colour lands exactly on a
                     // key would be read as transparent or shadow by the
                     // runtime's exact comparisons. Nudge it one step in the

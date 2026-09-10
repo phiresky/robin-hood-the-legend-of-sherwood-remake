@@ -292,7 +292,11 @@ impl Thumbnail {
             for tx in 0..target_w {
                 let sx = (tx as u64 * src_w as u64 / target_w as u64) as usize;
                 let off = (sy * src_w + sx) * 4;
-                pixels.push(rgb888_to_rgb565(rgba[off], rgba[off + 1], rgba[off + 2]));
+                pixels.push(robin_util::color::rgb565(
+                    rgba[off],
+                    rgba[off + 1],
+                    rgba[off + 2],
+                ));
             }
         }
 
@@ -391,12 +395,12 @@ impl Thumbnail {
         match info.color_type {
             png::ColorType::Rgb => {
                 for chunk in data.as_chunks::<3>().0 {
-                    pixels.push(rgb888_to_rgb565(chunk[0], chunk[1], chunk[2]));
+                    pixels.push(robin_util::color::rgb565(chunk[0], chunk[1], chunk[2]));
                 }
             }
             png::ColorType::Rgba => {
                 for chunk in data.as_chunks::<4>().0 {
-                    pixels.push(rgb888_to_rgb565(chunk[0], chunk[1], chunk[2]));
+                    pixels.push(robin_util::color::rgb565(chunk[0], chunk[1], chunk[2]));
                 }
             }
             other => {
@@ -436,10 +440,6 @@ impl Thumbnail {
 fn rgb565_to_rgb888(pixel: u16) -> [u8; 3] {
     let (r, g, b) = crate::renderer::rgb565_to_rgb8(pixel);
     [r, g, b]
-}
-
-fn rgb888_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
-    ((r as u16 & 0xF8) << 8) | ((g as u16 & 0xFC) << 3) | (b as u16 >> 3)
 }
 
 // ─── Header ──────────────────────────────────────────────────────────
