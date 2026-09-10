@@ -326,18 +326,23 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                 ));
                 continue;
             }
-            let rhm_entries = match list_rhm_in_zip(&zip_path) {
-                Ok(v) => v,
-                Err(e) => {
-                    out.push(broken_entry(
-                        m,
-                        Some(version),
-                        &format!("bad zip: {e}"),
-                        preview.clone(),
-                    ));
-                    continue;
-                }
-            };
+            let (mut archive, entry_names) =
+                match open_mission_zip(&zip_path).and_then(|mut archive| {
+                    let names = archive_entry_names(&mut archive)?;
+                    Ok((archive, names))
+                }) {
+                    Ok(inspected) => inspected,
+                    Err(e) => {
+                        out.push(broken_entry(
+                            m,
+                            Some(version),
+                            &format!("bad zip: {e}"),
+                            preview.clone(),
+                        ));
+                        continue;
+                    }
+                };
+            let rhm_entries = selectable_rhm_entries(&entry_names);
             if rhm_entries.is_empty() {
                 out.push(broken_entry(
                     m,
@@ -356,7 +361,7 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                 let basename = rhm_basename(&rhm_zip_entry);
                 let expected_mounted_rhm =
                     format!("data/levels/{}.rhm", basename.to_ascii_lowercase());
-                let status = match selected_mission_layout_in_zip(&zip_path, &rhm_zip_entry)
+                let status = match selected_mission_layout(&entry_names, &rhm_zip_entry)
                     .and_then(|layout| {
                         if layout.mounted_rhm_path != expected_mounted_rhm {
                             return Err(format!(
@@ -364,7 +369,7 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                                 layout.mounted_rhm_path
                             ));
                         }
-                        peek_rhm_header_in_zip(&zip_path, &rhm_zip_entry)
+                        peek_rhm_header(&mut archive, &rhm_zip_entry)
                     })
                 {
                     Ok(header) => MissionStatus::Ok {
@@ -467,18 +472,27 @@ fn mission_language_label(zip_entry: &str) -> Option<&str> {
 /// mount, so multilingual archives expose every language instead of letting
 /// central-directory order silently choose one.
 pub fn list_rhm_in_zip(zip_path: &Path) -> Result<Vec<String>, String> {
-    let entry_names = archive_entry_names(zip_path)?;
-    let mut out = entry_names
-        .into_iter()
-        .filter(|name| name.to_ascii_lowercase().ends_with(".rhm"))
-        .collect::<Vec<_>>();
-    out.sort();
-    Ok(out)
+    let mut archive = open_mission_zip(zip_path)?;
+    let entry_names = archive_entry_names(&mut archive)?;
+    Ok(selectable_rhm_entries(&entry_names))
 }
 
-fn archive_entry_names(zip_path: &Path) -> Result<Vec<String>, String> {
+fn selectable_rhm_entries(entry_names: &[String]) -> Vec<String> {
+    let mut out = entry_names
+        .iter()
+        .filter(|name| name.to_ascii_lowercase().ends_with(".rhm"))
+        .cloned()
+        .collect::<Vec<_>>();
+    out.sort();
+    out
+}
+
+fn open_mission_zip(zip_path: &Path) -> Result<zip::ZipArchive<fs::File>, String> {
     let file = fs::File::open(zip_path).map_err(|e| format!("open: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("not a zip: {e}"))?;
+    zip::ZipArchive::new(file).map_err(|e| format!("not a zip: {e}"))
+}
+
+fn archive_entry_names(archive: &mut zip::ZipArchive<fs::File>) -> Result<Vec<String>, String> {
     let mut entry_names: Vec<String> = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
         let entry = archive
@@ -509,8 +523,16 @@ pub fn selected_mission_layout_in_zip(
     zip_path: &Path,
     rhm_entry: &str,
 ) -> Result<SelectedMissionLayout, String> {
-    let entries = archive_entry_names(zip_path)?;
-    let (strip_prefix, prepend_prefix) = detect_zip_layout_for_mission(&entries, rhm_entry)?;
+    let mut archive = open_mission_zip(zip_path)?;
+    let entries = archive_entry_names(&mut archive)?;
+    selected_mission_layout(&entries, rhm_entry)
+}
+
+fn selected_mission_layout(
+    entries: &[String],
+    rhm_entry: &str,
+) -> Result<SelectedMissionLayout, String> {
+    let (strip_prefix, prepend_prefix) = detect_zip_layout_for_mission(entries, rhm_entry)?;
     let selected = rhm_entry.to_ascii_lowercase();
     let relative = selected.strip_prefix(&strip_prefix).ok_or_else(|| {
         format!("selected mission `{rhm_entry}` is outside detected root `{strip_prefix}`")
@@ -540,6 +562,13 @@ pub struct RhmHeader {
 pub fn peek_rhm_header_in_zip(zip_path: &Path, rhm_entry: &str) -> Result<RhmHeader, String> {
     let file = fs::File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("not a zip: {e}"))?;
+    peek_rhm_header(&mut archive, rhm_entry)
+}
+
+fn peek_rhm_header(
+    archive: &mut zip::ZipArchive<fs::File>,
+    rhm_entry: &str,
+) -> Result<RhmHeader, String> {
     let mut entry = archive
         .by_name(rhm_entry)
         .map_err(|e| format!("entry {rhm_entry}: {e}"))?;
@@ -945,6 +974,62 @@ mod tests {
         bytes.extend_from_slice(map.as_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes
+    }
+
+    #[test]
+    fn discovery_checks_all_missions_with_shared_archive_despite_bad_header() {
+        let root = tempfile::tempdir().unwrap();
+        let zip_path = root.path().join("missions.zip");
+        write_test_zip(
+            &zip_path,
+            &[
+                ("Data/Levels/C.rhm", &minimal_rhm("third")),
+                ("Data/Levels/A.rhm", b"broken"),
+                ("Data/Levels/B.rhm", &minimal_rhm("second")),
+            ],
+        );
+        let details: ModDetails = serde_json::from_value(serde_json::json!({
+            "slug": "test", "title": "Test", "page_url": "", "author": "",
+            "map": "", "uploaded": "",
+            "versions": [{"date_uploaded": "1", "download_url": "", "local_file": "missions.zip"}]
+        }))
+        .unwrap();
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let rows = enumerate_missions(
+            &[DiscoveredMod {
+                details,
+                mod_dir: root.path().to_path_buf(),
+            }],
+            &files,
+        );
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.rhm_zip_entry.clone())
+                .collect::<Vec<_>>(),
+            list_rhm_in_zip(&zip_path).unwrap()
+        );
+        assert_eq!(rows.len(), 3);
+        for row in rows {
+            let layout = selected_mission_layout_in_zip(&zip_path, &row.rhm_zip_entry).unwrap();
+            assert_eq!(
+                layout.mounted_rhm_path,
+                format!("data/levels/{}.rhm", row.rhm_basename.to_ascii_lowercase())
+            );
+            match (
+                row.status,
+                peek_rhm_header_in_zip(&zip_path, &row.rhm_zip_entry),
+            ) {
+                (MissionStatus::Ok { map_filename }, Ok(header)) => {
+                    assert_eq!(map_filename, header.map_filename)
+                }
+                (MissionStatus::Broken { reason }, Err(error)) => {
+                    assert_eq!(reason, format!("mission validation failed: {error}"))
+                }
+                unexpected => {
+                    panic!("discovery and standalone inspection disagree: {unexpected:?}")
+                }
+            }
+        }
     }
 
     #[test]
