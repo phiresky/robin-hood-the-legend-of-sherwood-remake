@@ -143,12 +143,12 @@ fn rasterize_fog_region(
 ) {
     let scale_x = width as f32 / level_size.x;
     let scale_y = height as f32 / level_size.y;
+    let mut crossings = Vec::new();
     for polygon in region.polygons() {
-        let mut rings = Vec::with_capacity(1 + polygon.interiors.len());
-        rings.push(polygon.exterior.as_slice());
-        rings.extend(polygon.interiors.iter().map(Vec::as_slice));
+        let rings = std::iter::once(polygon.exterior.as_slice())
+            .chain(polygon.interiors.iter().map(Vec::as_slice));
         let Some((min_y, max_y)) = rings
-            .iter()
+            .clone()
             .flat_map(|ring| ring.iter().map(|point| point.y))
             .fold(None, |bounds, y| {
                 Some(bounds.map_or((y, y), |(min_y, max_y): (f32, f32)| {
@@ -169,11 +169,10 @@ fn rasterize_fog_region(
         if first_y > last_y || first_y >= height {
             continue;
         }
-        let mut crossings = Vec::new();
         for y in first_y..=last_y {
             let sample_y = (y as f32 + 0.5) / scale_y;
             crossings.clear();
-            for ring in &rings {
+            for ring in rings.clone() {
                 for index in 0..ring.len() {
                     let a = ring[index];
                     let b = ring[(index + 1) % ring.len()];
@@ -2268,6 +2267,67 @@ fn sprite_culling_preserves_inclusive_zoom_scaled_edges() {
             (0, 81 + margin),
         ] {
             assert!(outside_sprite_cull_margin(point, (100, 80), zoom));
+        }
+    }
+}
+
+#[test]
+fn fog_rasterization_preserves_holes_clipping_and_ring_orientation() {
+    use robin_engine::coordinates::MapSize;
+    use robin_engine::fog_of_war::{FogPolygon, FogRegion};
+
+    let rectangle = |left, top, right, bottom| {
+        vec![
+            MapPoint::new(left, top),
+            MapPoint::new(right, top),
+            MapPoint::new(right, bottom),
+            MapPoint::new(left, bottom),
+        ]
+    };
+    let mut polygons = vec![
+        FogPolygon {
+            exterior: rectangle(0.0, 0.0, 4.0, 4.0),
+            interiors: vec![rectangle(1.0, 1.0, 3.0, 3.0)],
+        },
+        FogPolygon {
+            exterior: rectangle(6.0, 0.0, 9.0, 2.0),
+            interiors: Vec::new(),
+        },
+        FogPolygon {
+            exterior: rectangle(-2.0, 5.0, 2.0, 7.0),
+            interiors: Vec::new(),
+        },
+        FogPolygon {
+            exterior: Vec::new(),
+            interiors: vec![Vec::new()],
+        },
+    ];
+    let expected = [
+        "####..##", "#..#..##", "#..#....", "####....", "........", "##......",
+    ];
+    for close_and_reverse in [false, true] {
+        if close_and_reverse {
+            for polygon in &mut polygons {
+                for ring in std::iter::once(&mut polygon.exterior).chain(&mut polygon.interiors) {
+                    ring.reverse();
+                    if let Some(first) = ring.first().copied() {
+                        ring.push(first);
+                    }
+                }
+            }
+        }
+        let region: FogRegion =
+            serde_json::from_value(serde_json::json!({"polygons": polygons})).unwrap();
+        let mut alpha = vec![255; 8 * 6];
+        for value in [165, 0] {
+            rasterize_fog_region(&mut alpha, 8, 6, MapSize::new(8.0, 6.0), &region, value);
+            for (actual, row) in alpha.chunks_exact(8).zip(expected) {
+                let expected: Vec<u8> = row
+                    .bytes()
+                    .map(|byte| if byte == b'#' { value } else { 255 })
+                    .collect();
+                assert_eq!(actual, expected);
+            }
         }
     }
 }
