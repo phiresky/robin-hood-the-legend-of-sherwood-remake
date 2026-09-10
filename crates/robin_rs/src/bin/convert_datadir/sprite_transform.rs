@@ -466,7 +466,10 @@ pub(super) fn build_rle_jxl_chunk(
                 group_jxl.push((jxl, placements));
             }
             if !low_psnr.is_empty() {
-                members.retain(|id| !low_psnr.contains(id));
+                // Keep retry order in low_psnr; use a separate index only for
+                // membership instead of scanning every rejection per member.
+                let rejected: std::collections::HashSet<u32> = low_psnr.iter().copied().collect();
+                members.retain(|id| !rejected.contains(id));
                 ungrouped.extend(low_psnr);
                 continue;
             }
