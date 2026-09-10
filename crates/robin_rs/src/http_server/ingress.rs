@@ -160,10 +160,7 @@ impl SessionIngress {
             );
             route.active = Arc::downgrade(&requests);
             // Only process-scoped replay operations can be queued while idle.
-            requests
-                .lock()
-                .expect("session RPC queue poisoned")
-                .extend(route.idle.drain(..));
+            *requests.lock().expect("session RPC queue poisoned") = route.take_idle();
         }
         Self {
             replay_capabilities: None,
@@ -694,7 +691,13 @@ mod tests {
         );
         let (replay, replay_reply) = request(HttpPayload::GetReplay);
         router.lock().unwrap().push_back(replay);
-        let mut session = SessionIngress::with_router(Some(router));
+        let original = router.lock().unwrap().idle.front().unwrap() as *const HttpRequest;
+        let mut session = SessionIngress::with_router(Some(router.clone()));
+        assert!(router.lock().unwrap().idle.is_empty());
+        assert!(std::ptr::eq(
+            original,
+            session.requests.lock().unwrap().front().unwrap()
+        ));
         let mut pending = session.take_requests();
         assert_eq!(pending.len(), 1);
         let request = pending.pop().unwrap();
