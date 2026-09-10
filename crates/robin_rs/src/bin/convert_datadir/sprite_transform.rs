@@ -229,9 +229,28 @@ pub(super) struct RleJxlAccepted {
 /// Compressed-size estimate for the keep-exact side of the per-sprite
 /// decision: the raw words as they would sit in the outer chunk zstd.
 pub(super) fn zstd19_len(bytes: &[u8]) -> Result<usize> {
-    Ok(zstd::stream::encode_all(bytes, 19)
-        .context("zstd19 size estimate")?
-        .len())
+    let mut output = CompressedByteCount::default();
+    zstd::stream::copy_encode(bytes, &mut output, 19).context("zstd19 size estimate")?;
+    Ok(output.bytes)
+}
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct CompressedByteCount {
+    bytes: usize,
+}
+
+impl std::io::Write for CompressedByteCount {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes.len())
+            .ok_or_else(|| std::io::Error::other("compressed byte count exceeds usize"))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Build the lossy-JXL payload for one RHS chunk's eligible RLE sprites and
@@ -758,6 +777,42 @@ pub(super) fn build_rhs_chunk_payload(
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+
+    #[test]
+    fn compressed_size_matches_materialized_output() {
+        for length in [0, 1, 8191, 8192, 8193, 131_072, 300_000] {
+            let mut state = 0x1234_5678_u32;
+            let mixed: Vec<_> = (0..length)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    state as u8
+                })
+                .collect();
+            for bytes in [vec![0; length], mixed] {
+                assert_eq!(
+                    zstd19_len(&bytes).unwrap(),
+                    zstd::stream::encode_all(bytes.as_slice(), 19)
+                        .unwrap()
+                        .len(),
+                    "input length {length}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compressed_byte_counter_reports_overflow_without_wrapping() {
+        use std::io::Write as _;
+        let mut counter = CompressedByteCount {
+            bytes: usize::MAX - 1,
+        };
+        assert_eq!(counter.write(&[1]).unwrap(), 1);
+        assert!(counter.write(&[2]).is_err());
+        assert_eq!(counter.bytes, usize::MAX);
+        assert_eq!(counter.write(&[]).unwrap(), 0);
+    }
 
     #[test]
     fn raw_word_iteration_preserves_all_little_endian_values() {
