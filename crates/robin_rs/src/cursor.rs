@@ -284,10 +284,10 @@ impl CursorRenderer {
             }
         };
 
-        // Get cursor pictures, then clone the frames out so we don't
-        // hold the resource-manager borrow across the renderer calls.
-        let pictures: Vec<Option<Picture>> = match resource_manager.get_pictures(cursor_id) {
-            Ok(pics) => pics.to_vec(),
+        // Uploads use the independent renderer, so source pictures can stay
+        // borrowed from the resource manager throughout preparation.
+        let pictures = match resource_manager.get_pictures(cursor_id) {
+            Ok(pics) => pics,
             Err(e) => {
                 tracing::warn!("Failed to get cursor pictures {cursor_id}: {e}");
                 return false;
@@ -323,13 +323,11 @@ impl CursorRenderer {
         }
 
         // Bail out if no frame uploaded successfully.
-        if first_dims.is_none() {
+        let Some((w, h)) = first_dims else {
             tracing::warn!("Cursor {cursor_id} had no valid frames");
             self.clear_frames();
             return false;
-        }
-
-        let (w, h) = first_dims.unwrap();
+        };
         self.hotspot_x = hotspot.x;
         self.hotspot_y = hotspot.y;
         self.current_cursor_id = cursor_id;
