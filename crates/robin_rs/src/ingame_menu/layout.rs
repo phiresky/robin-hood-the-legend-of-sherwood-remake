@@ -561,6 +561,15 @@ pub struct WrapResult {
 /// contain a single ≤5-character word, the previous line's last word
 /// is bumped down.
 pub fn wrap_text(font: &NativeFont, text: &str, box_w: i32, max_lines: usize) -> WrapResult {
+    wrap_text_by(text, box_w, max_lines, |text| font.text_width(text))
+}
+
+fn wrap_text_by(
+    text: &str,
+    box_w: i32,
+    max_lines: usize,
+    measure: impl Fn(&str) -> i32,
+) -> WrapResult {
     let mut lines: Vec<String> = Vec::new();
     let mut paragraph_end: Vec<bool> = Vec::new();
     let mut consumed_chars = 0usize; // byte count of text consumed so far
@@ -582,7 +591,8 @@ pub fn wrap_text(font: &NativeFont, text: &str, box_w: i32, max_lines: usize) ->
             if lines.len() < max_lines {
                 lines.push(String::new());
                 paragraph_end.push(true);
-                consumed_chars = cursor + paragraph.len();
+                cursor += paragraph.len();
+                consumed_chars = cursor;
                 continue;
             } else {
                 break;
@@ -590,11 +600,11 @@ pub fn wrap_text(font: &NativeFont, text: &str, box_w: i32, max_lines: usize) ->
         }
 
         // Use `sum_of_word_widths + (N-1) * space_w` as the effective
-        // line width.  `font.text_width(line)` folds negative cross-char
+        // line width.  `measure(line)` folds negative cross-char
         // kerning across space boundaries into the measurement, making
         // packed lines look like they fit when rendered word-by-word
         // they would overflow.
-        let space_w = font.text_width(" ").max(1);
+        let space_w = measure(" ").max(1);
         let mut i = 0;
         let mut last_word_end = 0usize; // byte offset (within paragraph) past the last word we packed
         while i < words.len() {
@@ -602,10 +612,10 @@ pub fn wrap_text(font: &NativeFont, text: &str, box_w: i32, max_lines: usize) ->
                 break;
             }
             let mut line = String::from(words[i]);
-            let mut cur_w = font.text_width(words[i]);
+            let mut cur_w = measure(words[i]);
             let mut j = i + 1;
             while j < words.len() {
-                let next_w = font.text_width(words[j]);
+                let next_w = measure(words[j]);
                 let candidate_w = cur_w + space_w + next_w;
                 if candidate_w > box_w {
                     break;
@@ -1245,85 +1255,7 @@ pub fn render_text_in_box_aligned_font(
 }
 
 pub fn wrap_text_font(font: &Font, text: &str, box_w: i32, max_lines: usize) -> WrapResult {
-    let mut lines: Vec<String> = Vec::new();
-    let mut paragraph_end: Vec<bool> = Vec::new();
-    let mut consumed_chars = 0usize;
-    if max_lines == 0 || box_w <= 0 {
-        return WrapResult {
-            remaining: text.to_string(),
-            lines,
-            paragraph_end,
-        };
-    }
-    let mut cursor = 0usize;
-    for (paragraph_index, paragraph) in text.split('\n').enumerate() {
-        if paragraph_index > 0 {
-            cursor += 1;
-        }
-        let words: Vec<&str> = paragraph.split_whitespace().collect();
-        if words.is_empty() {
-            if lines.len() < max_lines {
-                lines.push(String::new());
-                paragraph_end.push(true);
-                consumed_chars = cursor + paragraph.len();
-                continue;
-            }
-            break;
-        }
-        let space_w = font.text_width(" ").max(1);
-        let mut i = 0;
-        let mut last_word_end = 0usize;
-        while i < words.len() {
-            if lines.len() >= max_lines {
-                break;
-            }
-            let mut line = String::from(words[i]);
-            let mut cur_w = font.text_width(words[i]);
-            let mut j = i + 1;
-            while j < words.len() {
-                let next_w = font.text_width(words[j]);
-                let candidate_w = cur_w + space_w + next_w;
-                if candidate_w > box_w {
-                    break;
-                }
-                line.push(' ');
-                line.push_str(words[j]);
-                cur_w = candidate_w;
-                j += 1;
-            }
-            if j < words.len() && j + 1 == words.len() && words[j].len() <= 5 && j > i + 1 {
-                j -= 1;
-                line = words[i..j].join(" ");
-            }
-            let is_para_end = j == words.len();
-            lines.push(line);
-            paragraph_end.push(is_para_end);
-            let last_word = words[j - 1];
-            let last_word_ptr = last_word.as_ptr() as usize - paragraph.as_ptr() as usize;
-            last_word_end = last_word_ptr + last_word.len();
-            i = j;
-        }
-        if i >= words.len() {
-            consumed_chars = cursor + paragraph.len();
-            cursor += paragraph.len();
-        } else {
-            consumed_chars = cursor + last_word_end;
-            cursor += paragraph.len();
-        }
-        if lines.len() >= max_lines {
-            break;
-        }
-    }
-    let remaining = if consumed_chars >= text.len() {
-        String::new()
-    } else {
-        text[consumed_chars..].trim_start().to_string()
-    };
-    WrapResult {
-        remaining,
-        lines,
-        paragraph_end,
-    }
+    wrap_text_by(text, box_w, max_lines, |text| font.text_width(text))
 }
 
 /// Wrap polymorphic-font text for a bounded box, falling back to glyph-level
@@ -1745,6 +1677,58 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn shared_word_wrap_preserves_orphans_paragraphs_and_remainders() {
+        for (text, width, limit, lines, ends, remaining) in [
+            (
+                "one two six",
+                7,
+                10,
+                vec!["one", "two six"],
+                vec![false, true],
+                "",
+            ),
+            ("one two six", 7, 1, vec!["one"], vec![false], "two six"),
+            ("alpha beta", 20, 1, vec!["alpha beta"], vec![true], ""),
+            ("alpha\nbeta", 20, 1, vec!["alpha"], vec![true], "beta"),
+            (
+                "alpha\nbeta",
+                20,
+                2,
+                vec!["alpha", "beta"],
+                vec![true, true],
+                "",
+            ),
+            ("oversized", 2, 1, vec!["oversized"], vec![true], ""),
+            ("αβ γδ ε", 5, 10, vec!["αβ", "γδ ε"], vec![false, true], ""),
+            ("text", 0, 10, vec![], vec![], "text"),
+            ("text", 20, 0, vec![], vec![], "text"),
+            ("  \nabc", 20, 2, vec!["", "abc"], vec![true, true], ""),
+            (
+                "  \nabc def",
+                4,
+                2,
+                vec!["", "abc"],
+                vec![true, false],
+                "def",
+            ),
+            (
+                "a\n \t\nb",
+                20,
+                3,
+                vec!["a", "", "b"],
+                vec![true, true, true],
+                "",
+            ),
+        ] {
+            let result =
+                super::wrap_text_by(text, width, limit, |text| text.chars().count() as i32);
+            assert_eq!(result.lines, lines, "{text:?}");
+            assert_eq!(result.paragraph_end, ends, "{text:?}");
+            assert_eq!(result.remaining, remaining, "{text:?}");
+        }
+    }
 
     #[test]
     fn tooltip_hover_keeps_identity_and_timer_together() {
