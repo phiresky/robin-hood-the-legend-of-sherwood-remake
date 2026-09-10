@@ -560,12 +560,16 @@ impl GpuResources {
     pub(super) fn ensure_font_atlas(
         &mut self,
         gpu: &GpuContext,
-        font_id: u64,
         font: &crate::native_font::NativeFont,
     ) -> wgpu::BindGroup {
+        let font_id = font.atlas_cache_identity();
         if let Some(atlas) = self.font_atlas_cache.get(&font_id) {
             return atlas.bind_group.clone();
         }
+        // A cache miss is an opportunity to reclaim fonts replaced since the
+        // last upload. Queued bind groups retain any in-flight GPU resources.
+        self.font_atlas_cache
+            .retain(|_, atlas| atlas.font_lifetime.strong_count() > 0);
         let (rgba, width, height) = font.build_rgba_atlas();
         let (texture, view) = upload_rgba_texture(gpu, &rgba, width, height, "font atlas");
         let bind_group = make_tex_bg(
@@ -578,6 +582,7 @@ impl GpuResources {
         self.font_atlas_cache.insert(
             font_id,
             FontAtlas {
+                font_lifetime: font.atlas_lifetime(),
                 _texture: texture,
                 _view: view,
                 bind_group: bind_group.clone(),

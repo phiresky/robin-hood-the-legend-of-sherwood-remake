@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -55,6 +55,11 @@ pub struct TextQuad {
 }
 
 pub struct NativeFont {
+    /// Process-local atlas identity. Moving or replacing a font must not make
+    /// the renderer associate it with an atlas from a reused memory address.
+    atlas_cache_identity: u64,
+    /// Lets renderers retire cached atlases after this font owner is dropped.
+    atlas_lifetime: Arc<()>,
     /// Display name from the `.sbf` `FONT_HEADER`. Used in the
     /// missing-glyph diagnostic.
     name: String,
@@ -79,6 +84,14 @@ pub struct NativeFont {
 }
 
 impl NativeFont {
+    pub(crate) fn atlas_cache_identity(&self) -> u64 {
+        self.atlas_cache_identity
+    }
+
+    pub(crate) fn atlas_lifetime(&self) -> Weak<()> {
+        Arc::downgrade(&self.atlas_lifetime)
+    }
+
     /// Load a native font from a `.sbf` file path.
     ///
     /// The path is resolved through `SbFile` (supports alternate data dirs
@@ -190,6 +203,8 @@ impl NativeFont {
         );
 
         Ok(Self {
+            atlas_cache_identity: next_atlas_cache_identity(),
+            atlas_lifetime: Arc::new(()),
             name,
             height,
             baseline,
@@ -347,6 +362,16 @@ impl NativeFont {
         }
         w
     }
+}
+
+/// Never reuse an atlas identity, even after its font owner has been dropped.
+fn next_atlas_cache_identity() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |identity| {
+        identity.checked_add(1)
+    })
+    .expect("native font atlas identity exhausted")
 }
 
 /// Convert a `&[u8]` of little-endian u16 pixel data to `Vec<u16>`.
@@ -787,6 +812,8 @@ mod tests {
         // blue channel = 0x1F, extracted via `& 0x1F`). Glyph pixels
         // avoid the 0x07C0 color-key sentinel the render path skips.
         NativeFont {
+            atlas_cache_identity: next_atlas_cache_identity(),
+            atlas_lifetime: Arc::new(()),
             name: "test".to_string(),
             height: 2,
             baseline: 1,
@@ -801,6 +828,28 @@ mod tests {
             alpha_width: 6,
             missing_chars_warned: Mutex::new(HashSet::new()),
         }
+    }
+
+    #[test]
+    fn atlas_identity_survives_moves_but_not_same_address_replacement() {
+        let mut slot = Box::new(make_test_font());
+        let address = std::ptr::from_ref(slot.as_ref());
+        let original_identity = slot.atlas_cache_identity();
+        let original_lifetime = slot.atlas_lifetime();
+        assert_eq!(original_lifetime.strong_count(), 1);
+
+        *slot = make_test_font();
+        assert_eq!(std::ptr::from_ref(slot.as_ref()), address);
+        assert_ne!(slot.atlas_cache_identity(), original_identity);
+        assert_eq!(original_lifetime.strong_count(), 0);
+
+        let replacement_identity = slot.atlas_cache_identity();
+        let replacement_lifetime = slot.atlas_lifetime();
+        let moved = *slot;
+        assert_eq!(moved.atlas_cache_identity(), replacement_identity);
+        assert_eq!(replacement_lifetime.strong_count(), 1);
+        drop(moved);
+        assert_eq!(replacement_lifetime.strong_count(), 0);
     }
 
     #[test]

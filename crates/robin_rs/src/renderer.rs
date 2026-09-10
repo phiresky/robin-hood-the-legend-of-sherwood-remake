@@ -397,6 +397,7 @@ pub struct Renderer {
 }
 
 struct FontAtlas {
+    font_lifetime: std::sync::Weak<()>,
     _texture: wgpu::Texture,
     _view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
@@ -2621,8 +2622,7 @@ impl Renderer {
         if text.is_empty() || font.height() == 0 {
             return;
         }
-        let font_id = (font as *const crate::native_font::NativeFont) as usize as u64;
-        let atlas_bg = self.ensure_font_atlas(font_id, font);
+        let atlas_bg = self.resources.ensure_font_atlas(&self.gpu, font);
         let tex_idx = self.queue_cached_bg(atlas_bg);
         for q in font.layout_quads(text, x, y) {
             self.frame.queued.push(QueuedDraw {
@@ -2692,20 +2692,8 @@ impl Renderer {
         });
     }
 
-    /// Get-or-build the GPU font-atlas bind group for `font`.
-    /// Identity is the font's pointer — stable for the duration of
-    /// the level since `Host` owns the font.
-    fn ensure_font_atlas(
-        &mut self,
-        font_id: u64,
-        font: &crate::native_font::NativeFont,
-    ) -> wgpu::BindGroup {
-        self.resources.ensure_font_atlas(&self.gpu, font_id, font)
-    }
-
-    /// Invalidate pointer-keyed bitmap font atlases before replacing eager
-    /// font owners. Allocators may reuse an old address for a different
-    /// locale's font; retaining that atlas would render stale glyphs.
+    /// Release bitmap font atlases when leaving a loading/resource phase.
+    /// Font identities prevent stale hits independently of this reclamation.
     pub fn clear_font_atlas_cache(&mut self) {
         self.resources.clear_font_atlas_cache();
     }
