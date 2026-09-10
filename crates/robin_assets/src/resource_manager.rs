@@ -1231,6 +1231,9 @@ impl ResourceManager {
 
     /// Replace currently loaded picture payloads with encoded shipping
     /// payloads. Non-picture resource metadata stays intact.
+    /// Each collection is replaced only after all its frames encode successfully.
+    /// On error, completed collections remain encoded and the failed collection
+    /// retains its decoded pictures so the operation can be retried.
     pub fn encode_pictures_for_shipping<F>(&mut self, mut encode: F) -> Result<usize>
     where
         F: FnMut(&Picture) -> Result<EncodedPicture>,
@@ -1240,15 +1243,17 @@ impl ResourceManager {
         let ids: Vec<ResourceId> = self.data.pictures.keys().copied().collect();
         let mut encoded_count = 0usize;
         for id in ids {
-            let Some(pictures) = self.data.pictures.remove(&id) else {
-                continue;
-            };
+            let pictures = self
+                .data
+                .pictures
+                .get(&id)
+                .expect("collected resident picture ID");
             let mut encoded_slots = Vec::with_capacity(pictures.len());
-            for (sub_id, slot) in pictures.into_iter().enumerate() {
+            for (sub_id, slot) in pictures.iter().enumerate() {
                 encoded_slots.push(match slot {
                     Some(pic) => {
                         encoded_count += 1;
-                        Some(encode(&pic).with_context(|| {
+                        Some(encode(pic).with_context(|| {
                             format!("resource {id}/{sub_id}: encode picture for shipping")
                         })?)
                     }
@@ -1256,6 +1261,7 @@ impl ResourceManager {
                 });
             }
             self.data.encoded_pictures.insert(id, encoded_slots);
+            self.data.pictures.remove(&id);
         }
         Ok(encoded_count)
     }
@@ -1711,6 +1717,60 @@ mod tests {
                 .load_resource_data(&mut Reader::new(&bytes[20..]), 42, tag)
                 .unwrap();
             assert_eq!(restored.pictures_raw(42).unwrap().len(), count);
+        }
+    }
+
+    #[test]
+    fn failed_shipping_encoding_retains_the_collection_for_retry() {
+        let mut manager = ResourceManager::new();
+        manager.data.pictures.insert(
+            42,
+            vec![Some(Picture::default()), None, Some(Picture::default())],
+        );
+        manager
+            .data
+            .encoded_pictures
+            .insert(42, vec![Some(EncodedPicture::jxl_rgba565_keyed(vec![7]))]);
+        let originals = serde_json::to_value(&manager.data.pictures[&42]).unwrap();
+        let original_storage = manager.data.pictures[&42].as_ptr();
+        let mut calls = 0;
+        let error = manager
+            .encode_pictures_for_shipping(|_| {
+                calls += 1;
+                if calls == 2 {
+                    bail!("injected encoder failure");
+                }
+                Ok(EncodedPicture::jxl_rgba565_keyed(vec![1]))
+            })
+            .unwrap_err();
+        assert!(
+            format!("{error:#}")
+                .contains("resource 42/2: encode picture for shipping: injected encoder failure")
+        );
+        assert_eq!(calls, 2);
+        assert_eq!(manager.data.pictures[&42].as_ptr(), original_storage);
+        assert_eq!(
+            serde_json::to_value(&manager.data.pictures[&42]).unwrap(),
+            originals
+        );
+        assert_eq!(
+            manager.data.encoded_pictures[&42][0]
+                .as_ref()
+                .unwrap()
+                .bytes,
+            vec![7]
+        );
+
+        let count = manager
+            .encode_pictures_for_shipping(|_| Ok(EncodedPicture::jxl_rgba565_keyed(vec![2])))
+            .unwrap();
+        assert_eq!(count, 2);
+        assert!(!manager.data.pictures.contains_key(&42));
+        let encoded = &manager.data.encoded_pictures[&42];
+        assert_eq!(encoded.len(), 3);
+        assert!(encoded[1].is_none());
+        for slot in [0, 2] {
+            assert_eq!(encoded[slot].as_ref().unwrap().bytes, vec![2]);
         }
     }
 
