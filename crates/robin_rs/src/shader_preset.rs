@@ -325,6 +325,20 @@ mod tests {
         );
     }
 
+    #[cfg(all(feature = "retroarch-shaders", unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn discovery_preserves_literal_backslashes_in_unix_filenames() {
+        let root = tempfile::tempdir().unwrap();
+        let filename = r"literal\name.slangp";
+        let path = root.path().join(filename);
+        std::fs::write(&path, b"fixture").unwrap();
+        let presets = discover_retroarch_presets_in(root.path());
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].id, filename);
+        assert_eq!(root.path().join(&presets[0].id), path);
+        assert!(root.path().join(&presets[0].id).is_file());
+    }
+
     #[test]
     fn selected_preset_key_borrows_the_exact_configured_value() {
         let selected = String::from(" shaders/custom.slangp ");
@@ -415,7 +429,8 @@ fn discover_retroarch_presets_in(root: &Path) -> Vec<RetroArchPresetInfo> {
             tracing::warn!(path = %path.display(), "Shader preset path is not UTF-8; skipping it");
             continue;
         };
-        let id = relative.replace('\\', "/");
+        // Normalize platform separators, not literal backslashes in Unix names.
+        let id = relative.replace(std::path::MAIN_SEPARATOR, "/");
         let label = id.trim_end_matches(".slangp").replace('/', " / ");
         presets.push(RetroArchPresetInfo { id, label });
     }
