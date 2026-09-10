@@ -211,7 +211,7 @@ pub(crate) struct CampaignMapModalState {
     presentation: CampaignPresentationMode,
     exhibit_grid: ExhibitGridNavigator,
     input: ModalInputState,
-    pseudo_debrief_at_ms: Option<u32>,
+    pseudo_debrief_started_at_ms: Option<u32>,
     selected_classic: usize,
     selected_progress: usize,
     show_achievement_badges: bool,
@@ -282,8 +282,8 @@ impl CampaignMapModalState {
         }
         let selected_progress = graph.first_selectable().unwrap_or(0);
         let exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected_progress);
-        let pseudo_debrief_at_ms =
-            pseudo_debrief_pending.then(|| crate::window::process_uptime_ms().saturating_add(500));
+        let pseudo_debrief_started_at_ms =
+            pseudo_debrief_pending.then(crate::window::process_uptime_ms);
         Self {
             items,
             scroll_views: campaign_scroll_views(&assets),
@@ -293,7 +293,7 @@ impl CampaignMapModalState {
             presentation,
             exhibit_grid,
             input: ModalInputState::new(),
-            pseudo_debrief_at_ms,
+            pseudo_debrief_started_at_ms,
             selected_classic: 0,
             selected_progress,
             show_achievement_badges,
@@ -377,7 +377,7 @@ impl CampaignMapModalState {
                 mode => mode,
             },
             input: ModalInputState::new(),
-            pseudo_debrief_at_ms: None,
+            pseudo_debrief_started_at_ms: None,
             selected_classic: 0,
             selected_progress,
             show_achievement_badges: view_config.show_achievement_badges,
@@ -521,9 +521,13 @@ impl CampaignMapModalState {
         if final_choice.is_some() {
             return final_choice;
         }
-        self.pseudo_debrief_at_ms
-            .is_some_and(|at| crate::window::process_uptime_ms() >= at)
+        self.pseudo_debrief_due(crate::window::process_uptime_ms())
             .then_some(CampaignMapChoice::PseudoDebriefTimer)
+    }
+
+    fn pseudo_debrief_due(&self, now_ms: u32) -> bool {
+        self.pseudo_debrief_started_at_ms
+            .is_some_and(|start| now_ms.wrapping_sub(start) >= 500)
     }
 
     fn details_offset(&self) -> Option<usize> {
@@ -621,10 +625,8 @@ impl CampaignMapModalState {
             }
         }
         let mut final_choice = None;
-        let input_enabled = self
-            .pseudo_debrief_at_ms
-            .map(|at| crate::window::process_uptime_ms() >= at)
-            .unwrap_or(true);
+        let input_enabled = self.pseudo_debrief_started_at_ms.is_none()
+            || self.pseudo_debrief_due(crate::window::process_uptime_ms());
 
         self.sync_scroll_views(false);
         for event in events {
@@ -2919,6 +2921,24 @@ mod browser_tests {
     use robin_engine::{mission::Mission, profiles::MissionProfile};
 
     #[test]
+    fn pseudo_debrief_delay_uses_elapsed_time_across_clock_wrap() {
+        let mut state = browser();
+        for now in [0, 499, 500, u32::MAX] {
+            assert!(!state.pseudo_debrief_due(now));
+        }
+        for start in [0u32, 1, 1000, u32::MAX - 499, u32::MAX - 100, u32::MAX] {
+            state.pseudo_debrief_started_at_ms = Some(start);
+            for elapsed in [0u32, 1, 100, 499, 500, 501, 1000] {
+                assert_eq!(
+                    state.pseudo_debrief_due(start.wrapping_add(elapsed)),
+                    elapsed >= 500,
+                    "start={start}, elapsed={elapsed}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn detail_sections_borrow_text_and_preserve_fallback_precedence() {
         let mut state = browser();
         let node = &mut state.graph.nodes[0];
@@ -3223,7 +3243,7 @@ mod browser_tests {
             graph,
             presentation: CampaignPresentationMode::ProgressTree,
             input: ModalInputState::new(),
-            pseudo_debrief_at_ms: None,
+            pseudo_debrief_started_at_ms: None,
             selected_classic: 0,
             selected_progress: 0,
             show_achievement_badges: true,
