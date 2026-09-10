@@ -28,6 +28,12 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 // Widget ID ranges: resolution 100..102, widescreen 150, options 200..209,
 // scaling 400.., ok/cancel 300..301.
 const ID_RES_BASE: u32 = 100;
+const RESOLUTIONS: [(usize, f32, f32); 3] = [
+    (MT_STR_RES_LOW, 640.0, 480.0),
+    (MT_STR_RES_MEDIUM, 800.0, 600.0),
+    (MT_STR_RES_HIGH, 1024.0, 768.0),
+];
+const ID_RES_LAST: u32 = ID_RES_BASE + RESOLUTIONS.len() as u32 - 1;
 const ID_ADAPTIVE_WIDESCREEN: u32 = 150;
 const ID_OPT_BASE: u32 = 200;
 const OPTION_COUNT: u32 = 10;
@@ -104,17 +110,11 @@ pub async fn show_graphics(
             row_h,
         );
     }
-    for (i, label) in [
-        resources.menu_text.get(MT_STR_RES_LOW),
-        resources.menu_text.get(MT_STR_RES_MEDIUM),
-        resources.menu_text.get(MT_STR_RES_HIGH),
-    ]
-    .iter()
-    .enumerate()
-    {
+    for (i, &(label_id, _, _)) in RESOLUTIONS.iter().enumerate() {
+        let label = resources.menu_text.get(label_id);
         add(
             ID_RES_BASE + i as u32,
-            label,
+            &label,
             30,
             OPTION_START_Y + i as i32 * (row_h + OPTION_SPACING),
             COLUMN_W,
@@ -125,7 +125,7 @@ pub async fn show_graphics(
         ID_ADAPTIVE_WIDESCREEN,
         "Adaptive Widescreen",
         30,
-        OPTION_START_Y + 3 * (row_h + OPTION_SPACING),
+        OPTION_START_Y + RESOLUTIONS.len() as i32 * (row_h + OPTION_SPACING),
         COLUMN_W,
         row_h,
     );
@@ -326,7 +326,7 @@ pub async fn show_graphics(
                     done = true;
                 }
                 ID_CANCEL => done = true,
-                id if (ID_RES_BASE..ID_RES_BASE + 3).contains(&id) => {
+                id if (ID_RES_BASE..=ID_RES_LAST).contains(&id) => {
                     apply_resolution(&mut edit.working, (id - ID_RES_BASE) as usize);
                     dirty = true;
                 }
@@ -441,7 +441,7 @@ pub async fn show_graphics(
 
         // Render only controls owned by the active page.
         if page == 0 {
-            for i in 0..3u32 {
+            for i in 0..RESOLUTIONS.len() as u32 {
                 if let Some(w) = frame.widget(ID_RES_BASE + i) {
                     widget_bridge::draw_widget_radio(
                         renderer,
@@ -560,7 +560,7 @@ pub async fn show_graphics(
 
 fn widget_page(id: u32) -> Option<u32> {
     match id {
-        ID_ADAPTIVE_WIDESCREEN | ID_RES_BASE..=102 | ID_OPT_BASE..=209 => Some(0),
+        ID_ADAPTIVE_WIDESCREEN | ID_RES_BASE..=ID_RES_LAST | ID_OPT_BASE..=209 => Some(0),
         ID_SCALE_BASE..=499 => Some(1),
         ID_EFFECT_BASE..=599 => Some(2),
         _ => None,
@@ -834,21 +834,12 @@ async fn pick_retroarch_preset() -> Result<Option<std::path::PathBuf>, String> {
 }
 
 fn apply_resolution(config: &mut GraphicConfig, idx: usize) {
-    match idx {
-        0 => config.set_resolution(640.0, 480.0),
-        1 => config.set_resolution(800.0, 600.0),
-        2 => config.set_resolution(1024.0, 768.0),
-        _ => {}
-    }
+    let (_, width, height) = RESOLUTIONS[idx];
+    config.set_resolution(width, height);
 }
 
 fn is_resolution_selected(config: &GraphicConfig, idx: usize) -> bool {
-    let (want_x, want_y) = match idx {
-        0 => (640.0, 480.0),
-        1 => (800.0, 600.0),
-        2 => (1024.0, 768.0),
-        _ => return false,
-    };
+    let (_, want_x, want_y) = RESOLUTIONS[idx];
     (config.resolution_x - want_x).abs() < 0.5 && (config.resolution_y - want_y).abs() < 0.5
 }
 
@@ -1077,5 +1068,30 @@ fn every_parameter_row_edits_only_its_displayed_value() {
             expected[offset + index] += 5;
             assert_eq!(values(&edited), expected);
         }
+    }
+}
+
+#[test]
+fn resolution_rows_share_labels_values_selection_and_page_ownership() {
+    assert_eq!(
+        RESOLUTIONS,
+        [
+            (MT_STR_RES_LOW, 640.0, 480.0),
+            (MT_STR_RES_MEDIUM, 800.0, 600.0),
+            (MT_STR_RES_HIGH, 1024.0, 768.0),
+        ]
+    );
+    let mut config = GraphicConfig::default();
+    for (index, &(_, width, height)) in RESOLUTIONS.iter().enumerate() {
+        apply_resolution(&mut config, index);
+        assert_eq!((config.resolution_x, config.resolution_y), (width, height));
+        for other in 0..RESOLUTIONS.len() {
+            assert_eq!(is_resolution_selected(&config, other), index == other);
+        }
+        assert_eq!(widget_page(ID_RES_BASE + index as u32), Some(0));
+        config.resolution_x = width + 0.49;
+        assert!(is_resolution_selected(&config, index));
+        config.resolution_x = width + 0.5;
+        assert!(!is_resolution_selected(&config, index));
     }
 }
