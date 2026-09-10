@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MENU_W, MenuTransform, align_bottom_right, dim_screen, enter_modal_gpu_phase,
-    render_text_virt_font, wrap_text_for_box_font,
+    MENU_W, MenuTransform, align_bottom_right, dim_screen, elide_text_to_width_by,
+    enter_modal_gpu_phase, render_text_virt_font, wrap_text_for_box_font,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mods_dir};
@@ -437,39 +437,16 @@ fn draw_list(
             label
         };
         // Truncate so long labels don't bleed out of the list pane into
-        // the detail pane. Drops trailing chars + adds an ellipsis if it
+        // the detail pane. Keeps complete graphemes and adds an ellipsis if it
         // doesn't fit.
         let row_text_w = view.content_width() - 12;
-        let label = truncate_to_pixel_width(font, &label, row_text_w);
+        let label = elide_text_to_width_by(&label, row_text_w, false, |text| font.text_width(text));
         // Visual highlight of the selected row already drawn above; the
         // text colour is the same for selected/unselected, matching the
         // main menu profile info block.
-        let _ = is_selected;
         render_text_virt_font(renderer, font, transform, &label, LIST_X + 10, row_y);
     }
     view.draw_scrollbar(renderer, transform, resources);
-}
-
-fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
-    if max_w <= 0 {
-        return String::new();
-    }
-    if font.text_width(text) <= max_w {
-        return text.to_string();
-    }
-    let ellipsis = "…";
-    let ellipsis_w = font.text_width(ellipsis);
-    let budget = (max_w - ellipsis_w).max(0);
-    let mut fit_end = 0usize;
-    for (idx, _) in text.char_indices() {
-        if font.text_width(&text[..idx]) > budget {
-            break;
-        }
-        fit_end = idx;
-    }
-    let mut out = text[..fit_end].trim_end().to_string();
-    out.push_str(ellipsis);
-    out
 }
 
 fn draw_detail_pane(

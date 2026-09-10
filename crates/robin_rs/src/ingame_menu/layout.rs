@@ -24,11 +24,14 @@ pub(crate) fn elide_text_to_width_by(
     measure: impl Fn(&str) -> i32,
 ) -> String {
     const ELLIPSIS: &str = "…";
-    if max_width <= 0 || measure(ELLIPSIS) > max_width {
+    if max_width <= 0 {
         return String::new();
     }
     if !force_marker && measure(text) <= max_width {
         return text.to_owned();
+    }
+    if measure(ELLIPSIS) > max_width {
+        return String::new();
     }
     let mut candidate = String::new();
     if force_marker {
@@ -1748,7 +1751,7 @@ mod tests {
                 4,
                 false,
                 "ab…",
-                vec!["…", "ab cd", "…", "a…", "ab…", "ab…", "ab c…"],
+                vec!["ab cd", "…", "…", "a…", "ab…", "ab…", "ab c…"],
             ),
             ("a ", 5, true, "a …", vec!["…", "a …"]),
             (
@@ -1758,7 +1761,7 @@ mod tests {
                 "a…",
                 vec!["…", "a bc…", "…", "a…", "a…", "a b…"],
             ),
-            ("é", 1, false, "é", vec!["…", "é"]),
+            ("é", 1, false, "é", vec!["é"]),
             ("anything", 0, false, "", vec![]),
         ] {
             let calls = std::cell::RefCell::new(Vec::new());
@@ -1768,6 +1771,27 @@ mod tests {
             });
             assert_eq!(output, expected);
             assert_eq!(*calls.borrow(), measured);
+        }
+    }
+
+    #[test]
+    fn text_elision_keeps_graphemes_and_short_text_when_marker_does_not_fit() {
+        let measure = |text: &str| text.chars().map(|ch| if ch == '…' { 3 } else { 1 }).sum();
+        for (text, width, force, expected) in [
+            ("a", 1, false, "a"),
+            ("", 1, false, ""),
+            ("a", 1, true, ""),
+            ("abcd", 2, false, ""),
+            ("abcdef", 3, false, "…"),
+            ("abcdef", 5, false, "ab…"),
+            ("e\u{301}clair", 4, false, "…"),
+            ("e\u{301}clair", 5, false, "e\u{301}…"),
+            ("👩‍💻abc", 5, false, "…"),
+            ("👩‍💻abcd", 6, false, "👩‍💻…"),
+        ] {
+            let result = super::elide_text_to_width_by(text, width, force, measure);
+            assert_eq!(result, expected);
+            assert!(measure(&result) <= width);
         }
     }
 
