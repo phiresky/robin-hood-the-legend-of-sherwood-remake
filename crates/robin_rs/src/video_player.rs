@@ -337,8 +337,6 @@ fn poll_skip(window: &mut GameWindow) -> bool {
 #[cfg(feature = "video")]
 struct VideoBlit {
     pipeline: wgpu::RenderPipeline,
-    sampler: wgpu::Sampler,
-    bgl: wgpu::BindGroupLayout,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     letterbox_buffer: wgpu::Buffer,
@@ -526,8 +524,6 @@ impl VideoBlit {
 
         Self {
             pipeline,
-            sampler,
-            bgl,
             texture,
             bind_group,
             letterbox_buffer: buffer,
@@ -659,9 +655,6 @@ impl VideoBlit {
         window.gpu.queue.submit(Some(encoder.finish()));
         window.gpu.queue.present(frame);
         self.presentation_frame = self.presentation_frame.wrapping_add(1);
-        // Silence "unused" warnings — these fields exist to keep the
-        // bind-group layout / sampler alive for the pipeline's life.
-        let _ = (&self.bgl, &self.sampler);
         Ok(())
     }
 }
