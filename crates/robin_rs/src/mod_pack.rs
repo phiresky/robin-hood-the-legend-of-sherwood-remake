@@ -591,8 +591,21 @@ fn peek_rhm_header(
     archive: &mut zip::ZipArchive<fs::File>,
     rhm_entry: &str,
 ) -> Result<RhmHeader, String> {
+    // Match the overlay index: slash-normalized ASCII-insensitive paths,
+    // with the first central-directory entry winning any aliases. Exact
+    // by_name lookup can otherwise inspect different bytes than gameplay.
+    let normalized = rhm_entry.replace('\\', "/");
+    let index = (0..archive.len())
+        .find(|&index| {
+            archive
+                .name_for_index(index)
+                .expect("ZIP index within archive length")
+                .replace('\\', "/")
+                .eq_ignore_ascii_case(&normalized)
+        })
+        .ok_or_else(|| format!("entry {rhm_entry}: not found in archive"))?;
     let mut entry = archive
-        .by_name(rhm_entry)
+        .by_index(index)
         .map_err(|e| format!("entry {rhm_entry}: {e}"))?;
     let mut buf = Vec::with_capacity(RHM_HEADER_PREFIX_LEN);
     entry
@@ -1218,6 +1231,50 @@ mod tests {
             let basename = rhm_basename(&name);
             assert!(format!("{basename}.rhm").eq_ignore_ascii_case(leaf));
         }
+    }
+
+    #[test]
+    fn header_inspection_matches_mounted_archive_aliases() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("mission.zip");
+        let first = minimal_rhm("first");
+        let second = minimal_rhm("second");
+        write_test_zip(
+            &path,
+            &[
+                (r"English\DATA\Levels\Test.RHM", &first),
+                ("English/Data/Levels/Test.rhm", &second),
+            ],
+        );
+        let files = std::sync::Arc::new(SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        assert_eq!(
+            peek_rhm_header_in_zip(&path, r"English\DATA\Levels\Test.RHM")
+                .unwrap()
+                .map_filename,
+            "first",
+        );
+        let entries = list_rhm_in_zip(&path).unwrap();
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            let header = peek_rhm_header_in_zip(&path, &entry).unwrap();
+            let layout = selected_mission_layout_in_zip(&path, &entry).unwrap();
+            let _guard =
+                mount_for_selected_mission(&path, false, root.path(), &entry, files.clone())
+                    .unwrap();
+            let mounted = files.read_all(&layout.mounted_rhm_path).unwrap();
+            assert_eq!(mounted, first);
+            assert_eq!(
+                header.map_filename,
+                parse_rhm_header(&mounted).unwrap().map_filename
+            );
+        }
+        assert!(
+            peek_rhm_header_in_zip(&path, "missing.rhm")
+                .unwrap_err()
+                .contains("not found in archive")
+        );
     }
 
     #[test]
