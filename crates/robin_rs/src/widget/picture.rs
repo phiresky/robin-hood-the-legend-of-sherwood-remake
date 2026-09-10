@@ -43,14 +43,9 @@ impl Default for WidgetPicture {
 
 impl WidgetPicture {
     pub fn new(id: super::WidgetId) -> Self {
-        Self {
-            base: WidgetBase {
-                id,
-                with_focus: false,
-                ..Default::default()
-            },
-            alternate_picture: None,
-        }
+        let mut widget = Self::default();
+        widget.base.id = id;
+        widget
     }
 
     /// Map state to renderer sub-resource ID.
@@ -181,14 +176,9 @@ impl Default for WidgetMultiPicture {
 
 impl WidgetMultiPicture {
     pub fn new(id: super::WidgetId) -> Self {
-        Self {
-            base: WidgetBase {
-                id,
-                with_focus: false,
-                ..Default::default()
-            },
-            sub_picture: 0,
-        }
+        let mut widget = Self::default();
+        widget.base.id = id;
+        widget
     }
 
     /// Select which sub-picture to display.

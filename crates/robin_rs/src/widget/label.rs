@@ -35,14 +35,9 @@ impl Default for WidgetLabel {
 
 impl WidgetLabel {
     pub fn new(id: super::WidgetId) -> Self {
-        Self {
-            base: WidgetBase {
-                id,
-                with_focus: false,
-                ..Default::default()
-            },
-            refresh_needed: [false; 2],
-        }
+        let mut widget = Self::default();
+        widget.base.id = id;
+        widget
     }
 
     /// Override set_text to mark both buffers as needing refresh.
@@ -108,4 +103,25 @@ fn repeated_label_text_updates_reuse_storage_and_refresh_both_buffers() {
         assert!(label.probe_refresh(1).is_some());
         assert!(label.probe_refresh(1).is_none());
     }
+}
+
+#[test]
+fn noninteractive_widget_constructors_preserve_all_defaults_except_id() {
+    macro_rules! check {
+        ($widget:ty) => {
+            for id in [0, 1, u32::MAX] {
+                let actual = <$widget>::new(id);
+                let mut expected = <$widget>::default();
+                expected.base.id = id;
+                assert!(!actual.base.with_focus);
+                assert_eq!(
+                    serde_json::to_value(&actual).unwrap(),
+                    serde_json::to_value(&expected).unwrap()
+                );
+            }
+        };
+    }
+    check!(WidgetLabel);
+    check!(super::WidgetPicture);
+    check!(super::WidgetMultiPicture);
 }
