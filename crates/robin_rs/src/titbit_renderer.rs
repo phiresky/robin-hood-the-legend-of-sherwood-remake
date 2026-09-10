@@ -834,6 +834,9 @@ fn load_row(
     };
 
     let mut frames = Vec::with_capacity(pictures.len());
+    // Queue uploads copy their source bytes, so scratch storage can serve every frame.
+    let mut pixels = Vec::new();
+    let mut rgba = Vec::new();
     for slot in pictures {
         let Some(pic) = slot else { continue };
         if pic.width == 0 || pic.height == 0 {
@@ -843,7 +846,8 @@ fn load_row(
         let Some((crop_x, crop_y, crop_w, crop_h)) = pic.opaque_bounds_16() else {
             continue;
         };
-        let mut pixels = Vec::with_capacity(crop_w as usize * crop_h as usize);
+        pixels.clear();
+        pixels.reserve(crop_w as usize * crop_h as usize);
         for y in 0..crop_h as usize {
             let src = (crop_y as usize + y) * pic.width as usize + crop_x as usize;
             pixels.extend(
@@ -867,10 +871,9 @@ fn load_row(
         // Preserve the existing wipe_shadow override of 100 percent.
         // TODO: Verify this policy against original rendering: despite the
         // name, solid-mode shadow pixels become opaque black at 100 percent.
-        let rgba = rgb565_to_rgba8888(
+        rgb565_to_rgba8888(
             &pixels,
-            crop_w,
-            crop_h,
+            &mut rgba,
             TRANSPARENT_COLOR_KEY_16,
             shadow_color,
             if wipe_shadow { 100 } else { shadow_level },
@@ -925,7 +928,8 @@ fn load_row(
     frames
 }
 
-/// Convert RGB565 pixels to RGBA8888 bytes with shadow alpha pre-baked.
+/// Replace the output buffer with RGBA8888 bytes, reusing its allocation.
+/// Shadow alpha is pre-baked.
 ///
 /// For each input pixel:
 /// - Equal to `transparent` → alpha 0 (skipped)
@@ -938,23 +942,22 @@ fn load_row(
 /// - In constant mode, all non-transparent pixels use the given opacity.
 fn rgb565_to_rgba8888(
     pixels: &[u16],
-    width: u16,
-    height: u16,
+    bytes: &mut Vec<u8>,
     transparent: u16,
     shadow_color: u16,
     shadow_level: u16,
     alpha_mode: TitbitAlphaMode,
-) -> Vec<u8> {
+) {
     let shadow_alpha = (shadow_level.min(100) as u32 * 255 / 100) as u8;
     let constant_mode = matches!(alpha_mode, TitbitAlphaMode::ConstantPercent(_));
     let fixed_alpha = match alpha_mode {
         TitbitAlphaMode::ConstantPercent(percent) => (percent.min(100) as u32 * 255 / 100) as u8,
         TitbitAlphaMode::SolidWithShadow | TitbitAlphaMode::BlueChannel => 255,
     };
-    let n = width as usize * height as usize;
-    let mut bytes = Vec::with_capacity(n * 4);
+    bytes.clear();
+    bytes.reserve(pixels.len() * 4);
 
-    for &px in pixels.iter().take(n) {
+    for &px in pixels {
         let transparent_pixel = px == transparent || (constant_mode && px == SPRITE_SHADOW_KEY_16);
         let (r, g, b, a) = if transparent_pixel {
             (0, 0, 0, 0)
@@ -972,8 +975,6 @@ fn rgb565_to_rgba8888(
         };
         bytes.extend_from_slice(&[r, g, b, a]);
     }
-
-    bytes
 }
 
 fn alpha_from_rgb565_blue(px: u16) -> u8 {
@@ -1065,10 +1066,10 @@ mod tests {
             TitbitAlphaMode::ConstantPercent(100),
             TitbitAlphaMode::ConstantPercent(u16::MAX),
         ] {
-            let bytes = rgb565_to_rgba8888(
+            let mut bytes = Vec::new();
+            rgb565_to_rgba8888(
                 &pixels,
-                256,
-                256,
+                &mut bytes,
                 TRANSPARENT_COLOR_KEY_16,
                 DEFAULT_SHADOW_COLOR,
                 50,
@@ -1109,12 +1110,43 @@ mod tests {
     }
 
     #[test]
+    fn rgba_conversion_reuses_storage_without_leaking_previous_frame_pixels() {
+        let mut bytes = Vec::with_capacity(64);
+        let original_ptr = bytes.as_ptr();
+        let original_capacity = bytes.capacity();
+        for pixels in [&[0xFFFF, 0xF800, 0x07E0][..], &[0x001F][..], &[][..]] {
+            rgb565_to_rgba8888(
+                pixels,
+                &mut bytes,
+                TRANSPARENT_COLOR_KEY_16,
+                DEFAULT_SHADOW_COLOR,
+                SHADOW_LEVEL,
+                TitbitAlphaMode::BlueChannel,
+            );
+            let expected: Vec<u8> = pixels
+                .iter()
+                .flat_map(|&pixel| {
+                    [
+                        ((pixel >> 11) * 8) as u8,
+                        (((pixel >> 5) & 63) * 4) as u8,
+                        ((pixel & 31) * 8) as u8,
+                        ((pixel & 31) * 8) as u8,
+                    ]
+                })
+                .collect();
+            assert_eq!(bytes, expected);
+            assert_eq!(bytes.as_ptr(), original_ptr);
+            assert_eq!(bytes.capacity(), original_capacity);
+        }
+    }
+
+    #[test]
     fn blue_channel_alpha_mode_matches_titbit_blit_flags() {
         let px = 0x001F;
-        let bytes = rgb565_to_rgba8888(
+        let mut bytes = Vec::new();
+        rgb565_to_rgba8888(
             &[px],
-            1,
-            1,
+            &mut bytes,
             TRANSPARENT_COLOR_KEY_16,
             DEFAULT_SHADOW_COLOR,
             SHADOW_LEVEL,
@@ -1125,10 +1157,10 @@ mod tests {
 
     #[test]
     fn constant_alpha_mode_matches_ghost_percent_and_wipes_shadow_key() {
-        let bytes = rgb565_to_rgba8888(
+        let mut bytes = Vec::new();
+        rgb565_to_rgba8888(
             &[0xFFFF, SPRITE_SHADOW_KEY_16],
-            2,
-            1,
+            &mut bytes,
             TRANSPARENT_COLOR_KEY_16,
             DEFAULT_SHADOW_COLOR,
             SHADOW_LEVEL,
