@@ -1732,25 +1732,23 @@ impl SaveGameManager {
 
     /// Does this slot have a stored payload, including a session checkpoint?
     pub fn slot_file_exists(&self, index: usize) -> bool {
-        if let Some(slot) = self.catalog.get(index) {
-            if self
-                .operations
-                .pending_name()
-                .is_some_and(|name| name.as_str() == slot.filename)
-            {
-                return false; // A queued publication is explicitly not loadable yet.
-            }
-            let name = SlotName::new(slot.filename.clone()).expect("validated runtime slot");
-            if self
-                .catalog
-                .state(&name)
-                .expect("validated runtime slot state")
-                == SlotState::Draft
-            {
-                return false;
-            }
+        let slot = self.catalog.get(index).expect("invalid save slot identity");
+        if self
+            .operations
+            .pending_name()
+            .is_some_and(|name| name.as_str() == slot.filename)
+        {
+            return false; // A queued publication is explicitly not loadable yet.
         }
-        if self.catalog.get(index).is_some_and(SaveGame::is_restart) {
+        if self
+            .catalog
+            .state_at(index)
+            .expect("validated runtime slot state")
+            == SlotState::Draft
+        {
+            return false;
+        }
+        if slot.is_restart() {
             if self.session_restart.is_some() {
                 return true;
             }
@@ -1758,9 +1756,7 @@ impl SaveGameManager {
             return false;
         }
 
-        if let Some(slot) = self.catalog.get(index)
-            && slot.is_autosave()
-        {
+        if slot.is_autosave() {
             return match crate::autosave::payload_exists(&self.save_directory, &slot.filename) {
                 Ok(exists) => exists,
                 Err(error) => {
@@ -2290,6 +2286,7 @@ mod tests {
         let handle = manager.create_draft("Draft".into(), 17).unwrap();
         let index = manager.resolve_handle(&handle).unwrap();
         manager.catalog[index] = published_slot(handle.name().as_str());
+        assert!(!manager.slot_file_exists(index));
         manager.save_index().unwrap();
         assert!(
             SaveGameManager::load_index(root.path().to_str().unwrap())
@@ -2299,6 +2296,7 @@ mod tests {
                 == 0
         );
         std::fs::write(manager.save_path(index), b"unrelated writer").unwrap();
+        assert!(!manager.slot_file_exists(index));
         manager.remove(index).unwrap();
         assert_eq!(
             std::fs::read(root.path().join(format!("{}.json", handle.name().as_str()))).unwrap(),
