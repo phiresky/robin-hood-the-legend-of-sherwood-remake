@@ -312,6 +312,9 @@ impl Thumbnail {
             writer
                 .write_image_data(&self.rgb888_pixels())
                 .with_context(|| format!("writing thumbnail PNG data {}", path.display()))?;
+            writer
+                .finish()
+                .with_context(|| format!("finishing thumbnail PNG {}", path.display()))?;
         }
         atomic_write(path, &encoded)
     }

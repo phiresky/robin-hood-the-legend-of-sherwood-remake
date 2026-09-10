@@ -1582,6 +1582,7 @@ fn write_png(path: &PathBuf, w: u32, h: u32, rgba: bool, data: &[u8]) -> Result<
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header()?;
     writer.write_image_data(data)?;
+    writer.finish()?;
     Ok(())
 }
 

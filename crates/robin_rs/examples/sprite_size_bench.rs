@@ -1464,6 +1464,7 @@ fn write_png_rgba(path: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> {
     enc.set_compression(png::Compression::High);
     let mut writer = enc.write_header()?;
     writer.write_image_data(rgba)?;
+    writer.finish()?;
     Ok(())
 }
 
@@ -1476,6 +1477,7 @@ fn write_png_rgb(path: &Path, w: u32, h: u32, rgb: &[u8]) -> Result<()> {
     enc.set_compression(png::Compression::High);
     let mut writer = enc.write_header()?;
     writer.write_image_data(rgb)?;
+    writer.finish()?;
     Ok(())
 }
 
@@ -1639,6 +1641,7 @@ fn write_apng(path: &Path, frames: &[BenchFrame]) -> Result<()> {
         let rgba = rgb565_to_rgba_keyed(&padded, w, h);
         writer.write_image_data(&rgba)?;
     }
+    writer.finish()?;
     Ok(())
 }
 

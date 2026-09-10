@@ -233,6 +233,7 @@ mod probe {
         enc.set_depth(png::BitDepth::Eight);
         let mut writer = enc.write_header().context("png header")?;
         writer.write_image_data(rgba).context("png data")?;
+        writer.finish().context("png finish")?;
         Ok(())
     }
 

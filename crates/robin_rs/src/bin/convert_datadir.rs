@@ -1812,6 +1812,7 @@ fn write_png(dst: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<()> {
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().context("png header")?;
     writer.write_image_data(rgba).context("png data")?;
+    writer.finish().context("png finish")?;
     Ok(())
 }
 

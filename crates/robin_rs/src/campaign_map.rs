@@ -3566,11 +3566,9 @@ mod capture_tests {
                     let mut encoder = png::Encoder::new(file, w, h);
                     encoder.set_color(png::ColorType::Rgba);
                     encoder.set_depth(png::BitDepth::Eight);
-                    encoder
-                        .write_header()
-                        .unwrap()
-                        .write_image_data(&pixels)
-                        .unwrap();
+                    let mut writer = encoder.write_header().unwrap();
+                    writer.write_image_data(&pixels).unwrap();
+                    writer.finish().unwrap();
                     eprintln!("Captured {}", path.display());
                 }
             }

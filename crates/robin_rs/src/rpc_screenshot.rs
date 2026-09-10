@@ -92,6 +92,9 @@ pub(crate) fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRe
         writer
             .write_image_data(pixels)
             .map_err(|e| RpcError::internal(format!("png data: {e}")))?;
+        writer
+            .finish()
+            .map_err(|e| RpcError::internal(format!("png finish: {e}")))?;
     }
     Ok(ReplyBody::Binary {
         content_type: "image/png",

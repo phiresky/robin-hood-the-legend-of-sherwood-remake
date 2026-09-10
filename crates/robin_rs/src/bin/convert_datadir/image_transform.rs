@@ -221,6 +221,7 @@ pub(super) fn encode_pixels_to_jxl(
         enc.set_depth(png::BitDepth::Eight);
         let mut w = enc.write_header().context("png header")?;
         w.write_image_data(pixels).context("png data")?;
+        w.finish().context("png finish")?;
     }
 
     let mut cmd = Command::new("cjxl");
