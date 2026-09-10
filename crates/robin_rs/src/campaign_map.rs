@@ -564,7 +564,14 @@ impl CampaignMapModalState {
         if let Some(node) = self.graph.nodes.get(self.selected_progress) {
             self.scroll_views[HISTORY_VIEW].set_total(node.plays.len());
             if self.details_open {
-                self.scroll_views[TEXT_VIEW].set_total(detail_lines(node, &self.assets).count());
+                let text_view = &mut self.scroll_views[TEXT_VIEW];
+                let font = self
+                    .assets
+                    .progress_font
+                    .as_ref()
+                    .expect("mission details font");
+                text_view
+                    .set_total(detail_lines(node, font, text_view.content_width() - 32).count());
             }
             if reveal || initialize {
                 self.scroll_views[TREE_VIEW].reveal(node.depth);
@@ -1562,7 +1569,10 @@ fn render_campaign_progress(
             capture_views[HISTORY_VIEW].set_total(node.plays.len());
             capture_views[HISTORY_VIEW].set_offset(history_scroll);
             if let Some(offset) = details_scroll {
-                capture_views[TEXT_VIEW].set_total(detail_lines(node, assets).count());
+                let text_view = &mut capture_views[TEXT_VIEW];
+                let font = assets.progress_font.as_ref().expect("mission details font");
+                text_view
+                    .set_total(detail_lines(node, font, text_view.content_width() - 32).count());
                 capture_views[TEXT_VIEW].set_offset(offset);
             }
         }
@@ -2166,10 +2176,9 @@ const DETAIL_VISIBLE_LINES: usize = 16;
 
 fn detail_lines<'a>(
     node: &'a crate::campaign_progress::CampaignProgressNode,
-    assets: &'a CampaignMapAssets,
+    font: &'a Font,
+    width: i32,
 ) -> impl Iterator<Item = String> + 'a {
-    let font = assets.progress_font.as_ref().expect("mission details font");
-    let width = campaign_scroll_views(assets)[TEXT_VIEW].content_width() - 32;
     detail_sections(node).flat_map(move |text| {
         let blank_line = text.is_empty().then(String::new);
         let wrapped = (!text.is_empty())
@@ -2223,8 +2232,8 @@ fn render_mission_details(
         512,
     );
     progress_rect(renderer, transform, (32, 254, 512, 408), (12, 20, 13));
-    let lines = detail_lines(node, assets);
     let text_view = &views[TEXT_VIEW];
+    let lines = detail_lines(node, font, text_view.content_width() - 32);
     let text_scroll = text_view.offset();
     for (row, text) in lines
         .skip(text_scroll)
@@ -3048,7 +3057,7 @@ mod browser_tests {
         node.availability_notes = vec!["First requirement".into(), "".into(), "条件".into()];
         node.briefing = Some("e\u{0301}clair 👩‍💻 mission briefing with several words. ".repeat(80));
         let font = state.assets.progress_font.as_ref().unwrap();
-        let width = campaign_scroll_views(&state.assets)[TEXT_VIEW].content_width() - 32;
+        let width = state.scroll_views[TEXT_VIEW].content_width() - 32;
         let mut expected = Vec::new();
         for section in detail_sections(node) {
             if section.is_empty() {
@@ -3064,13 +3073,13 @@ mod browser_tests {
         }
         assert!(expected.len() > DETAIL_VISIBLE_LINES);
         assert_eq!(
-            detail_lines(node, &state.assets).collect::<Vec<_>>(),
+            detail_lines(node, font, width).collect::<Vec<_>>(),
             expected
         );
-        assert_eq!(detail_lines(node, &state.assets).count(), expected.len());
+        assert_eq!(detail_lines(node, font, width).count(), expected.len());
         for offset in [0, 1, 5, expected.len() - 1, expected.len()] {
             assert_eq!(
-                detail_lines(node, &state.assets)
+                detail_lines(node, font, width)
                     .skip(offset)
                     .take(DETAIL_VISIBLE_LINES)
                     .collect::<Vec<_>>(),
@@ -3081,6 +3090,22 @@ mod browser_tests {
                     .cloned()
                     .collect::<Vec<_>>()
             );
+        }
+    }
+
+    #[test]
+    fn detail_wrapping_uses_the_supplied_viewport_width() {
+        let mut state = browser();
+        let node = &mut state.graph.nodes[0];
+        node.briefing = Some("A long mission briefing with many words. ".repeat(40));
+        let font = state.assets.progress_font.as_ref().unwrap();
+        let narrow = detail_lines(node, font, 120).collect::<Vec<_>>();
+        let wide = detail_lines(node, font, 480).collect::<Vec<_>>();
+        assert!(narrow.len() > wide.len());
+        for (width, lines) in [(120, narrow), (480, wide)] {
+            for line in lines {
+                assert!(font.text_width(&line) <= width, "{width}: {line}");
+            }
         }
     }
 
@@ -3233,7 +3258,15 @@ mod browser_tests {
         state.handle_events(vec![GameEvent::MouseWheel(-100)], transform, true);
         assert_eq!(
             state.details_offset(),
-            Some(detail_lines(&state.graph.nodes[0], &state.assets).count() - DETAIL_VISIBLE_LINES)
+            Some(
+                detail_lines(
+                    &state.graph.nodes[0],
+                    state.assets.progress_font.as_ref().unwrap(),
+                    state.scroll_views[TEXT_VIEW].content_width() - 32
+                )
+                .count()
+                    - DETAIL_VISIBLE_LINES
+            )
         );
         state.handle_events(vec![GameEvent::MouseWheel(100)], transform, true);
         assert_eq!(state.details_offset(), Some(0));
@@ -3810,7 +3843,14 @@ mod capture_tests {
                         .nodes
                         .iter()
                         .enumerate()
-                        .max_by_key(|(_, node)| detail_lines(node, &state.assets).count())
+                        .max_by_key(|(_, node)| {
+                            detail_lines(
+                                node,
+                                state.assets.progress_font.as_ref().unwrap(),
+                                state.scroll_views[TEXT_VIEW].content_width() - 32,
+                            )
+                            .count()
+                        })
                         .unwrap()
                         .0,
                     0,
