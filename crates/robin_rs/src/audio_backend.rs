@@ -1001,8 +1001,18 @@ mod tests {
     #[ignore = "requires ROBINHOOD_DATA_DIR pointing to original fullgame data"]
     fn legacy_vorbis_repair_preserves_decoded_original_music() {
         let root = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
-        for name in ["Menu.wav", "Cast_Fight.wav"] {
-            let path = Path::new(&root).join("DATA/Musics").join(name);
+        for name in ["Menu", "Cast_Fight"] {
+            let path = ["DATA/Musics", "Data/Musics"]
+                .into_iter()
+                .flat_map(|directory| {
+                    ["wav", "ogg"].map(|extension| {
+                        Path::new(&root)
+                            .join(directory)
+                            .join(format!("{name}.{extension}"))
+                    })
+                })
+                .find(|path| path.is_file())
+                .unwrap_or_else(|| panic!("original music fixture {name} is missing under {root}"));
             let bytes = std::fs::read(&path).expect("read original music");
             let repaired = repair_legacy_vorbis_comment(bytes.clone()).unwrap();
             assert_ne!(
