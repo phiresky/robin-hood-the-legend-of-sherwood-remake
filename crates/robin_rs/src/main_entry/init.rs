@@ -249,21 +249,47 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
         "Registered validated native core overlay datadir"
     );
 
-    if let Some(mods_dir) = resolve_install_resource_dir(MODS_DIR)
-        && let Ok(entries) = std::fs::read_dir(mods_dir)
-    {
-        // Sort for a deterministic overlay lookup order.
-        let mut mod_dirs: Vec<String> = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
-            .map(|entry| entry.path().to_string_lossy().into_owned())
-            .collect();
-        mod_dirs.sort();
-        for dir in mod_dirs {
-            match files.add_overlay_path(&dir) {
-                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay datadir: {dir}"),
+    let mut mod_roots = Vec::new();
+    if let Some(root) = resolve_install_resource_dir(MODS_DIR) {
+        mod_roots.push(root);
+    }
+    let configured_root = crate::mod_pack::default_mods_root();
+    if !mod_roots.contains(&configured_root) {
+        mod_roots.push(configured_root);
+    }
+    for mods_dir in mod_roots {
+        let entries = match std::fs::read_dir(&mods_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                tracing::warn!("Cannot scan mod directory {}: {error}", mods_dir.display());
+                continue;
+            }
+        };
+        let mut roots = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+                    if path.is_dir()
+                        || path
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+                    {
+                        roots.push(path);
+                    }
+                }
+                Err(error) => tracing::warn!("Cannot read mod directory entry: {error}"),
+            }
+        }
+        roots.sort();
+        for path in roots {
+            match crate::mod_pack::mount_mod_overlay(files, &path) {
+                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay: {}", path.display()),
                 SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-                err => tracing::warn!("Failed to register mod overlay datadir {dir}: {err}"),
+                error => {
+                    tracing::warn!("Failed to register mod overlay {}: {error}", path.display())
+                }
             }
         }
     }
@@ -276,7 +302,7 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
             continue;
         }
         let path = path.to_string_lossy().into_owned();
-        match files.add_overlay_path(&path) {
+        match crate::mod_pack::mount_mod_overlay(files, Path::new(&path)) {
             SBFILE_NO_ERROR => tracing::info!("Registered overlay datadir: {path}"),
             SBFILE_ERROR_PATH_ALREADY_PRESENT => {
                 tracing::debug!("Overlay datadir already registered: {path}")
@@ -1119,22 +1145,24 @@ fn apply_soldier_profile_patches_with_files(
     mut profiles: ProfileManager,
     files: &SbFileSystem,
 ) -> Result<ProfileManager, InitError> {
-    for root in files.overlay_paths() {
-        let path = Path::new(&root).join(SOLDIER_PROFILE_PATCH_PATH);
-        if !path.is_file() {
+    for root in files.overlay_sources() {
+        let path = format!("{root}/{SOLDIER_PROFILE_PATCH_PATH}");
+        let bytes = files
+            .read_overlay(&root, SOLDIER_PROFILE_PATCH_PATH)
+            .map_err(|error| InitError::ContentSoldierProfilePatch {
+                path: path.clone(),
+                message: format!("file read error {error}"),
+            })?;
+        let Some(bytes) = bytes else {
             continue;
-        }
-        let result = std::fs::read(&path)
+        };
+        let result = serde_json::from_slice(&bytes)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
             .and_then(|patch| apply_soldier_profile_patch(&mut profiles, patch));
         if let Err(message) = result {
-            return Err(InitError::ContentSoldierProfilePatch {
-                path: path.display().to_string(),
-                message,
-            });
+            return Err(InitError::ContentSoldierProfilePatch { path, message });
         }
-        tracing::info!("Applied soldier profile patch {}", path.display());
+        tracing::info!("Applied soldier profile patch {path}");
     }
     Ok(profiles)
 }
@@ -1401,6 +1429,53 @@ mod tests {
         assert_eq!(profiles.soldiers[1].profile_name, "Blue Cavalier");
         assert_eq!(profiles.soldiers[1].display_name, "Blue Cavalier");
         assert!(!profiles.soldiers[1].hostile);
+    }
+
+    #[test]
+    fn soldier_profile_patches_compose_across_directory_and_zip_layers() {
+        use std::io::Write;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(SOLDIER_PROFILE_PATCH_PATH);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let patch = |template: &str, filename: &str| {
+            serde_json::to_vec(&serde_json::json!({
+                "soldiers": [{"template":template,"filename":filename,"display_name":filename}]
+            }))
+            .unwrap()
+        };
+        std::fs::write(path, patch("Knight03", "Knight00")).unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                format!("Wrapped/{SOLDIER_PROFILE_PATCH_PATH}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(&patch("Knight00", "Knight01")).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.add_overlay_path(directory.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.add_overlay_zip_bytes_for_mission("patch", bytes.into(), None),
+            SBFILE_NO_ERROR
+        );
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Knight03".into(),
+            ..Default::default()
+        });
+        let profiles = apply_soldier_profile_patches_with_files(profiles, &files).unwrap();
+        assert_eq!(
+            profiles
+                .soldiers
+                .iter()
+                .map(|soldier| soldier.filename.as_str())
+                .collect::<Vec<_>>(),
+            ["Knight03", "Knight00", "Knight01"]
+        );
     }
 
     #[test]

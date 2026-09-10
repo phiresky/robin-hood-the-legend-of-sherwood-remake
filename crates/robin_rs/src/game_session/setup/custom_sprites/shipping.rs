@@ -150,7 +150,11 @@ fn decode_group(group: Group) -> Result<Vec<RuntimeSprite>> {
 
 pub(super) fn read(path: &Path) -> Result<HackableRhsCache> {
     let compressed = std::fs::read(path).with_context(|| path.display().to_string())?;
-    let bytes = zstd::stream::decode_all(compressed.as_slice())?;
+    read_bytes(&compressed, &path.display().to_string())
+}
+
+pub(super) fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
+    let bytes = zstd::stream::decode_all(compressed)?;
     ensure!(bytes.starts_with(MAGIC), "unsupported custom VQ format");
     let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..])?;
     ensure!(
@@ -164,8 +168,7 @@ pub(super) fn read(path: &Path) -> Result<HackableRhsCache> {
     for group in bundle.groups {
         bundle.metadata.frames.extend(decode_group(group)?);
     }
-    validate_cache_frames(&path.display().to_string(), &bundle.metadata)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    validate_cache_frames(source, &bundle.metadata).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(bundle.metadata)
 }
 

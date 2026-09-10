@@ -2020,7 +2020,7 @@ mod tests {
             pager: OptionsPager::default(),
             input: ModalInputState::new(),
             transform: MenuTransform::centered(640, 480),
-            shortcut_scroll: 0,
+            shortcut_scroll: None,
             rebinding: None,
             shortcut_dirty: false,
             shortcut_reserved: false,
