@@ -15,7 +15,9 @@ enum AdmissionWorkerReply {
 const ADMISSION_WORKER_ARG: &str = "--internal-replay-admission-worker";
 const ADMISSION_WORKER_WALL_TIME: std::time::Duration = std::time::Duration::from_secs(15);
 const ADMISSION_WORKER_REPLY_LIMIT: usize = 16 * 1024;
-const ADMISSION_WORKER_ERROR_LIMIT: usize = 8 * 1024;
+// A control byte can expand to six JSON bytes (\u00xx). Reserve space for
+// the reply envelope and truncation suffix before budgeting diagnostic text.
+const ADMISSION_WORKER_ERROR_LIMIT: usize = (ADMISSION_WORKER_REPLY_LIMIT - 128) / 6;
 
 fn bounded_worker_error(error: impl std::fmt::Display) -> String {
     let mut message = error.to_string();
@@ -85,7 +87,6 @@ pub fn run_native_admission_worker() -> i32 {
 
 pub(super) fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError> {
     use sha2::Digest as _;
-    use std::io::{Read as _, Write as _};
     use std::process::{Command, Stdio};
 
     preflight_compact_transport(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
@@ -99,56 +100,98 @@ pub(super) fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     configure_native_worker_limits(&mut command)?;
-    let mut child = command.spawn().map_err(|error| {
+    let child = command.spawn().map_err(|error| {
         ReplayLoadError::WorkerProtocol(format!("spawn admission worker: {error}"))
     })?;
-    let write_result = child
+    let output = exchange_with_worker(child, text, ADMISSION_WORKER_WALL_TIME)?;
+    let reply: AdmissionWorkerReply = serde_json::from_slice(&output).map_err(|error| {
+        ReplayLoadError::WorkerProtocol(format!("decode worker reply: {error}"))
+    })?;
+    match reply {
+        AdmissionWorkerReply::Rejected { error } => Err(ReplayLoadError::AdmissionRejected(error)),
+        AdmissionWorkerReply::Accepted { sha256 } => {
+            let actual = hex::encode(sha2::Sha256::digest(text.as_bytes()));
+            if sha256 != actual {
+                return Err(ReplayLoadError::WorkerProtocol(
+                    "worker accepted a different replay digest".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn exchange_with_worker(
+    mut child: std::process::Child,
+    text: &str,
+    wall_time: std::time::Duration,
+) -> Result<Vec<u8>, ReplayLoadError> {
+    use std::io::{Read as _, Write as _};
+
+    let mut stdin = child
         .stdin
         .take()
-        .ok_or_else(|| ReplayLoadError::WorkerProtocol("worker stdin is unavailable".into()))?
-        .write_all(text.as_bytes());
-    if let Err(error) = write_result {
-        // A worker killed by its memory/CPU limit commonly closes stdin while
-        // the parent is still writing. Reap it here rather than leaving a
-        // zombie and report the failure as containment, not ordinary I/O.
-        let _ = child.kill();
-        let status = child.wait().ok();
-        return Err(ReplayLoadError::ResourceLimit {
-            stage: "worker-input",
-            detail: match status {
-                Some(status) => format!("worker closed input ({error}); exit status {status}"),
-                None => format!("worker closed input ({error})"),
-            },
-        });
-    }
-
-    let started = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait().map_err(|error| {
-            ReplayLoadError::WorkerProtocol(format!("wait for admission worker: {error}"))
-        })? {
-            Some(status) => break status,
-            None if started.elapsed() >= ADMISSION_WORKER_WALL_TIME => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ReplayLoadError::ResourceLimit {
-                    stage: "wall-time",
-                    detail: format!(
-                        "limit of {} seconds exceeded",
-                        ADMISSION_WORKER_WALL_TIME.as_secs()
-                    ),
-                });
-            }
-            None => std::thread::sleep(std::time::Duration::from_millis(10)),
-        }
-    };
-    let mut output = Vec::new();
-    child
+        .expect("admission worker stdin was piped");
+    let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| ReplayLoadError::WorkerProtocol("worker stdout is unavailable".into()))?
-        .take((ADMISSION_WORKER_REPLY_LIMIT + 1) as u64)
-        .read_to_end(&mut output)
+        .expect("admission worker stdout was piped");
+    // Drain concurrently: even a bounded JSON reply can exceed the OS pipe's
+    // capacity. Waiting for exit before reading can deadlock on diagnostics.
+    let reader = match std::thread::Builder::new()
+        .name("replay-admission-reply".into())
+        .spawn(move || {
+            let mut output = Vec::new();
+            stdout
+                .take((ADMISSION_WORKER_REPLY_LIMIT + 1) as u64)
+                .read_to_end(&mut output)
+                .map(|_| output)
+        }) {
+        Ok(reader) => reader,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ReplayLoadError::WorkerProtocol(format!(
+                "spawn worker reply reader: {error}"
+            )));
+        }
+    };
+    let completion = (|| {
+        if let Err(error) = stdin.write_all(text.as_bytes()) {
+            return Err(ReplayLoadError::ResourceLimit {
+                stage: "worker-input",
+                detail: format!("worker closed input ({error})"),
+            });
+        }
+        drop(stdin);
+        // TODO: include the synchronous stdin write in this wall-time deadline;
+        // a worker that stops reading can currently block before the timer starts.
+        let started = std::time::Instant::now();
+        loop {
+            match child.try_wait().map_err(|error| {
+                ReplayLoadError::WorkerProtocol(format!("wait for admission worker: {error}"))
+            })? {
+                Some(status) => return Ok(status),
+                None if started.elapsed() >= wall_time => {
+                    return Err(ReplayLoadError::ResourceLimit {
+                        stage: "wall-time",
+                        detail: format!("limit of {} seconds exceeded", wall_time.as_secs()),
+                    });
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+    })();
+    // Every early error reaps the worker before joining its pipe reader.
+    if completion.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let output = reader
+        .join()
+        .map_err(|_| ReplayLoadError::WorkerProtocol("worker reply reader panicked".into()));
+    let status = completion?;
+    let output = output?
         .map_err(|error| ReplayLoadError::WorkerProtocol(format!("read worker reply: {error}")))?;
     if output.len() > ADMISSION_WORKER_REPLY_LIMIT {
         return Err(ReplayLoadError::ResourceLimit {
@@ -166,21 +209,7 @@ pub(super) fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError
             detail: format!("worker exited abnormally with {status}"),
         });
     }
-    let reply: AdmissionWorkerReply = serde_json::from_slice(&output).map_err(|error| {
-        ReplayLoadError::WorkerProtocol(format!("decode worker reply: {error}"))
-    })?;
-    match reply {
-        AdmissionWorkerReply::Rejected { error } => Err(ReplayLoadError::AdmissionRejected(error)),
-        AdmissionWorkerReply::Accepted { sha256 } => {
-            let actual = hex::encode(sha2::Sha256::digest(text.as_bytes()));
-            if sha256 != actual {
-                return Err(ReplayLoadError::WorkerProtocol(
-                    "worker accepted a different replay digest".into(),
-                ));
-            }
-            Ok(())
-        }
-    }
+    Ok(output)
 }
 
 #[cfg(unix)]
@@ -254,6 +283,79 @@ fn configure_current_native_worker_limits() -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn shell_worker(script: &str) -> std::process::Child {
+        use std::process::{Command, Stdio};
+        Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn test worker")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_reply_is_drained_before_waiting_for_exit() {
+        let output = exchange_with_worker(
+            shell_worker("printf '%12288s' ''"),
+            "",
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(output, vec![b' '; 12288]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oversized_worker_reply_is_bounded_without_a_pipe_deadlock() {
+        let error = exchange_with_worker(
+            shell_worker("printf '%32768s' ''"),
+            "",
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ReplayLoadError::ResourceLimit {
+                stage: "worker-output",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_timeout_reaps_process_and_joins_reply_reader() {
+        let error = exchange_with_worker(
+            shell_worker("while :; do :; done"),
+            "",
+            std::time::Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ReplayLoadError::ResourceLimit {
+                stage: "wall-time",
+                ..
+            }
+        ));
+        let error = exchange_with_worker(
+            shell_worker("exit 7"),
+            "",
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ReplayLoadError::ResourceLimit {
+                stage: "worker-process",
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn public_worker_argument_is_not_a_user_cli_format() {
         assert!(ADMISSION_WORKER_ARG.starts_with("--internal-"));
@@ -266,5 +368,21 @@ mod tests {
         assert!(bounded.is_char_boundary(bounded.len()));
         assert!(bounded.len() <= ADMISSION_WORKER_ERROR_LIMIT + " [truncated]".len());
         assert!(bounded.ends_with(" [truncated]"));
+    }
+
+    #[test]
+    fn escaped_worker_diagnostics_fit_the_reply_budget() {
+        for character in (0u8..=127).map(char::from).chain(['é', '🦊']) {
+            let error = character.to_string().repeat(ADMISSION_WORKER_REPLY_LIMIT);
+            let reply = AdmissionWorkerReply::Rejected {
+                error: bounded_worker_error(error),
+            };
+            let bytes = serde_json::to_vec(&reply).unwrap();
+            assert!(bytes.len() <= ADMISSION_WORKER_REPLY_LIMIT, "{character:?}");
+            assert!(matches!(
+                serde_json::from_slice::<AdmissionWorkerReply>(&bytes).unwrap(),
+                AdmissionWorkerReply::Rejected { .. }
+            ));
+        }
     }
 }
