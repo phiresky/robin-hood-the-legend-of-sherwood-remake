@@ -2293,13 +2293,14 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
         let pseudo_status = engine.campaign().get_last_pseudo_mission_status();
         let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
         if sherwood_flow.is_none() {
-            let campaign_profile = host
+            let (campaign_view_config, campaign_history) = host
                 .application_context()
-                .active_profile_snapshot()
+                .with_active_profile(|profile| {
+                    (profile.gameplay_config, profile.campaign_history.clone())
+                })
                 .unwrap_or_else(|error| {
                     panic!("campaign presentation requires an active profile: {error}")
                 });
-            let campaign_view_config = campaign_profile.gameplay_config;
             game.mark_campaign_map_displayed();
             game.take_campaign_map_redisplay();
             let campaign = engine.campaign();
@@ -2324,7 +2325,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     pseudo_debrief_pending,
                     campaign_view_config.campaign_presentation,
                     campaign_view_config.show_achievement_badges,
-                    &campaign_profile.campaign_history,
+                    &campaign_history,
                 ),
             ));
         }

@@ -1,7 +1,7 @@
 //! Campaign map screen — picks a mission and returns it.
 //!
-//! A blocking modal that draws the DEFAULT.RES campaign map and waits
-//! for a location selection.
+//! Frame-polled campaign map and history views. Their owners keep advancing
+//! the outer event loop while these views wait for a selection.
 
 use crate::campaign_progress::{
     CampaignProgressGraph, ExhibitGridNavigator, MissionKind, MissionProgressState,
@@ -315,11 +315,22 @@ impl CampaignMapModalState {
         profiles: &engine_profiles::ProfileManager,
         resources: &mut IngameMenuResources,
     ) -> Self {
-        let profile = application_context
-            .active_profile_snapshot()
+        // Build owned history presentation data under the profile read lock;
+        // localization, resource loading, and rendering happen after it is released.
+        let (view_config, mut graph, lifetime_totals, lifetime_achievements) = application_context
+            .with_active_profile(|profile| {
+                (
+                    profile.gameplay_config,
+                    CampaignProgressGraph::build(
+                        campaign,
+                        profiles,
+                        Some(&profile.campaign_history),
+                    ),
+                    profile.campaign_history.totals(),
+                    profile.campaign_history.achievement_aggregation(),
+                )
+            })
             .expect("campaign manager requires an active profile");
-        let mut graph =
-            CampaignProgressGraph::build(campaign, profiles, Some(&profile.campaign_history));
         for node in &mut graph.nodes {
             node.name = application_context.localized_mission_name(node.mission_id, &node.name);
         }
@@ -361,7 +372,7 @@ impl CampaignMapModalState {
             frame: FrameWnd::default(),
             exhibit_grid: ExhibitGridNavigator::new(graph.nodes.len(), selected_progress),
             graph,
-            presentation: match profile.gameplay_config.campaign_presentation {
+            presentation: match view_config.campaign_presentation {
                 CampaignPresentationMode::ClassicMap => CampaignPresentationMode::ProgressTree,
                 mode => mode,
             },
@@ -369,14 +380,14 @@ impl CampaignMapModalState {
             pseudo_debrief_at_ms: None,
             selected_classic: 0,
             selected_progress,
-            show_achievement_badges: profile.gameplay_config.show_achievement_badges,
+            show_achievement_badges: view_config.show_achievement_badges,
             achievement_overview: false,
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
             recording_index,
-            lifetime_totals: profile.campaign_history.totals(),
-            lifetime_achievements: profile.campaign_history.achievement_aggregation(),
+            lifetime_totals,
+            lifetime_achievements,
         }
     }
 
