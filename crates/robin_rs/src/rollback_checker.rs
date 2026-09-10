@@ -269,7 +269,7 @@ impl RollbackCheckJob {
         let live_v = serde_json::to_value(live).map_err(std::io::Error::other)?;
         let rep_v = serde_json::to_value(replayed).map_err(std::io::Error::other)?;
         let mut diffs: Vec<serde_json::Value> = Vec::new();
-        collect_diffs("", &live_v, &rep_v, &mut diffs);
+        collect_diffs(&mut String::new(), &live_v, &rep_v, &mut diffs);
 
         let dump = serde_json::json!({
             "end_frame": end_frame,
@@ -323,7 +323,7 @@ impl PerfStats {
 /// for every leaf where the values differ. Matching subtrees are skipped
 /// entirely to keep the output small.
 fn collect_diffs(
-    path: &str,
+    path: &mut String,
     a: &serde_json::Value,
     b: &serde_json::Value,
     out: &mut Vec<serde_json::Value>,
@@ -338,19 +338,23 @@ fn collect_diffs(
             keys.sort();
             keys.dedup();
             for k in keys {
-                let p = if path.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{path}.{k}")
-                };
-                collect_optional_diffs(&p, am.get(k), bm.get(k), out);
+                let prefix_len = path.len();
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(k);
+                collect_optional_diffs(path, am.get(k), bm.get(k), out);
+                path.truncate(prefix_len);
             }
         }
         (Value::Array(av), Value::Array(bv)) => {
             let n = av.len().max(bv.len());
             for i in 0..n {
-                let p = format!("{path}[{i}]");
-                collect_optional_diffs(&p, av.get(i), bv.get(i), out);
+                use std::fmt::Write as _;
+                let prefix_len = path.len();
+                write!(path, "[{i}]").expect("formatting a JSON path into a String cannot fail");
+                collect_optional_diffs(path, av.get(i), bv.get(i), out);
+                path.truncate(prefix_len);
             }
         }
         _ => out.push(serde_json::json!({
@@ -364,7 +368,7 @@ fn collect_diffs(
 /// Absence is not JSON null. Presence flags distinguish missing entries while
 /// retaining the ordinary report's `live` and `replayed` value fields.
 fn collect_optional_diffs(
-    path: &str,
+    path: &mut String,
     live: Option<&serde_json::Value>,
     replayed: Option<&serde_json::Value>,
     out: &mut Vec<serde_json::Value>,
@@ -388,11 +392,34 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn nested_diagnostics_restore_and_reuse_the_callers_path_buffer() {
+        let mut path = String::with_capacity(128);
+        path.push_str("engine");
+        let pointer = path.as_ptr();
+        let mut diffs = Vec::new();
+        collect_diffs(
+            &mut path,
+            &json!({"actors": [{"name": "é"}], "frame": 1}),
+            &json!({"actors": [{"name": "Robin"}], "frame": 2}),
+            &mut diffs,
+        );
+        assert_eq!(path, "engine");
+        assert_eq!(path.as_ptr(), pointer);
+        assert_eq!(
+            diffs,
+            vec![
+                json!({"path": "engine.actors[0].name", "live": "é", "replayed": "Robin"}),
+                json!({"path": "engine.frame", "live": 1, "replayed": 2}),
+            ]
+        );
+    }
+
+    #[test]
     fn missing_null_fields_and_array_elements_remain_visible_in_diagnostics() {
         let live = json!({"a": null, "items": [1, null]});
         let replayed = json!({"b": null, "items": [1]});
         let mut diffs = Vec::new();
-        collect_diffs("", &live, &replayed, &mut diffs);
+        collect_diffs(&mut String::new(), &live, &replayed, &mut diffs);
         assert_eq!(
             diffs,
             vec![
@@ -405,7 +432,7 @@ mod tests {
             ]
         );
         let mut reversed = Vec::new();
-        collect_diffs("", &replayed, &live, &mut reversed);
+        collect_diffs(&mut String::new(), &replayed, &live, &mut reversed);
         for (forward, backward) in diffs.iter().zip(&reversed) {
             assert_eq!(forward["path"], backward["path"]);
             assert_eq!(forward["live_present"], backward["replayed_present"]);
@@ -419,7 +446,7 @@ mod tests {
         let live = json!({"same": {"nested": [null, 1]}, "changed": [1, {"x": true}]});
         let replayed = json!({"same": {"nested": [null, 1]}, "changed": [2, {"x": null}]});
         let mut diffs = Vec::new();
-        collect_diffs("", &live, &replayed, &mut diffs);
+        collect_diffs(&mut String::new(), &live, &replayed, &mut diffs);
         assert_eq!(
             diffs,
             vec![
