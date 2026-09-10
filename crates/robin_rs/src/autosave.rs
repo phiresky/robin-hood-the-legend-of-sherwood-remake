@@ -711,6 +711,7 @@ fn metadata_from_payload(
     );
     metadata.mission_id = payload.header.mission_id;
     metadata.version = payload.header.version;
+    metadata.multiplayer_diagnostic = payload.header.multiplayer_diagnostic;
     metadata.timestamp = payload.header.timestamp_unix.to_string();
     metadata.mission_name = mission_name;
     metadata.player_profile_id = Some(provenance.player_profile_id);
@@ -1272,6 +1273,27 @@ fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) ->
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn autosave_metadata_preserves_payload_diagnostic_classification() {
+        let mut assets = robin_engine::engine::LevelAssets::new();
+        let engine = Engine::new_for_test(
+            1280.0,
+            720.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .unwrap();
+        let host = Host::scratch(1280.0, 720.0);
+        let mut payload = GameSaveFile::capture(&engine, &host, 1, "Mission".into());
+        let mut profiles = ProfileManager::default();
+        profiles.missions.push(Default::default());
+        for diagnostic in [true, false] {
+            payload.header.multiplayer_diagnostic = diagnostic;
+            let metadata = metadata_from_payload("Autosave_123_0000", &payload, &profiles).unwrap();
+            assert_eq!(metadata.multiplayer_diagnostic, diagnostic);
+        }
+    }
+
     use super::*;
 
     #[cfg(unix)]
