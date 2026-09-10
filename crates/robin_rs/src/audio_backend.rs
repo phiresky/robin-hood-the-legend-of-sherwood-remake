@@ -227,48 +227,6 @@ impl KiraAudioBackend {
             }
         }
     }
-
-    fn resolve_music_path(files: &SbFileSystem, path: &str) -> Result<PathBuf, String> {
-        let resolve_one = |path: &str| {
-            files
-                .try_exists(path)
-                .map(|exists| exists.then(|| PathBuf::from(path)))
-                .map_err(|status| format!("music lookup failed for {path}: {status}"))
-        };
-
-        if let Some(resolved) = resolve_one(path)? {
-            return Ok(resolved);
-        }
-
-        let raw = PathBuf::from(path);
-        if raw
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
-        {
-            let ogg_path = raw.with_extension("ogg");
-            if let Some(ogg_path) = ogg_path.to_str()
-                && let Some(resolved) = resolve_one(ogg_path)?
-            {
-                return Ok(resolved);
-            }
-        } else if raw
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("ogg"))
-        {
-            let wav_path = raw.with_extension("wav");
-            if let Some(wav_path) = wav_path.to_str()
-                && let Some(resolved) = resolve_one(wav_path)?
-            {
-                return Ok(resolved);
-            }
-        }
-
-        let opus = raw.with_extension("opus");
-        if let Some(resolved) = resolve_one(&opus.to_string_lossy())? {
-            return Ok(resolved);
-        }
-        Err(format!("music asset not found: {}", raw.display()))
-    }
 }
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
@@ -487,7 +445,7 @@ impl AudioBackend for KiraAudioBackend {
     }
 
     fn play_music(&mut self, path: &str, looping: bool) -> bool {
-        let full_path = match KiraAudioBackend::resolve_music_path(&self.files, path) {
+        let full_path = match resolver::resolve_music(&self.files, path) {
             Ok(path) => path,
             Err(error) => {
                 tracing::warn!("kira: resolve music '{path}': {error}");
@@ -1076,7 +1034,7 @@ mod tests {
         let wav = temp.path().join("Lincoln_D.wav");
         let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
         assert_eq!(
-            KiraAudioBackend::resolve_music_path(&files, wav.to_str().unwrap()).unwrap(),
+            resolver::resolve_music(&files, wav.to_str().unwrap()).unwrap(),
             ogg
         );
     }
@@ -1100,8 +1058,7 @@ mod tests {
                 resolver::resolve_sample(Path::new("Data/Sounds"), "reader.wav", &files).unwrap();
             let data = load_static_sound(&files, &sample).unwrap();
             assert_eq!(data.sample_rate, rate);
-            let music =
-                KiraAudioBackend::resolve_music_path(&files, "Data/Music/reader.wav").unwrap();
+            let music = resolver::resolve_music(&files, "Data/Music/reader.wav").unwrap();
             assert_eq!(music, Path::new("Data/Music/reader.ogg"));
             assert!(load_streaming_sound(&files, &music).is_ok());
             let old_key = sample_cache_key(&files, &sample);
