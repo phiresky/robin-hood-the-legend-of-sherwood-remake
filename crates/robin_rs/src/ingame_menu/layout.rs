@@ -696,82 +696,12 @@ pub fn wrap_text_per_char(
     box_w: i32,
     max_lines: usize,
 ) -> WrapResult {
-    let mut lines: Vec<String> = Vec::new();
-    let mut paragraph_end: Vec<bool> = Vec::new();
-    if max_lines == 0 || box_w <= 0 {
-        return WrapResult {
-            remaining: text.to_string(),
-            lines,
-            paragraph_end,
-        };
-    }
-
-    let mut current = String::new();
-    let mut current_w = 0i32;
-    let mut consumed_bytes = 0usize;
-
-    let push_line = |lines: &mut Vec<String>,
-                     pe: &mut Vec<bool>,
-                     line: &mut String,
-                     w: &mut i32,
-                     is_para_end: bool| {
-        lines.push(std::mem::take(line));
-        pe.push(is_para_end);
-        *w = 0;
-    };
-
-    let chars = text.char_indices().peekable();
-    for (idx, ch) in chars {
-        if ch == '\n' {
-            push_line(
-                &mut lines,
-                &mut paragraph_end,
-                &mut current,
-                &mut current_w,
-                true,
-            );
-            consumed_bytes = idx + ch.len_utf8();
-            if lines.len() >= max_lines {
-                break;
-            }
-            continue;
-        }
-        let mut buf = [0u8; 4];
-        let cw = font.text_width(ch.encode_utf8(&mut buf));
-        if current_w + cw > box_w && !current.is_empty() {
-            push_line(
-                &mut lines,
-                &mut paragraph_end,
-                &mut current,
-                &mut current_w,
-                false,
-            );
-            consumed_bytes = idx;
-            if lines.len() >= max_lines {
-                break;
-            }
-        }
-        current.push(ch);
-        current_w += cw;
-    }
-
-    if !current.is_empty() && lines.len() < max_lines {
-        lines.push(std::mem::take(&mut current));
-        paragraph_end.push(true);
-        consumed_bytes = text.len();
-    }
-
-    let remaining = if consumed_bytes >= text.len() {
-        String::new()
-    } else {
-        text[consumed_bytes..].to_string()
-    };
-
-    WrapResult {
-        remaining,
-        lines,
-        paragraph_end,
-    }
+    let characters = text
+        .char_indices()
+        .map(|(index, ch)| (index, &text[index..index + ch.len_utf8()]));
+    wrap_text_units(text, box_w, max_lines, characters, |unit| {
+        font.text_width(unit)
+    })
 }
 
 /// Measure the height needed to render `text` inside a box of the
@@ -1284,6 +1214,22 @@ pub fn wrap_text_per_char_font(
     box_w: i32,
     max_lines: usize,
 ) -> WrapResult {
+    wrap_text_units(
+        text,
+        box_w,
+        max_lines,
+        text.grapheme_indices(true),
+        |unit| font.text_width(unit),
+    )
+}
+
+fn wrap_text_units<'a>(
+    text: &'a str,
+    box_w: i32,
+    max_lines: usize,
+    units: impl Iterator<Item = (usize, &'a str)>,
+    measure: impl Fn(&str) -> i32,
+) -> WrapResult {
     let mut lines = Vec::new();
     let mut paragraph_end = Vec::new();
     if max_lines == 0 || box_w <= 0 {
@@ -1307,8 +1253,8 @@ pub fn wrap_text_per_char_font(
         *width = 0;
     };
 
-    for (idx, grapheme) in text.grapheme_indices(true) {
-        if grapheme == "\n" {
+    for (idx, unit) in units {
+        if unit == "\n" {
             push_line(
                 &mut lines,
                 &mut paragraph_end,
@@ -1316,15 +1262,15 @@ pub fn wrap_text_per_char_font(
                 &mut current_w,
                 true,
             );
-            consumed_bytes = idx + grapheme.len();
+            consumed_bytes = idx + unit.len();
             if lines.len() >= max_lines {
                 break;
             }
             continue;
         }
 
-        let grapheme_w = font.text_width(grapheme);
-        if current_w + grapheme_w > box_w && !current.is_empty() {
+        let unit_width = measure(unit);
+        if current_w + unit_width > box_w && !current.is_empty() {
             push_line(
                 &mut lines,
                 &mut paragraph_end,
@@ -1337,8 +1283,8 @@ pub fn wrap_text_per_char_font(
                 break;
             }
         }
-        current.push_str(grapheme);
-        current_w += grapheme_w;
+        current.push_str(unit);
+        current_w += unit_width;
     }
 
     if !current.is_empty() && lines.len() < max_lines {
@@ -1677,6 +1623,48 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn narrow_wrapping_preserves_explicit_character_and_grapheme_policies() {
+        let text = "e\u{301}x";
+        let measure = |unit: &str| unit.chars().count() as i32;
+        for limit in [1, 10] {
+            let characters = text
+                .char_indices()
+                .map(|(index, ch)| (index, &text[index..index + ch.len_utf8()]));
+            let native = super::wrap_text_units(text, 1, limit, characters, measure);
+            let graphemes =
+                super::wrap_text_units(text, 1, limit, text.grapheme_indices(true), measure);
+            if limit == 1 {
+                assert_eq!(native.lines, ["e"]);
+                assert_eq!(native.remaining, "\u{301}x");
+                assert_eq!(graphemes.lines, ["e\u{301}"]);
+                assert_eq!(graphemes.remaining, "x");
+                assert_eq!(native.paragraph_end, [false]);
+                assert_eq!(graphemes.paragraph_end, [false]);
+            } else {
+                assert_eq!(native.lines, ["e", "\u{301}", "x"]);
+                assert_eq!(graphemes.lines, ["e\u{301}", "x"]);
+                assert!(native.remaining.is_empty());
+                assert!(graphemes.remaining.is_empty());
+                assert_eq!(native.paragraph_end, [false, false, true]);
+                assert_eq!(graphemes.paragraph_end, [false, true]);
+            }
+        }
+        for (text, width, limit, lines, ends, remaining) in [
+            ("ab\ncd", 1, 2, vec!["a", "b"], vec![false, true], "cd"),
+            ("ab\n", 2, 10, vec!["ab"], vec![true], ""),
+            ("\n\nx", 2, 2, vec!["", ""], vec![true, true], "x"),
+            ("abc", 0, 2, vec![], vec![], "abc"),
+            ("abc", 2, 0, vec![], vec![], "abc"),
+        ] {
+            let result =
+                super::wrap_text_units(text, width, limit, text.grapheme_indices(true), measure);
+            assert_eq!(result.lines, lines);
+            assert_eq!(result.paragraph_end, ends);
+            assert_eq!(result.remaining, remaining);
+        }
+    }
 
     #[test]
     fn shared_word_wrap_preserves_orphans_paragraphs_and_remainders() {
