@@ -19,8 +19,8 @@ fn expand_queue_geometry(draws: &[QueuedDraw], verts: &mut Vec<QuadVertex>) {
         let corners = draw.corners.unwrap_or_else(|| {
             let x0 = draw.dst.x as f32;
             let y0 = draw.dst.y as f32;
-            let x1 = (draw.dst.x + draw.dst.w) as f32;
-            let y1 = (draw.dst.y + draw.dst.h) as f32;
+            let x1 = (i64::from(draw.dst.x) + i64::from(draw.dst.w)) as f32;
+            let y1 = (i64::from(draw.dst.y) + i64::from(draw.dst.h)) as f32;
             [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
         });
         let [u0, v0, u1, v1] = draw.uv;
@@ -1549,6 +1549,29 @@ mod presentation_tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn geometry_expands_rectangles_without_integer_edge_overflow() {
+        let mut draw = quad(DrawOperation::StencilClear);
+        let mut vertices = Vec::new();
+        for (origin, extent) in [(i32::MAX - 2, 10), (i32::MIN + 2, -10)] {
+            draw.dst = Rect {
+                x: origin,
+                y: origin,
+                w: extent,
+                h: extent,
+            };
+            expand_queue_geometry(std::slice::from_ref(&draw), &mut vertices);
+            let edge = (i64::from(origin) + i64::from(extent)) as f32;
+            assert_eq!(vertices[0].pos, [origin as f32; 2]);
+            assert_eq!(vertices[5].pos, [edge; 2]);
+            assert!(
+                vertices
+                    .iter()
+                    .all(|vertex| vertex.pos.iter().all(|value| value.is_finite()))
+            );
+        }
     }
 
     #[test]

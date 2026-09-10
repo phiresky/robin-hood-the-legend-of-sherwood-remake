@@ -3138,25 +3138,26 @@ fn src_dst_uv(
 /// (assuming the original uv is `[0,0,1,1]` over the full `dst`).
 /// Returns `None` if fully clipped away.
 fn clip_dst_to_uv(dst: Rect, clip: Rect) -> Option<(Rect, [f32; 4])> {
-    let x0 = dst.x.max(clip.x);
-    let y0 = dst.y.max(clip.y);
-    let x1 = (dst.x + dst.w).min(clip.x + clip.w);
-    let y1 = (dst.y + dst.h).min(clip.y + clip.h);
+    let x0 = i64::from(dst.x.max(clip.x));
+    let y0 = i64::from(dst.y.max(clip.y));
+    let x1 = (i64::from(dst.x) + i64::from(dst.w)).min(i64::from(clip.x) + i64::from(clip.w));
+    let y1 = (i64::from(dst.y) + i64::from(dst.h)).min(i64::from(clip.y) + i64::from(clip.h));
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
-    let dw = dst.w.max(1) as f32;
-    let dh = dst.h.max(1) as f32;
-    let u0 = (x0 - dst.x) as f32 / dw;
-    let v0 = (y0 - dst.y) as f32 / dh;
-    let u1 = (x1 - dst.x) as f32 / dw;
-    let v1 = (y1 - dst.y) as f32 / dh;
+    // A nonempty intersection proves both destination dimensions are positive.
+    let dw = dst.w as f32;
+    let dh = dst.h as f32;
+    let u0 = (x0 - i64::from(dst.x)) as f32 / dw;
+    let v0 = (y0 - i64::from(dst.y)) as f32 / dh;
+    let u1 = (x1 - i64::from(dst.x)) as f32 / dw;
+    let v1 = (y1 - i64::from(dst.y)) as f32 / dh;
     Some((
         Rect {
-            x: x0,
-            y: y0,
-            w: x1 - x0,
-            h: y1 - y0,
+            x: x0 as i32,
+            y: y0 as i32,
+            w: (x1 - x0) as i32,
+            h: (y1 - y0) as i32,
         },
         [u0, v0, u1, v1],
     ))
@@ -3930,6 +3931,24 @@ mod tests {
         let (dst, uv) = src_dst_uv(Some(&src), None, 64.0, 32.0);
         assert_eq!(dst, Rect::new(0, 0, 0, 0));
         assert_eq!(uv, [0.25, 0.5, 0.25, 0.5]);
+    }
+
+    #[test]
+    fn clipping_preserves_uvs_at_integer_coordinate_boundaries() {
+        for origin in [i32::MIN, 0, i32::MAX - 5] {
+            let dst = Rect::new(origin, origin, 10, 10);
+            let clip = Rect::new(origin + 2, origin + 2, 4, 4);
+            let (clipped, uv) = clip_dst_to_uv(dst, clip).unwrap();
+            assert_eq!(clipped, clip);
+            assert_eq!(uv, [0.2, 0.2, 0.6, 0.6]);
+        }
+        let invalid = Rect {
+            x: i32::MIN,
+            y: i32::MIN,
+            w: -1,
+            h: -1,
+        };
+        assert!(clip_dst_to_uv(invalid, invalid).is_none());
     }
 
     #[test]
