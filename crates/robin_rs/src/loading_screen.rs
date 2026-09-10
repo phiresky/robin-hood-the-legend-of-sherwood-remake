@@ -470,8 +470,8 @@ pub struct LoadingScreenRenderer {
     /// sand-dissolve bar. Falls back to the version font when MenuText
     /// isn't resolvable in the current datadir.
     status_font: Option<Font>,
-    /// Which datadir family is currently loaded, for the version overlay.
-    datadir_kind: LoadingDatadirKind,
+    /// Version/demo label prepared once for this loading screen.
+    version_text: String,
     /// Ceiling on `state.current_level` for the current phase. Intra-phase
     /// `increment` calls clamp to this so the bar can't overshoot the
     /// next phase's start target. `set_status` bumps this to the new
@@ -646,7 +646,7 @@ impl LoadingScreenRenderer {
             }
         };
         let version_font = load_font("Version");
-        let status_font = load_font("MenuText").or_else(|| load_font("Version"));
+        let status_font = load_font("MenuText");
         tracing::info!(
             "Loading screen initialized: {}x{}, datadir={:?}",
             width,
@@ -660,7 +660,7 @@ impl LoadingScreenRenderer {
             loading_dissolve,
             version_font,
             status_font,
-            datadir_kind,
+            version_text: loading_version_text(datadir_kind),
             phase_ceiling: 0.0,
             window_focused: true,
         })
@@ -795,9 +795,8 @@ impl LoadingScreenRenderer {
     /// Render the current phase status ("Loading sprite bank…" etc.)
     /// centred horizontally near the bottom of the artwork rectangle.
     fn render_status_text(&mut self, art: Rect) {
-        let font = match self.status_font {
-            Some(ref f) => f,
-            None => return,
+        let Some(font) = self.status_font.as_ref().or(self.version_font.as_ref()) else {
+            return;
         };
         let Some(text) = self.state.status_text.as_deref() else {
             return;
@@ -825,17 +824,17 @@ impl LoadingScreenRenderer {
             None => return,
         };
 
-        let text = loading_version_text(self.datadir_kind);
+        let text = &self.version_text;
 
-        let tw = font.text_width(&text);
+        let tw = font.text_width(text);
         let fh = font.height() as i32;
         // Right-aligned within the top 100px band, vertically centered
         let tx = art.x + art.w - tw - 4; // small right margin
         let ty = art.y + (100 - fh) / 2; // centered in 0..100 band
 
         match font {
-            Font::Native(native) => self.renderer.render_text_argb(native, &text, tx, ty),
-            Font::TrueType(tt) => self.renderer.render_text_truetype(tt, &text, tx, ty),
+            Font::Native(native) => self.renderer.render_text_argb(native, text, tx, ty),
+            Font::TrueType(tt) => self.renderer.render_text_truetype(tt, text, tx, ty),
         }
     }
 
