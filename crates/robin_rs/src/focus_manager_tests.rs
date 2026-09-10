@@ -716,3 +716,43 @@ fn navigation_replaces_existing_events_from_same_origin() {
             .any(|e| e.origin == 1 && e.msg_type == UiEventType::FocusChanged)
     );
 }
+
+#[test]
+fn group_navigation_preserves_direction_and_eligibility_for_every_small_group() {
+    for enabled in 0u8..8 {
+        for navigable in 0u8..8 {
+            for initial in [None, Some(0), Some(1), Some(2)] {
+                for forward in [false, true] {
+                    let mut manager = FocusManager::new(GroupOrientation::Vertical);
+                    for index in 0..3 {
+                        let mut widget = MockGroupable::new(index + 1);
+                        widget.enabled = enabled & (1 << index) != 0;
+                        manager.add_groupable(Box::new(widget), navigable & (1 << index) != 0);
+                    }
+                    manager.focused_groupable_idx = initial;
+                    let start = match (initial, forward) {
+                        (None, true) => 0,
+                        (None, false) => 2,
+                        (Some(index), true) => (index + 1) % 3,
+                        (Some(index), false) => (index + 2) % 3,
+                    };
+                    let target = (0..3)
+                        .map(|offset| {
+                            if forward {
+                                (start + offset) % 3
+                            } else {
+                                (start + 3 - offset) % 3
+                            }
+                        })
+                        .find(|index| enabled & (1 << index) != 0 && navigable & (1 << index) != 0);
+                    if forward {
+                        manager.move_group_focus_next();
+                    } else {
+                        manager.move_group_focus_previous();
+                    }
+                    assert_eq!(manager.focused_groupable_idx, target.or(initial));
+                }
+            }
+        }
+    }
+}

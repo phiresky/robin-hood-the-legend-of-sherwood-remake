@@ -724,75 +724,55 @@ impl FocusManager {
 
     /// Move focus to the next groupable widget (wrapping around).
     fn move_group_focus_next(&mut self) -> Vec<UiEvent> {
-        let mut events = Vec::new();
-        let len = self.group.len();
-        if len == 0 {
-            return events;
-        }
-
-        // Determine start index and unfocus current widget.
-        let start = match self.focused_groupable_idx {
-            None => 0,
-            Some(idx) => {
-                self.group[idx].widget.hide_focus(true);
-                events.extend(self.group[idx].widget.set_group_focused(false));
-                events.extend(self.group[idx].widget.set_group_selected(false));
-                (idx + 1) % len
-            }
-        };
-
-        // Search forward (wrapping) for an enabled, navigable widget.
-        let mut candidate = start;
-        for _ in 0..len {
-            if self.group[candidate].widget.is_enabled() && self.group[candidate].navigable {
-                self.focused_groupable_idx = Some(candidate);
-                self.group[candidate].widget.hide_focus(false);
-                events.extend(self.group[candidate].widget.set_group_focused(true));
-                return events;
-            }
-            candidate = (candidate + 1) % len;
-        }
-
-        events
+        self.move_group_focus(true)
     }
 
     /// Move focus to the previous groupable widget (wrapping around).
     fn move_group_focus_previous(&mut self) -> Vec<UiEvent> {
+        self.move_group_focus(false)
+    }
+
+    fn move_group_focus(&mut self, forward: bool) -> Vec<UiEvent> {
         let mut events = Vec::new();
         let len = self.group.len();
         if len == 0 {
             return events;
         }
-
-        // Determine start index.
-        let start = match self.focused_groupable_idx {
-            None | Some(0) => len - 1,
-            Some(idx) => idx - 1,
+        let advance = |index| {
+            if forward {
+                (index + 1) % len
+            } else if index == 0 {
+                len - 1
+            } else {
+                index - 1
+            }
         };
-
-        // Unfocus current widget if any.
-        if let Some(idx) = self.focused_groupable_idx {
-            self.group[idx].widget.hide_focus(true);
-            events.extend(self.group[idx].widget.set_group_focused(false));
-            events.extend(self.group[idx].widget.set_group_selected(false));
-        }
-
-        // Search backward (wrapping) for an enabled, navigable widget.
-        let mut candidate = start;
+        let mut candidate = match self.focused_groupable_idx {
+            None => {
+                if forward {
+                    0
+                } else {
+                    len - 1
+                }
+            }
+            Some(index) => {
+                let widget = &mut self.group[index].widget;
+                widget.hide_focus(true);
+                events.extend(widget.set_group_focused(false));
+                events.extend(widget.set_group_selected(false));
+                advance(index)
+            }
+        };
         for _ in 0..len {
-            if self.group[candidate].widget.is_enabled() && self.group[candidate].navigable {
+            let entry = &mut self.group[candidate];
+            if entry.widget.is_enabled() && entry.navigable {
                 self.focused_groupable_idx = Some(candidate);
-                self.group[candidate].widget.hide_focus(false);
-                events.extend(self.group[candidate].widget.set_group_focused(true));
+                entry.widget.hide_focus(false);
+                events.extend(entry.widget.set_group_focused(true));
                 return events;
             }
-            if candidate == 0 {
-                candidate = len - 1;
-            } else {
-                candidate -= 1;
-            }
+            candidate = advance(candidate);
         }
-
         events
     }
 
