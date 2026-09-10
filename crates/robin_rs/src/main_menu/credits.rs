@@ -112,7 +112,6 @@ pub(crate) async fn show_credits(
 
         let screen_w = renderer.screen_width() as i32;
         let screen_h = renderer.screen_height() as i32;
-        let margin_x = ((screen_w - credit_width) / 2).max(0);
 
         // ── Render ──
         // Background: fill with black, then blit the centered texture.
@@ -129,48 +128,9 @@ pub(crate) async fn show_credits(
                 .expect("live credits background");
         }
 
-        // Credits roll — three phases of the scroll: entering from
-        // below, fully visible, and clipping off the top.
-        if offset < 0 {
-            // Entering the screen from the bottom.
-            let dst_top = -offset;
-            let dst_bottom = screen_h;
-            let src_top = 0;
-            let src_bottom = screen_h + offset; // = credit visible height so far
-            if src_bottom > 0 {
-                let src =
-                    BBox::from_coords(0.0, src_top as f32, credit_width as f32, src_bottom as f32);
-                let dst = BBox::from_coords(
-                    margin_x as f32,
-                    dst_top as f32,
-                    (margin_x + credit_width) as f32,
-                    dst_bottom as f32,
-                );
-                renderer
-                    .draw_surface_with_shadow(
-                        credits_surface.handle(),
-                        Some(&src),
-                        Some(&dst),
-                        0x1f,
-                        50,
-                        BLIT_SOURCE_TRANSPARENT,
-                    )
-                    .expect("live credits upload");
-            }
-        } else if offset + screen_h < credit_height {
-            // Fully scrolling.
-            let src = BBox::from_coords(
-                0.0,
-                offset as f32,
-                credit_width as f32,
-                (offset + screen_h) as f32,
-            );
-            let dst = BBox::from_coords(
-                margin_x as f32,
-                0.0,
-                (margin_x + credit_width) as f32,
-                screen_h as f32,
-            );
+        if let Some((src, dst)) =
+            credits_rectangles(offset, (credit_width, credit_height), (screen_w, screen_h))
+        {
             renderer
                 .draw_surface_with_shadow(
                     credits_surface.handle(),
@@ -181,33 +141,6 @@ pub(crate) async fn show_credits(
                     BLIT_SOURCE_TRANSPARENT,
                 )
                 .expect("live credits upload");
-        } else {
-            // Tail — the bottom of the roll is within the screen.
-            let remaining = credit_height - offset;
-            if remaining > 0 {
-                let src = BBox::from_coords(
-                    0.0,
-                    offset as f32,
-                    credit_width as f32,
-                    credit_height as f32,
-                );
-                let dst = BBox::from_coords(
-                    margin_x as f32,
-                    0.0,
-                    (margin_x + credit_width) as f32,
-                    remaining as f32,
-                );
-                renderer
-                    .draw_surface_with_shadow(
-                        credits_surface.handle(),
-                        Some(&src),
-                        Some(&dst),
-                        0x1f,
-                        50,
-                        BLIT_SOURCE_TRANSPARENT,
-                    )
-                    .expect("live credits upload");
-            }
         }
 
         // Stop guard: keep advancing only until the roll's centred end
@@ -233,6 +166,65 @@ pub(crate) async fn show_credits(
         crate::window::sleep_ui_frame().await;
     }
     retire_uploads(renderer, credits_surface, bg_surface);
+}
+
+/// Preserve the entering, full-screen, and trailing phases of the legacy roll.
+fn credits_rectangles(
+    offset: i32,
+    (credit_width, credit_height): (i32, i32),
+    (screen_width, screen_height): (i32, i32),
+) -> Option<(BBox, BBox)> {
+    let margin_x = ((screen_width - credit_width) / 2).max(0);
+    let (src_top, src_bottom, dst_top, dst_bottom) = if offset < 0 {
+        let visible = screen_height + offset;
+        if visible <= 0 {
+            return None;
+        }
+        (0, visible, -offset, screen_height)
+    } else if offset + screen_height < credit_height {
+        (offset, offset + screen_height, 0, screen_height)
+    } else {
+        let remaining = credit_height - offset;
+        if remaining <= 0 {
+            return None;
+        }
+        (offset, credit_height, 0, remaining)
+    };
+    Some((
+        BBox::from_coords(0.0, src_top as f32, credit_width as f32, src_bottom as f32),
+        BBox::from_coords(
+            margin_x as f32,
+            dst_top as f32,
+            (margin_x + credit_width) as f32,
+            dst_bottom as f32,
+        ),
+    ))
+}
+
+#[test]
+fn credits_rectangles_preserve_scroll_phase_boundaries() {
+    let coords = |rect: BBox| [rect.min.x, rect.min.y, rect.max.x, rect.max.y];
+    assert!(credits_rectangles(-481, (200, 1000), (640, 480)).is_none());
+    assert!(credits_rectangles(-480, (200, 1000), (640, 480)).is_none());
+    for (offset, source_y, destination_y) in [
+        (-479, [0.0, 1.0], [479.0, 480.0]),
+        (-1, [0.0, 479.0], [1.0, 480.0]),
+        (0, [0.0, 480.0], [0.0, 480.0]),
+        (519, [519.0, 999.0], [0.0, 480.0]),
+        (520, [520.0, 1000.0], [0.0, 480.0]),
+        (999, [999.0, 1000.0], [0.0, 1.0]),
+    ] {
+        let (src, dst) = credits_rectangles(offset, (200, 1000), (640, 480)).unwrap();
+        assert_eq!(coords(src), [0.0, source_y[0], 200.0, source_y[1]]);
+        assert_eq!(
+            coords(dst),
+            [220.0, destination_y[0], 420.0, destination_y[1]]
+        );
+    }
+    assert!(credits_rectangles(1000, (200, 1000), (640, 480)).is_none());
+    let (src, dst) = credits_rectangles(0, (200, 100), (100, 480)).unwrap();
+    assert_eq!(coords(src), [0.0, 0.0, 200.0, 100.0]);
+    assert_eq!(coords(dst), [0.0, 0.0, 200.0, 100.0]);
 }
 
 fn retire_uploads(
