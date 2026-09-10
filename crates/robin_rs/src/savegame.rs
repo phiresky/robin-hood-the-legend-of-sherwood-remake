@@ -44,22 +44,30 @@ pub struct SlotName(String);
 impl TryFrom<String> for SlotName {
     type Error = String;
     fn try_from(value: String) -> Result<Self, String> {
+        Self::validate(&value)?;
+        Ok(Self(value))
+    }
+}
+
+impl SlotName {
+    fn validate(value: &str) -> Result<(), String> {
         if value.is_empty()
             || !value
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-            || matches!(
-                value.to_ascii_lowercase().as_str(),
-                "saves"
-                    | "autosaves"
-                    | "quick-save-recovery"
-                    | "save-delete-recovery"
-                    | "owned-save-recovery"
-                    | "con"
-                    | "prn"
-                    | "aux"
-                    | "nul"
-            )
+            || [
+                "saves",
+                "autosaves",
+                "quick-save-recovery",
+                "save-delete-recovery",
+                "owned-save-recovery",
+                "con",
+                "prn",
+                "aux",
+                "nul",
+            ]
+            .iter()
+            .any(|reserved| value.eq_ignore_ascii_case(reserved))
             || (value.len() == 4
                 && (value[..3].eq_ignore_ascii_case("com")
                     || value[..3].eq_ignore_ascii_case("lpt"))
@@ -67,7 +75,7 @@ impl TryFrom<String> for SlotName {
         {
             return Err(format!("invalid save slot basename {value:?}"));
         }
-        Ok(Self(value))
+        Ok(())
     }
 }
 
@@ -215,7 +223,7 @@ impl SaveGame {
     }
 
     pub(crate) fn validate_published_metadata(&self) -> Result<()> {
-        SlotName::try_from(self.filename.clone()).map_err(anyhow::Error::msg)?;
+        SlotName::validate(&self.filename).map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
             self.special == SpecialSlot::from_filename(&self.filename),
             "save slot special kind disagrees with filename"
@@ -1084,7 +1092,7 @@ impl SaveGameManager {
     ) -> Result<usize> {
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
-        SlotName::new(filename.clone()).map_err(anyhow::Error::msg)?;
+        SlotName::validate(&filename).map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
             self.find_by_filename(&filename).is_none(),
             "duplicate save slot {filename}"
@@ -1950,7 +1958,7 @@ impl Drop for SaveGameManager {
 fn validate_slot_names(saves: &[SaveGame]) -> Result<()> {
     let mut names = std::collections::HashSet::new();
     for slot in saves {
-        SlotName::new(slot.filename.clone()).map_err(anyhow::Error::msg)?;
+        SlotName::validate(&slot.filename).map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
             names.insert(slot.filename.to_ascii_lowercase()),
             "duplicate save slot name {:?}",
@@ -2781,8 +2789,18 @@ mod tests {
             "COM1",
             "quick-save-recovery",
             "save-delete-recovery",
+            "OwNeD-SaVe-ReCoVeRy",
+            "AuToSaVeS",
+            "NUL",
+            "PRN",
+            "雪a",
+            "a雪",
         ] {
             assert!(SlotName::new(name).is_err(), "accepted {name:?}");
+            assert!(
+                SlotName::validate(name).is_err(),
+                "accepted borrowed {name:?}"
+            );
             assert!(serde_json::from_value::<SlotName>(serde_json::json!(name)).is_err());
         }
         for name in [
@@ -2790,8 +2808,13 @@ mod tests {
             "QuickSave",
             "Autosave_123_0000",
             "custom-save",
+            "com0",
+            "COM10",
+            "lpt0",
+            "saves-backup",
         ] {
             assert_eq!(SlotName::new(name).unwrap().as_str(), name);
+            assert!(SlotName::validate(name).is_ok());
         }
     }
 
