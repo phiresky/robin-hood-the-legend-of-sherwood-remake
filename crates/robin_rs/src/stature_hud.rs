@@ -19,11 +19,11 @@
 //! or posture changes.
 
 use crate::gfx_types::{Point, Rect as ScreenRect};
-use robin_engine::sprite as engine_sprite;
 
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
 use robin_engine::resource_ids::{RHID_DOWN_ARROW, RHID_UP_ARROW};
 
+use crate::hud_sprite::screen_rect_to_sprite_bbox;
 use crate::ingame_menu::layout::button_sprite_state;
 #[cfg(test)]
 use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED};
@@ -31,15 +31,6 @@ use crate::native_font::Font;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::player_command::PlayerCommand;
-
-fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
-    engine_sprite::BBox::from_coords(
-        rect.x() as f32,
-        rect.y() as f32,
-        (rect.x() + rect.width() as i32) as f32,
-        (rect.y() + rect.height() as i32) as f32,
-    )
-}
 
 /// Which stature arrow widget was hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

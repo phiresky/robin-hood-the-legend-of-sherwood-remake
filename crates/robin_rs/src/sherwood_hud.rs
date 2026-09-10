@@ -22,8 +22,8 @@
 //!   back out).
 
 use crate::gfx_types::{Point, Rect as ScreenRect};
-use robin_engine::sprite as engine_sprite;
 
+use crate::hud_sprite::screen_rect_to_sprite_bbox;
 #[cfg(test)]
 use crate::ingame_menu::layout::BTN_STATE_PRESSED;
 use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, button_sprite_state};
@@ -34,15 +34,6 @@ use robin_engine::resource_ids::{
     RHID_CONVERT_MONEY_TO_BLAZONS, RHID_DISPLAY_CAMPAIGN_MAP, RHID_FLOATING_CANCEL,
     RHID_FLOATING_OK, RHID_GO_TO_EXIT,
 };
-
-fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
-    engine_sprite::BBox::from_coords(
-        rect.x() as f32,
-        rect.y() as f32,
-        (rect.x() + rect.width() as i32) as f32,
-        (rect.y() + rect.height() as i32) as f32,
-    )
-}
 
 /// Logical Sherwood button id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

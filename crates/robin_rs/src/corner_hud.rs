@@ -24,7 +24,6 @@
 use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
-use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::button_sprite_state;
 #[cfg(test)]
@@ -32,15 +31,6 @@ use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PR
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids::{RHID_CLOCK, RHID_QUICKSTART, RHID_SIGHT};
-
-fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
-    engine_sprite::BBox::from_coords(
-        rect.x() as f32,
-        rect.y() as f32,
-        (rect.x() + rect.width() as i32) as f32,
-        (rect.y() + rect.height() as i32) as f32,
-    )
-}
 
 /// Logical id for the three corner HUD buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -203,7 +193,7 @@ impl CornerHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-use crate::hud_sprite::{SpriteBank, SpriteFrame};
+use crate::hud_sprite::{SpriteBank, SpriteFrame, screen_rect_to_sprite_bbox};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
