@@ -558,10 +558,11 @@ impl DistributedModCache {
                 .iter()
                 .filter_map(|(key, entry)| {
                     let hash = parse_hash(key).ok()?;
-                    (!self.pins.contains(&hash)).then_some((entry.last_used, key.clone(), hash))
+                    (!self.pins.contains(&hash)).then_some((entry.last_used, key, hash))
                 })
-                .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-            let Some((_, key, hash)) = candidate else {
+                .min_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)))
+                .map(|(_, key, hash)| (key.clone(), hash));
+            let Some((key, hash)) = candidate else {
                 self.index = prior_index;
                 return Err(format!(
                     "distributed-mod cache cannot reserve {new_bytes} staged bytes: no unpinned complete or older partial entry remains"

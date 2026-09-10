@@ -157,6 +157,9 @@ pub(crate) fn select_evictions(
         .try_fold(staged_bytes, u64::checked_add)
         .ok_or_else(|| "distributed-mod cache byte accounting overflow".to_owned())?;
     let mut count = entries.len();
+    if count <= DISTRIBUTED_MOD_CACHE_ENTRY_LIMIT && total <= DISTRIBUTED_MOD_CACHE_BYTE_LIMIT {
+        return Ok(Vec::new());
+    }
     let mut candidates: Vec<_> = entries
         .iter()
         .filter(|(hash, _)| !protected.contains(*hash))
@@ -200,6 +203,39 @@ pub(crate) fn check_consent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn eviction_at_exact_limits_needs_no_candidates_even_when_every_entry_is_pinned() {
+        use std::collections::{BTreeMap, BTreeSet};
+        let entries: BTreeMap<_, _> = (0..DISTRIBUTED_MOD_CACHE_ENTRY_LIMIT)
+            .map(|index| {
+                (
+                    index.to_string(),
+                    CacheIndexEntry {
+                        encoded_bytes: 1,
+                        last_used: 0,
+                    },
+                )
+            })
+            .collect();
+        let protected: BTreeSet<_> = entries.keys().cloned().collect();
+        let staged = DISTRIBUTED_MOD_CACHE_BYTE_LIMIT - entries.len() as u64;
+        assert!(
+            select_evictions(&entries, &protected, staged)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(select_evictions(&entries, &protected, staged + 1).is_err());
+        assert!(
+            select_evictions(
+                &BTreeMap::new(),
+                &BTreeSet::new(),
+                DISTRIBUTED_MOD_CACHE_BYTE_LIMIT
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+
     #[test]
     fn cached_content_still_requires_consent_and_spellforge_setting() {
         let mut offer = robin_engine::multiplayer::DistributedModOffer {
