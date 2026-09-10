@@ -86,14 +86,9 @@ impl KeyConfigStore {
         let path = Self::store_path(directory);
         match fs::read_to_string(&path) {
             Ok(data) => {
-                let mut store: KeyConfigStore = serde_json::from_str(&data)
+                let store: KeyConfigStore = serde_json::from_str(&data)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                for config in store.configs.values_mut() {
-                    config.ensure_current_bindings();
-                }
-                store.validate_archive()?;
-                store.save_directory = directory.to_owned();
-                Ok(store)
+                store.finish_loading(directory)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(Self::new(directory.to_owned()))
@@ -132,6 +127,16 @@ impl KeyConfigStore {
         browser_key_config_storage()?
             .set_item(BROWSER_KEY_CONFIG_STORE_KEY, &serialized)
             .map_err(|error| browser_key_config_io("persist browser key configs", error))
+    }
+
+    /// Apply the same migrations and admission policy to every persisted format.
+    fn finish_loading(mut self, directory: &str) -> std::io::Result<Self> {
+        for config in self.configs.values_mut() {
+            config.ensure_current_bindings();
+        }
+        self.validate_archive()?;
+        self.save_directory = directory.to_owned();
+        Ok(self)
     }
 
     fn validate_archive(&self) -> std::io::Result<()> {
@@ -256,13 +261,7 @@ fn decode_browser_key_config_archive(
             ),
         ));
     }
-    let mut store = envelope.store;
-    for config in store.configs.values_mut() {
-        config.ensure_current_bindings();
-    }
-    store.validate_archive()?;
-    store.save_directory = directory.to_owned();
-    Ok(store)
+    envelope.store.finish_loading(directory)
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────
@@ -271,6 +270,54 @@ fn decode_browser_key_config_archive(
 mod tests {
     use super::*;
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn native_and_browser_loads_share_migration_and_validation() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().to_str().unwrap();
+        let mut legacy = KeyConfigStore::new("obsolete".into());
+        legacy.configs.insert(7, ProfileKeyConfig::default());
+        for invalid in [false, true] {
+            if invalid {
+                legacy.configs.get_mut(&7).unwrap().custom.bindings = vec![
+                    crate::key_config::KeyBinding {
+                        action: "ZoomIn".into(),
+                        primary_key: None,
+                        secondary_key: None,
+                    }; 2
+                ];
+            }
+            fs::write(
+                KeyConfigStore::store_path(directory),
+                serde_json::to_vec(&legacy).unwrap(),
+            )
+            .unwrap();
+            let browser = serde_json::to_string(&BrowserKeyConfigEnvelope {
+                schema_version: BROWSER_KEY_CONFIG_SCHEMA_VERSION,
+                store: &legacy,
+            })
+            .unwrap();
+            let native = KeyConfigStore::load(directory);
+            let browser = decode_browser_key_config_archive(&browser, directory);
+            if invalid {
+                assert_eq!(native.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+                assert_eq!(browser.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+            } else {
+                let native = native.unwrap();
+                let browser = browser.unwrap();
+                assert_eq!(native.save_directory, directory);
+                assert_eq!(browser.save_directory, directory);
+                assert_eq!(
+                    serde_json::to_value(&native).unwrap(),
+                    serde_json::to_value(&browser).unwrap()
+                );
+                let profile = native.get(7).unwrap();
+                for config in [&profile.active, &profile.custom] {
+                    assert!(config.get_binding("ToggleCloak").is_some());
+                }
+            }
+        }
+    }
 
     #[test]
     fn browser_archive_preserves_wire_format_and_rejects_invalid_documents() {
