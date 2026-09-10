@@ -168,6 +168,42 @@ mod hub_resolution_tests {
     use super::*;
 
     #[test]
+    fn positional_pairing_matches_unique_hub_reference_for_short_orders() {
+        let orders: Vec<Vec<u32>> = (0..=4)
+            .flat_map(|length| {
+                (0..3_u32.pow(length)).map(move |mut code| {
+                    (0..length)
+                        .map(|_| {
+                            let id = code % 3;
+                            code /= 3;
+                            id
+                        })
+                        .collect()
+                })
+            })
+            .collect();
+        for variant in &orders {
+            for hub in &orders {
+                let mut candidates = std::collections::BTreeMap::<u32, BTreeSet<u32>>::new();
+                for (&vid, &hid) in variant.iter().zip(hub) {
+                    candidates.entry(vid).or_default().insert(hid);
+                }
+                let expected = candidates
+                    .into_iter()
+                    .filter_map(|(vid, hubs)| {
+                        (hubs.len() == 1).then(|| (vid, *hubs.first().unwrap()))
+                    })
+                    .collect();
+                assert_eq!(
+                    positional_pair_map(variant, hub),
+                    expected,
+                    "variant={variant:?}, hub={hub:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn prepared_hubs_preserve_first_sorted_case_match_without_loading() {
         let preps = ["Characters/HERO.rhs", "Characters/Hero.rhs"]
             .map(|name| {
@@ -231,22 +267,15 @@ mod hub_resolution_tests {
 }
 
 /// Positional variant->hub frame pairing over two script frame-id orders:
-/// zip, dedup, and drop variant frames that pair with conflicting hub frames
+/// Zip and drop variant frames that pair with conflicting hub frames
 /// (those fall back to weaker contexts per sprite).
 pub(super) fn positional_pair_map(
     variant_order: &[u32],
     hub_order: &[u32],
 ) -> std::collections::BTreeMap<u32, u32> {
-    let mut pairs: Vec<(u32, u32)> = variant_order
-        .iter()
-        .copied()
-        .zip(hub_order.iter().copied())
-        .collect();
-    pairs.sort_unstable();
-    pairs.dedup();
     let mut pair_map = std::collections::BTreeMap::<u32, u32>::new();
     let mut conflicted = BTreeSet::<u32>::new();
-    for (vid, hid) in pairs {
+    for (&vid, &hid) in variant_order.iter().zip(hub_order) {
         match pair_map.get(&vid) {
             Some(&existing) if existing != hid => {
                 conflicted.insert(vid);
