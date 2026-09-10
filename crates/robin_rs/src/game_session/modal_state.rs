@@ -836,22 +836,17 @@ pub(super) fn start_active_sherwood_report(
         tracing::warn!("DisplaySherwoodReport: menu resources unavailable — skipped");
         return None;
     };
-    let profile = host
+    let (score_info, show_production_forecast, sherwood_trading) = host
         .application_context()
-        .active_profile_snapshot()
+        .with_active_profile(sherwood_report_profile_values)
         .unwrap_or_else(|error| panic!("Sherwood report requires an active profile: {error}"));
-    let score_info = ScoreInfo {
-        score: profile.score as i32,
-        preserved_lives: profile.preserved_lives as i32,
-        play_time_seconds: profile.play_time,
-    };
     let text = build_sherwood_report_text(
         engine,
         profiles,
         &score_info,
         &resources.menu_text,
-        profile.gameplay_config.show_production_forecast,
-        profile.gameplay_config.sherwood_trading,
+        show_production_forecast,
+        sherwood_trading,
     );
     let kind = engine_player_command::ModalKind::SherwoodReport;
     let replay_result = None;
@@ -867,6 +862,21 @@ pub(super) fn start_active_sherwood_report(
     };
 
     Some(ModalBatch::new(VecDeque::from([item])))
+}
+
+/// Both report entry paths use the same scalar profile projection.
+fn sherwood_report_profile_values(
+    profile: &robin_engine::player_profile::PlayerProfile,
+) -> (ScoreInfo, bool, bool) {
+    (
+        ScoreInfo {
+            score: profile.score as i32,
+            preserved_lives: profile.preserved_lives as i32,
+            play_time_seconds: profile.play_time,
+        },
+        profile.gameplay_config.show_production_forecast,
+        profile.gameplay_config.sherwood_trading,
+    )
 }
 
 fn build_sherwood_report_text(
@@ -1273,24 +1283,19 @@ pub(super) async fn drain_pending_sherwood_stat(
         if let Some(resources) = ctx.menu_resources.as_ref() {
             // The Sherwood stat panel pulls score / preserved lives
             // / play time from the active player profile.
-            let profile = host
+            let (score_info, show_production_forecast, sherwood_trading) = host
                 .application_context()
-                .active_profile_snapshot()
+                .with_active_profile(sherwood_report_profile_values)
                 .unwrap_or_else(|error| {
                     panic!("Sherwood report requires an active profile: {error}")
                 });
-            let score_info = ScoreInfo {
-                score: profile.score as i32,
-                preserved_lives: profile.preserved_lives as i32,
-                play_time_seconds: profile.play_time,
-            };
             let text = build_sherwood_report_text(
                 engine,
                 profiles,
                 &score_info,
                 &resources.menu_text,
-                profile.gameplay_config.show_production_forecast,
-                profile.gameplay_config.sherwood_trading,
+                show_production_forecast,
+                sherwood_trading,
             );
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
@@ -1556,6 +1561,28 @@ mod tests {
         DebriefingTextId, DialogResult, MissionStateModalKind, ModalKind, PlayerCommand,
     };
     use std::collections::VecDeque;
+
+    #[test]
+    fn report_profile_projection_preserves_scores_and_independent_feature_flags() {
+        use robin_engine::player_profile::{DifficultyLevel, PlayerProfile};
+        let mut profile = PlayerProfile::new(1, "Robin".into(), DifficultyLevel::Medium);
+        profile.score = u32::MAX;
+        profile.preserved_lives = 7;
+        profile.play_time = 3601;
+        for forecast in [false, true] {
+            for trading in [false, true] {
+                profile.gameplay_config.show_production_forecast = forecast;
+                profile.gameplay_config.sherwood_trading = trading;
+                let (score, projected_forecast, projected_trading) =
+                    super::sherwood_report_profile_values(&profile);
+                assert_eq!(score.score, -1); // Preserve the existing signed report conversion.
+                assert_eq!(score.preserved_lives, 7);
+                assert_eq!(score.play_time_seconds, 3601);
+                assert_eq!(projected_forecast, forecast);
+                assert_eq!(projected_trading, trading);
+            }
+        }
+    }
 
     #[test]
     fn strict_replay_waits_for_later_recorded_control_for_every_scripted_lane() {

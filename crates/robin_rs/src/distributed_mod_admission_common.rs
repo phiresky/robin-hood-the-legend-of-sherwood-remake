@@ -68,9 +68,7 @@ pub async fn admit_trusted_distributed_mod(
     crate::distributed_mod_policy::check_consent(
         offer,
         application_context
-            .active_profile_snapshot()?
-            .gameplay_config
-            .enable_spellforge_missions,
+            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)?,
         application_context.is_spellforge_content_trusted(trust_key)?,
     )
     .inspect_err(|message| channels.reject_content(offer.full_mod_sha256, message.clone()))?;

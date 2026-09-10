@@ -380,10 +380,8 @@ impl RustCallbacks {
 
     pub(crate) fn autosave_enabled(&self) -> bool {
         self.application_context
-            .active_profile_snapshot()
+            .with_active_profile(|profile| profile.gameplay_config.autosave_enabled)
             .unwrap_or_else(|error| panic!("autosave requires an active profile: {error}"))
-            .gameplay_config
-            .autosave_enabled
     }
 
     pub(crate) fn plan_autosave(

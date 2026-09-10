@@ -254,9 +254,8 @@ pub async fn play_video(
     };
 
     // ── wgpu video blit pipeline (self-contained) ──────────────────
-    let graphics = application_context
-        .active_profile_snapshot()?
-        .graphic_config;
+    let graphics =
+        application_context.with_active_profile(|profile| profile.graphic_config.clone())?;
     let mut blit = VideoBlit::new(
         &window.gpu,
         window.gpu.surface_format,
