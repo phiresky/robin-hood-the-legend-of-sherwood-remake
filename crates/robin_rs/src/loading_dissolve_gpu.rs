@@ -118,29 +118,21 @@ pub(crate) fn upload_textures(
         }
     };
 
-    // Each upload copies its bytes into GPU-owned storage. Keep only one
-    // converted image alive at a time instead of three full RGBA buffers.
-    let (initial_texture, initial_view) = upload_rgba_texture(
-        gpu,
-        &rgb565_to_rgba_opaque(initial_pixels),
-        width,
-        height,
-        "loading initial",
-    );
-    let (final_texture, final_view) = upload_rgba_texture(
-        gpu,
-        &rgb565_to_rgba_opaque(final_pixels),
-        width,
-        height,
-        "loading final",
-    );
-    let mut mask_rgba = Vec::with_capacity(expected * 4);
+    // Each upload copies its bytes into GPU-owned storage. Reuse one conversion
+    // buffer for both images and the mask rather than allocating each separately.
+    let mut rgba = Vec::with_capacity(expected * 4);
+    rgb565_to_rgba_opaque(initial_pixels, &mut rgba);
+    let (initial_texture, initial_view) =
+        upload_rgba_texture(gpu, &rgba, width, height, "loading initial");
+    rgb565_to_rgba_opaque(final_pixels, &mut rgba);
+    let (final_texture, final_view) =
+        upload_rgba_texture(gpu, &rgba, width, height, "loading final");
+    rgba.clear();
     for &h in &height_field.data {
-        mask_rgba.extend_from_slice(&[h, h, h, 255]);
+        rgba.extend_from_slice(&[h, h, h, 255]);
     }
 
-    let (mask_texture, mask_view) =
-        upload_rgba_texture(gpu, &mask_rgba, width, height, "loading mask");
+    let (mask_texture, mask_view) = upload_rgba_texture(gpu, &rgba, width, height, "loading mask");
 
     Some(LoadingDissolveTextures {
         _initial_texture: initial_texture,
@@ -227,18 +219,33 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 /// surface (backgrounds, sprites, managed surfaces) is expanded.
 /// No colour-key or shadow-key handling: these are literal screen
 /// captures.
-fn rgb565_to_rgba_opaque(pixels: &[u16]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(pixels.len() * 4);
+fn rgb565_to_rgba_opaque(pixels: &[u16], out: &mut Vec<u8>) {
+    out.clear();
+    out.reserve(pixels.len() * 4);
     for &px in pixels {
         let (r, g, b) = rgb565_to_rgb8(px);
         out.extend_from_slice(&[r, g, b, 255]);
     }
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opaque_conversion_reuses_storage_and_discards_previous_image_bytes() {
+        let mut rgba = Vec::with_capacity(16);
+        let allocation = rgba.as_ptr();
+        for pixels in [&[0xFFFF, 0xF800, 0x07E0][..], &[0], &[], &[0x001F, 0xFFFF]] {
+            rgb565_to_rgba_opaque(pixels, &mut rgba);
+            assert_eq!(rgba.as_ptr(), allocation);
+            assert_eq!(rgba.len(), pixels.len() * 4);
+            for (&pixel, actual) in pixels.iter().zip(rgba.as_chunks::<4>().0) {
+                let (r, g, b) = rgb565_to_rgb8(pixel);
+                assert_eq!(*actual, [r, g, b, 255]);
+            }
+        }
+    }
 
     #[test]
     fn upload_validation_rejects_invalid_shapes_before_allocation() {
@@ -267,7 +274,8 @@ mod tests {
     #[test]
     fn opaque_conversion_preserves_every_rgb565_value() {
         let pixels: Vec<_> = (0..=u16::MAX).collect();
-        let rgba = rgb565_to_rgba_opaque(&pixels);
+        let mut rgba = Vec::new();
+        rgb565_to_rgba_opaque(&pixels, &mut rgba);
         assert_eq!(rgba.len(), pixels.len() * 4);
         for (pixel, color) in pixels.into_iter().zip(rgba.chunks_exact(4)) {
             assert_eq!(
