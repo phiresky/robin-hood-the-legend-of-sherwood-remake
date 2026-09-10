@@ -10,6 +10,7 @@ use robin_engine::coordinates::{ScreenPoint, ScreenVec};
 use robin_engine::geo2d::{PRECISION, Segment2D, segments_intersect};
 use robin_engine::player_command::{CompositeSwordTechnique, GestureQuality};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 
@@ -400,13 +401,10 @@ impl MouseWay {
             .filter_map(|pattern| score_legacy_pattern(pattern, &input, direction))
             .fold(0.0_f32, f32::max);
 
-        let mut ranked = CompositeSwordTechnique::ALL
-            .into_iter()
-            .map(|technique| {
-                let template = normalized_resampled(composite_template(technique).iter().copied());
-                (technique, path_similarity(&input, &template, false, false))
-            })
-            .collect::<Vec<_>>();
+        let mut ranked = CompositeSwordTechnique::ALL.map(|technique| {
+            let template = normalized_resampled(composite_template(technique).iter().copied());
+            (technique, path_similarity(&input, &template, false, false))
+        });
         ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
         let (nearest_composite, best_composite) = ranked[0];
         let second_composite = ranked[1].1;
@@ -588,7 +586,7 @@ fn score_legacy_pattern(
     let scored_input = if actor_relative {
         rotate_to_north(input, direction)
     } else {
-        input.to_vec()
+        Cow::Borrowed(input)
     };
     let cyclic = matches!(
         pattern,
@@ -603,19 +601,21 @@ fn score_legacy_pattern(
     ))
 }
 
-fn rotate_to_north(points: &[(f32, f32)], direction: ScreenVec) -> Vec<(f32, f32)> {
+fn rotate_to_north(points: &[(f32, f32)], direction: ScreenVec) -> Cow<'_, [(f32, f32)]> {
     if direction.x.abs() < PRECISION && direction.y.abs() < PRECISION {
         tracing::warn!("gesture quality received a zero actor-facing vector");
-        return points.to_vec();
+        return Cow::Borrowed(points);
     }
     let facing_angle = direction.y.atan2(direction.x);
     let target_angle = -PI / 2.0;
     let angle = target_angle - facing_angle;
     let (sin, cos) = angle.sin_cos();
-    points
-        .iter()
-        .map(|&(x, y)| (x * cos - y * sin, x * sin + y * cos))
-        .collect()
+    Cow::Owned(
+        points
+            .iter()
+            .map(|&(x, y)| (x * cos - y * sin, x * sin + y * cos))
+            .collect(),
+    )
 }
 
 fn normalized_resampled(points: impl IntoIterator<Item = (f32, f32)>) -> Vec<(f32, f32)> {
@@ -931,6 +931,29 @@ pub fn is_self_intersecting(points: &VecDeque<ScreenPoint>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn north_alignment_borrows_degenerate_facing_and_preserves_rotation_arithmetic() {
+        let points = [(1.0, -2.0), (-3.0, 4.0), (0.0, 0.0)];
+        for direction in [ScreenVec::ZERO, ScreenVec::new(PRECISION * 0.5, 0.0)] {
+            let aligned = rotate_to_north(&points, direction);
+            assert!(matches!(aligned, Cow::Borrowed(_)));
+            assert_eq!(aligned.as_ptr(), points.as_ptr());
+            assert_eq!(aligned.as_ref(), &points);
+        }
+        for direction in [
+            ScreenVec::new(0.0, -10.0),
+            ScreenVec::new(10.0, 0.0),
+            ScreenVec::new(-3.0, 7.0),
+        ] {
+            let angle = -PI / 2.0 - direction.y.atan2(direction.x);
+            let (sin, cos) = angle.sin_cos();
+            let expected = points.map(|(x, y)| (x * cos - y * sin, x * sin + y * cos));
+            let aligned = rotate_to_north(&points, direction);
+            assert!(matches!(aligned, Cow::Owned(_)));
+            assert_eq!(aligned.as_ref(), &expected);
+        }
+    }
 
     fn make_way(points: &[(f32, f32)]) -> MouseWay {
         let mut w = MouseWay::new();
