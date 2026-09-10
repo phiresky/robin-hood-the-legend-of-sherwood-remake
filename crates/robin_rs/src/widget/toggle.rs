@@ -75,14 +75,9 @@ impl Default for WidgetToggleButton {
 
 impl WidgetToggleButton {
     pub fn new(id: super::WidgetId) -> Self {
-        Self {
-            base: WidgetBase {
-                id,
-                state: UiState::SelectedFirst,
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        let mut widget = Self::default();
+        widget.base.id = id;
+        widget
     }
 
     /// Get the current toggle state (0 = first, 1 = second).
@@ -875,5 +870,19 @@ mod tests {
         let events = g.activate();
         assert_eq!(events[0].msg_type, UiEventType::Activated);
         assert_eq!(events[0].origin, 1);
+    }
+}
+
+#[test]
+fn constructor_keeps_toggle_specific_defaults() {
+    for id in [0, 1, u32::MAX] {
+        let widget = WidgetToggleButton::new(id);
+        let mut expected = WidgetToggleButton::default();
+        expected.base.id = id;
+        assert_eq!(widget.base.state, UiState::SelectedFirst);
+        assert_eq!(
+            serde_json::to_value(widget).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
     }
 }

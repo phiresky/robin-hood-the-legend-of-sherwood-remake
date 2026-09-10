@@ -50,12 +50,8 @@ pub struct WidgetSlider {
     /// Last tracking index at which `WidgetSliderTrack` was emitted.
     /// Compared against the fresh `tracking` after each drag update;
     /// the event only fires when they differ.
-    #[serde(default = "default_last_tracked")]
+    #[serde(default)]
     last_tracked: Option<u32>,
-}
-
-fn default_last_tracked() -> Option<u32> {
-    None
 }
 
 impl Default for WidgetSlider {
@@ -513,4 +509,17 @@ mod tests {
             }
         }
     }
+}
+
+#[test]
+fn missing_last_tracked_field_uses_option_default() {
+    let original = WidgetSlider::new(7);
+    let mut json = serde_json::to_value(&original).unwrap();
+    json.as_object_mut().unwrap().remove("last_tracked");
+    let restored: WidgetSlider = serde_json::from_value(json).unwrap();
+    assert_eq!(restored.last_tracked, None);
+    assert_eq!(
+        serde_json::to_value(restored).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
 }
