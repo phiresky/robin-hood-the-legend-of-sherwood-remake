@@ -225,6 +225,8 @@ pub async fn show_sounds(
     // repeat events in the same widget state stay silent; resets on
     // state change.
     let mut noisy_tracker = widget_bridge::NoisyTracker::new();
+    let mut slider_events = Vec::new();
+    let mut button_events = Vec::new();
 
     while !done {
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
@@ -282,10 +284,7 @@ pub async fn show_sounds(
         // dispatch passes the current widget's `UiState` and the
         // shared `NoisyTracker` so the state-gate applies per-widget:
         // a sound plays at most once per (widget, state) pair.
-        let (slider_events, button_events): (Vec<_>, Vec<_>) = events
-            .iter()
-            .cloned()
-            .partition(|e| is_slider_id(e.origin_widget_id));
+        partition_widget_events(events, &mut slider_events, &mut button_events);
 
         // Observe buttons even on silent mouse-leave frames to rearm hover.
         if let (Some(snd), Some(loader)) = (sound.as_deref_mut(), sample_loader) {
@@ -434,6 +433,22 @@ pub async fn show_sounds(
     edit.commit(accepted && dirty, config)
 }
 
+fn partition_widget_events(
+    events: Vec<UiEvent>,
+    sliders: &mut Vec<UiEvent>,
+    buttons: &mut Vec<UiEvent>,
+) {
+    sliders.clear();
+    buttons.clear();
+    for event in events {
+        if is_slider_id(event.origin_widget_id) {
+            sliders.push(event);
+        } else {
+            buttons.push(event);
+        }
+    }
+}
+
 fn is_slider_id(id: u32) -> bool {
     (ID_SLIDER_BASE..ID_SLIDER_BASE + SOUND_SLIDERS.len() as u32).contains(&id)
 }
@@ -508,4 +523,46 @@ fn sound_slider_order_matches_numeric_settings_and_widget_ids() {
 #[should_panic(expected = "invalid sound slider index")]
 fn invalid_sound_slider_index_is_not_a_zero_volume() {
     slider_value(&SoundConfig::default(), SOUND_SLIDERS.len());
+}
+
+#[test]
+fn event_partition_reuses_buffers_and_moves_payloads_in_order() {
+    let payload = String::from("owned event payload");
+    let pointer = payload.as_ptr();
+    let mut sliders = Vec::with_capacity(4);
+    let mut buttons = Vec::with_capacity(4);
+    let slider_pointer = sliders.as_ptr();
+    let button_pointer = buttons.as_ptr();
+    let mut events: Vec<_> = [ID_OK, ID_SLIDER_BASE + 1, ID_CANCEL, ID_SLIDER_BASE]
+        .into_iter()
+        .map(|id| UiEvent {
+            msg_type: UiMsg::WidgetActivated,
+            origin_widget_id: id,
+            data: None,
+        })
+        .collect();
+    events[1].data = Some(crate::ui::UiEventData::Text(payload));
+    partition_widget_events(events, &mut sliders, &mut buttons);
+    assert_eq!(
+        sliders
+            .iter()
+            .map(|event| event.origin_widget_id)
+            .collect::<Vec<_>>(),
+        [ID_SLIDER_BASE + 1, ID_SLIDER_BASE]
+    );
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|event| event.origin_widget_id)
+            .collect::<Vec<_>>(),
+        [ID_OK, ID_CANCEL]
+    );
+    let Some(crate::ui::UiEventData::Text(payload)) = &sliders[0].data else {
+        panic!("partition must preserve the payload");
+    };
+    assert_eq!(payload.as_ptr(), pointer);
+    partition_widget_events(Vec::new(), &mut sliders, &mut buttons);
+    assert!(sliders.is_empty() && buttons.is_empty());
+    assert_eq!(sliders.as_ptr(), slider_pointer);
+    assert_eq!(buttons.as_ptr(), button_pointer);
 }
