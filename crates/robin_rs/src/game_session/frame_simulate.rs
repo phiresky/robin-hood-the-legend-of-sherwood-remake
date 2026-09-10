@@ -180,9 +180,8 @@ impl SimulationVisualRefresh<'_> {
 
         let dynamic_visuals = host
             .application_context()
-            .active_profile_snapshot()
-            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-            .unwrap_or(true);
+            .with_active_profile(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or_else(|error| panic!("visual refresh requires an active profile: {error}"));
         let current_visual_ambiance = if dynamic_visuals {
             engine.weather().ambiance
         } else {

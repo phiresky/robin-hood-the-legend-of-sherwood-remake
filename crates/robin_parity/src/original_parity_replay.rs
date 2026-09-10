@@ -4688,7 +4688,13 @@ impl VisualReplay {
     ) -> Self {
         window.set_logical_size(1024, 768);
         let mut renderer = Renderer::new(&window, 1024, 768, TextureScaleMode::Nearest);
-        robin_rs::level_loading_host::initialize_sprite_variants(&mut host, engine);
+        // Parity visualization uses a profile-free scratch host and follows the
+        // recorded engine ambiance, independent of player graphics preferences.
+        robin_rs::level_loading_host::initialize_sprite_variants_for_ambiance(
+            &mut host,
+            engine.weather().ambiance,
+            engine.sim_config().bypass_fog_sprites_crash,
+        );
         robin_rs::level_loading_host::apply_background_map(
             engine,
             &mut host,

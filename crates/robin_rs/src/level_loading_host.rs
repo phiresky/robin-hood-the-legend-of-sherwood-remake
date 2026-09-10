@@ -170,26 +170,9 @@ fn load_terrain_candidate(
         .map_err(|error| format!("failed to load terrain image '{path}': {error}"))
 }
 
-/// Select the appropriate sprite-variant dictionaries for the engine's
-/// current ambiance and adjust global shadow values on the host's
-/// `FrameHolder`.  Lives host-side because the engine crate no longer
-/// references `FrameHolder`.
-pub fn initialize_sprite_variants(host: &mut Host, engine: &Engine) {
-    let bypass_fog_sprites_crash = engine.sim_config().bypass_fog_sprites_crash;
-    let visual_ambiance = if host
-        .application_context()
-        .active_profile_snapshot()
-        .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-        .unwrap_or(true)
-    {
-        engine.weather().ambiance
-    } else {
-        engine.initial_mission_ambiance()
-    };
-    initialize_sprite_variants_for_ambiance(host, visual_ambiance, bypass_fog_sprites_crash);
-}
-
-/// Pre-engine form of [`initialize_sprite_variants`].
+/// Select sprite-variant dictionaries and global shadow values for an explicitly
+/// chosen visual ambiance. Lives host-side because the engine does not reference
+/// `FrameHolder`.
 ///
 /// Mission ambiance and the sealed simulation configuration are known before
 /// construction. Using this exact helper on both startup paths lets the host
@@ -989,11 +972,12 @@ pub fn apply_minimap(
     // The sentinel `(65536, 65536)` is the per-profile "never written"
     // default (`PlayerProfile::new` initializes both fields to that
     // value).
-    let profile = host
+    let saved_position = host
         .application_context()
-        .active_profile_snapshot()
+        .with_active_profile(|profile| {
+            engine_coordinates::ScreenPoint::new(profile.minimap_x, profile.minimap_y)
+        })
         .unwrap_or_else(|error| panic!("minimap setup requires an active profile: {error}"));
-    let saved_position = engine_coordinates::ScreenPoint::new(profile.minimap_x, profile.minimap_y);
 
     tracing::info!(
         "Minimap loaded: {}x{} pixels, surface {:?}, saved position ({:.0}, {:.0})",

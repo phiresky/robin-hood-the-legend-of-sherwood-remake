@@ -529,9 +529,10 @@ impl InteractiveRendererAssembly {
 
         let dynamic_visuals = host
             .application_context()
-            .active_profile_snapshot()
-            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
-            .unwrap_or(true);
+            .with_active_profile(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .unwrap_or_else(|error| {
+                panic!("interactive renderer setup requires an active profile: {error}")
+            });
         if !dynamic_visuals && initial_ambiance != engine.initial_mission_ambiance() {
             let desired = engine.initial_mission_ambiance();
             if let Some((_, decoded)) = self

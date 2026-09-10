@@ -3820,7 +3820,7 @@ impl EngineInner {
     }
 
     // NOTE: `initialize_sprite_variants` was moved to robin_rs
-    // (`level_loading_host::initialize_sprite_variants`) as part of
+    // (`level_loading_host::initialize_sprite_variants_for_ambiance`) as part of
     // the engine carve-out (Decision 1): it only manipulates the host-
     // side `FrameHolder` (variant dictionaries, global shadow values)
     // which the engine must no longer reference. After level load: Day

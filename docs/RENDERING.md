@@ -261,10 +261,12 @@ which conflicts with decoding sprites on first draw.
 
 - **Shadow stays on the CPU.** Moving the shadow resolve into the
   fragment shader was investigated and rejected: it buys nothing
-  measurable. Ambience is set once per mission
-  (`level_loading_host::initialize_sprite_variants`, called only from
-  `game_session/setup.rs`), so `shadow_color` / `shadow_alpha` never
-  change during play and no sprite is ever re-baked for them. And the
+  measurable in the captured missions. Initial sprite dictionaries are selected
+  by `level_loading_host::initialize_sprite_variants_for_ambiance` during mission
+  setup and parity visualization. Dynamic ambience can subsequently rebind
+  sprite caches when the visual ambiance or shadow key changes
+  (`SimulationVisualRefresh` in `game_session/frame_simulate.rs`); it does not
+  rebind them on unchanged frames. In the measured captures, the
   cache carries no duplicates to collapse — the capture line reports
   `cache=106e/106f` and `90e/90f`, i.e. entries exactly equal distinct
   `(bank_id, variant)` frames.
