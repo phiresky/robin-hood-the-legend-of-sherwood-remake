@@ -661,14 +661,12 @@ impl TerminalDebriefingState {
                     let detailed_metadata = context
                         .host
                         .application_context()
-                        .active_profile_snapshot()
+                        .with_active_profile(|profile| profile.gameplay_config.detailed_save_metadata)
                         .unwrap_or_else(|error| {
                             panic!(
                                 "terminal debriefing load picker requires an active profile: {error}"
                             )
-                        })
-                        .gameplay_config
-                        .detailed_save_metadata;
+                        });
                     self.phase = TerminalDebriefingPhase::LoadPicker {
                         picker: crate::ingame_menu::LoadPickerModalState::new(
                             context.window,

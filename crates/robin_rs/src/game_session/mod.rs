@@ -288,9 +288,7 @@ pub(crate) async fn prepare_replay_launch(
     }
     if data.header().spellforge_package.is_some()
         && !application_context
-            .active_profile_snapshot()?
-            .gameplay_config
-            .enable_spellforge_missions
+            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)?
     {
         return Err(format!(
             "Spellforge mission `{}` is disabled in Gameplay settings; playback did not change the saved preference",
@@ -593,10 +591,8 @@ pub(super) fn install_pending_lua_session(
             .clone();
         if !host
             .application_context()
-            .active_profile_snapshot()
+            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)
             .map_err(crate::lua_session::SpellforgeSessionError::Profile)?
-            .gameplay_config
-            .enable_spellforge_missions
         {
             return Err(crate::lua_session::SpellforgeSessionError::Disabled { mission });
         }
@@ -610,10 +606,8 @@ pub(super) fn install_pending_lua_session(
     if pending.requires_spellforge
         && !host
             .application_context()
-            .active_profile_snapshot()
+            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)
             .map_err(crate::lua_session::SpellforgeSessionError::Profile)?
-            .gameplay_config
-            .enable_spellforge_missions
     {
         return Err(crate::lua_session::SpellforgeSessionError::Disabled {
             mission: pending.rhm_basename.clone(),
@@ -1274,10 +1268,8 @@ fn validate_cold_save_spellforge_preference(
         return Ok(());
     }
     let enabled = application_context
-        .active_profile_snapshot()
-        .map_err(|error| format!("read Spellforge gameplay preference: {error}"))?
-        .gameplay_config
-        .enable_spellforge_missions;
+        .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)
+        .map_err(|error| format!("read Spellforge gameplay preference: {error}"))?;
     if !enabled {
         return Err(format!(
             "Spellforge mission `{mission_basename}` is disabled in Gameplay settings"
@@ -1907,6 +1899,19 @@ mod required_state_tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn cold_spellforge_admission_requires_profile_services_only_for_spellforge() {
+        let context = crate::host::ApplicationContext::default();
+        assert!(
+            validate_cold_save_spellforge_preference(&context, "OrdinaryMission", false).is_ok()
+        );
+        let expected = context.active_profile_snapshot().unwrap_err();
+        assert_eq!(
+            validate_cold_save_spellforge_preference(&context, "NestedMission", true).unwrap_err(),
+            format!("read Spellforge gameplay preference: {expected}")
+        );
+    }
+
+    #[test]
     fn disabled_cold_spellforge_save_fails_without_mutating_preference() {
         use crate::host::ApplicationContext;
         use crate::key_config_store::KeyConfigStore;
@@ -1941,6 +1946,16 @@ mod required_state_tests {
                 .enable_spellforge_missions,
             "cold admission must never coerce the persisted gameplay toggle"
         );
+        context
+            .with_player_profiles_mut(|profiles| {
+                profiles
+                    .get_active_mut()
+                    .unwrap()
+                    .gameplay_config
+                    .enable_spellforge_missions = true;
+            })
+            .unwrap();
+        assert!(validate_cold_save_spellforge_preference(&context, "NestedMission", true).is_ok());
     }
 
     #[test]

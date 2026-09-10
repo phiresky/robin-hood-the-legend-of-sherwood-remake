@@ -218,15 +218,17 @@ impl FrontendPreferences {
 impl ApplicationContext {
     pub(crate) fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
         let (key_config, custom_key_config) = self.active_key_configs()?;
-        let active_profile = self.active_profile_snapshot()?;
-        Ok(HostContextSnapshot {
-            shipping: self.shipping_arc()?,
-            preferences: FrontendPreferences::new(
+        let preferences = self.with_active_profile(|profile| {
+            FrontendPreferences::new(
                 key_config,
                 custom_key_config,
-                active_profile.gameplay_config,
-                &active_profile.graphic_config,
-            ),
+                profile.gameplay_config,
+                &profile.graphic_config,
+            )
+        })?;
+        Ok(HostContextSnapshot {
+            shipping: self.shipping_arc()?,
+            preferences,
         })
     }
 }
@@ -1864,13 +1866,8 @@ impl HostPresentation<'_> {
     /// profile mutation, asset preparation, or other application authority.
     pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
         self.application
-            .with_player_profiles(|profiles| {
-                profiles
-                    .get_active()
-                    .map(|profile| profile.graphic_config.clone())
-            })
+            .with_active_profile(|profile| profile.graphic_config.clone())
             .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
-            .expect("rendering requires an active profile")
     }
 }
 

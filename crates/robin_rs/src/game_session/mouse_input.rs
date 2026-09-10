@@ -1573,16 +1573,29 @@ pub(super) fn handle_pause_menu_events(
             PauseMenuOutcome::OpenOptions => {
                 // Opening options from the in-game menu displays the options menu.
                 let resources = required_menu_resources(menu_resources, "pause-menu Options");
-                let profile = host
+                let (
+                    profile_id,
+                    graphic_config,
+                    profile_gameplay_config,
+                    multiplayer_config,
+                    profile_sound_config,
+                ) = host
                     .application_context()
-                    .active_profile_snapshot()
+                    .with_active_profile(|profile| {
+                        (
+                            profile.id,
+                            profile.graphic_config.clone(),
+                            profile.gameplay_config,
+                            profile.multiplayer_config,
+                            profile.sound_config,
+                        )
+                    })
                     .unwrap_or_else(|error| {
                         panic!("in-game Options requires an active profile: {error}")
                     });
                 // Replay headers and multiplayer snapshots own deterministic
                 // simulation toggles. Seed those rows from the active mission
                 // rather than a potentially stale local profile.
-                let profile_gameplay_config = profile.gameplay_config;
                 let mut gameplay_config = profile_gameplay_config;
                 gameplay_config.fix_hard_reaction_times =
                     engine.sim_config().fix_hard_reaction_times;
@@ -1602,7 +1615,6 @@ pub(super) fn handle_pause_menu_events(
                 gameplay_config.more_combat_gestures = engine.sim_config().more_combat_gestures;
                 gameplay_config.gesture_quality_damage = engine.sim_config().gesture_quality_damage;
                 gameplay_config.fog_of_war = engine.sim_config().fog_of_war;
-                let profile_sound_config = profile.sound_config;
                 let mut sound_config = profile_sound_config;
                 sound_config.amount_of_speaking = engine.sim_config().amount_of_speaking;
                 *active_ui_task = Some(ActiveUiTask::Options(OptionsTaskState::new(
@@ -1610,11 +1622,11 @@ pub(super) fn handle_pause_menu_events(
                     event_pump,
                     renderer,
                     resources,
-                    profile.id,
-                    profile.graphic_config,
+                    profile_id,
+                    graphic_config,
                     gameplay_config,
                     profile_gameplay_config,
-                    profile.multiplayer_config,
+                    multiplayer_config,
                     sound_config,
                     profile_sound_config,
                     host.frontend.preferences().key_config().clone(),
