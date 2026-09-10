@@ -91,6 +91,7 @@ ogg = { version = "0.9.2", optional = true }
 # point at user-supplied data directories, so restricting their accepted audio
 # formats would be an unnecessary compatibility regression.
 kira = { version = "0.12", optional = true }
+lru = { version = "0.18.4", optional = true }
 # Spatial-audio coordinates for Kira. Web Audio uses StereoPannerNode.
 mint = { version = "0.5", optional = true }
 fs2 = "0.4"
@@ -265,7 +266,7 @@ multiplayer = [
 # Developer conversion/inspection binaries are built only on demand.
 tools = ["dep:ogg", "dep:rayon"]
 android = ["audio"]
-audio = ["dep:kira", "dep:mint", "dep:rayon", "dep:ogg"]
+audio = ["dep:kira", "dep:lru", "dep:mint", "dep:rayon", "dep:ogg"]
 dialogs = ["dep:rfd"]
 gamepad = ["dep:gilrs"]
 hardware-info = ["dep:sysinfo"]

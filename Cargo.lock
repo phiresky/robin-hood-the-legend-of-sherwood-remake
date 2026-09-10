@@ -6206,6 +6206,7 @@ dependencies = [
  "kira",
  "libc",
  "librashader",
+ "lru 0.18.4",
  "mainline",
  "mint",
  "mlua",

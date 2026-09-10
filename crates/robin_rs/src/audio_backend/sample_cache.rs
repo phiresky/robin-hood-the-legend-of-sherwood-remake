@@ -1,17 +1,15 @@
 //! Decoded sample residency, separate from mixer channels and device lifetime.
-use std::collections::HashMap;
-
 use kira::sound::static_sound::StaticSoundData;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 
 /// Cache retention is bounded; active Kira voices own independent Arc clones.
 /// Eviction releases cache ownership without interrupting playback.
 #[derive(Serialize, Deserialize)]
 pub(super) struct SampleCache {
-    #[serde(skip)]
-    samples: HashMap<String, (StaticSoundData, u64)>,
-    #[serde(skip)]
-    clock: u64,
+    // Entry count is unbounded here because residency is governed by bytes.
+    #[serde(skip, default = "LruCache::unbounded")]
+    samples: LruCache<String, StaticSoundData>,
     #[serde(skip)]
     resident_bytes: usize,
     budget_bytes: usize,
@@ -20,26 +18,21 @@ pub(super) struct SampleCache {
 impl SampleCache {
     pub(super) fn new(budget_bytes: usize) -> Self {
         Self {
-            samples: HashMap::new(),
-            clock: 0,
+            samples: LruCache::unbounded(),
             resident_bytes: 0,
             budget_bytes,
         }
     }
 
     pub(super) fn get(&mut self, key: &str) -> Option<StaticSoundData> {
-        self.clock = self.clock.wrapping_add(1);
-        self.samples.get_mut(key).map(|(sample, used)| {
-            *used = self.clock;
-            sample.clone()
-        })
+        self.samples.get(key).cloned()
     }
 
     pub(super) fn insert(&mut self, key: String, sample: StaticSoundData) {
         let bytes = std::mem::size_of_val(sample.frames.as_ref());
         // A replacement invalidates the old value even when the new sample
         // is too large to retain. Never serve stale audio under the same key.
-        if let Some((old, _)) = self.samples.remove(&key) {
+        if let Some(old) = self.samples.pop(&key) {
             self.resident_bytes -= std::mem::size_of_val(old.frames.as_ref());
         }
         if bytes > self.budget_bytes {
@@ -51,18 +44,14 @@ impl SampleCache {
             return;
         }
         while self.resident_bytes > self.budget_bytes - bytes {
-            let oldest = self
+            let (_, old) = self
                 .samples
-                .iter()
-                .min_by_key(|(_, (_, used))| used)
-                .map(|(key, _)| key.clone())
+                .pop_lru()
                 .expect("nonzero audio residency has a cache entry");
-            let (old, _) = self.samples.remove(&oldest).unwrap();
             self.resident_bytes -= std::mem::size_of_val(old.frames.as_ref());
         }
-        self.clock = self.clock.wrapping_add(1);
         self.resident_bytes += bytes;
-        self.samples.insert(key, (sample, self.clock));
+        self.samples.put(key, sample);
         tracing::debug!(
             resident_bytes = self.resident_bytes,
             entries = self.samples.len(),
@@ -134,5 +123,42 @@ mod tests {
         assert!(cache.get("b").is_none());
         assert_eq!(cache.get("a").unwrap().sample_rate, 2);
         assert!(cache.get("c").is_some());
+    }
+
+    #[test]
+    fn larger_insert_evicts_multiple_least_recent_samples_to_meet_byte_budget() {
+        let bytes = std::mem::size_of::<kira::Frame>();
+        let mut cache = SampleCache::new(bytes * 4);
+        for key in ["a", "b", "c", "d"] {
+            cache.insert(key.into(), sample());
+        }
+        let active = cache.get("a").unwrap();
+        let mut larger = sample();
+        larger.frames = vec![kira::Frame::ZERO; 3].into();
+        cache.insert("large".into(), larger);
+        assert_eq!(cache.resident_bytes, bytes * 4);
+        assert_eq!(cache.samples.len(), 2);
+        for evicted in ["b", "c", "d"] {
+            assert!(cache.get(evicted).is_none());
+        }
+        assert!(cache.get("a").is_some());
+        assert_eq!(cache.get("large").unwrap().frames.len(), 3);
+        drop(cache);
+        assert_eq!(std::sync::Arc::strong_count(&active.frames), 1);
+    }
+
+    #[test]
+    fn diagnostic_roundtrip_restores_budget_without_sample_residency() {
+        let bytes = std::mem::size_of::<kira::Frame>();
+        let mut cache = SampleCache::new(bytes);
+        cache.insert("a".into(), sample());
+        let mut restored: SampleCache =
+            serde_json::from_value(serde_json::to_value(&cache).unwrap()).unwrap();
+        assert_eq!(restored.budget_bytes, bytes);
+        assert_eq!(restored.resident_bytes, 0);
+        assert!(restored.get("a").is_none());
+        restored.insert("b".into(), sample());
+        assert_eq!(restored.resident_bytes, bytes);
+        assert!(restored.get("b").is_some());
     }
 }
