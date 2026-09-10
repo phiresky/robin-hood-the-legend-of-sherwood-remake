@@ -85,18 +85,26 @@ pub const fn retroarch_runtime_available() -> bool {
 /// Keep every graphics frontend on this shared list: browser builds and
 /// native builds without `retroarch-shaders` must not offer the native-only
 /// RetroArch runner and then fail only after the player accepts the setting.
-pub fn available_texture_scale_modes() -> Vec<TextureScaleMode> {
+pub fn available_texture_scale_modes() -> &'static [TextureScaleMode] {
     texture_scale_modes_for_retroarch_availability(retroarch_runtime_available())
 }
 
 fn texture_scale_modes_for_retroarch_availability(
     retroarch_available: bool,
-) -> Vec<TextureScaleMode> {
-    TextureScaleMode::ALL
-        .iter()
-        .copied()
-        .filter(|mode| *mode != TextureScaleMode::RetroArch || retroarch_available)
-        .collect()
+) -> &'static [TextureScaleMode] {
+    static PORTABLE_MODES: std::sync::LazyLock<Vec<TextureScaleMode>> =
+        std::sync::LazyLock::new(|| {
+            TextureScaleMode::ALL
+                .iter()
+                .copied()
+                .filter(|mode| *mode != TextureScaleMode::RetroArch)
+                .collect()
+        });
+    if retroarch_available {
+        TextureScaleMode::ALL
+    } else {
+        &PORTABLE_MODES
+    }
 }
 
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
@@ -275,6 +283,20 @@ mod tests {
     fn availability_filters_only_the_native_retroarch_runner() {
         let portable = texture_scale_modes_for_retroarch_availability(false);
         let native = texture_scale_modes_for_retroarch_availability(true);
+
+        assert_eq!(native, TextureScaleMode::ALL);
+        assert!(std::ptr::eq(
+            portable,
+            texture_scale_modes_for_retroarch_availability(false)
+        ));
+        assert_eq!(
+            portable,
+            TextureScaleMode::ALL
+                .iter()
+                .copied()
+                .filter(|mode| *mode != TextureScaleMode::RetroArch)
+                .collect::<Vec<_>>()
+        );
 
         assert!(!portable.contains(&TextureScaleMode::RetroArch));
         assert!(native.contains(&TextureScaleMode::RetroArch));

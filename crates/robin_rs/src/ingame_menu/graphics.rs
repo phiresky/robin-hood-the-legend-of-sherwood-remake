@@ -53,7 +53,7 @@ const PRESET_LIST_ROW_H: i32 = 28;
 const PRESET_LIST_ROWS: usize = 4;
 
 /// Labels for the scaling radio column.
-fn scale_modes() -> Vec<TextureScaleMode> {
+fn scale_modes() -> &'static [TextureScaleMode] {
     crate::shader_preset::available_texture_scale_modes()
 }
 
