@@ -127,6 +127,13 @@ impl PickerModel {
         }
     }
 
+    pub fn selected_manager_index(&self) -> Option<usize> {
+        self.selected_slot().map(|name| {
+            self.visible_slot_index(name)
+                .expect("selected identity must be visible")
+        })
+    }
+
     pub fn select(&mut self, row: Option<ListRow>) {
         self.selection = row.map(|row| match row {
             ListRow::New => {
@@ -430,6 +437,22 @@ mod tests {
         let save = PickerModel::new(SaveLoadMode::Save, false, 3, rows);
         assert_eq!(save.visible(), vec![1]);
         assert_eq!(save.selected_row(), Some(ListRow::New));
+    }
+
+    #[test]
+    fn selected_manager_index_follows_identity_not_presentation_position() {
+        let mut picker = model();
+        assert_eq!(picker.selected_manager_index(), None);
+        picker.select(Some(ListRow::Existing(1)));
+        assert_eq!(picker.selected_manager_index(), Some(1));
+        picker.refresh(vec![slot("Savegame_001", 7), slot("Savegame_000", 2)]);
+        assert_eq!(picker.selected_row(), Some(ListRow::Existing(0)));
+        assert_eq!(picker.selected_manager_index(), Some(7));
+        picker.refresh(vec![]);
+        assert_eq!(picker.selected_manager_index(), None);
+        let save = PickerModel::new(SaveLoadMode::Save, false, 2, vec![]);
+        assert_eq!(save.selected_row(), Some(ListRow::New));
+        assert_eq!(save.selected_manager_index(), None);
     }
 
     #[test]

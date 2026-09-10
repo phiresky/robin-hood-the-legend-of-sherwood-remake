@@ -145,8 +145,7 @@ impl LoadPickerModalState {
             sync_thumbnail_cache(
                 &mut self.thumb_cache,
                 &mut self.thumb_widget,
-                self.model.selected_row(),
-                &self.model.visible(),
+                self.model.selected_manager_index(),
                 save_manager,
                 renderer,
                 SaveLoadMode::Load,
@@ -249,8 +248,7 @@ impl LoadPickerModalState {
         sync_thumbnail_cache(
             &mut self.thumb_cache,
             &mut self.thumb_widget,
-            selected,
-            &visible,
+            self.model.selected_manager_index(),
             save_manager,
             renderer,
             SaveLoadMode::Load,
@@ -619,8 +617,7 @@ struct ThumbnailCache {
 fn sync_thumbnail_cache(
     cache: &mut Option<ThumbnailCache>,
     widget: &mut crate::widget::WidgetPicture,
-    selected: Option<ListRow>,
-    visible: &[usize],
+    selected_manager_index: Option<usize>,
     save_manager: &SaveGameManager,
     renderer: &mut Renderer,
     mode: SaveLoadMode,
@@ -632,13 +629,9 @@ fn sync_thumbnail_cache(
     }
     // Save-mode never previews a thumbnail — the picture widget stays
     // disabled and the entire reload branch is gated on Load mode.
-    let target_slot = match (mode, selected) {
-        (SaveLoadMode::Load, Some(ListRow::Existing(v))) => Some(
-            *visible
-                .get(v)
-                .expect("selected thumbnail row must be visible"),
-        ),
-        _ => None,
+    let target_slot = match mode {
+        SaveLoadMode::Load => selected_manager_index,
+        SaveLoadMode::Save => None,
     };
     let target_name = target_slot.map(|slot| {
         save_manager
@@ -1078,18 +1071,16 @@ fn truncate_to_pixel_width_by(
 /// the buffer + caret) so subsequent text input keeps flowing through.
 pub(crate) fn sync_input_for_selection(
     input_widget: &mut WidgetInputField,
-    selection: Option<ListRow>,
+    selected_manager_index: Option<usize>,
     mode: SaveLoadMode,
-    visible: &[usize],
     save_manager: &SaveGameManager,
 ) {
     if mode != SaveLoadMode::Save {
         input_widget.set_text("");
         return;
     }
-    match selection {
-        Some(ListRow::Existing(v_idx)) => {
-            let slot = visible[v_idx];
+    match selected_manager_index {
+        Some(slot) => {
             let save = save_manager
                 .get(slot)
                 .expect("visible slot must resolve to a save");

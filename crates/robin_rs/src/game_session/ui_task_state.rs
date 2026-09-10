@@ -1421,9 +1421,8 @@ impl SaveLoadTaskState {
     fn sync_name(&mut self, manager: &SaveGameManager) {
         sync_input_for_selection(
             &mut self.name,
-            self.model.selected_row(),
+            self.model.selected_manager_index(),
             self.mode,
-            &self.model.visible(),
             manager,
         );
     }
