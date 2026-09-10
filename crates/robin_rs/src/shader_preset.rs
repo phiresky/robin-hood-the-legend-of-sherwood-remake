@@ -156,25 +156,25 @@ impl ShaderPresetRenderer {
             return Err(format!("{mode:?} is not a RetroArch preset mode"));
         }
         let key = preset_key(mode, retroarch_preset)?;
-        if self.failed_keys.contains(&key) {
+        if self.failed_keys.contains(key) {
             return Err(format!(
                 "shader preset {key} failed earlier in this session"
             ));
         }
-        if !self.chains.contains_key(&key) {
-            match self.load_chain(&key) {
+        if !self.chains.contains_key(key) {
+            match self.load_chain(key) {
                 Ok(chain) => {
-                    self.chains.insert(key.clone(), chain);
+                    self.chains.insert(key.to_owned(), chain);
                 }
                 Err(error) => {
-                    self.failed_keys.insert(key.clone());
+                    self.failed_keys.insert(key.to_owned());
                     return Err(error);
                 }
             }
         }
         let chain = self
             .chains
-            .get_mut(&key)
+            .get_mut(key)
             .expect("shader preset chain inserted above");
         let output_size = Size {
             width: dst_rect[2].max(1.0).ceil() as u32,
@@ -199,8 +199,8 @@ impl ShaderPresetRenderer {
             None,
         ) {
             tracing::error!("librashader WGPU frame failed for {key}: {e}");
-            self.failed_keys.insert(key.clone());
-            self.chains.remove(&key);
+            self.failed_keys.insert(key.to_owned());
+            self.chains.remove(key);
             return Err(format!("librashader WGPU frame failed for {key}: {e}"));
         }
         if frame_count.is_none() {
@@ -261,13 +261,12 @@ impl ShaderPresetRenderer {
     }
 }
 
-#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
-fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Result<String, String> {
+#[cfg(any(test, all(feature = "retroarch-shaders", not(target_arch = "wasm32"))))]
+fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Result<&str, String> {
     match mode {
         TextureScaleMode::RetroArch => retroarch_preset
             .filter(|preset| !preset.trim().is_empty())
             .or_else(|| retroarch_presets().first().map(|preset| preset.id.as_str()))
-            .map(str::to_string)
             .ok_or_else(|| {
                 "RetroArch shader mode selected but no .slangp preset was chosen".to_string()
             }),
@@ -278,6 +277,20 @@ fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_preset_key_borrows_the_exact_configured_value() {
+        let selected = String::from(" shaders/custom.slangp ");
+        let key = preset_key(TextureScaleMode::RetroArch, Some(&selected)).unwrap();
+        assert!(std::ptr::eq(key, selected.as_str()));
+        for missing in [None, Some(""), Some(" \t\n")] {
+            let resolved = preset_key(TextureScaleMode::RetroArch, missing);
+            match retroarch_presets().first() {
+                Some(first) => assert!(std::ptr::eq(resolved.unwrap(), first.id.as_str())),
+                None => assert!(resolved.is_err()),
+            }
+        }
+    }
 
     #[test]
     fn availability_filters_only_the_native_retroarch_runner() {
