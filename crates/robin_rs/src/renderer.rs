@@ -2918,9 +2918,9 @@ fn sprite_rgba_for_upload(
     shadow_color: u16,
     shadow_alpha: u8,
     bit_depth: u16,
-) -> Vec<u8> {
+) -> std::borrow::Cow<'_, [u8]> {
     if let Some(rgba) = frame_holder.rgba_data(bank_id) {
-        return rgba.to_vec();
+        return std::borrow::Cow::Borrowed(rgba);
     }
 
     let w = frame_holder.sprite_width(bank_id);
@@ -2934,14 +2934,14 @@ fn sprite_rgba_for_upload(
         shadow_color,
         bit_depth,
     );
-    rgb565_to_rgba_with_key(
+    std::borrow::Cow::Owned(rgb565_to_rgba_with_key(
         &rgb565,
         w as usize,
         h as usize,
         TRANSPARENT_COLOR_KEY_16,
         shadow_alpha,
         Some(shadow_color),
-    )
+    ))
 }
 
 /// Build the outside-edge outline texture: transparent surface, two
@@ -4052,7 +4052,35 @@ mod tests {
             16,
         );
 
-        assert_eq!(uploaded, rgba);
+        assert!(matches!(uploaded, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(uploaded.as_ref(), rgba);
+        assert_eq!(
+            uploaded.as_ptr(),
+            holder.rgba_data(bank_id).unwrap().as_ptr()
+        );
+    }
+
+    #[test]
+    fn legacy_sprite_upload_owns_decoded_pixels_and_preserves_keys() {
+        let mut holder = FrameHolder::default();
+        let bank_id = holder.append_legacy_keyed_rgba_sprite(
+            3,
+            1,
+            &[0, 250, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255],
+        );
+        let uploaded = sprite_rgba_for_upload(
+            &holder,
+            bank_id,
+            SpriteVariant::Day,
+            SHADOW_KEY,
+            DEFAULT_SHADOW_ALPHA,
+            16,
+        );
+        assert!(matches!(uploaded, std::borrow::Cow::Owned(_)));
+        assert_eq!(
+            uploaded.as_ref(),
+            &[0, 0, 0, 0, 0, 0, 0, DEFAULT_SHADOW_ALPHA, 248, 0, 0, 255]
+        );
     }
 
     #[test]
