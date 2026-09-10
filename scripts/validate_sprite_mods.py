@@ -23,7 +23,7 @@ from profile_patch_tools import identifier, load_catalog
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("mods", nargs="+", type=Path)
-    parser.add_argument("--profile-catalog", type=Path, default=Path("target/profiles.patch-view.json"))
+    parser.add_argument("--profile-catalog", type=Path, default=Path("target/profile.cpf.json"))
     parser.add_argument("--profiles-only", action="store_true",
                         help="validate patched profiles and mission references without rechecking sprite images")
     args = parser.parse_args()

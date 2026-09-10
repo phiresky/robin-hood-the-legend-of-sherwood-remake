@@ -6,7 +6,7 @@ operations. This is not JSON Merge Patch. Place files beneath `mods/<your-mod>/`
 
 | File | Document being patched |
 | --- | --- |
-| `Data/Configuration/profiles.patch.json` | All loaded profiles; characters, soldiers, civilians and missions have named keys; weapons use arrays |
+| `Data/Configuration/profiles.patch.json` | The canonical `Data/Configuration/profile.cpf.json` document; the binary CPF loader produces the identical schema |
 | `Data/Levels/<mission>.level.patch.json` | Decoded `LoadedLevel`: `proto`, `mission`, and `diplomacy` |
 | `Data/Levels/<mission>.descriptors.patch.json` | Decoded `LevelDescriptors`: resource references, pictures, dialogues, and custom text arrays |
 
@@ -33,33 +33,51 @@ Any serialized profile field can be edited: combat skills, hostility,
 equipment, action arrays, voice-bank IDs, mission parameters, etc. Copying
 includes the complete source profile. Required sprites/resources must exist.
 
-Keys are exact, case-sensitive filenames, not display names. Missions use
+The on-disk profile JSON is the patch target. There is no separate patch view.
+The exporter creates exact, case-sensitive filename keys; missions use
 `mission_filename`. Duplicate filenames become `filename#<original index>`.
+Authored keys remain intact through all patch layers, even when a profile's
+filename changes. Set the copied profile's filename to the intended asset name.
 JSON Pointer escapes `/` as `~1` and `~` as `~0`. Weapon tables retain numeric
 IDs: `/hth_weapons/<index>` and `/bows/<index>`.
 
-Existing named entries keep their numeric slots; removing or renaming an
-existing key is rejected because compiled missions reference those slots.
-New entries append in sorted key order. Character `index` is absent from the
-patch view and assigned by the loader, including for copies. Keys are rebuilt
-from filenames before each mod's patch, so set a copy's `filename` to its
-intended new identity.
+The document also contains `character_order`, `soldier_order`, `civilian_order`,
+and `mission_order`: arrays of keys preserving the original numeric profile IDs.
+For example, `"soldier_order": ["Archer00", "Knight03"]` assigns slots 0 and 1
+regardless of the order of properties in `soldiers`. A key may occur only once
+in its order list and must exist in the matching map.
+
+Patches cannot remove existing profiles or remove/reorder the existing order
+lists, because compiled missions reference their numeric slots. New profiles
+may be appended to an order list; any unlisted keys append in sorted key order
+after all patch layers. Character `index` is absent from authored JSON and is
+assigned from this ordering by the loader, including for copies.
 
 Dump your base CPF's exact patch keys, fields and enum values:
 
 ```sh
 cargo build -p robin_rs --example cpf_to_json
-target/debug/examples/cpf_to_json --patch-view /absolute/path/Data/Configuration/profile.cpf target/profiles.patch-view.json
+target/debug/examples/cpf_to_json /absolute/path/Data/Configuration/profile.cpf target/profile.cpf.json
 ```
 
-This is before mod patches and mission-derived metadata. Without `--patch-view`,
-the example still produces the original array representation. Tooling can also
-call `robin_engine::content_patch::profile_document`.
+The exporter and `convert_datadir` produce this canonical format by default.
+Old array-based profile JSON is rejected with instructions to regenerate the
+hackable datadir or re-export just its profile JSON from the original CPF.
+No migrator or special export flag is needed. Runtime/save serialization of
+`ProfileManager` is internal and is not the authored file format.
+
+Ordinary JSON Patch tools can patch the exported file directly:
+
+```sh
+jsonpatch target/profile.cpf.json mods/my-mod/Data/Configuration/profiles.patch.json > target/patched-profile.cpf.json
+target/debug/examples/cpf_to_json target/patched-profile.cpf.json target/validated-profile.cpf.json
+```
 
 Pass `--patch path/to/profiles.patch.json` to preview and validate an actual
 patch with the Rust loader before exporting. Repeat `--patch` in mod load order
-to preview their composition. Omit `--patch-view` to inspect the resulting
-numeric profile slots.
+to preview their composition. JSON input is accepted as well as binary CPF.
+Patches operate before mission-derived beam-me metadata is populated for loose
+datadirs; those derived fields should be changed through mission data instead.
 
 ## Mission data
 
@@ -113,8 +131,8 @@ changes as standard operations; template objects are not accepted.
 The sprite importer emits this format too. After exporting the base catalog:
 
 ```sh
-uv run scripts/import_fabri18_sprites.py --profiles-only --profile-catalog target/profiles.patch-view.json
-uv run scripts/validate_sprite_mods.py --profile-catalog target/profiles.patch-view.json mods/fabri18-sprite-gallery mods/mounted-knight-colours
+uv run scripts/import_fabri18_sprites.py --profiles-only --profile-catalog target/profile.cpf.json
+uv run scripts/validate_sprite_mods.py --profile-catalog target/profile.cpf.json mods/fabri18-sprite-gallery mods/mounted-knight-colours
 ```
 
 Both scripts declare dependencies inline; no requirements file or manual

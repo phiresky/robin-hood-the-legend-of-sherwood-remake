@@ -792,7 +792,9 @@ impl Converter {
             .map_err(|e| anyhow!("parse cpf: {e}"))?;
 
         let dst = self.out_path(&format!("{rel}.json"), resolved.locale);
-        let json = serde_json::to_string_pretty(&mgr)?;
+        let document =
+            robin_engine::content_patch::profile_document(&mgr).map_err(anyhow::Error::msg)?;
+        let json = serde_json::to_string_pretty(&document)?;
         write_with_parents(&dst, json.as_bytes())?;
         self.converted += 1;
         Ok(mgr)
@@ -1616,7 +1618,9 @@ fn convert_cpf(src: &Path, dst: &Path) -> Result<()> {
     let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)
         .map_err(|e| anyhow!("parse cpf: {e}"))?;
-    write_json_pretty(dst, &mgr)
+    let document =
+        robin_engine::content_patch::profile_document(&mgr).map_err(anyhow::Error::msg)?;
+    write_json_pretty(dst, &document)
 }
 
 fn convert_red(src: &Path, dst: &Path) -> Result<()> {

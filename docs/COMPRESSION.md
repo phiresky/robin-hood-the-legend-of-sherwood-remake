@@ -4126,7 +4126,7 @@ additions. Sprites, JXL map, mission descriptor and other payloads are unchanged
 only the profile patch and README differ from the previous flat archive.
 The archive remains flat and is installed directly into `mods/`.
 
-The current Rust `cpf_to_json --patch-view --patch` loader accepted the patch
+The current Rust `cpf_to_json --patch` loader accepted the patch
 against both GOG full-game and Leicester demo CPF catalogs. All 51 final
 profile objects exactly match the prior package, including progression stats
 and explicit animation names; existing soldier profiles remain unchanged.
