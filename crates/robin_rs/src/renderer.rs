@@ -3353,6 +3353,40 @@ mod bind_counter {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_mouse_trail_pixels(gpu: GpuContext) {
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 1, 1, TextureScaleMode::Nearest);
+    let picture = robin_assets::picture::Picture {
+        width: 1,
+        height: 1,
+        pitch: 2,
+        pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+        data: vec![0, 0],
+        palette: None,
+    };
+    let trail =
+        crate::mouse_trail::MouseTrailRenderer::from_picture(&picture, &mut renderer).unwrap();
+    let mut way = crate::mouse_way::MouseWay::new();
+    way.points
+        .push_back(robin_engine::coordinates::ScreenPoint::new(0.0, 0.0));
+    way.alpha.push_back(0.0);
+    for level in 0u16..=32 {
+        way.alpha[0] = f32::from(level) * 100.0 / 32.0;
+        renderer.begin_gpu_frame_clear();
+        trail.render(&way, &mut renderer);
+        let used_alpha = (31 * level) >> 5;
+        let pixel = (((0xFC80u16 & 0xF800) >> 5) * used_alpha & 0xF800)
+            | (((0xFC80u16 & 0x07E0) >> 5) * used_alpha & 0x07E0);
+        let (r, g, b) = robin_util::color::rgb565_to_rgb8(pixel);
+        assert_eq!(
+            renderer.try_capture_frame_rgba().unwrap(),
+            (1, 1, vec![r, g, b, 255]),
+            "trail alpha level {level}"
+        );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn verify_loading_dissolve_pixels(gpu: GpuContext) {
     let mut renderer =
         Renderer::with_optional_surface(gpu, None, None, 3, 2, TextureScaleMode::Nearest);
@@ -3399,6 +3433,7 @@ fn verify_loading_dissolve_pixels(gpu: GpuContext) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    verify_mouse_trail_pixels(gpu.clone());
     verify_loading_dissolve_pixels(gpu.clone());
     verify_mask_atlas_pixels(gpu.clone());
     let mut other_renderer =
