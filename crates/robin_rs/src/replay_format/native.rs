@@ -6,7 +6,7 @@ use super::{
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 enum AdmissionWorkerReply {
     Accepted { sha256: String },
     Rejected { error: String },
@@ -86,7 +86,6 @@ pub fn run_native_admission_worker() -> i32 {
 }
 
 pub(super) fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError> {
-    use sha2::Digest as _;
     use std::process::{Command, Stdio};
 
     preflight_compact_transport(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
@@ -104,7 +103,13 @@ pub(super) fn validate_in_native_child(text: &str) -> Result<(), ReplayLoadError
         ReplayLoadError::WorkerProtocol(format!("spawn admission worker: {error}"))
     })?;
     let output = exchange_with_worker(child, text, ADMISSION_WORKER_WALL_TIME)?;
-    let reply: AdmissionWorkerReply = serde_json::from_slice(&output).map_err(|error| {
+    verify_worker_reply(&output, text)
+}
+
+fn verify_worker_reply(output: &[u8], text: &str) -> Result<(), ReplayLoadError> {
+    use sha2::Digest as _;
+
+    let reply: AdmissionWorkerReply = serde_json::from_slice(output).map_err(|error| {
         ReplayLoadError::WorkerProtocol(format!("decode worker reply: {error}"))
     })?;
     match reply {
@@ -297,6 +302,74 @@ fn configure_current_native_worker_limits() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_acceptance_is_bound_to_the_exact_input_bytes() {
+        use sha2::Digest as _;
+        let text = "exact replay bytes 🦊";
+        let reply = serde_json::to_vec(&AdmissionWorkerReply::Accepted {
+            sha256: hex::encode(sha2::Sha256::digest(text.as_bytes())),
+        })
+        .unwrap();
+        verify_worker_reply(&reply, text).unwrap();
+        for changed in ["", "exact replay bytes", "exact replay bytes 🦊\n"] {
+            assert!(matches!(
+                verify_worker_reply(&reply, changed),
+                Err(ReplayLoadError::WorkerProtocol(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn worker_rejection_retains_its_diagnostic() {
+        let message = "invalid replay\n\"details\": é";
+        let reply = serde_json::to_vec(&AdmissionWorkerReply::Rejected {
+            error: message.into(),
+        })
+        .unwrap();
+        assert!(
+            matches!(verify_worker_reply(&reply, "input"), Err(ReplayLoadError::AdmissionRejected(error)) if error == message)
+        );
+    }
+
+    #[test]
+    fn malformed_and_ambiguous_worker_replies_fail_closed() {
+        for reply in [
+            "",
+            "null",
+            "{}",
+            "[]",
+            "not JSON",
+            r#"{"status":"unknown"}"#,
+            r#"{"status":"accepted"}"#,
+            r#"{"status":"accepted","sha256":false}"#,
+            r#"{"status":"accepted","sha256":"bad"}"#,
+            r#"{"status":"rejected","error":"bad","sha256":"also accepted"}"#,
+            r#"{"status":"rejected","error":"bad","extra":true}"#,
+            r#"{"status":"rejected","error":"one","error":"two"}"#,
+            r#"{"status":"rejected","error":"bad"} trailing"#,
+        ] {
+            assert!(
+                matches!(
+                    verify_worker_reply(reply.as_bytes(), "input"),
+                    Err(ReplayLoadError::WorkerProtocol(_))
+                ),
+                "{reply}"
+            );
+        }
+        use sha2::Digest as _;
+        let mut reply = serde_json::json!({
+            "status": "accepted",
+            "sha256": hex::encode(sha2::Sha256::digest(b"input")),
+            "error": "also rejected",
+        });
+        assert!(matches!(
+            verify_worker_reply(&serde_json::to_vec(&reply).unwrap(), "input"),
+            Err(ReplayLoadError::WorkerProtocol(_))
+        ));
+        reply.as_object_mut().unwrap().remove("error");
+        verify_worker_reply(&serde_json::to_vec(&reply).unwrap(), "input").unwrap();
+    }
 
     #[cfg(unix)]
     fn shell_worker(script: &str) -> std::process::Child {
