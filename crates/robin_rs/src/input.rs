@@ -252,7 +252,7 @@ impl ThreadedInput {
             return;
         }
 
-        self.wheel_delta = 0;
+        let mut wheel_delta = 0i128;
 
         for event in events {
             match event {
@@ -274,28 +274,11 @@ impl ThreadedInput {
                 | GameEvent::KeyUp {
                     physical_key: None, ..
                 } => {}
-                GameEvent::MouseMove { x, y, .. } => {
-                    // Skip the entire mouse-event branch when disabled
-                    // so cinematics / movie playback / mission briefings
-                    // don't leak motion through to the game.
-                    if !self.enabled {
-                        continue;
-                    }
-                    self.position.x = *x as f32;
-                    self.position.y = *y as f32;
-                    self.has_position = true;
-                    self.clip_position();
-                }
-                GameEvent::MouseDown(x, y, _btn, _clicks) => {
-                    if !self.enabled {
-                        continue;
-                    }
-                    self.position.x = *x as f32;
-                    self.position.y = *y as f32;
-                    self.has_position = true;
-                    self.clip_position();
-                }
-                GameEvent::MouseUp(x, y, _btn) => {
+                GameEvent::MouseMove { x, y, .. }
+                | GameEvent::MouseDown(x, y, _, _)
+                | GameEvent::MouseUp(x, y, _) => {
+                    // Cinematics and modal screens must not leak mouse motion
+                    // or button-event coordinates into the gameplay cursor.
                     if !self.enabled {
                         continue;
                     }
@@ -308,10 +291,9 @@ impl ThreadedInput {
                     if !self.enabled {
                         continue;
                     }
-                    // Accumulate per-frame so `translate_mouse` sees the
-                    // net delta when several wheel events arrive in one
-                    // tick (each event carries a ±1 step).
-                    self.wheel_delta += *y as i16;
+                    // Keep opposing events cancellable before narrowing to the
+                    // legacy per-frame i16 delta. i128 can sum any event slice.
+                    wheel_delta += i128::from(*y);
                 }
                 GameEvent::Quit => {
                     self.ended = true;
@@ -346,6 +328,7 @@ impl ThreadedInput {
                 }
             }
         }
+        self.wheel_delta = wheel_delta.clamp(i128::from(i16::MIN), i128::from(i16::MAX)) as i16;
     }
 
     /// Current persistent keyboard state.
@@ -442,6 +425,50 @@ mod tests {
         // A fresh frame resets the accumulator even when no wheel arrives.
         ti.feed_events(&[]);
         assert_eq!(ti.wheel_delta(), 0);
+    }
+
+    #[test]
+    fn feed_wheel_preserves_full_event_deltas_and_clamps_only_the_frame_total() {
+        for (deltas, expected) in [
+            (vec![i32::MAX], i16::MAX),
+            (vec![i32::MIN], i16::MIN),
+            (vec![30_000, 30_000], i16::MAX),
+            (vec![-30_000, -30_000], i16::MIN),
+            (vec![i32::MAX, i32::MIN], -1),
+            (vec![i32::MIN, i32::MAX], -1),
+            (vec![60_000, -59_990], 10),
+        ] {
+            let mut input = ThreadedInput::new();
+            let events: Vec<_> = deltas.into_iter().map(GameEvent::MouseWheel).collect();
+            input.feed_events(&events);
+            assert_eq!(input.wheel_delta(), expected);
+            input.feed_events(&[]);
+            assert_eq!(input.wheel_delta(), 0);
+        }
+    }
+
+    #[test]
+    fn mouse_position_events_share_clipping_and_disabled_input_policy() {
+        for event in [
+            GameEvent::MouseMove {
+                x: 1000,
+                y: -20,
+                xrel: 0,
+                yrel: 0,
+            },
+            GameEvent::MouseDown(1000, -20, 1, 1),
+            GameEvent::MouseUp(1000, -20, 1),
+        ] {
+            let mut input = ThreadedInput::new();
+            input.set_clipping(ScreenBBox::from_coords(0.0, 0.0, 800.0, 600.0));
+            input.enabled = false;
+            input.feed_events(std::slice::from_ref(&event));
+            assert!(!input.has_position);
+            input.enabled = true;
+            input.feed_events(std::slice::from_ref(&event));
+            assert!(input.has_position);
+            assert_eq!((input.position().x, input.position().y), (799.0, 0.0));
+        }
     }
 
     #[test]
