@@ -1,6 +1,102 @@
 //! Discover mission payloads and their complete runtime dependency roots.
 use super::*;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn npc_dependencies_share_asset_collection_and_reject_missing_profiles() {
+        let mut profiles = ProfileManager::default();
+        profiles
+            .soldiers
+            .push(robin_engine::profiles::SoldierProfile {
+                filename: "Guard".into(),
+                profile_name: "Guard profile".into(),
+                exclamation_id: 7,
+                ..Default::default()
+            });
+        profiles
+            .civilians
+            .push(robin_engine::profiles::CivilianProfile {
+                filename: "Civilian".into(),
+                profile_name: "Civilian profile".into(),
+                exclamation_id: 0,
+                ..Default::default()
+            });
+        let mut build = ShippingMissionBuild::default();
+        add_npc_dependencies(&mut build, &profiles, [0, 0], [0]).unwrap();
+        assert_eq!(build.required_rhs_profiles.len(), 2);
+        assert_eq!(
+            build.required_rhs_profiles["Characters/Guard.rhs"],
+            BTreeSet::from(["Guard profile".into()])
+        );
+        assert_eq!(
+            build.required_rhs_profiles["Characters/Civilian.rhs"],
+            BTreeSet::from(["Civilian profile".into()])
+        );
+        assert_eq!(build.required_exclamation_ids, BTreeSet::from([7]));
+        assert!(
+            add_npc_dependencies(&mut build, &profiles, [1], [])
+                .unwrap_err()
+                .to_string()
+                .contains("soldier profile index 1")
+        );
+        assert!(
+            add_npc_dependencies(&mut build, &profiles, [], [2])
+                .unwrap_err()
+                .to_string()
+                .contains("civilian profile index 2")
+        );
+    }
+}
+
+fn add_npc_dependencies(
+    build: &mut ShippingMissionBuild,
+    profiles: &ProfileManager,
+    soldiers: impl IntoIterator<Item = u32>,
+    civilians: impl IntoIterator<Item = u32>,
+) -> Result<()> {
+    let soldiers = soldiers.into_iter().map(|index| {
+        profiles
+            .soldiers
+            .get(index as usize)
+            .map(|profile| {
+                (
+                    &profile.filename,
+                    &profile.profile_name,
+                    profile.exclamation_id,
+                )
+            })
+            .ok_or_else(|| anyhow!("soldier profile index {index} does not exist"))
+    });
+    let civilians = civilians.into_iter().map(|index| {
+        profiles
+            .civilians
+            .get(index as usize)
+            .map(|profile| {
+                (
+                    &profile.filename,
+                    &profile.profile_name,
+                    profile.exclamation_id,
+                )
+            })
+            .ok_or_else(|| anyhow!("civilian profile index {index} does not exist"))
+    });
+    for profile in soldiers.chain(civilians) {
+        let (filename, profile_name, exclamation_id) = profile?;
+        if exclamation_id != 0 {
+            build.required_exclamation_ids.insert(exclamation_id);
+        }
+        add_required_rhs_rel(
+            &mut build.required_rhs_profiles,
+            format!("Characters/{filename}.rhs"),
+            profile_name,
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn plan_missions(
     dd: &mut ShippingDatadir,
     cpf: &ProfileManager,
@@ -121,6 +217,19 @@ pub(super) fn plan_missions(
                 }
             }
         }
+        add_npc_dependencies(
+            &mut build,
+            cpf,
+            mission
+                .soldiers
+                .iter()
+                .map(|soldier| soldier.profile_number),
+            mission
+                .civilians
+                .iter()
+                .map(|civilian| civilian.profile_number),
+        )
+        .with_context(|| format!("NPC dependencies for mission {}", mp.mission_filename))?;
         let required_rhs_profiles = &mut build.required_rhs_profiles;
         // Demo boot hardcodes its party; preserve those profiles even when
         // the mission script does not name them directly.
@@ -206,34 +315,6 @@ pub(super) fn plan_missions(
                     mission.header.ambiance,
                     &fx.sprite,
                     &in_path,
-                );
-            }
-        }
-        for soldier in &mission.soldiers {
-            if let Some(profile) = cpf.soldiers.get(soldier.profile_number as usize) {
-                if profile.exclamation_id != 0 {
-                    build
-                        .required_exclamation_ids
-                        .insert(profile.exclamation_id);
-                }
-                add_required_rhs_rel(
-                    required_rhs_profiles,
-                    format!("Characters/{}.rhs", profile.filename),
-                    &profile.profile_name,
-                );
-            }
-        }
-        for civilian in &mission.civilians {
-            if let Some(profile) = cpf.civilians.get(civilian.profile_number as usize) {
-                if profile.exclamation_id != 0 {
-                    build
-                        .required_exclamation_ids
-                        .insert(profile.exclamation_id);
-                }
-                add_required_rhs_rel(
-                    required_rhs_profiles,
-                    format!("Characters/{}.rhs", profile.filename),
-                    &profile.profile_name,
                 );
             }
         }
