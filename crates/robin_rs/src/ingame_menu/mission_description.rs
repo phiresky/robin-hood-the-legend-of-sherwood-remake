@@ -310,11 +310,8 @@ impl MissionDescriptionModalState {
                 .then_some((self.screen.user_choice, self.screen.men_to_blazon_mode));
         }
 
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        for event in event_pump.poll_events() {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             self.input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => self.screen.activate(MissionDescriptionButton::Cancel),

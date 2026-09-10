@@ -157,10 +157,7 @@ impl LoadPickerModalState {
 
         let visible = self.model.visible();
 
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         let row_height = if self.detailed_metadata {
             DETAILED_ROW_HEIGHT
         } else {
@@ -201,7 +198,7 @@ impl LoadPickerModalState {
         ];
         self.controller
             .begin_frame(&self.model, &btn_positions, btn_w, btn_h);
-        for event in event_pump.poll_events() {
+        for event in events {
             self.controller.handle_event(
                 &mut self.model,
                 &event,

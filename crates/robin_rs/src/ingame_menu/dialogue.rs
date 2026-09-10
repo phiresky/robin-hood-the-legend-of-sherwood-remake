@@ -622,8 +622,10 @@ impl DialogueModalState {
             return Some(self.finish(sound, sound_config, audio, result));
         }
 
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        self.transform = transform;
         if self.dismissal.is_pending() {
-            for event in event_pump.poll_events() {
+            for event in events {
                 self.input_state.update_from_event(&event, self.transform);
             }
             self.input_state.end_frame();
@@ -633,8 +635,6 @@ impl DialogueModalState {
         }
 
         let mut advance = false;
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
         for event in events {
             self.input_state.update_from_event(&event, self.transform);
             match event {

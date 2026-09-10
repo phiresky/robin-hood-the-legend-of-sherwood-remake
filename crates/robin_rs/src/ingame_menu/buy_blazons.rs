@@ -167,14 +167,11 @@ impl BuyBlazonsModalState {
         if !self.screen.can_buy() {
             return Some(BuyBlazonsOutcome::Cancelled);
         }
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         let win_x = (MENU_W - WIN_W) / 2;
         let win_y = (MENU_H - WIN_H) / 2;
         let mut keyboard_activation = None;
-        for event in event_pump.poll_events() {
+        for event in events {
             self.input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => self.screen.on_quit(),
