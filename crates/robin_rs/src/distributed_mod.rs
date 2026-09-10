@@ -702,7 +702,7 @@ fn canonical_archive_path(raw: &str) -> Result<String, DistributedModError> {
     Ok(raw.to_ascii_lowercase())
 }
 
-fn parse_rhm_map_filename(bytes: &[u8]) -> Result<String, String> {
+fn parse_rhm_map_filename(bytes: &[u8]) -> Result<&str, String> {
     if bytes.len() < 34 {
         return Err(format!("selected RHM is too short ({} bytes)", bytes.len()));
     }
@@ -719,9 +719,9 @@ fn parse_rhm_map_filename(bytes: &[u8]) -> Result<String, String> {
     if end > bytes.len() {
         return Err("selected RHM truncates its map filename".to_owned());
     }
-    let map = String::from_utf8(bytes[34..end].to_vec())
+    let map = std::str::from_utf8(&bytes[34..end])
         .map_err(|error| format!("selected RHM map filename is not UTF-8: {error}"))?;
-    let map = map.trim_end_matches('\0').to_owned();
+    let map = map.trim_end_matches('\0');
     if map.is_empty() || map.contains(['/', '\\']) {
         return Err(format!("selected RHM has invalid map filename `{map}`"));
     }
@@ -748,6 +748,57 @@ mod tests {
         bytes[32..34].copy_from_slice(&(map.len() as u16).to_le_bytes());
         bytes.extend_from_slice(map.as_bytes());
         bytes
+    }
+
+    #[test]
+    fn map_filename_borrows_validated_archive_bytes() {
+        for tag in [b"RHMI", b"DUTY"] {
+            for name in ["Map", "Map\0\0", "Mäp\0"] {
+                let mut bytes = rhm(name);
+                bytes[..4].copy_from_slice(tag);
+                bytes.extend_from_slice(b"ignored payload");
+                let map = parse_rhm_map_filename(&bytes).unwrap();
+                assert_eq!(map, name.trim_end_matches('\0'));
+                assert_eq!(map.as_ptr(), bytes[34..].as_ptr());
+            }
+        }
+    }
+
+    #[test]
+    fn map_filename_rejects_malformed_archive_fields() {
+        assert!(
+            parse_rhm_map_filename(&[0; 33])
+                .unwrap_err()
+                .contains("too short")
+        );
+        let mut bytes = rhm("Map");
+        bytes[..4].copy_from_slice(b"NOPE");
+        assert!(
+            parse_rhm_map_filename(&bytes)
+                .unwrap_err()
+                .contains("unknown tag")
+        );
+        bytes[..4].copy_from_slice(b"RHMI");
+        bytes.pop();
+        assert!(
+            parse_rhm_map_filename(&bytes)
+                .unwrap_err()
+                .contains("truncates")
+        );
+        let mut bytes = rhm("Map");
+        bytes[34] = 0xff;
+        assert!(
+            parse_rhm_map_filename(&bytes)
+                .unwrap_err()
+                .contains("not UTF-8")
+        );
+        for name in ["", "\0\0", "a/b", "a\\b"] {
+            assert!(
+                parse_rhm_map_filename(&rhm(name))
+                    .unwrap_err()
+                    .contains("invalid map filename")
+            );
+        }
     }
 
     fn archive(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
