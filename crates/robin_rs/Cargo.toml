@@ -45,7 +45,9 @@ futures = "0.3"
 libc = "0.2"
 bytemuck = { workspace = true, features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
-ffmpeg-next = { version = "9", optional = true }
+# Playback needs demuxing/decoding, scaling, and resampling—not device capture
+# or filter graphs, whose native dependencies also burden isolated workers.
+ffmpeg-next = { version = "9", optional = true, default-features = false, features = ["format", "software-resampling", "software-scaling"] }
 png = "0.18"
 bitcode.workspace = true
 zstd.workspace = true

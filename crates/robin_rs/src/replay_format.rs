@@ -440,6 +440,9 @@ fn configure_current_native_worker_limits() -> std::io::Result<()> {
     // leaves >4x the bounded binary-buffer overlap while containing bitcode's
     // pre-validation collection allocation multiplier. Browser admission uses
     // the identical 384 MiB linear-memory maximum.
+    // TODO: decouple admission from the full game executable: video-enabled
+    // debug builds can exhaust this ceiling on code/shared-library mappings
+    // alone. Preserve decode containment while isolating that dependency footprint.
     const ADDRESS_SPACE_BYTES: libc::rlim_t = 384 * 1024 * 1024;
     set_limit!(libc::RLIMIT_AS, ADDRESS_SPACE_BYTES)?;
     set_limit!(libc::RLIMIT_CPU, 10)?;

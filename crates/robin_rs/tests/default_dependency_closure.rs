@@ -3,6 +3,55 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[test]
+fn video_dependency_features_exclude_capture_and_filter_subsystems() {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "metadata",
+            "--locked",
+            "--format-version=1",
+            "--features=video",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run video cargo metadata");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("decode cargo metadata");
+    for (name, required, forbidden) in [
+        ("ffmpeg-next", "format", ["device", "filter"]),
+        ("ffmpeg-sys-next", "avformat", ["avdevice", "avfilter"]),
+    ] {
+        let package = metadata["packages"]
+            .as_array()
+            .expect("packages")
+            .iter()
+            .find(|package| package["name"] == name)
+            .expect("video dependency package");
+        let node = metadata["resolve"]["nodes"]
+            .as_array()
+            .expect("resolve nodes")
+            .iter()
+            .find(|node| node["id"] == package["id"])
+            .expect("enabled video dependency");
+        let features = node["features"].as_array().expect("resolved features");
+        assert!(
+            features.iter().any(|feature| feature == required),
+            "{name} needs {required}"
+        );
+        for feature in forbidden {
+            assert!(
+                !features.iter().any(|enabled| enabled == feature),
+                "unused {name}/{feature} expands the native worker dependency footprint"
+            );
+        }
+    }
+}
+
+#[test]
 fn default_dependency_closure_excludes_optional_integrations() {
     let output = std::process::Command::new(env!("CARGO"))
         .args(["metadata", "--format-version=1"])
