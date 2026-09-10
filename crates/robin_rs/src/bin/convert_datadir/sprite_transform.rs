@@ -137,6 +137,35 @@ pub(super) fn member_quality(
     y0: usize,
 ) -> Result<f64> {
     use robin_assets::rle_jxl::{self, CL_OPAQUE};
+    anyhow::ensure!(
+        candidate.pixels.len() == usize::from(candidate.width) * usize::from(candidate.height),
+        "sprite {} source canvas dimensions do not match its pixels",
+        candidate.id
+    );
+    let row_bytes = rgba_width
+        .checked_mul(4)
+        .filter(|&bytes| bytes != 0)
+        .with_context(|| {
+            format!(
+                "sprite {} has an invalid decoded canvas width",
+                candidate.id
+            )
+        })?;
+    anyhow::ensure!(
+        rgba.len().is_multiple_of(row_bytes),
+        "sprite {} decoded canvas contains an incomplete RGBA row",
+        candidate.id
+    );
+    let rgba_height = rgba.len() / row_bytes;
+    anyhow::ensure!(
+        x0.checked_add(usize::from(candidate.width))
+            .is_some_and(|end| end <= rgba_width)
+            && y0
+                .checked_add(usize::from(candidate.height))
+                .is_some_and(|end| end <= rgba_height),
+        "sprite {} member region lies outside the decoded canvas",
+        candidate.id
+    );
     let (mut sse, mut opaque) = (0.0f64, 0u64);
     for y in 0..candidate.height as usize {
         for x in 0..candidate.width as usize {
@@ -777,6 +806,49 @@ pub(super) fn build_rhs_chunk_payload(
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+
+    #[test]
+    fn member_quality_checks_canvas_shape_and_region_before_indexing() {
+        let candidate = RleJxlCandidate {
+            id: 7,
+            width: 2,
+            height: 1,
+            pixels: vec![0xf800, 0x001f],
+            raw_words: 2,
+        };
+        let rgba = robin_assets::rle_jxl::canvas_to_rgba(&candidate.pixels).unwrap();
+        assert_eq!(
+            member_quality(&candidate, &rgba, 2, 0, 0).unwrap(),
+            f64::INFINITY
+        );
+        let mut atlas = vec![0; 4 * 4 * 3];
+        atlas[20..28].copy_from_slice(&rgba);
+        assert_eq!(
+            member_quality(&candidate, &atlas, 4, 1, 1).unwrap(),
+            f64::INFINITY
+        );
+        atlas[23] = 0;
+        assert!(
+            member_quality(&candidate, &atlas, 4, 1, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("class")
+        );
+        for (bytes, width, x, y) in [
+            (rgba.as_slice(), 0, 0, 0),
+            (rgba.as_slice(), usize::MAX, 0, 0),
+            (&rgba[..7], 2, 0, 0),
+            (rgba.as_slice(), 2, 1, 0),
+            (rgba.as_slice(), 2, 0, 1),
+            (rgba.as_slice(), 2, usize::MAX, 0),
+            (rgba.as_slice(), 2, 0, usize::MAX),
+        ] {
+            assert!(member_quality(&candidate, bytes, width, x, y).is_err());
+        }
+        let mut wrong_source = candidate;
+        wrong_source.pixels.pop();
+        assert!(member_quality(&wrong_source, &rgba, 2, 0, 0).is_err());
+    }
 
     #[test]
     fn compressed_size_matches_materialized_output() {
