@@ -83,17 +83,16 @@ pub fn checked_range(
     total: usize,
     context: impl Into<String>,
 ) -> Result<Range<usize>, Error> {
-    let context = context.into();
-    let end = start.checked_add(length).ok_or_else(|| {
-        Error::new(
-            context.clone(),
+    let Some(end) = start.checked_add(length) else {
+        return Err(Error::new(
+            context,
             start,
             ErrorKind::ArithmeticOverflow {
                 count: 1,
                 item_size: length,
             },
-        )
-    })?;
+        ));
+    };
     if end > total {
         return Err(Error::new(
             context,
@@ -125,17 +124,16 @@ impl<'a> Reader<'a> {
     }
 
     pub fn take(&mut self, length: usize, context: impl Into<String>) -> Result<&'a [u8], Error> {
-        let context = context.into();
-        let end = self.position.checked_add(length).ok_or_else(|| {
-            Error::new(
-                context.clone(),
+        let Some(end) = self.position.checked_add(length) else {
+            return Err(Error::new(
+                context,
                 self.position,
                 ErrorKind::ArithmeticOverflow {
                     count: 1,
                     item_size: length,
                 },
-            )
-        })?;
+            ));
+        };
         if end > self.bytes.len() {
             return Err(Error::new(
                 context,
@@ -188,7 +186,7 @@ impl<'a> Reader<'a> {
     ) -> Result<usize, Error> {
         let context = context.into();
         let offset = self.position;
-        let count = self.u32(context.clone())? as usize;
+        let count = self.u32(context.as_str())? as usize;
         self.validate_count(count, minimum_item_size, context, offset)?;
         Ok(count)
     }
@@ -201,7 +199,7 @@ impl<'a> Reader<'a> {
     ) -> Result<usize, Error> {
         let context = context.into();
         let offset = self.position;
-        let raw = self.i32(context.clone())?;
+        let raw = self.i32(context.as_str())?;
         let count = usize::try_from(raw)
             .map_err(|_| Error::new(context.clone(), offset, ErrorKind::NegativeCount(raw)))?;
         self.validate_count(count, minimum_item_size, context, offset)?;
@@ -215,17 +213,16 @@ impl<'a> Reader<'a> {
         context: impl Into<String>,
         offset: usize,
     ) -> Result<(), Error> {
-        let context = context.into();
-        let minimum_bytes = count.checked_mul(minimum_item_size).ok_or_else(|| {
-            Error::new(
-                context.clone(),
+        let Some(minimum_bytes) = count.checked_mul(minimum_item_size) else {
+            return Err(Error::new(
+                context,
                 offset,
                 ErrorKind::ArithmeticOverflow {
                     count,
                     item_size: minimum_item_size,
                 },
-            )
-        })?;
+            ));
+        };
         if minimum_bytes > self.remaining() {
             return Err(Error::new(
                 context,
@@ -247,7 +244,6 @@ impl<'a> Reader<'a> {
         length: usize,
         context: impl Into<String>,
     ) -> Result<&'a [u8], Error> {
-        let context = context.into();
         let range = checked_range(start, length, self.bytes.len(), context)?;
         Ok(&self.bytes[range])
     }
@@ -271,6 +267,51 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct UnusedContext;
+
+    impl From<UnusedContext> for String {
+        fn from(_: UnusedContext) -> Self {
+            panic!("successful reads must not materialize error context")
+        }
+    }
+
+    #[test]
+    fn successful_reads_do_not_materialize_error_context() {
+        let bytes = [0; 16];
+        let mut reader = Reader::new(&bytes);
+        assert_eq!(checked_range(2, 3, bytes.len(), UnusedContext), Ok(2..5));
+        assert_eq!(reader.range(2, 3, UnusedContext).unwrap(), &[0; 3]);
+        reader.validate_count(2, 8, UnusedContext, 0).unwrap();
+        assert_eq!(reader.u8(UnusedContext).unwrap(), 0);
+        assert_eq!(reader.u16(UnusedContext).unwrap(), 0);
+        assert_eq!(reader.u32(UnusedContext).unwrap(), 0);
+        assert_eq!(reader.i32(UnusedContext).unwrap(), 0);
+        assert_eq!(reader.f32(UnusedContext).unwrap(), 0.0);
+        assert_eq!(reader.take(1, UnusedContext).unwrap(), &[0]);
+        assert!(reader.take(0, UnusedContext).unwrap().is_empty());
+        reader.seek(0, UnusedContext).unwrap();
+    }
+
+    #[test]
+    fn arithmetic_failures_preserve_context_and_cursor() {
+        let mut reader = Reader::new(&[0; 4]);
+        reader.seek(1, "start").unwrap();
+        let error = reader.take(usize::MAX, "payload").unwrap_err();
+        assert_eq!(error.context, "payload");
+        assert_eq!(error.offset, 1);
+        assert!(matches!(error.kind, ErrorKind::ArithmeticOverflow { .. }));
+        assert_eq!(reader.position(), 1);
+
+        let error = reader
+            .validate_count(usize::MAX, 2, "items", 7)
+            .unwrap_err();
+        assert_eq!(error.context, "items");
+        assert_eq!(error.offset, 7);
+        assert!(matches!(error.kind, ErrorKind::ArithmeticOverflow { .. }));
+        assert_eq!(reader.position(), 1);
+    }
 
     #[test]
     fn take_reports_context_offset_and_remaining_bytes() {
