@@ -344,6 +344,34 @@ pub struct CampaignProgressGraph {
     pub cyclic_prerequisites: bool,
 }
 
+fn reorder_gallery_nodes(
+    nodes: Vec<CampaignProgressNode>,
+    order: &[usize],
+) -> Vec<CampaignProgressNode> {
+    assert_eq!(
+        nodes.len(),
+        order.len(),
+        "gallery order must include every node"
+    );
+    let mut remap = vec![0; nodes.len()];
+    for (new, &old) in order.iter().enumerate() {
+        remap[old] = new;
+    }
+    let mut remaining: Vec<_> = nodes.into_iter().map(Some).collect();
+    order
+        .iter()
+        .map(|&old| {
+            let mut node = remaining[old]
+                .take()
+                .expect("gallery order must include each node exactly once");
+            for parent in &mut node.prerequisite_nodes {
+                *parent = remap[*parent];
+            }
+            node
+        })
+        .collect()
+}
+
 impl CampaignProgressGraph {
     pub fn build(
         campaign: &Campaign,
@@ -605,16 +633,7 @@ impl CampaignProgressGraph {
         }
         // Gallery order follows story stages too. Remap every display edge;
         // mission_idx continues to identify the original campaign mission.
-        let mut remap = vec![0; nodes.len()];
-        for (new, &old) in branch_order.iter().enumerate() {
-            remap[old] = new;
-        }
-        nodes = branch_order.iter().map(|&old| nodes[old].clone()).collect();
-        for node in &mut nodes {
-            for parent in &mut node.prerequisite_nodes {
-                *parent = remap[*parent];
-            }
-        }
+        nodes = reorder_gallery_nodes(nodes, &branch_order);
         let completed_missions = nodes
             .iter()
             .filter(|node| {
@@ -693,6 +712,80 @@ mod tests {
     use super::*;
     use robin_engine::mission::Mission;
     use robin_engine::profiles::MissionProfile;
+
+    #[test]
+    fn gallery_reordering_moves_nodes_and_preserves_all_display_edges() {
+        let mut profiles = ProfileManager::new();
+        let mut campaign = Campaign::default();
+        for index in 0..5 {
+            profiles.missions.push(MissionProfile {
+                id: index,
+                mission_name: format!("Mission {index}"),
+                location: if index == 0 {
+                    MissionLocation::Sherwood
+                } else {
+                    MissionLocation::Nottingham
+                },
+                ..Default::default()
+            });
+            campaign.missions.push(Mission {
+                profile_idx: Some(index),
+                ..Mission::new()
+            });
+        }
+        let mut template = CampaignProgressGraph::build(&campaign, &profiles, None).nodes;
+        assert_eq!(template.len(), 4);
+        for (index, node) in template.iter_mut().enumerate() {
+            node.prerequisite_nodes = vec![index, (index + 1) % 4];
+        }
+        assert!(reorder_gallery_nodes(Vec::new(), &[]).is_empty());
+        let mut checked = 0;
+        for a in 0..4 {
+            for b in 0..4 {
+                for c in 0..4 {
+                    for d in 0..4 {
+                        let order = [a, b, c, d];
+                        if order
+                            .iter()
+                            .copied()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            != 4
+                        {
+                            continue;
+                        }
+                        let nodes = template.clone();
+                        let name_pointers: Vec<_> =
+                            nodes.iter().map(|node| node.name.as_ptr()).collect();
+                        let mut remap = [0; 4];
+                        for (new, &old) in order.iter().enumerate() {
+                            remap[old] = new;
+                        }
+                        let expected: Vec<_> = order
+                            .iter()
+                            .map(|&old| {
+                                let mut node = nodes[old].clone();
+                                for parent in &mut node.prerequisite_nodes {
+                                    *parent = remap[*parent];
+                                }
+                                node
+                            })
+                            .collect();
+                        let actual = reorder_gallery_nodes(nodes, &order);
+                        assert_eq!(
+                            serde_json::to_value(&actual).unwrap(),
+                            serde_json::to_value(expected).unwrap()
+                        );
+                        for (new, &old) in order.iter().enumerate() {
+                            assert_eq!(actual[new].name.as_ptr(), name_pointers[old]);
+                        }
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 24);
+    }
 
     #[test]
     fn story_route_and_branches_keep_real_edges_and_hide_unused_slots() {
