@@ -372,7 +372,7 @@ pub(super) fn bundle_grouped_audio(
         }
         entry.0.push(logical.clone());
     }
-    let mut members_by_group = BTreeMap::<&str, Vec<String>>::new();
+    let mut members_by_group = BTreeMap::<&str, Vec<&str>>::new();
     for (file, (_, size)) in &file_refs {
         if *size >= AUDIO_BUNDLE_MAX_MEMBER {
             continue;
@@ -388,7 +388,7 @@ pub(super) fn bundle_grouped_audio(
         members_by_group
             .entry(group)
             .or_default()
-            .push(file.clone());
+            .push(file.as_str());
     }
     let bundles_dir = data_out.join("audio/bundles");
     fs::create_dir_all(&bundles_dir)?;
@@ -397,7 +397,7 @@ pub(super) fn bundle_grouped_audio(
         // BTreeMap iteration already sorted members by content-hash name.
         let mut bytes = Vec::new();
         let mut offsets = Vec::with_capacity(members.len());
-        for file in &members {
+        for &file in &members {
             let input = fs::File::open(data_out.join(file))
                 .with_context(|| format!("open bundle member {file}"))?;
             offsets.push(u32::try_from(bytes.len()).context("audio bundle exceeds u32")?);
@@ -411,7 +411,7 @@ pub(super) fn bundle_grouped_audio(
             .with_context(|| format!("write {bundle_rel}"))?;
         bundle_count += 1;
         bundled_bytes += bytes.len() as u64;
-        for (file, offset) in members.iter().zip(offsets) {
+        for (&file, offset) in members.iter().zip(offsets) {
             for logical in &file_refs[file].0 {
                 let asset = dd
                     .audio_assets
