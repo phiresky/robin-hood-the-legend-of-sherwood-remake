@@ -348,34 +348,32 @@ impl DebriefingModalState {
 /// as-is in the output.
 fn substitute_printf(template: &str, values: &[&str]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
-    let mut idx = 0;
+    let mut values = values.iter();
     let mut chars = template.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '%' {
             out.push(c);
             continue;
         }
-        // Lookahead at the conversion spec.
-        let mut spec = String::new();
-        if let Some(&'l') = chars.peek() {
-            spec.push('l');
-            chars.next();
-        }
-        match chars.peek() {
-            Some(&'u') | Some(&'i') | Some(&'d') | Some(&'s') => {
-                spec.push(*chars.peek().unwrap());
+        let long = chars.next_if_eq(&'l').is_some();
+        match chars.peek().copied() {
+            Some(spec @ ('u' | 'i' | 'd' | 's')) => {
                 chars.next();
-                if idx < values.len() {
-                    out.push_str(values[idx]);
-                    idx += 1;
+                if let Some(value) = values.next() {
+                    out.push_str(value);
                 } else {
                     out.push('%');
-                    out.push_str(&spec);
+                    if long {
+                        out.push('l');
+                    }
+                    out.push(spec);
                 }
             }
             _ => {
                 out.push('%');
-                out.push_str(&spec);
+                if long {
+                    out.push('l');
+                }
             }
         }
     }
@@ -944,6 +942,20 @@ mod tests {
             substitute_printf("Money %u (bonus %u, loot %u)", &["300", "100", "200"]),
             "Money 300 (bonus 100, loot 200)"
         );
+    }
+
+    #[test]
+    fn substitute_printf_preserves_unsupported_and_unfilled_syntax() {
+        for template in ["%", "%l", "%x", "%lx", "%lls", "é %lu 界 %s", "%%"] {
+            assert_eq!(substitute_printf(template, &[]), template);
+        }
+        assert_eq!(
+            substitute_printf("%x %li %ld %s", &["1", "2", "é"]),
+            "%x 1 2 é"
+        );
+        assert_eq!(substitute_printf("%u %ls %d", &["42"]), "42 %ls %d");
+        assert_eq!(substitute_printf("%%u", &["42"]), "%42");
+        assert_eq!(substitute_printf("%s", &["", "unused"]), "");
     }
 
     #[test]

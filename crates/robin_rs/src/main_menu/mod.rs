@@ -1091,16 +1091,19 @@ fn seconds_to_time(seconds: u32) -> String {
 /// placeholder is present the template is returned verbatim — the
 /// localised table is assumed trustworthy.
 fn substitute_i(template: &str, value: i64) -> String {
-    for marker in ["%i", "%d"] {
-        if let Some(pos) = template.find(marker) {
-            let mut out = String::with_capacity(template.len() + 8);
-            out.push_str(&template[..pos]);
-            out.push_str(&value.to_string());
-            out.push_str(&template[pos + marker.len()..]);
-            return out;
-        }
-    }
-    template.to_string()
+    let first = ["%i", "%d"]
+        .into_iter()
+        .filter_map(|marker| template.find(marker))
+        .min();
+    let Some(pos) = first else {
+        return template.to_owned();
+    };
+    use std::fmt::Write;
+    let mut out = String::with_capacity(template.len() + 8);
+    out.push_str(&template[..pos]);
+    write!(&mut out, "{value}").expect("writing to a String cannot fail");
+    out.push_str(&template[pos + 2..]);
+    out
 }
 
 #[cfg(test)]
@@ -1301,6 +1304,14 @@ mod tests {
     fn substitute_i_basic() {
         assert_eq!(substitute_i("Money: £%i", 100), "Money: £100");
         assert_eq!(substitute_i("Ransom: %d", 42), "Ransom: 42");
+    }
+
+    #[test]
+    fn substitute_i_uses_first_position_not_specifier_priority() {
+        assert_eq!(substitute_i("£%d / %i", -42), "£-42 / %i");
+        assert_eq!(substitute_i("%i / %d", 42), "42 / %d");
+        assert_eq!(substitute_i("%d %d", i64::MIN), format!("{} %d", i64::MIN));
+        assert_eq!(substitute_i("%u / %s", 42), "%u / %s");
     }
 
     #[test]
