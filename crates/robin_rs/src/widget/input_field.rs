@@ -310,25 +310,8 @@ impl WidgetInputField {
                     self.caret_visible = true;
                     return Vec::new();
                 }
-                KeyCode::Backspace => {
-                    if self.caret_offset > 0 {
-                        self.caret_offset -= 1;
-                        let byte_pos =
-                            byte_offset_for_char_index(&self.edit_text, self.caret_offset);
-                        self.edit_text.remove(byte_pos);
-                        return vec![self.base.make_event(UiMsg::WidgetTextChanging)];
-                    }
-                    return Vec::new();
-                }
-                KeyCode::Delete => {
-                    if self.caret_offset < self.edit_text.chars().count() {
-                        let byte_pos =
-                            byte_offset_for_char_index(&self.edit_text, self.caret_offset);
-                        self.edit_text.remove(byte_pos);
-                        return vec![self.base.make_event(UiMsg::WidgetTextChanging)];
-                    }
-                    return Vec::new();
-                }
+                KeyCode::Backspace => return self.remove_before_caret().into_iter().collect(),
+                KeyCode::Delete => return self.remove_at_caret().into_iter().collect(),
                 KeyCode::Enter => {
                     return self.validate_and_exit();
                 }
@@ -440,24 +423,39 @@ impl WidgetInputField {
 
     /// Remove the character before the caret (Backspace).
     pub fn backspace(&mut self) -> Option<UiEvent> {
+        let event = self.remove_before_caret();
+        if event.is_some() {
+            self.caret_visible = true;
+        }
+        event
+    }
+
+    // Keyboard dispatch preserves blink state; direct edit helpers reveal it.
+    fn remove_before_caret(&mut self) -> Option<UiEvent> {
         if self.caret_offset == 0 {
             return None;
         }
         self.caret_offset -= 1;
         let byte_pos = byte_offset_for_char_index(&self.edit_text, self.caret_offset);
         self.edit_text.remove(byte_pos);
-        self.caret_visible = true;
         Some(self.base.make_event(UiMsg::WidgetTextChanging))
     }
 
     /// Remove the character at the caret (Delete).
     pub fn delete_char(&mut self) -> Option<UiEvent> {
+        let event = self.remove_at_caret();
+        if event.is_some() {
+            self.caret_visible = true;
+        }
+        event
+    }
+
+    fn remove_at_caret(&mut self) -> Option<UiEvent> {
         if self.caret_offset >= self.edit_text.chars().count() {
             return None;
         }
         let byte_pos = byte_offset_for_char_index(&self.edit_text, self.caret_offset);
         self.edit_text.remove(byte_pos);
-        self.caret_visible = true;
         Some(self.base.make_event(UiMsg::WidgetTextChanging))
     }
 
@@ -936,5 +934,38 @@ mod tests {
         f.set_focusable_active(false);
         assert_eq!(f.base.state, UiState::SelectedEditable);
         assert_eq!(f.base.text, "");
+    }
+}
+
+#[test]
+fn removal_paths_share_unicode_edits_but_preserve_caret_display_policy() {
+    for backwards in [false, true] {
+        let mut keyboard = WidgetInputField::new(1);
+        keyboard.set_text("é🏹中");
+        keyboard.caret_offset = 1;
+        keyboard.caret_visible = false;
+        let mut direct = keyboard.clone();
+        let keyboard_event = if backwards {
+            keyboard.remove_before_caret()
+        } else {
+            keyboard.remove_at_caret()
+        };
+        let direct_event = if backwards {
+            direct.backspace()
+        } else {
+            direct.delete_char()
+        };
+        assert_eq!(keyboard_event.unwrap().msg_type, UiMsg::WidgetTextChanging);
+        assert_eq!(direct_event.unwrap().msg_type, UiMsg::WidgetTextChanging);
+        assert_eq!(keyboard.edit_text, if backwards { "🏹中" } else { "é中" });
+        assert_eq!(keyboard.edit_text, direct.edit_text);
+        assert_eq!(keyboard.caret_offset, direct.caret_offset);
+        assert!(!keyboard.caret_visible);
+        assert!(direct.caret_visible);
+        direct.set_text("");
+        direct.caret_visible = false;
+        assert!(direct.backspace().is_none());
+        assert!(direct.delete_char().is_none());
+        assert!(!direct.caret_visible);
     }
 }
