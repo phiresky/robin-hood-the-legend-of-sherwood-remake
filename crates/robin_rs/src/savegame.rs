@@ -1367,30 +1367,21 @@ impl SaveGameManager {
         let src = self
             .catalog
             .get(src)
-            .with_context(|| format!("cannot copy metadata from missing save slot {src}"))?
-            .clone();
+            .with_context(|| format!("cannot copy metadata from missing save slot {src}"))?;
         let destination = dst;
-        let mut dst = self
+        let dst = self
             .catalog
             .get(dst)
-            .with_context(|| format!("cannot copy metadata to missing save slot {dst}"))?
-            .clone();
-
-        dst.mission_id = src.mission_id;
-        dst.version = src.version;
-        dst.timestamp = src.timestamp;
-        dst.mission_name = src.mission_name;
-        dst.player_profile_id = src.player_profile_id;
-        dst.player_name = src.player_name;
-        dst.campaign_progress = src.campaign_progress;
-        dst.missions_done = src.missions_done;
-        dst.missions_total = src.missions_total;
-        dst.gang_size = src.gang_size;
-        dst.ransom = src.ransom;
-        dst.blazons = src.blazons;
-        dst.amulets = src.amulets;
-        dst.multiplayer_diagnostic = src.multiplayer_diagnostic;
-        self.catalog.replace(destination, dst, state)
+            .with_context(|| format!("cannot copy metadata to missing save slot {dst}"))?;
+        // Copy the source snapshot while retaining the destination's slot
+        // identity and user-facing label, not its obsolete snapshot metadata.
+        let metadata = SaveGame {
+            filename: dst.filename.clone(),
+            text: dst.text.clone(),
+            special: dst.special,
+            ..src.clone()
+        };
+        self.catalog.replace(destination, metadata, state)
     }
 
     /// Write a full save file (engine + campaign) to the given slot.
