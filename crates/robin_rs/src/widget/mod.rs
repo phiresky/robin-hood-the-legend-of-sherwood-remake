@@ -19,7 +19,7 @@ use robin_engine::widget_state as engine_widget_state;
 
 pub use button::WidgetButton;
 pub use frame_wnd::FrameWnd;
-pub use input_field::{TextFromCaretSide, WidgetInputField};
+pub use input_field::WidgetInputField;
 pub use label::WidgetLabel;
 pub use listbox::{ColumnAlign, ColumnLayout, LayoutCell, WidgetListbox};
 pub use picture::{WidgetMultiPicture, WidgetPicture};

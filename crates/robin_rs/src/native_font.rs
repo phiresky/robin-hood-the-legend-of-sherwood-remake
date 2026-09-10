@@ -316,8 +316,7 @@ impl NativeFont {
     /// `pre_spacing + width + post_spacing`. Missing glyphs return 0.
     ///
     /// Does NOT include `extra_spacing()` — callers that need per-char
-    /// pixel advances (e.g. `WidgetInputField::get_text_from_caret`)
-    /// must add `extra_spacing()` themselves.
+    /// pixel advances must add `extra_spacing()` themselves.
     pub fn character_width(&self, ch: char) -> u32 {
         let code = ch as u32;
         if code > u16::MAX as u32 {

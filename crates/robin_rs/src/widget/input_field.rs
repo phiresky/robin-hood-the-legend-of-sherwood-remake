@@ -529,68 +529,6 @@ impl WidgetInputField {
         true
     }
 
-    /// Compute the visible substring from the caret outward, bounded by
-    /// a pixel-width budget.
-    ///
-    /// Walks left or right from the caret, accumulating per-char pixel
-    /// widths via `char_width_fn` (which should return the character's
-    /// rendered width including any extra spacing) and stops when the
-    /// running total would exceed `width`. Used by the renderer to
-    /// compute a horizontal scroll window so long text scrolls under
-    /// the caret rather than overflowing the field.
-    ///
-    /// Font-agnostic at the widget level: callers wire their own font
-    /// (NativeFont, TrueTypeFont, …) through the closure.
-    pub fn get_text_from_caret(
-        &self,
-        side: TextFromCaretSide,
-        width: u32,
-        char_width_fn: impl Fn(char) -> u32,
-    ) -> String {
-        let chars: Vec<char> = self.edit_text.chars().collect();
-        let n = chars.len();
-        let mut result = String::new();
-        let mut cur_width: u32 = 0;
-
-        match side {
-            TextFromCaretSide::Left => {
-                // Walk leftward from `caret_offset - 1` (the char just
-                // before the caret), prepending to the result.
-                if self.caret_offset == 0 {
-                    return result;
-                }
-                let mut i = self.caret_offset;
-                while i > 0 {
-                    let ch = chars[i - 1];
-                    let w = char_width_fn(ch);
-                    if cur_width + w > width {
-                        break;
-                    }
-                    cur_width += w;
-                    result.insert(0, ch);
-                    i -= 1;
-                }
-            }
-            TextFromCaretSide::Right => {
-                // Walk rightward from `caret_offset` (the char at the
-                // caret position).
-                let mut i = self.caret_offset;
-                while i < n {
-                    let ch = chars[i];
-                    let w = char_width_fn(ch);
-                    if cur_width + w > width {
-                        break;
-                    }
-                    cur_width += w;
-                    result.push(ch);
-                    i += 1;
-                }
-            }
-        }
-
-        result
-    }
-
     /// Commit the edit and leave edit mode (as if Enter were pressed).
     pub fn commit_edit(&mut self) -> Vec<UiEvent> {
         if self.base.state != UiState::SelectedEditable {
@@ -646,13 +584,6 @@ impl crate::focus_manager::WidgetFocusable for WidgetInputField {
     fn suppresses_navigation_while_active(&self) -> bool {
         true
     }
-}
-
-/// Side selector for [`WidgetInputField::get_text_from_caret`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextFromCaretSide {
-    Left,
-    Right,
 }
 
 /// Convert a character index into a byte offset within a UTF-8 string.
@@ -898,32 +829,6 @@ mod tests {
         f.set_focusable_active(false);
         assert_eq!(f.base.state, UiState::SelectedEditable);
         assert_eq!(f.saved_text, "hello");
-    }
-
-    #[test]
-    fn get_text_from_caret_left_and_right_with_pixel_budget() {
-        // With every char 10 pixels wide, a width budget of 25 fits
-        // exactly two chars on either side of the caret (cumulative
-        // 20 ≤ 25, next would push to 30 > 25).
-        let mut f = WidgetInputField::new(1);
-        f.edit_text = "abcdef".to_string();
-        f.caret_offset = 3; // between 'c' and 'd'
-        let cw = |_ch: char| -> u32 { 10 };
-        let left = f.get_text_from_caret(TextFromCaretSide::Left, 25, cw);
-        assert_eq!(left, "bc");
-        let right = f.get_text_from_caret(TextFromCaretSide::Right, 25, cw);
-        assert_eq!(right, "de");
-    }
-
-    #[test]
-    fn get_text_from_caret_zero_width_returns_empty() {
-        // Returns empty when the budget can't fit the first char.
-        let mut f = WidgetInputField::new(1);
-        f.edit_text = "abc".to_string();
-        f.caret_offset = 1;
-        let cw = |_ch: char| -> u32 { 10 };
-        assert_eq!(f.get_text_from_caret(TextFromCaretSide::Left, 5, cw), "");
-        assert_eq!(f.get_text_from_caret(TextFromCaretSide::Right, 5, cw), "");
     }
 
     #[test]
