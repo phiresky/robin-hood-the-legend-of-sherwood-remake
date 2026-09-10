@@ -78,20 +78,21 @@ impl RecordingIndex {
             if scan.stopped {
                 return Err("recording index is shut down".into());
             }
+            if scan.worker.is_some() {
+                return Ok(());
+            }
             let Some(directory) = self.directory.clone() else {
                 return Ok(());
             };
-            if scan.worker.is_none() {
-                let cancelled = self.cancelled.clone();
-                scan.worker = Some(
-                    std::thread::Builder::new()
-                        .name("recording-index".into())
-                        .spawn(move || {
-                            backfill(&directory, &cancelled).map_err(|error| error.to_string())
-                        })
-                        .map_err(|error| format!("Cannot start recording index: {error}"))?,
-                );
-            }
+            let cancelled = self.cancelled.clone();
+            scan.worker = Some(
+                std::thread::Builder::new()
+                    .name("recording-index".into())
+                    .spawn(move || {
+                        backfill(&directory, &cancelled).map_err(|error| error.to_string())
+                    })
+                    .map_err(|error| format!("Cannot start recording index: {error}"))?,
+            );
         }
         Ok(())
     }
@@ -550,6 +551,70 @@ mod tests {
         drop(file);
         assert!(!temporary_path.exists());
         assert!(!recording_link_path(&attempts, key).exists());
+    }
+
+    #[test]
+    fn refresh_retains_running_and_completed_workers_until_observed() {
+        let directory = tempfile::tempdir().unwrap();
+        let index = RecordingIndex::native(directory.path().join("attempts"));
+        let (release, wait) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            wait.recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            Err("unobserved scan result".to_owned())
+        });
+        let worker_id = worker.thread().id();
+        index.scan.lock().unwrap().worker = Some(worker);
+        index.refresh_index().unwrap();
+        assert_eq!(
+            index
+                .scan
+                .lock()
+                .unwrap()
+                .worker
+                .as_ref()
+                .unwrap()
+                .thread()
+                .id(),
+            worker_id
+        );
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !index
+            .scan
+            .lock()
+            .unwrap()
+            .worker
+            .as_ref()
+            .unwrap()
+            .is_finished()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "test worker did not finish"
+            );
+            std::thread::yield_now();
+        }
+        index.refresh_index().unwrap();
+        assert_eq!(
+            index
+                .scan
+                .lock()
+                .unwrap()
+                .worker
+                .as_ref()
+                .unwrap()
+                .thread()
+                .id(),
+            worker_id
+        );
+        assert_eq!(
+            index.take_completion(),
+            Some(Err("unobserved scan result".to_owned()))
+        );
+        assert!(index.take_completion().is_none());
+        index.refresh_index().unwrap();
+        completion(&index).unwrap();
     }
 
     #[test]
