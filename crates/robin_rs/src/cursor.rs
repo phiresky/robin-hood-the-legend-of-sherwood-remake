@@ -539,14 +539,14 @@ fn cursor_pixel_layers(
     pixels: impl ExactSizeIterator<Item = u16>,
     shadowed: bool,
 ) -> (Vec<u8>, Option<Vec<u8>>) {
-    let mut color_rgba = Vec::with_capacity(pixels.len() * 4);
-    let mut shadow_rgba = Vec::with_capacity(pixels.len() * 4);
-    let mut has_shadow = false;
+    let byte_len = pixels.len() * 4;
+    let mut color_rgba = Vec::with_capacity(byte_len);
+    let mut shadow_rgba: Option<Vec<u8>> = None;
     for px in pixels {
+        let is_shadow = shadowed && px == SHADOW_KEY;
         if px == TRANSPARENT_COLOR_KEY_16 {
             color_rgba.extend_from_slice(&[0, 0, 0, 0]);
-            shadow_rgba.extend_from_slice(&[0, 0, 0, 0]);
-        } else if shadowed && px == SHADOW_KEY {
+        } else if is_shadow {
             // Only a shadowed cursor keys its shadow colour out.
             // A normal cursor is a plain source-transparent blit in the
             // original game (the cursor logic switches on the resource's mouse
@@ -555,16 +555,21 @@ fn cursor_pixel_layers(
             // White turns the texture into a tintable alpha mask. Normal
             // rendering tints it black, preserving the old wgpu result;
             // bow feedback and QA recording can now supply their own color.
-            shadow_rgba.extend_from_slice(&[255, 255, 255, 255]);
-            has_shadow = true;
+            shadow_rgba.get_or_insert_with(|| {
+                let mut shadow = Vec::with_capacity(byte_len);
+                shadow.resize(color_rgba.len() - 4, 0);
+                shadow
+            });
         } else {
             let (r, g, b) = rgb565_to_rgb8(px);
             color_rgba.extend_from_slice(&[r, g, b, 255]);
-            shadow_rgba.extend_from_slice(&[0, 0, 0, 0]);
+        }
+        if let Some(shadow) = &mut shadow_rgba {
+            shadow.extend_from_slice(&if is_shadow { [255; 4] } else { [0; 4] });
         }
     }
 
-    (color_rgba, has_shadow.then_some(shadow_rgba))
+    (color_rgba, shadow_rgba)
 }
 
 fn cursor_shadow_tint(opacity: u16, shadow_color: u16, effect: CursorShadowEffect) -> [f32; 4] {
@@ -630,6 +635,30 @@ mod tests {
             }
         }
         let (_, shadow) = cursor_pixel_layers([0xFFFF, TRANSPARENT_COLOR_KEY_16].into_iter(), true);
+        assert!(shadow.is_none());
+    }
+
+    #[test]
+    fn late_cursor_shadow_allocation_preserves_transparent_prefix_and_suffix() {
+        for shadow_index in 0..5 {
+            let mut pixels = [0xFFFF, TRANSPARENT_COLOR_KEY_16, 0, 0xFFE0, 0xF800];
+            pixels[shadow_index] = SHADOW_KEY;
+            let (_, shadow) = cursor_pixel_layers(pixels.into_iter(), true);
+            let shadow = shadow.unwrap();
+            assert_eq!(shadow.len(), 20);
+            for (index, pixel) in shadow.as_chunks::<4>().0.iter().enumerate() {
+                assert_eq!(
+                    *pixel,
+                    if index == shadow_index {
+                        [255; 4]
+                    } else {
+                        [0; 4]
+                    }
+                );
+            }
+        }
+        let (color, shadow) = cursor_pixel_layers(std::iter::empty(), true);
+        assert!(color.is_empty());
         assert!(shadow.is_none());
     }
 
