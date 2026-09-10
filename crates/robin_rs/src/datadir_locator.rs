@@ -39,24 +39,28 @@ const INSTALL_FOLDER_NAMES: &[&str] = &[
     "Robin Hood",
 ];
 
-/// Case-insensitive single-component lookup: the entry of `dir` whose name
-/// matches `name` ignoring ASCII case.
-fn entry_case_insensitive(dir: &Path, name: &str) -> Option<PathBuf> {
+fn directory_entries(dir: &Path) -> impl Iterator<Item = std::fs::DirEntry> + '_ {
     let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
             tracing::warn!(path = %dir.display(), "Could not inspect game installation directory: {error}");
-            return None;
+            None
         }
     };
-    entries.filter_map(|entry| match entry {
+    entries.into_iter().flatten().filter_map(move |entry| match entry {
         Ok(entry) => Some(entry),
         Err(error) => {
             tracing::warn!(path = %dir.display(), "Could not inspect game installation entry: {error}");
             None
         }
-    }).find_map(|entry| {
+    })
+}
+
+/// Case-insensitive single-component lookup: the entry of `dir` whose name
+/// matches `name` ignoring ASCII case.
+fn entry_case_insensitive(dir: &Path, name: &str) -> Option<PathBuf> {
+    directory_entries(dir).find_map(|entry| {
         entry
             .file_name()
             .to_str()?
@@ -146,17 +150,35 @@ fn search_roots() -> Vec<PathBuf> {
 /// releases and return the first valid installation.
 pub fn find_installed_datadir() -> Option<PathBuf> {
     for root in search_roots() {
-        for name in INSTALL_FOLDER_NAMES {
-            let Some(candidate) = entry_case_insensitive(&root, name) else {
-                continue;
-            };
-            if is_valid_install_dir(&candidate) {
-                tracing::info!("Found game installation: {}", candidate.display());
-                return Some(candidate);
-            }
+        if let Some(candidate) = find_installation_in_root(&root) {
+            tracing::info!("Found game installation: {}", candidate.display());
+            return Some(candidate);
         }
     }
     None
+}
+
+fn find_installation_in_root(root: &Path) -> Option<PathBuf> {
+    let mut candidates = vec![None; INSTALL_FOLDER_NAMES.len()];
+    for entry in directory_entries(root) {
+        let filename = entry.file_name();
+        let Some(filename) = filename.to_str() else {
+            continue;
+        };
+        if let Some(index) = INSTALL_FOLDER_NAMES
+            .iter()
+            .position(|name| filename.eq_ignore_ascii_case(name))
+            && candidates[index].is_none()
+        {
+            candidates[index] = Some(entry.path());
+        }
+    }
+    // Preserve configured priority, not filesystem enumeration order. As with
+    // single-name lookup, only the first case-insensitive match is considered.
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|candidate| is_valid_install_dir(candidate))
 }
 
 /// Accept a picked folder as either the installation root or its `Data`
@@ -457,6 +479,33 @@ pub fn change_datadir_interactive() -> Option<PathBuf> {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn root_scan_preserves_folder_priority_and_skips_invalid_installations() {
+        let root = tempfile::tempdir().unwrap();
+        let preferred = root
+            .path()
+            .join(super::INSTALL_FOLDER_NAMES[0].to_ascii_uppercase());
+        let fallback = root.path().join(super::INSTALL_FOLDER_NAMES[1]);
+        // Create in reverse preference order so creation order is not policy.
+        for path in [&fallback, &preferred] {
+            std::fs::create_dir_all(path.join("Data")).unwrap();
+            std::fs::write(path.join("Data/datadir.bin"), b"marker").unwrap();
+        }
+        assert_eq!(
+            super::find_installation_in_root(root.path()),
+            Some(preferred.clone())
+        );
+        std::fs::remove_file(preferred.join("Data/datadir.bin")).unwrap();
+        assert_eq!(
+            super::find_installation_in_root(root.path()),
+            Some(fallback)
+        );
+        assert_eq!(
+            super::find_installation_in_root(&root.path().join("missing")),
+            None
+        );
+    }
+
     use super::*;
 
     #[test]
