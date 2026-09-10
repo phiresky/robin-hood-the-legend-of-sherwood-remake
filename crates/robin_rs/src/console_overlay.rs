@@ -153,6 +153,13 @@ struct CompletionCycle {
     use_final: bool,
 }
 
+/// Browsing history always owns the draft to restore on return to editing.
+#[derive(Debug, Serialize, Deserialize)]
+struct HistoryNavigation {
+    index: usize,
+    saved_input: String,
+}
+
 #[derive(Debug, Default)]
 pub struct ConsoleOverlay {
     visible: bool,
@@ -166,13 +173,8 @@ pub struct ConsoleOverlay {
     output: VecDeque<OutputLine>,
     /// Submitted command lines, for ↑/↓ recall.  Most recent at the back.
     cmd_history: Vec<String>,
-    /// Index into `cmd_history` while navigating; `None` when on the
-    /// freshly-typed line.  Stored as "distance from end" so wrap math
-    /// stays stable as new commands are submitted.
-    history_cursor: Option<usize>,
-    /// Saved input line when the user starts navigating history, so
-    /// pressing ↓ past the end restores what they were typing.
-    history_saved_input: Option<String>,
+    /// Current history index and draft; absent while editing a fresh line.
+    history_navigation: Option<HistoryNavigation>,
     /// Original prefix and position for repeated Tab presses.
     /// Cleared whenever the user edits the input.
     completion: Option<CompletionCycle>,
@@ -234,8 +236,7 @@ impl ConsoleOverlay {
     fn reset_edit_session(&mut self) {
         self.input.clear();
         self.cursor = 0;
-        self.history_cursor = None;
-        self.history_saved_input = None;
+        self.history_navigation = None;
         self.completion = None;
         self.scroll_from_bottom = 0;
     }
@@ -278,8 +279,7 @@ impl ConsoleOverlay {
                         if self.input.chars().count() < MAX_INPUT_LEN {
                             self.insert_char_at_cursor(c);
                             self.caret_timer = 0;
-                            self.history_cursor = None;
-                            self.history_saved_input = None;
+                            self.history_navigation = None;
                             self.completion = None;
                         }
                     }
@@ -605,36 +605,38 @@ impl ConsoleOverlay {
         if self.cmd_history.is_empty() {
             return;
         }
-        let next = match self.history_cursor {
-            None => {
-                // Save the in-progress line so ↓-past-end restores it.
-                self.history_saved_input = Some(std::mem::take(&mut self.input));
-                self.cmd_history.len() - 1
+        let navigation = match self.history_navigation.take() {
+            None => HistoryNavigation {
+                index: self.cmd_history.len() - 1,
+                saved_input: std::mem::take(&mut self.input),
+            },
+            Some(mut navigation) => {
+                navigation.index = navigation.index.saturating_sub(1);
+                navigation
             }
-            Some(0) => 0, // Already at the oldest entry.
-            Some(i) => i - 1,
         };
-        self.input.clone_from(&self.cmd_history[next]);
+        self.input.clone_from(&self.cmd_history[navigation.index]);
         self.cursor = self.input.chars().count();
-        self.history_cursor = Some(next);
+        self.history_navigation = Some(navigation);
         self.completion = None;
         self.caret_timer = 0;
     }
 
     fn history_next(&mut self) {
-        let Some(cur) = self.history_cursor else {
+        let Some(mut navigation) = self.history_navigation.take() else {
             return;
         };
-        let last = self.cmd_history.len().saturating_sub(1);
-        if cur >= last {
-            // Past the newest entry — restore the saved in-progress
-            // line and exit history-navigation mode.
-            self.input = self.history_saved_input.take().unwrap_or_default();
-            self.history_cursor = None;
+        assert!(
+            navigation.index < self.cmd_history.len(),
+            "console history navigation must reference an existing command"
+        );
+        if navigation.index + 1 == self.cmd_history.len() {
+            // Returning to editing moves the saved draft back without copying.
+            self.input = navigation.saved_input;
         } else {
-            let next = cur + 1;
-            self.input.clone_from(&self.cmd_history[next]);
-            self.history_cursor = Some(next);
+            navigation.index += 1;
+            self.input.clone_from(&self.cmd_history[navigation.index]);
+            self.history_navigation = Some(navigation);
         }
         self.cursor = self.input.chars().count();
         self.completion = None;
@@ -908,8 +910,10 @@ mod tests {
                 cursor: 3,
                 cmd_history: vec!["HELP".into()],
                 output: VecDeque::from([OutputLine::Response("kept".into())]),
-                history_cursor: Some(0),
-                history_saved_input: Some("draft".into()),
+                history_navigation: Some(HistoryNavigation {
+                    index: 0,
+                    saved_input: "draft".into(),
+                }),
                 completion: Some(CompletionCycle {
                     prefix: "h".into(),
                     index: 2,
@@ -930,8 +934,7 @@ mod tests {
             assert!(!c.visible);
             assert!(c.input.is_empty());
             assert_eq!(c.cursor, 0);
-            assert!(c.history_cursor.is_none());
-            assert!(c.history_saved_input.is_none());
+            assert!(c.history_navigation.is_none());
             assert!(c.completion.is_none());
             assert_eq!(c.scroll_from_bottom, 0);
             assert_eq!(c.caret_timer, if path == 0 { 0 } else { 17 });
@@ -1065,7 +1068,48 @@ mod tests {
         c.history_next();
         // Past the newest — restored in-progress line.
         assert_eq!(c.input, "in-progress");
-        assert!(c.history_cursor.is_none());
+        assert!(c.history_navigation.is_none());
+    }
+
+    #[test]
+    fn history_navigation_owns_and_restores_the_original_draft_buffer() {
+        for draft in ["", "café 界", "unfinished command"] {
+            let mut c = ConsoleOverlay::new();
+            c.cmd_history = vec!["HELP".into(), "FREEZE".into()];
+            c.input = String::with_capacity(64);
+            c.input.push_str(draft);
+            let original_buffer = c.input.as_ptr();
+            for _ in 0..2 {
+                c.history_prev();
+                assert_eq!(c.history_navigation.as_ref().unwrap().saved_input, draft);
+                c.history_prev();
+                c.history_prev(); // Clamp at the oldest entry.
+                assert_eq!(c.input, "HELP");
+                c.history_next();
+                assert_eq!(c.input, "FREEZE");
+                c.history_next();
+                assert_eq!(c.input, draft);
+                assert_eq!(c.input.as_ptr(), original_buffer);
+                assert_eq!(c.cursor, draft.chars().count());
+                assert!(c.history_navigation.is_none());
+                c.history_next(); // Already editing; preserve the restored draft.
+                assert_eq!(c.input.as_ptr(), original_buffer);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_history_navigation_leaves_the_edit_untouched() {
+        let mut c = ConsoleOverlay::new();
+        c.input = "draft".into();
+        c.cursor = 2;
+        c.caret_timer = 17;
+        c.history_prev();
+        c.history_next();
+        assert_eq!(c.input, "draft");
+        assert_eq!(c.cursor, 2);
+        assert_eq!(c.caret_timer, 17);
+        assert!(c.history_navigation.is_none());
     }
 
     #[test]
