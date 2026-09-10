@@ -884,6 +884,31 @@ enum LocatedSample {
     },
 }
 
+/// Authored sound paths try the sound directory first, then Exclamations.
+/// Absolute paths never receive a speech-directory fallback.
+fn sample_base_paths(base_dir: &Path, file_name: &str) -> Vec<PathBuf> {
+    let normalised = file_name.replace('\\', "/");
+    let absolute = Path::new(&normalised).is_absolute();
+    let path = if absolute {
+        PathBuf::from(&normalised)
+    } else {
+        base_dir.join(&normalised)
+    };
+    if absolute {
+        vec![path]
+    } else {
+        vec![path, base_dir.join("Exclamations").join(&normalised)]
+    }
+}
+
+/// Try each authored path before its converted Opus sibling.
+fn with_opus_fallback(paths: Vec<PathBuf>) -> impl Iterator<Item = PathBuf> {
+    paths.into_iter().flat_map(|path| {
+        let opus = path.with_extension("opus");
+        [path, opus]
+    })
+}
+
 /// Resolve a sample name against the loader's candidate paths and read it.
 ///
 /// Candidate order for the explicitly owned playback loader.
@@ -893,18 +918,7 @@ fn locate_sample(
     files: &SbFileSystem,
     _shipping: Option<&ShippingDatadir>,
 ) -> Option<LocatedSample> {
-    let normalised = file_name.replace('\\', "/");
-    let absolute = Path::new(&normalised).is_absolute();
-    let path = if absolute {
-        PathBuf::from(&normalised)
-    } else {
-        base_dir.join(&normalised)
-    };
-    let candidates = if absolute {
-        vec![path]
-    } else {
-        vec![path, base_dir.join("Exclamations").join(&normalised)]
-    };
+    let candidates = sample_base_paths(base_dir, file_name);
     #[cfg(target_arch = "wasm32")]
     if let Some((size, duration_ms)) = _shipping.and_then(|shipping| {
         candidates
@@ -915,11 +929,7 @@ fn locate_sample(
         // authoritative bookkeeping, not another encoded-byte copy.
         return Some(LocatedSample::Metadata { size, duration_ms });
     }
-    let candidates = candidates.into_iter().flat_map(|candidate| {
-        let opus = candidate.with_extension("opus");
-        [candidate, opus]
-    });
-    let (data, source_path) = candidates.into_iter().find_map(|candidate| {
+    let (data, source_path) = with_opus_fallback(candidates).find_map(|candidate| {
         files
             .read_all(&candidate.to_string_lossy())
             .ok()
@@ -1272,6 +1282,51 @@ mod tests {
         assert_eq!(loader("sample.wav").unwrap().2, 1000);
         assert!(loader(path.to_str().unwrap()).is_none());
         assert!(loader("../sample.wav").is_none());
+    }
+
+    #[test]
+    fn sample_lookup_paths_preserve_authored_and_converted_precedence() {
+        let base = Path::new("Data/Sounds");
+        let expected = [
+            "Data/Sounds/Expressions/voice.wav",
+            "Data/Sounds/Expressions/voice.opus",
+            "Data/Sounds/Exclamations/Expressions/voice.wav",
+            "Data/Sounds/Exclamations/Expressions/voice.opus",
+        ]
+        .map(PathBuf::from);
+        assert_eq!(
+            with_opus_fallback(sample_base_paths(base, "Expressions\\\\voice.wav"))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let absolute = std::env::current_dir().unwrap().join("voice.wav");
+        assert_eq!(
+            with_opus_fallback(sample_base_paths(base, absolute.to_str().unwrap()))
+                .collect::<Vec<_>>(),
+            [absolute.clone(), absolute.with_extension("opus")]
+        );
+
+        for first_available in 0..expected.len() {
+            let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+            for (index, path) in expected.iter().enumerate().skip(first_available) {
+                assets
+                    .install_preloaded_asset(path.to_str().unwrap(), vec![index as u8])
+                    .unwrap();
+            }
+            let files = SbFileSystem::new(assets);
+            let Some(LocatedSample::Bytes { data, source_path }) =
+                locate_sample(base, "Expressions\\\\voice.wav", &files, None)
+            else {
+                panic!("an installed candidate must resolve to bytes");
+            };
+            assert_eq!(source_path, expected[first_available]);
+            assert_eq!(data, [first_available as u8]);
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            assert_eq!(
+                resolver::resolve_sample(base, "Expressions\\\\voice.wav", &files).unwrap(),
+                source_path
+            );
+        }
     }
 
     #[test]

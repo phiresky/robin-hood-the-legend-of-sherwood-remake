@@ -6,28 +6,12 @@ pub(super) fn resolve_sample(
     file_name: &str,
     files: &robin_engine::sbfile::SbFileSystem,
 ) -> Result<PathBuf, String> {
-    let normalised = file_name.replace('\\', "/");
-    let absolute = Path::new(&normalised).is_absolute();
-    let path = if absolute {
-        PathBuf::from(&normalised)
-    } else {
-        sound_dir.join(&normalised)
-    };
-    let candidates = if absolute {
-        vec![path.clone()]
-    } else {
-        // actors.res stores speech paths relative to its Exclamations
-        // directory (for example `Expressions/X_SD_...wav`), whereas
-        // ordinary FX/source paths are relative to Data/Sounds.
-        vec![
-            path.clone(),
-            sound_dir.join("Exclamations").join(&normalised),
-        ]
-    };
-    for candidate in candidates.into_iter().flat_map(|path| {
-        let opus = path.with_extension("opus");
-        [path, opus]
-    }) {
+    let candidates = super::sample_base_paths(sound_dir, file_name);
+    let path = candidates
+        .first()
+        .expect("sample lookup always includes a primary path")
+        .clone();
+    for candidate in super::with_opus_fallback(candidates) {
         if files
             .try_exists(&candidate.to_string_lossy())
             .map_err(|status| {
