@@ -739,33 +739,44 @@ fn render_portrait_text_gpu(
 /// Collect comma-joined nicknames of every active seat that currently
 /// has `pc_id` in its selection.
 fn collect_peer_label(engine: &PresentationView<'_>, pc_id: EntityId) -> Option<String> {
-    let mut names = Vec::new();
-    let mut active_count = 0usize;
-    for (player_id, selection, peer_nickname) in engine.active_peer_selections() {
-        active_count += 1;
-        if !selection.contains(&pc_id) {
+    format_peer_label(
+        engine
+            .active_peer_selections()
+            .map(|(id, selection, nickname)| (id, selection.contains(&pc_id), nickname)),
+    )
+}
+
+fn format_peer_label<'a>(
+    peers: impl IntoIterator<Item = (PlayerId, bool, &'a str)>,
+) -> Option<String> {
+    use std::fmt::Write;
+
+    // Single-player selections have no peer label, regardless of their name.
+    let mut peers = peers.into_iter();
+    let first = peers.next()?;
+    let second = peers.next()?;
+    let mut label = String::new();
+    for (player_id, selected, nickname) in [first, second].into_iter().chain(peers) {
+        if !selected {
             continue;
         }
-        let nickname = if peer_nickname.is_empty() {
-            // Fall back to "P{id}" when a peer joined without a
-            // nickname (shouldn't happen in normal flow, but keeps
-            // the label visible if a transport bug ever lets it).
-            format!("P{}", player_id.0)
+        if !label.is_empty() {
+            label.push_str(", ");
+        }
+        if nickname.is_empty() {
+            // Preserve the seat-number label for unnamed peers.
+            write!(&mut label, "P{}", player_id.0).expect("writing to a String cannot fail");
         } else {
-            peer_nickname.to_owned()
-        };
-        names.push(nickname);
+            label.push_str(nickname);
+        }
     }
-    if active_count <= 1 {
-        return None;
-    }
-    let mut label = names.join(", ");
     const MAX_LABEL_CHARS: usize = 18;
     if label.chars().count() > MAX_LABEL_CHARS {
-        label = label
-            .chars()
-            .take(MAX_LABEL_CHARS.saturating_sub(3))
-            .collect();
+        let (end, _) = label
+            .char_indices()
+            .nth(MAX_LABEL_CHARS - 3)
+            .expect("label exceeds the truncation boundary");
+        label.truncate(end);
         label.push_str("...");
     }
     if label.is_empty() { None } else { Some(label) }
@@ -891,6 +902,59 @@ fn render_ammo_counts_gpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_labels_preserve_seat_order_selection_and_single_player_suppression() {
+        assert_eq!(format_peer_label([]), None);
+        assert_eq!(format_peer_label([(PlayerId(0), true, "Robin")]), None);
+        assert_eq!(
+            format_peer_label([
+                (PlayerId(0), false, "Robin"),
+                (PlayerId(1), false, "Marian")
+            ]),
+            None
+        );
+        assert_eq!(
+            format_peer_label([
+                (PlayerId(0), true, "Robin"),
+                (PlayerId(1), false, "Marian"),
+                (PlayerId(2), true, "")
+            ])
+            .as_deref(),
+            Some("Robin, P2"),
+        );
+        assert_eq!(
+            format_peer_label([
+                (PlayerId(0), false, "Robin"),
+                (PlayerId(1), false, "Marian"),
+                (PlayerId(2), true, "John")
+            ])
+            .as_deref(),
+            Some("John"),
+        );
+    }
+
+    #[test]
+    fn peer_labels_keep_the_existing_eighteen_scalar_limit() {
+        for (nickname, expected) in [
+            (
+                "abcdefghijklmnopqr".to_owned(),
+                "abcdefghijklmnopqr".to_owned(),
+            ),
+            (
+                "abcdefghijklmnopqrs".to_owned(),
+                "abcdefghijklmno...".to_owned(),
+            ),
+            ("界".repeat(19), format!("{}...", "界".repeat(15))),
+        ] {
+            let label = format_peer_label([
+                (PlayerId(0), true, nickname.as_str()),
+                (PlayerId(1), false, ""),
+            ])
+            .unwrap();
+            assert_eq!(label, expected);
+        }
+    }
 
     #[test]
     fn hud_wrapping_preserves_blank_lines_orphans_and_whole_candidate_metrics() {
