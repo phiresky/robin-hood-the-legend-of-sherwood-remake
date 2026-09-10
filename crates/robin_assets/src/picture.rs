@@ -1,15 +1,10 @@
 //! Image/texture loading and pixel format handling.
 //!
 //! [`Picture`] holds pixel data and provides format conversions. Loaders
-//! cover three on-disk formats:
-//! - [`Picture::load_sixteen_from_stream`] — 16-bit compressed, used in `.res` files
-//! - [`Picture::load_tga_from_stream`] — TGA
-//! - [`Picture::load_bmp_from_stream`] — BMP
-//!
-//! All loaders take an already-open `SbFile` stream rather than a path —
-//! several call sites (`loading_screen.rs`, `native_font.rs`) read multiple
-//! sequential pictures from the same handle, so path-based wrappers are
-//! intentionally absent.
+//! support legacy Sixteen RGB565 pictures and JPEG XL terrain/interface images.
+//! Stream loaders accept an already-open `SbFile`; buffered loaders accept byte
+//! slices. Sixteen stream loading consumes one picture at the current position,
+//! allowing multiple sequential pictures in resources and native fonts.
 
 use std::io::Read;
 
@@ -200,7 +195,10 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
 
 /// Seek to an absolute byte position (SEEK_SET).
 pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
-    file.skip(pos as i64, 0); // 0 = SEEK_SET
+    let error = file.skip(pos as i64, 0); // 0 = SEEK_SET
+    if error != robin_data_io::sbfile::SBFILE_NO_ERROR {
+        bail!("seek to {pos}: error {error}");
+    }
     Ok(())
 }
 
@@ -371,27 +369,35 @@ impl Picture {
     /// `--map-format jxl-{lossless,q90}` flag; this helper makes the loader
     /// transparent to that choice.
     ///
+    /// Starts at the current stream position. Sixteen consumes one picture;
+    /// JPEG XL consumes the remainder of the stream.
+    ///
     /// Always returns the picture in `PixelFormat::Rgb16` so downstream code
     /// (which expects RGB565 pixels for the GPU upload path) is unchanged.
     pub fn load_terrain_from_stream(file: &mut SbFile) -> Result<Self> {
         // Peek 12 bytes to identify JXL (which has a 2- or 12-byte signature),
         // then either slurp the rest and hand it to the JXL decoder, or
         // rewind and parse as the legacy Sixteen format.
+        let start = file.tell();
         let mut head = [0u8; 12];
         file.serialize_bytes(&mut head)
             .map_err(|e| anyhow!("read terrain header: {e}"))?;
         if is_jxl_signature(&head) {
-            let total = file.get_size() as usize;
-            let remaining = total.saturating_sub(head.len());
+            let total = usize::try_from(
+                file.get_size()
+                    .checked_sub(start)
+                    .context("terrain starts past end of file")?,
+            )
+            .context("terrain byte length exceeds addressable memory")?;
             let mut blob = Vec::with_capacity(total);
             blob.extend_from_slice(&head);
             blob.resize(total, 0);
-            file.serialize_bytes(&mut blob[head.len()..head.len() + remaining])
+            file.serialize_bytes(&mut blob[head.len()..])
                 .map_err(|e| anyhow!("read terrain body: {e}"))?;
             return Self::load_jxl_rgb565(&blob);
         }
         // Legacy Sixteen format: rewind the 12 peeked bytes and parse.
-        seek_to(file, 0)?;
+        seek_to(file, start)?;
         Self::load_sixteen_from_stream(file)
     }
 
@@ -439,10 +445,6 @@ impl Picture {
         if is_jxl_signature(bytes) {
             return Self::load_jxl_rgb565(bytes);
         }
-        // Wrap the bytes in a Cursor-like SbFile? We don't have one. The
-        // legacy Sixteen parser uses `serialize_bytes` against SbFile,
-        // which assumes a real File. Replicate the wire format directly
-        // here for the buffered case.
         Self::load_sixteen_from_bytes(bytes)
     }
 
@@ -817,14 +819,6 @@ impl Picture {
         let payload = read_bytes(file, packed_size)?;
         Self::decode_sixteen_payload(x_size, y_size, packing, &payload)
     }
-
-    // =======================================================================
-    // TGA format
-    // =======================================================================
-
-    // =======================================================================
-    // BMP format
-    // =======================================================================
 
     // =======================================================================
     // Pixel format conversion
@@ -1386,6 +1380,58 @@ mod tests {
         invalid.pitch = 4;
         invalid.data.pop();
         assert!(invalid.write_sixteen_to_bytes(SixteenPacking::Zip).is_err());
+    }
+
+    #[test]
+    fn terrain_stream_loading_respects_the_starting_position() {
+        let picture = Picture {
+            width: 2,
+            height: 1,
+            pitch: 4,
+            pixel_format: PixelFormat::Rgb16,
+            data: vec![1, 2, 3, 4],
+            palette: None,
+        };
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let files = robin_data_io::sbfile::SbFileSystem::new(vfs.clone());
+        for packing in [SixteenPacking::None, SixteenPacking::Zip] {
+            let encoded = picture.write_sixteen_to_bytes(packing).unwrap();
+            for prefix_len in [0, 3, 17] {
+                let mut bytes = vec![0xff; prefix_len];
+                bytes.extend_from_slice(&encoded);
+                bytes.extend_from_slice(&42u32.to_le_bytes());
+                vfs.install_preloaded_asset("terrain-fixture.bin", bytes)
+                    .unwrap();
+                let mut file = files.open("terrain-fixture.bin", 0).unwrap();
+                seek_to(&mut file, prefix_len as u64).unwrap();
+                let decoded = Picture::load_terrain_from_stream(&mut file).unwrap();
+                assert_eq!((decoded.width, decoded.height, decoded.pitch), (2, 1, 4));
+                assert_eq!(decoded.data, picture.data);
+                assert_eq!(read_u32(&mut file).unwrap(), 42);
+            }
+        }
+
+        // An incomplete JXL image must reach the decoder, not over-read the
+        // stream because the prefix was incorrectly included in its length.
+        let jxl_header = b"\x00\x00\x00\x0CJXL \r\n\x87\n";
+        let expected_error = Picture::load_terrain_from_bytes(jxl_header)
+            .unwrap_err()
+            .to_string();
+        for prefix_len in [0, 3, 17] {
+            let mut bytes = vec![0xff; prefix_len];
+            bytes.extend_from_slice(jxl_header);
+            vfs.install_preloaded_asset("terrain-fixture.bin", bytes)
+                .unwrap();
+            let mut file = files.open("terrain-fixture.bin", 0).unwrap();
+            seek_to(&mut file, prefix_len as u64).unwrap();
+            assert_eq!(
+                Picture::load_terrain_from_stream(&mut file)
+                    .unwrap_err()
+                    .to_string(),
+                expected_error
+            );
+            assert_eq!(file.tell(), file.get_size());
+        }
     }
 
     #[test]
