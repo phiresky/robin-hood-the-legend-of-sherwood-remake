@@ -520,17 +520,18 @@ fn render_darken_inside_gpu_spans(
         [sx, sy]
     };
 
-    // Convert all polygons from world → screen coordinates.
-    let screen_polys: Vec<Vec<[f32; 2]>> = visible_polygons
+    // Only the edge tables survive preparation; reuse projected-point scratch
+    // storage instead of retaining a second copy of every polygon.
+    let mut screen_poly = Vec::new();
+    let edge_tables: Vec<Vec<ScanEdge>> = visible_polygons
         .iter()
-        .map(|poly| poly.iter().map(|p| project(*p)).collect())
+        .map(|poly| {
+            screen_poly.clear();
+            screen_poly.extend(poly.iter().map(|p| project(*p)));
+            build_edge_table(&screen_poly)
+        })
         .collect();
     let viewer_screen = project(viewer);
-
-    let edge_tables: Vec<Vec<ScanEdge>> = screen_polys
-        .iter()
-        .map(|poly| build_edge_table(poly))
-        .collect();
 
     // Only walk the rows actually covered by the polygons instead of the
     // full screen height, and reuse the per-row scratch buffers.
@@ -1437,4 +1438,40 @@ fn span_subtraction_matches_pixel_difference_and_reuses_output() {
             assert_eq!(output.as_ptr(), pointer);
         }
     }
+}
+
+#[test]
+fn mask_row_scratch_is_cleared_for_empty_and_excluded_rows() {
+    let mut mask = engine_mask::RuntimeMask {
+        layer: 0,
+        mask_type: robin_engine::level_data::MASK_CHARACTER,
+        bbox: MapBBox::from_coords(0.0, 0.0, 4.0, 2.0),
+        character_polyline: Vec::new(),
+        lower_y_for_mask: 0.0,
+        projectile_polyline: Vec::new(),
+        obstacle_indices: Vec::new(),
+        width: 4,
+        height: 2,
+        bitmap: vec![1, 0, 1, 1, 0, 0, 0, 0],
+    };
+    let view = MapBBox::from_coords(0.0, 0.0, 8.0, 4.0);
+    let mut spans = Vec::with_capacity(8);
+    let pointer = spans.as_ptr();
+    mask_spans_for_row_into(&[&mask], &view, 1.0, 1.0, 0, 8, &mut spans);
+    assert_eq!(spans, [(0, 1), (2, 4)]);
+    mask_spans_for_row_into(&[&mask], &view, 2.0, 0.5, 0, 7, &mut spans);
+    assert_eq!(spans, [(0, 2), (4, 7)]);
+    for row in [-1, 1, 2] {
+        spans.push((-10, 10));
+        mask_spans_for_row_into(&[&mask], &view, 1.0, 1.0, row, 8, &mut spans);
+        assert!(spans.is_empty());
+    }
+    spans.push((-10, 10));
+    mask_spans_for_row_into(&[], &view, 1.0, 1.0, 0, 8, &mut spans);
+    assert!(spans.is_empty());
+    mask.mask_type = robin_engine::level_data::MASK_PROJECTILE;
+    spans.push((-10, 10));
+    mask_spans_for_row_into(&[&mask], &view, 1.0, 1.0, 0, 8, &mut spans);
+    assert!(spans.is_empty());
+    assert_eq!(spans.as_ptr(), pointer);
 }
