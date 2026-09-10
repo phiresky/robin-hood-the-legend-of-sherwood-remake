@@ -843,12 +843,7 @@ fn on_portrait_click(
             };
             portrait_action_handled = match selected_action {
                 Action::Heal => {
-                    // Target must be alive and injured (life < 100).
-                    let can_heal = engine
-                        .get_entity(pc_id)
-                        .and_then(|e| e.pc_data())
-                        .is_some_and(|pc| pc.life_points > 0 && pc.life_points < 100);
-                    if can_heal {
+                    if crate::game_input::is_valid_heal_portrait_target(engine, pc_id) {
                         if let Some(&healer_id) = engine.hero_selection(local_seat).first() {
                             let cmds = vec![
                                 PlayerCommand::LaunchInteraction {

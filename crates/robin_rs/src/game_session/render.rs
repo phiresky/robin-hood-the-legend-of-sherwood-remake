@@ -1131,22 +1131,15 @@ pub(super) fn update_mouse_and_cursor(
         && !hit.is_burned
     {
         let pc_id = hit.pc_id;
-        let life = engine
-            .get_entity(pc_id)
-            .and_then(|e| e.pc_data())
-            .map(|pc| pc.life_points)
-            .unwrap_or(0);
         let override_cursor = match armed {
             engine_profiles::Action::Heal => {
-                // Same predicate as the portrait Heal commit (alive +
-                // injured).
-                if life > 0 && life < 100 {
+                if crate::game_input::is_valid_heal_portrait_target(engine, pc_id) {
                     Some(engine_resource_ids::RHMOUSE_HEAL_YES)
                 } else {
                     Some(engine_resource_ids::RHMOUSE_HEAL_NO)
                 }
             }
-            engine_profiles::Action::Shield => {
+            engine_profiles::Action::Shield | engine_profiles::Action::BigShield => {
                 let actor = engine.hero_selection(local_seat).first().copied();
                 let choosing_protectee = actor.is_some_and(|actor| {
                     crate::game_input::is_choosing_shield_protectee(
@@ -1155,29 +1148,27 @@ pub(super) fn update_mouse_and_cursor(
                 });
                 if !choosing_protectee {
                     None
-                } else if crate::game_input::is_valid_shield_portrait_protectee(
-                    engine, local_seat, pc_id,
-                ) {
-                    Some(engine_resource_ids::RHMOUSE_SHIELD_YES)
                 } else {
-                    Some(engine_resource_ids::RHMOUSE_SHIELD_NO)
-                }
-            }
-            engine_profiles::Action::BigShield => {
-                let actor = engine.hero_selection(local_seat).first().copied();
-                let choosing_protectee = actor.is_some_and(|actor| {
-                    crate::game_input::is_choosing_shield_protectee(
-                        engine, local_seat, actor, shift_held,
+                    let (yes, no) = if armed == engine_profiles::Action::BigShield {
+                        (
+                            engine_resource_ids::RHMOUSE_BIG_SHIELD_YES,
+                            engine_resource_ids::RHMOUSE_BIG_SHIELD_NO,
+                        )
+                    } else {
+                        (
+                            engine_resource_ids::RHMOUSE_SHIELD_YES,
+                            engine_resource_ids::RHMOUSE_SHIELD_NO,
+                        )
+                    };
+                    Some(
+                        if crate::game_input::is_valid_shield_portrait_protectee(
+                            engine, local_seat, pc_id,
+                        ) {
+                            yes
+                        } else {
+                            no
+                        },
                     )
-                });
-                if !choosing_protectee {
-                    None
-                } else if crate::game_input::is_valid_shield_portrait_protectee(
-                    engine, local_seat, pc_id,
-                ) {
-                    Some(engine_resource_ids::RHMOUSE_BIG_SHIELD_YES)
-                } else {
-                    Some(engine_resource_ids::RHMOUSE_BIG_SHIELD_NO)
                 }
             }
             _ => None,

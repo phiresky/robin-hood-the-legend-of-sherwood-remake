@@ -597,6 +597,15 @@ pub(crate) fn is_choosing_shield_protectee(
     }
 }
 
+/// Portrait healing accepts PCs whose life is strictly between zero and full.
+/// Share this gate between click handling and its Yes/No cursor feedback.
+pub(crate) fn is_valid_heal_portrait_target(engine: &Engine, target: EntityId) -> bool {
+    engine
+        .get_entity(target)
+        .and_then(|entity| entity.pc_data())
+        .is_some_and(|pc| pc.life_points > 0 && pc.life_points < 100)
+}
+
 /// Original-game shield-portrait target gate. Shield targeting requires
 /// one selected bearer, and cannot protect a selected, dead, or inactive PC.
 pub(crate) fn is_valid_shield_portrait_protectee(
@@ -2478,6 +2487,27 @@ mod tests {
     }
 
     // ── pattern_to_command ──
+
+    #[test]
+    fn portrait_heal_gate_requires_an_injured_pc() {
+        let (mut engine, _, _) = fixture();
+        let missing = EntityId::Pc(robin_engine::entity_id::PcId(999));
+        assert!(!is_valid_heal_portrait_target(&engine, missing));
+        for life in [i16::MIN, -1, 0, 1, 50, 99, 100, 101, i16::MAX] {
+            // Activity is not part of this legacy portrait gate; callers
+            // independently decide which portraits are interactive.
+            for active in [false, true] {
+                let pc =
+                    add_pc_with_status(&mut engine, 25.0, 25.0, Posture::Upright, active, life);
+                assert_eq!(
+                    is_valid_heal_portrait_target(&engine, pc),
+                    (1..100).contains(&life)
+                );
+            }
+            let soldier = add_soldier(&mut engine, 25.0, 25.0, life);
+            assert!(!is_valid_heal_portrait_target(&engine, soldier));
+        }
+    }
 
     #[test]
     fn world_shield_clicks_select_protectee_then_require_danger_point() {
