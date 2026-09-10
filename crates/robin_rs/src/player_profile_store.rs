@@ -52,7 +52,12 @@ impl PlayerProfileStore {
     pub(crate) fn directory(&self) -> std::io::Result<String> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory } => Ok(directory.to_string_lossy().into_owned()),
+            Self::Native { directory } => directory.to_str().map(str::to_owned).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "player-profile directory cannot be represented as UTF-8 archive metadata",
+                )
+            }),
             #[cfg(target_arch = "wasm32")]
             Self::Browser { directory } => Ok(directory.clone()),
             Self::Unavailable { reason } => Err(std::io::Error::other(reason.clone())),
@@ -65,12 +70,9 @@ impl PlayerProfileStore {
         let directory = self.directory()?;
         let existing = match self {
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory } => {
-                match std::fs::read_to_string(directory.join("profiles.json")) {
-                    Ok(serialized) => Some(decode_native_archive(
-                        &serialized,
-                        &directory.to_string_lossy(),
-                    )?),
+            Self::Native { directory: root } => {
+                match std::fs::read_to_string(root.join("profiles.json")) {
+                    Ok(serialized) => Some(decode_native_archive(&serialized, &directory)?),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error),
                 }
@@ -222,6 +224,30 @@ fn decode_native_archive(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_storage_authority_is_rejected_before_filesystem_changes() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = tempfile::tempdir().unwrap();
+        let directory = root
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![b'p', 0xff]));
+        let store = PlayerProfileStore::Native {
+            directory: directory.clone(),
+        };
+        let manager = PlayerProfileManager::new(directory.to_string_lossy().into_owned());
+        for result in [
+            store.directory().map(|_| ()),
+            store.load().map(|_| ()),
+            store.save(&manager),
+            store.quarantine_profile_saves(0),
+            store.restore_profile_saves(0),
+        ] {
+            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+        }
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn profile_archive_decides_recovery_of_interrupted_save_rename() {
