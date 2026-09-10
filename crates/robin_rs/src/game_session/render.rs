@@ -1206,7 +1206,6 @@ pub(super) fn update_mouse_and_cursor(
 pub struct RenderContext<'a> {
     // Mutable GPU / render resources.
     pub renderer: &'a mut crate::renderer::Renderer,
-    pub cursor_renderer: &'a mut crate::cursor::CursorRenderer,
     pub titbit_renderer: &'a mut crate::titbit_renderer::TitbitRenderer,
     pub console_overlay: &'a crate::console_overlay::ConsoleOverlay,
 
@@ -1215,6 +1214,7 @@ pub struct RenderContext<'a> {
     pub hud_tooltips: HudTooltipPresentation,
 
     // Immutable resources.
+    pub cursor_renderer: &'a crate::cursor::CursorRenderer,
     pub selection_mark_renderer: &'a crate::markers::SelectionMarkRenderer,
     pub mouse_trail_renderer: Option<&'a crate::mouse_trail::MouseTrailRenderer>,
     pub portrait_cache: &'a crate::ui_panel::PortraitCache,
@@ -1303,7 +1303,7 @@ fn render_frame_with_hud(
     // noisy.  All fields are `&'a mut T` / `&'a T`, so this is a
     // reborrow, not a move.
     let renderer = &mut *ctx.renderer;
-    let cursor_renderer = &mut *ctx.cursor_renderer;
+    let cursor_renderer = ctx.cursor_renderer;
     let selection_mark_renderer = ctx.selection_mark_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
     let console_overlay = ctx.console_overlay;

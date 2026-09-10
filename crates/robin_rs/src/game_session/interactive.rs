@@ -827,7 +827,7 @@ impl MissionPresentation {
     ) -> RenderContext<'a> {
         RenderContext {
             renderer: &mut self.renderer,
-            cursor_renderer: &mut self.sprites.cursor_renderer,
+            cursor_renderer: &self.sprites.cursor_renderer,
             selection_mark_renderer: &self.sprites.selection_mark_renderer,
             titbit_renderer: &mut self.sprites.titbit_renderer,
             console_overlay: &ui.console_overlay,
