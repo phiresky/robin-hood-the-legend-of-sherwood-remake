@@ -42,12 +42,17 @@ fn serde_value_to_json(
             let mut object = serde_json::Map::new();
             for (key, value) in entries {
                 let key = serde_value_key_to_string(key);
-                if object.contains_key(&key) {
-                    return Err(serde::ser::Error::custom(format!(
-                        "distinct map keys encode to the same JSON key {key:?}"
-                    )));
+                match object.entry(key) {
+                    serde_json::map::Entry::Vacant(entry) => {
+                        entry.insert(serde_value_to_json(value)?);
+                    }
+                    serde_json::map::Entry::Occupied(entry) => {
+                        return Err(serde::ser::Error::custom(format!(
+                            "distinct map keys encode to the same JSON key {:?}",
+                            entry.key()
+                        )));
+                    }
                 }
-                object.insert(key, serde_value_to_json(value)?);
             }
             serde_json::Value::Object(object)
         }
@@ -100,6 +105,22 @@ mod tests {
         assert_eq!(
             to_json_value(&pairs).unwrap(),
             serde_json::json!({"Seq([I32(1), I32(2)])": "pair"})
+        );
+    }
+
+    #[test]
+    fn duplicate_key_errors_precede_conversion_of_the_duplicate_value() {
+        let nested = Value::Map(BTreeMap::from([
+            (Value::Bool(false), Value::Unit),
+            (Value::String("false".into()), Value::Unit),
+        ]));
+        let value = Value::Map(BTreeMap::from([
+            (Value::Bool(true), Value::Unit),
+            (Value::String("true".into()), nested),
+        ]));
+        assert_eq!(
+            serde_value_to_json(value).unwrap_err().to_string(),
+            "distinct map keys encode to the same JSON key \"true\""
         );
     }
 
