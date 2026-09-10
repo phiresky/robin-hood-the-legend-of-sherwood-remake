@@ -49,6 +49,22 @@ use crate::window::GameWindow;
 #[cfg(feature = "video")]
 static FFMPEG_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
+/// EAGAIN and EOF end a drain normally; other failures must remain observable.
+#[cfg(feature = "video")]
+fn decoded_frame_available(result: Result<(), ffmpeg_next::Error>, media: &str) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(ffmpeg_next::Error::Eof)
+        | Err(ffmpeg_next::Error::Other {
+            errno: ffmpeg_next::error::EAGAIN,
+        }) => false,
+        Err(error) => {
+            tracing::warn!(%error, media, "Cutscene frame decoding failed");
+            false
+        }
+    }
+}
+
 /// Drain every frame currently decodable from `dec`, resample each to
 /// packed f32 stereo via `res`, and append the sample pairs to
 /// `audio_frames`. Used both for per-packet decoding and for the final
@@ -60,9 +76,10 @@ fn drain_resampled_audio(
     audio_frames: &mut Vec<kira::Frame>,
 ) {
     let mut frame = ffmpeg_next::frame::Audio::empty();
-    while dec.receive_frame(&mut frame).is_ok() {
+    while decoded_frame_available(dec.receive_frame(&mut frame), "audio") {
         let mut resampled = ffmpeg_next::frame::Audio::empty();
-        if res.run(&frame, &mut resampled).is_err() {
+        if let Err(error) = res.run(&frame, &mut resampled) {
+            tracing::warn!(%error, "Skipping cutscene audio frame after resampling failure");
             continue;
         }
         let n_samples = resampled.samples();
@@ -78,6 +95,24 @@ fn drain_resampled_audio(
                 right: pair[1],
             });
         }
+    }
+}
+
+#[cfg(all(test, feature = "video"))]
+#[test]
+fn frame_drain_continues_only_after_a_decoded_frame() {
+    assert!(decoded_frame_available(Ok(()), "test"));
+    for error in [
+        ffmpeg_next::Error::Eof,
+        ffmpeg_next::Error::Other {
+            errno: ffmpeg_next::error::EAGAIN,
+        },
+        ffmpeg_next::Error::InvalidData,
+        ffmpeg_next::Error::Other {
+            errno: ffmpeg_next::error::EIO,
+        },
+    ] {
+        assert!(!decoded_frame_available(Err(error), "test"));
     }
 }
 
@@ -205,12 +240,17 @@ pub async fn play_video(
         // We rewind ictx after this scan so the video-pump pass can walk
         // packets again from the start.
         for (stream, packet) in ictx.packets() {
-            if stream.index() == aidx && dec.send_packet(&packet).is_ok() {
-                drain_resampled_audio(&mut dec, &mut res, &mut audio_frames);
+            if stream.index() == aidx {
+                match dec.send_packet(&packet) {
+                    Ok(()) => drain_resampled_audio(&mut dec, &mut res, &mut audio_frames),
+                    Err(error) => tracing::warn!(%error, "Skipping rejected cutscene audio packet"),
+                }
             }
         }
         // Flush decoder.
-        let _ = dec.send_eof();
+        if let Err(error) = dec.send_eof() {
+            tracing::warn!(%error, "Cutscene audio decoder flush failed");
+        }
         drain_resampled_audio(&mut dec, &mut res, &mut audio_frames);
         tracing::info!(
             "Audio decoded: {} frames ({} sec @ {} Hz)",
@@ -267,13 +307,15 @@ pub async fn play_video(
         if stream.index() != video_idx {
             continue;
         }
-        if video_dec.send_packet(&packet).is_err() {
+        if let Err(error) = video_dec.send_packet(&packet) {
+            tracing::warn!(%error, "Skipping rejected cutscene video packet");
             continue;
         }
         let mut frame = ffmpeg_next::frame::Video::empty();
-        while video_dec.receive_frame(&mut frame).is_ok() {
+        while decoded_frame_available(video_dec.receive_frame(&mut frame), "video") {
             let mut rgba = ffmpeg_next::frame::Video::empty();
-            if scaler.run(&frame, &mut rgba).is_err() {
+            if let Err(error) = scaler.run(&frame, &mut rgba) {
+                tracing::warn!(%error, "Skipping cutscene video frame after scaling failure");
                 continue;
             }
             let pts_ms = frame
