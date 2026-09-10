@@ -1675,21 +1675,22 @@ pub fn draw_tooltip(
     // wrap pass, then size the box to the widest line and the line
     // count.
     let needs_wrap = text.contains('\n') || single_line_tw + 2 * PAD_X > MENU_W;
-    let (lines, longest_line_w) = if needs_wrap {
-        let wrap_w = (max_box_w).max(line_h);
-        let wrap = wrap_text_for_box_font(font, text, wrap_w, usize::MAX);
-        let widest = wrap
-            .lines
-            .iter()
-            .map(|l| font.text_width(l))
-            .max()
-            .unwrap_or(0);
-        (wrap.lines, widest)
-    } else {
-        (vec![text.to_string()], single_line_tw)
+    let wrapped = needs_wrap.then(|| {
+        let wrap_w = max_box_w.max(line_h);
+        wrap_text_for_box_font(font, text, wrap_w, usize::MAX)
+    });
+    let (line_count, longest_line_w) = match &wrapped {
+        Some(wrap) => (
+            wrap.lines.len() as i32,
+            wrap.lines
+                .iter()
+                .map(|line| font.text_width(line))
+                .max()
+                .unwrap_or(0),
+        ),
+        None => (1, single_line_tw),
     };
 
-    let line_count = lines.len() as i32;
     let box_w = longest_line_w + PAD_X * 2;
     let box_h = line_count * line_h + PAD_Y * 2;
 
@@ -1730,7 +1731,11 @@ pub fn draw_tooltip(
         sy + box_h,
         Renderer::create_color_16(100, 70, 30),
     );
-    for (idx, line) in lines.iter().enumerate() {
+    let lines = wrapped
+        .iter()
+        .flat_map(|wrap| wrap.lines.iter().map(String::as_str))
+        .chain(wrapped.is_none().then_some(text));
+    for (idx, line) in lines.enumerate() {
         let line_x = box_x + PAD_X;
         let line_y = box_y + PAD_Y + idx as i32 * line_h;
         let (tx, ty) = transform.to_screen(line_x, line_y);
