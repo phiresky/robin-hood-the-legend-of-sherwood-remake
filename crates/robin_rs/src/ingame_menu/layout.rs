@@ -1089,7 +1089,6 @@ pub fn render_text_in_box_aligned(
                     inner_x,
                     y,
                     inner_w,
-                    tw,
                     is_para_end,
                 );
             }
@@ -1328,59 +1327,16 @@ fn render_justified_line(
     box_x: i32,
     y: i32,
     box_w: i32,
-    line_w: i32,
     is_paragraph_end: bool,
 ) {
-    let _ = line_w;
-    let words: Vec<&str> = line.split_whitespace().collect();
-    let space_w = font.text_width(" ").max(1);
-    let word_count = words.len() as i32;
-    // Use the wrap-time line-width formula: sum of word widths + (N-1)
-    // single spaces.  `font.text_width(line)` includes inter-character
-    // kerning across space boundaries which can be negative, making the
-    // measured line width smaller than what's actually rendered when we
-    // emit each word with a plain `space_w` gap — causing the snapped
-    // last word to overlap the previous one.
-    let sum_word_w: i32 = words.iter().map(|w| font.text_width(w)).sum();
-    let effective_line_w = if word_count > 0 {
-        sum_word_w + (word_count - 1) * space_w
-    } else {
-        0
-    };
-    if words.len() < 2 || is_paragraph_end || effective_line_w >= box_w {
-        render_text_virt(renderer, font, transform, line, box_x, y);
-        return;
-    }
-
-    let slack = box_w - effective_line_w;
-    let extra_per_gap = slack / word_count;
-    let mut leftover = slack % word_count;
-
-    let last_idx = words.len() - 1;
-    let last_word_w = font.text_width(words[last_idx]);
-
-    let mut x = box_x;
-    for (i, word) in words.iter().enumerate() {
-        if i == last_idx {
-            // Snap last word to the right edge.
-            render_text_virt(
-                renderer,
-                font,
-                transform,
-                word,
-                box_x + box_w - last_word_w,
-                y,
-            );
-        } else {
-            render_text_virt(renderer, font, transform, word, x, y);
-            let mut gap = space_w + extra_per_gap;
-            if leftover > 0 {
-                gap += 1;
-                leftover -= 1;
-            }
-            x += font.text_width(word) + gap;
-        }
-    }
+    justify_line_by(
+        line,
+        box_x,
+        box_w,
+        is_paragraph_end,
+        |word| font.text_width(word),
+        |word, x| render_text_virt(renderer, font, transform, word, x, y),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1394,17 +1350,42 @@ fn render_justified_line_font(
     box_w: i32,
     is_paragraph_end: bool,
 ) {
-    let words: Vec<&str> = line.split_whitespace().collect();
-    let space_w = font.text_width(" ").max(1);
+    justify_line_by(
+        line,
+        box_x,
+        box_w,
+        is_paragraph_end,
+        |word| font.text_width(word),
+        |word, x| render_text_virt_font(renderer, font, transform, word, x, y),
+    );
+}
+
+/// Place words using the wrap-time width formula, not whole-line kerning.
+/// Preserve the original word-count divisor and final-word right-edge snap.
+fn justify_line_by(
+    line: &str,
+    box_x: i32,
+    box_w: i32,
+    is_paragraph_end: bool,
+    measure: impl Fn(&str) -> i32,
+    mut render: impl FnMut(&str, i32),
+) {
+    let words: Vec<_> = line
+        .split_whitespace()
+        .map(|word| (word, measure(word)))
+        .collect();
+    let space_w = measure(" ").max(1);
     let word_count = words.len() as i32;
-    let sum_word_w: i32 = words.iter().map(|w| font.text_width(w)).sum();
+    // Whole-line measurement can include negative kerning across spaces.
+    // Summing word widths matches the individual draw calls below.
+    let sum_word_w: i32 = words.iter().map(|(_, width)| width).sum();
     let effective_line_w = if word_count > 0 {
         sum_word_w + (word_count - 1) * space_w
     } else {
         0
     };
     if words.len() < 2 || is_paragraph_end || effective_line_w >= box_w {
-        render_text_virt_font(renderer, font, transform, line, box_x, y);
+        render(line, box_x);
         return;
     }
 
@@ -1412,26 +1393,18 @@ fn render_justified_line_font(
     let extra_per_gap = slack / word_count;
     let mut leftover = slack % word_count;
     let last_idx = words.len() - 1;
-    let last_word_w = font.text_width(words[last_idx]);
     let mut x = box_x;
-    for (i, word) in words.iter().enumerate() {
+    for (i, (word, width)) in words.into_iter().enumerate() {
         if i == last_idx {
-            render_text_virt_font(
-                renderer,
-                font,
-                transform,
-                word,
-                box_x + box_w - last_word_w,
-                y,
-            );
+            render(word, box_x + box_w - width);
         } else {
-            render_text_virt_font(renderer, font, transform, word, x, y);
+            render(word, x);
             let mut gap = space_w + extra_per_gap;
             if leftover > 0 {
                 gap += 1;
                 leftover -= 1;
             }
-            x += font.text_width(word) + gap;
+            x += width + gap;
         }
     }
 }
@@ -1623,6 +1596,67 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn justification_preserves_gap_distribution_and_unjustified_lines() {
+        for (line, width, paragraph_end, expected) in [
+            (
+                "aa b ccc",
+                15,
+                false,
+                vec![("aa", 10), ("b", 16), ("ccc", 22)],
+            ),
+            (
+                "aa b ccc",
+                14,
+                false,
+                vec![("aa", 10), ("b", 15), ("ccc", 21)],
+            ),
+            ("aa b", 4, false, vec![("aa b", 10)]),
+            ("aa b", 3, false, vec![("aa b", 10)]),
+            ("aa b", 20, true, vec![("aa b", 10)]),
+            ("  aa  ", 20, false, vec![("  aa  ", 10)]),
+            ("", 20, false, vec![("", 10)]),
+            (" \t ", 20, false, vec![(" \t ", 10)]),
+        ] {
+            let mut drawn = Vec::new();
+            super::justify_line_by(
+                line,
+                10,
+                width,
+                paragraph_end,
+                |word| word.chars().count() as i32,
+                |word, x| drawn.push((word.to_owned(), x)),
+            );
+            assert_eq!(
+                drawn,
+                expected
+                    .into_iter()
+                    .map(|(word, x)| (word.to_owned(), x))
+                    .collect::<Vec<_>>(),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn justification_uses_word_widths_and_clamps_space_width() {
+        let mut drawn = Vec::new();
+        super::justify_line_by(
+            "aa b",
+            0,
+            10,
+            false,
+            |word| match word {
+                "aa" => 2,
+                "b" => 1,
+                " " => -2,
+                _ => panic!("must not measure cross-word kerning"),
+            },
+            |word, x| drawn.push((word.to_owned(), x)),
+        );
+        assert_eq!(drawn, [("aa".to_owned(), 0), ("b".to_owned(), 9)]);
+    }
 
     #[test]
     fn narrow_wrapping_preserves_explicit_character_and_grapheme_policies() {
