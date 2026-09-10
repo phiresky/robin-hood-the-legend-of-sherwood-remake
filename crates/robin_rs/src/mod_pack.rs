@@ -455,13 +455,17 @@ fn rhm_basename(zip_entry: &str) -> String {
 }
 
 fn mission_language_label(zip_entry: &str) -> Option<&str> {
-    let segments = zip_entry.split('/').collect::<Vec<_>>();
-    let data_index = segments.windows(2).position(|pair| {
-        pair[0].eq_ignore_ascii_case("data") && pair[1].eq_ignore_ascii_case("levels")
-    })?;
-    data_index
-        .checked_sub(1)
-        .and_then(|index| segments.get(index).copied())
+    let mut segments = zip_entry.split('/');
+    let mut previous = None;
+    let mut current = segments.next()?;
+    for next in segments {
+        if current.eq_ignore_ascii_case("data") && next.eq_ignore_ascii_case("levels") {
+            return previous;
+        }
+        previous = Some(current);
+        current = next;
+    }
+    None
 }
 
 // ── Zip inspection ─────────────────────────────────────────────
@@ -498,16 +502,11 @@ fn archive_entry_names(archive: &mut zip::ZipArchive<fs::File>) -> Result<Vec<St
         let entry = archive
             .by_index_raw(i)
             .map_err(|e| format!("entry {i}: {e}"))?;
-        if entry.is_dir() {
-            entry_names.push(String::new());
-        } else {
+        if !entry.is_dir() && !entry.name().is_empty() {
             entry_names.push(entry.name().replace('\\', "/"));
         }
     }
-    Ok(entry_names
-        .into_iter()
-        .filter(|name| !name.is_empty())
-        .collect())
+    Ok(entry_names)
 }
 
 /// Exact selected archive layout reported by author tooling and used by the
@@ -793,6 +792,52 @@ pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_labels_keep_first_data_levels_pair_and_borrow_its_predecessor() {
+        for (path, expected) in [
+            ("English/Data/Levels/Test.rhm", Some("English")),
+            ("package/Deutsch/dAtA/lEvElS/Test.rhm", Some("Deutsch")),
+            ("日本語/Data/Levels/Test.rhm", Some("日本語")),
+            ("Data/Levels/English/Data/Levels/Test.rhm", None),
+            (
+                "outer/Data/Levels/inner/Data/Levels/Test.rhm",
+                Some("outer"),
+            ),
+            ("/Data/Levels/Test.rhm", Some("")),
+            ("English//Data/Levels/Test.rhm", Some("")),
+            ("English/Data/Other/Levels/Test.rhm", None),
+            ("", None),
+            ("Levels", None),
+            ("Data", None),
+        ] {
+            let result = mission_language_label(path);
+            assert_eq!(result, expected, "{path}");
+            if let Some(label) = result {
+                let start = path.as_ptr() as usize;
+                assert!((start..=start + path.len()).contains(&(label.as_ptr() as usize)));
+            }
+        }
+    }
+
+    #[test]
+    fn archive_directory_omits_directories_and_normalizes_file_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("test.zip");
+        let file = fs::File::create(&path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.add_directory("Data/Levels/", options).unwrap();
+        writer.start_file(r"Data\Levels\Test.rhm", options).unwrap();
+        writer.start_file("notes.txt", options).unwrap();
+        writer.finish().unwrap();
+        let mut archive = open_mission_zip(&path).unwrap();
+        assert_eq!(
+            archive_entry_names(&mut archive).unwrap(),
+            ["Data/Levels/Test.rhm", "notes.txt"]
+        );
+        assert_eq!(list_rhm_in_zip(&path).unwrap(), ["Data/Levels/Test.rhm"]);
+    }
 
     #[test]
     fn library_selection_uses_filename_order_and_accepts_renamed_archives() {
