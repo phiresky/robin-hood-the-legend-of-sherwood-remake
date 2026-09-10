@@ -138,13 +138,13 @@ pub async fn play_video(
     let _bundled_video = bundled_video;
 
     // ── Video stream ────────────────────────────────────────────────
-    let video_idx = ictx
-        .streams()
-        .best(ffmpeg_next::media::Type::Video)
-        .ok_or("No video stream")?
-        .index();
-    let video_time_base = ictx.stream(video_idx).unwrap().time_base();
-    let video_params = ictx.stream(video_idx).unwrap().parameters();
+    let (video_idx, video_time_base, video_params) = {
+        let stream = ictx
+            .streams()
+            .best(ffmpeg_next::media::Type::Video)
+            .ok_or("No video stream")?;
+        (stream.index(), stream.time_base(), stream.parameters())
+    };
     let video_ctx = ffmpeg_next::codec::context::Context::from_parameters(video_params)
         .map_err(|e| e.to_string())?;
     let mut video_dec = video_ctx.decoder().video().map_err(|e| e.to_string())?;
@@ -157,15 +157,12 @@ pub async fn play_video(
     );
 
     // ── Audio stream (optional) ─────────────────────────────────────
-    let audio_idx = ictx
+    let audio = ictx
         .streams()
         .best(ffmpeg_next::media::Type::Audio)
-        .map(|s| s.index());
-    let mut audio_dec = audio_idx
-        .map(|idx| {
-            let params = ictx.stream(idx).unwrap().parameters();
-            let ctx = ffmpeg_next::codec::context::Context::from_parameters(params)?;
-            ctx.decoder().audio()
+        .map(|stream| {
+            let ctx = ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())?;
+            Ok((stream.index(), ctx.decoder().audio()?))
         })
         .transpose()
         .map_err(|e: ffmpeg_next::Error| e.to_string())?;
@@ -184,17 +181,17 @@ pub async fn play_video(
 
     // ── Audio resampler → f32 stereo @ 44100 Hz (kira's frame layout) ──
     let output_sample_rate: u32 = 44100;
-    let mut audio_resampler = audio_dec
-        .as_mut()
-        .map(|dec| {
-            ffmpeg_next::software::resampling::Context::get(
+    let audio = audio
+        .map(|(index, dec)| {
+            let res = ffmpeg_next::software::resampling::Context::get(
                 dec.format(),
                 dec.channel_layout(),
                 dec.rate(),
                 ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
                 ffmpeg_next::ChannelLayout::STEREO,
                 output_sample_rate,
-            )
+            )?;
+            Ok((index, dec, res))
         })
         .transpose()
         .map_err(|e: ffmpeg_next::Error| format!("Resampler init failed: {e}"))?;
@@ -204,18 +201,17 @@ pub async fn play_video(
     // Cheap enough to buffer up-front and let kira drive the audio device
     // while we focus on rendering.
     let mut audio_frames: Vec<kira::Frame> = Vec::new();
-    if let (Some(dec), Some(res)) = (audio_dec.as_mut(), audio_resampler.as_mut()) {
+    if let Some((aidx, mut dec, mut res)) = audio {
         // We rewind ictx after this scan so the video-pump pass can walk
         // packets again from the start.
-        let aidx = audio_idx.unwrap();
         for (stream, packet) in ictx.packets() {
             if stream.index() == aidx && dec.send_packet(&packet).is_ok() {
-                drain_resampled_audio(dec, res, &mut audio_frames);
+                drain_resampled_audio(&mut dec, &mut res, &mut audio_frames);
             }
         }
         // Flush decoder.
         let _ = dec.send_eof();
-        drain_resampled_audio(dec, res, &mut audio_frames);
+        drain_resampled_audio(&mut dec, &mut res, &mut audio_frames);
         tracing::info!(
             "Audio decoded: {} frames ({} sec @ {} Hz)",
             audio_frames.len(),
