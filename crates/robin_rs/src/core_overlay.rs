@@ -180,17 +180,10 @@ pub struct CoreOverlayFile {
 /// changed.
 pub fn load_validated_bundle(
     manifest_bytes: &[u8],
-    mut read_asset: impl FnMut(&str) -> Result<Vec<u8>>,
+    read_asset: impl FnMut(&str) -> Result<Vec<u8>>,
 ) -> Result<(CoreOverlayManifest, Bundle)> {
-    let manifest: CoreOverlayManifest =
-        serde_json::from_slice(manifest_bytes).context("parse core overlay manifest")?;
-    validate_manifest_inventory(&manifest)?;
-
     let mut bundle = BTreeMap::new();
-    for entry in &manifest.files {
-        let bytes = read_asset(&entry.path)
-            .with_context(|| format!("read required core overlay asset {}", entry.path))?;
-        validate_file(entry, &bytes)?;
+    let manifest = read_validated_assets(manifest_bytes, read_asset, |entry, bytes| {
         let key = robin_util::asset_fs::bundle_key(Path::new(&entry.path));
         if bundle
             .insert(key.clone(), AssetBytes::from(bytes))
@@ -200,8 +193,28 @@ pub fn load_validated_bundle(
                 "core overlay paths collide after VFS normalization at {key}"
             ));
         }
-    }
+        Ok(())
+    })?;
     Ok((manifest, bundle))
+}
+
+/// Validation is independent of retention: native mounts can drop each file
+/// immediately, while archive consumers retain the admitted bytes as a bundle.
+fn read_validated_assets(
+    manifest_bytes: &[u8],
+    mut read_asset: impl FnMut(&str) -> Result<Vec<u8>>,
+    mut retain: impl FnMut(&CoreOverlayFile, Vec<u8>) -> Result<()>,
+) -> Result<CoreOverlayManifest> {
+    let manifest: CoreOverlayManifest =
+        serde_json::from_slice(manifest_bytes).context("parse core overlay manifest")?;
+    validate_manifest_inventory(&manifest)?;
+    for entry in &manifest.files {
+        let bytes = read_asset(&entry.path)
+            .with_context(|| format!("read required core overlay asset {}", entry.path))?;
+        validate_file(entry, &bytes)?;
+        retain(entry, bytes)?;
+    }
+    Ok(manifest)
 }
 
 /// Validate the canonical loose core-overlay directory used by packaged
@@ -214,6 +227,12 @@ pub fn load_validated_bundle(
 /// not have to reopen the source after admission.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load_validated_native_directory(root: &Path) -> Result<(CoreOverlayManifest, Bundle)> {
+    let manifest_bytes = read_native_manifest(root)?;
+    load_validated_bundle(&manifest_bytes, |path| read_native_asset(root, path))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_native_manifest(root: &Path) -> Result<Vec<u8>> {
     require_directory(root, "core overlay root")?;
 
     let manifest_path = root.join(CORE_OVERLAY_MANIFEST_PATH);
@@ -234,12 +253,15 @@ pub fn load_validated_native_directory(root: &Path) -> Result<(CoreOverlayManife
         ));
     }
 
-    load_validated_bundle(&manifest_bytes, |path| {
-        let asset_path = root.join(path);
-        require_regular_file(&asset_path, "core overlay asset")?;
-        std::fs::read(&asset_path)
-            .with_context(|| format!("read core overlay asset {}", asset_path.display()))
-    })
+    Ok(manifest_bytes)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_native_asset(root: &Path, path: &str) -> Result<Vec<u8>> {
+    let asset_path = root.join(path);
+    require_regular_file(&asset_path, "core overlay asset")?;
+    std::fs::read(&asset_path)
+        .with_context(|| format!("read core overlay asset {}", asset_path.display()))
 }
 
 /// Validate and register the loose core overlay before native initialization
@@ -252,7 +274,11 @@ pub fn mount_validated_native_directory<B: AsRef<[u8]>>(
     mut mount: impl FnMut(&str) -> i32,
     mut read_visible: impl FnMut(&str) -> Result<B>,
 ) -> Result<CoreOverlayManifest> {
-    let (manifest, _) = load_validated_native_directory(root)?;
+    let manifest = read_validated_assets(
+        &read_native_manifest(root)?,
+        |path| read_native_asset(root, path),
+        |_, _| Ok(()),
+    )?;
     let root_utf8 = root
         .to_str()
         .ok_or_else(|| anyhow!("core overlay path is not UTF-8: {}", root.display()))?;
@@ -643,6 +669,26 @@ mod tests {
         let extra = materialize_repo_overlay();
         std::fs::write(extra.path().join("Data/unlisted.bin"), b"unlisted").unwrap();
         assert_rejected_before_mount(&extra, "physical inventory mismatch");
+    }
+
+    #[test]
+    fn native_mount_rechecks_visible_bytes_after_discarding_validation_buffers() {
+        let overlay = materialize_repo_overlay();
+        let replaced = "Data/Interface/Fonts/manager.cfg";
+        let error = mount_validated_native_directory(
+            overlay.path(),
+            |_| {
+                std::fs::write(overlay.path().join(replaced), b"changed during mount").unwrap();
+                SBFILE_NO_ERROR
+            },
+            |path| Ok(std::fs::read(overlay.path().join(path))?),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}")
+                .contains("runtime lookup did not select the validated core overlay asset")
+        );
+        assert!(format!("{error:#}").contains(replaced));
     }
 
     #[test]
