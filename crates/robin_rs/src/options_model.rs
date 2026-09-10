@@ -50,7 +50,7 @@ pub(crate) fn adjust_sound_setting(
         SoundSetting::EightBit => config.sound_8bit = !config.sound_8bit,
         _ => {
             let value = sound_value_mut(config, setting);
-            *value = (i32::from(*value) + delta).clamp(0, 9) as u16;
+            *value = i32::from(*value).saturating_add(delta).clamp(0, 9) as u16;
         }
     }
     true
@@ -469,10 +469,8 @@ pub(crate) fn graphics_settings_for_retroarch_availability(
 }
 
 fn cycle_index(current: usize, len: usize, delta: i32) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    (current as i32 + delta).rem_euclid(len as i32) as usize
+    assert!(len > 0, "cannot cycle an empty option list");
+    (current as i128 + i128::from(delta)).rem_euclid(len as i128) as usize
 }
 
 pub(crate) fn adjust_graphics_setting(
@@ -915,4 +913,55 @@ mod tests {
         assert!(!edit.changed());
         assert_eq!(edit.commit(true, &mut config), (true, false));
     }
+}
+
+#[test]
+fn numeric_sound_adjustment_clamps_even_extreme_deltas() {
+    for setting in [
+        SoundSetting::FxVolume,
+        SoundSetting::DialogueVolume,
+        SoundSetting::MusicVolume,
+        SoundSetting::CommentVolume,
+        SoundSetting::CommentFrequency,
+    ] {
+        for initial in [0, 5, 9, u16::MAX] {
+            for delta in [i32::MIN, -1, 0, 1, i32::MAX] {
+                let mut config = SoundConfig::default();
+                *sound_value_mut(&mut config, setting) = initial;
+                assert!(adjust_sound_setting(
+                    &mut config,
+                    setting,
+                    delta,
+                    true,
+                    true
+                ));
+                assert_eq!(
+                    *sound_value_mut(&mut config, setting),
+                    (i64::from(initial) + i64::from(delta)).clamp(0, 9) as u16
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn option_cycles_wrap_without_narrowing_indices_or_overflowing_deltas() {
+    for len in 1..10 {
+        for current in 0..len {
+            for delta in -20..20 {
+                let expected = (current as i32 + delta).rem_euclid(len as i32) as usize;
+                assert_eq!(cycle_index(current, len, delta), expected);
+            }
+        }
+    }
+    assert_eq!(cycle_index(2, 3, i32::MAX), 0);
+    assert_eq!(cycle_index(2, 3, i32::MIN), 0);
+    assert_eq!(cycle_index(usize::MAX - 1, usize::MAX, 1), 0);
+    assert_eq!(cycle_index(0, usize::MAX, -1), usize::MAX - 1);
+}
+
+#[test]
+#[should_panic(expected = "cannot cycle an empty option list")]
+fn empty_option_cycle_is_not_a_valid_zero_index() {
+    cycle_index(0, 0, 1);
 }
