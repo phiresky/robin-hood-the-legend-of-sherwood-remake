@@ -247,14 +247,18 @@ fn take_len_prefixed_string(r: &mut Reader<'_>, context: String) -> Result<Strin
 mod tests {
     use super::*;
 
-    /// Path to the demo mission script, resolved relative to this crate.
-    /// Returns None if the datadir isn't checked out (e.g. in CI without
-    /// assets).
-    fn demo_scb_path() -> Option<std::path::PathBuf> {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let p = std::path::PathBuf::from(manifest_dir)
-            .join("../../datadirs/demo/Data/Levels/Dem_Lei_MP.scb");
-        p.canonicalize().ok()
+    #[allow(dead_code)] // Shared fixture helpers also support file-only consumers.
+    mod original_data {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-support/original_data.rs"
+        ));
+    }
+
+    fn demo_scb_path() -> std::path::PathBuf {
+        // parse_file resolves the original game's case-insensitive asset paths;
+        // extracted demo data can use DATA rather than Data.
+        original_data::data_directory(".").join("Data/Levels/Dem_Lei_MP.scb")
     }
 
     #[test]
@@ -424,11 +428,9 @@ mod tests {
     /// format diverges from my understanding, this fails with an error
     /// pointing at the offset.
     #[test]
+    #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn parses_shipped_demo_script() {
-        let Some(path) = demo_scb_path() else {
-            tracing::warn!("skipping: demo .scb not present");
-            return;
-        };
+        let path = demo_scb_path();
         let scb = parse_file(&path).expect("demo .scb should parse");
         assert_eq!(scb.version, 1.5);
         assert!(!scb.classes.is_empty());
@@ -461,8 +463,9 @@ mod tests {
     /// up as one of these counts going to zero (or the file not fully
     /// consuming).
     #[test]
+    #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn demo_script_has_content() {
-        let Some(path) = demo_scb_path() else { return };
+        let path = demo_scb_path();
         let scb = parse_file(&path).unwrap();
         let mvars: usize = scb.classes.iter().map(|c| c.member_variables.len()).sum();
         let fns: usize = scb.classes.iter().map(|c| c.functions.len()).sum();
@@ -473,18 +476,11 @@ mod tests {
         assert!(quads > 0, "script has bytecode");
     }
 
-    /// Parse every .scb in the full-game datadirs. If the directory
-    /// isn't present, the test is silently skipped. Catches format
-    /// regressions across all 39 mission scripts.
+    /// Parse every .scb in the configured full-game data directory.
     #[test]
+    #[ignore = "requires full-game data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn parses_all_fullgame_scripts() {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let levels_dir =
-            std::path::PathBuf::from(manifest_dir).join("../../datadirs/fullgame/Data/Levels");
-        let Ok(levels_dir) = levels_dir.canonicalize() else {
-            tracing::warn!("skipping: fullgame datadirs not present");
-            return;
-        };
+        let levels_dir = original_data::data_directory("Data/Levels");
 
         let mut parsed = 0;
         let mut total_classes = 0;
