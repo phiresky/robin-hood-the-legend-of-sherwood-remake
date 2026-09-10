@@ -38,7 +38,7 @@ enum ListboxState {
 
 /// A single item in the listbox.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListboxItem<T: Clone = ()> {
+pub struct ListboxItem<T = ()> {
     pub text: String,
     pub data: T,
     pub flags: u32,
@@ -147,7 +147,7 @@ impl ColumnLayout {
 ///
 /// Generic over item data type `T`. Defaults to `()` for text-only lists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WidgetListbox<T: Clone = ()> {
+pub struct WidgetListbox<T = ()> {
     pub base: WidgetBase,
 
     /// All items in the list.
@@ -190,7 +190,7 @@ pub struct WidgetListbox<T: Clone = ()> {
     pub column_layout: ColumnLayout,
 }
 
-impl<T: Clone> Default for WidgetListbox<T> {
+impl<T> Default for WidgetListbox<T> {
     fn default() -> Self {
         Self {
             base: WidgetBase::default(),
@@ -213,7 +213,7 @@ impl<T: Clone> Default for WidgetListbox<T> {
     }
 }
 
-impl<T: Clone> WidgetListbox<T> {
+impl<T> WidgetListbox<T> {
     pub fn new(id: super::WidgetId) -> Self {
         Self {
             base: WidgetBase {
@@ -820,5 +820,28 @@ mod tests {
         assert_eq!(cells.len(), 2);
         assert_eq!(cells[0].text, "a");
         assert_eq!(cells[1].text, "b|c");
+    }
+}
+
+#[test]
+fn listbox_operations_do_not_require_cloneable_item_data() {
+    let mut list = WidgetListbox::new(7);
+    list.visible_count = 1;
+    list.items = (0..3)
+        .map(|index| ListboxItem {
+            text: format!("item {index}"),
+            data: std::sync::Mutex::new(index),
+            flags: 0,
+        })
+        .collect();
+    list.selected = Some(1);
+    assert!(list.scroll_down());
+    assert_eq!(list.first_visible, 1);
+    assert_eq!(list.selected, Some(1));
+    assert!(list.scroll_down());
+    assert!(!list.scroll_down());
+    assert!(list.scroll_up());
+    for (index, item) in list.items.iter().enumerate() {
+        assert_eq!(*item.data.lock().unwrap(), index);
     }
 }
