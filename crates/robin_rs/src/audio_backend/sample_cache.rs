@@ -37,6 +37,11 @@ impl SampleCache {
 
     pub(super) fn insert(&mut self, key: String, sample: StaticSoundData) {
         let bytes = std::mem::size_of_val(sample.frames.as_ref());
+        // A replacement invalidates the old value even when the new sample
+        // is too large to retain. Never serve stale audio under the same key.
+        if let Some((old, _)) = self.samples.remove(&key) {
+            self.resident_bytes -= std::mem::size_of_val(old.frames.as_ref());
+        }
         if bytes > self.budget_bytes {
             tracing::debug!(
                 bytes,
@@ -45,10 +50,7 @@ impl SampleCache {
             );
             return;
         }
-        if let Some((old, _)) = self.samples.remove(&key) {
-            self.resident_bytes -= std::mem::size_of_val(old.frames.as_ref());
-        }
-        while self.resident_bytes + bytes > self.budget_bytes {
+        while self.resident_bytes > self.budget_bytes - bytes {
             let oldest = self
                 .samples
                 .iter()
@@ -100,5 +102,37 @@ mod tests {
         let mut cache = SampleCache::new(0);
         cache.insert("a".into(), sample());
         assert!(cache.get("a").is_none());
+    }
+    #[test]
+    fn oversized_replacement_retires_old_sample_without_evicting_other_keys() {
+        let bytes = std::mem::size_of::<kira::Frame>();
+        let mut cache = SampleCache::new(bytes * 2);
+        cache.insert("a".into(), sample());
+        cache.insert("b".into(), sample());
+        let active = cache.get("a").unwrap();
+        let mut replacement = sample();
+        replacement.frames = vec![kira::Frame::ZERO; 3].into();
+        cache.insert("a".into(), replacement);
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("b").is_some());
+        assert_eq!(cache.resident_bytes, bytes);
+        assert_eq!(active.frames.len(), 1);
+        assert_eq!(std::sync::Arc::strong_count(&active.frames), 1);
+    }
+
+    #[test]
+    fn retained_replacement_counts_bytes_once_and_becomes_most_recent() {
+        let bytes = std::mem::size_of::<kira::Frame>();
+        let mut cache = SampleCache::new(bytes * 2);
+        cache.insert("a".into(), sample());
+        cache.insert("b".into(), sample());
+        let mut replacement = sample();
+        replacement.sample_rate = 2;
+        cache.insert("a".into(), replacement);
+        assert_eq!(cache.resident_bytes, bytes * 2);
+        cache.insert("c".into(), sample());
+        assert!(cache.get("b").is_none());
+        assert_eq!(cache.get("a").unwrap().sample_rate, 2);
+        assert!(cache.get("c").is_some());
     }
 }
