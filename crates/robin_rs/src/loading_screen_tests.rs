@@ -411,16 +411,8 @@ fn loading_screen_sand_threshold_tracks_progress() {
 fn loading_screen_close_deactivates() {
     let mut screen = LoadingScreen::default();
     screen.initialize(800, 600, 10.0);
-    screen.set_height_field(HeightField {
-        data: vec![128; 800 * 600],
-        width: 800,
-        height: 600,
-    });
-    assert!(screen.height_field.is_some());
-
     screen.close();
     assert!(!screen.is_active());
-    assert!(screen.height_field.is_none());
 }
 
 #[test]
@@ -447,6 +439,13 @@ fn loading_screen_serde_roundtrip() {
     screen.update(42, 5.0);
 
     let json = serde_json::to_string(&screen).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+        serde_json::json!({
+            "max_level": 10.0, "current_level": 5.0, "string_id": 42,
+            "status_text": null, "active": true, "screen_width": 800, "screen_height": 600
+        })
+    );
     let restored: LoadingScreen = serde_json::from_str(&json).unwrap();
 
     assert_eq!(restored.max_level, screen.max_level);
@@ -454,8 +453,6 @@ fn loading_screen_serde_roundtrip() {
     assert_eq!(restored.string_id, screen.string_id);
     assert_eq!(restored.active, screen.active);
     assert_eq!(restored.screen_width, screen.screen_width);
-    // height_field is skipped during serde
-    assert!(restored.height_field.is_none());
 }
 
 #[test]

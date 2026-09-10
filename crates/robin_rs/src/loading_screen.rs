@@ -283,10 +283,6 @@ pub struct LoadingScreen {
     pub screen_width: u32,
     /// Screen height in pixels.
     pub screen_height: u32,
-    /// The height field for the sand dissolve effect.
-    /// Skipped during serialization (regenerated from image data on load).
-    #[serde(skip)]
-    pub height_field: Option<HeightField>,
 }
 
 impl Default for LoadingScreen {
@@ -299,7 +295,6 @@ impl Default for LoadingScreen {
             active: false,
             screen_width: 0,
             screen_height: 0,
-            height_field: None,
         }
     }
 }
@@ -307,9 +302,8 @@ impl Default for LoadingScreen {
 impl LoadingScreen {
     /// Initialize the loading screen for a new loading sequence.
     ///
-    /// Resets progress to zero and activates the screen. The height field
-    /// should be set separately via [`set_height_field`](Self::set_height_field)
-    /// after the dissolve images have been loaded.
+    /// Resets progress to zero and activates the screen. Dissolve textures are
+    /// owned separately by the renderer, not by this progress state.
     pub fn initialize(&mut self, screen_width: u32, screen_height: u32, max_level: f32) {
         self.max_level = max_level;
         self.current_level = 0.0;
@@ -318,12 +312,6 @@ impl LoadingScreen {
         self.active = true;
         self.screen_width = screen_width;
         self.screen_height = screen_height;
-        self.height_field = None;
-    }
-
-    /// Attach a height field for the sand dissolve effect.
-    pub fn set_height_field(&mut self, height_field: HeightField) {
-        self.height_field = Some(height_field);
     }
 
     /// Set the free-form status text shown below the sand-dissolve bar.
@@ -384,12 +372,11 @@ impl LoadingScreen {
         HeightField::compute_threshold(self.progress())
     }
 
-    /// Close the loading screen, releasing the height field.
+    /// Mark the loading screen inactive.
     ///
     /// After this call, [`is_active`](Self::is_active) returns `false`.
     pub fn close(&mut self) {
         self.active = false;
-        self.height_field = None;
     }
 
     /// Whether the loading screen is currently active.
@@ -617,6 +604,9 @@ impl LoadingScreenRenderer {
             &final_pixels,
             &height_field,
         )?;
+        // GPU textures own the uploaded pixels. Do not retain the CPU images
+        // during font preparation or the subsequent mission load.
+        drop((initial_pixels, final_pixels, mask_pixels, height_field));
 
         // Paint the framebuffer black and present *before* loading any
         // pictures/fonts, so the previous frame (main menu, window-
@@ -627,7 +617,6 @@ impl LoadingScreenRenderer {
 
         let mut state = LoadingScreen::default();
         state.initialize(width as u32, height as u32, max_level);
-        state.set_height_field(height_field);
 
         // Loading-screen behavior stores fonts behind a shared handle;
         // keep either native bitmap or locale-selected TrueType resolves and
