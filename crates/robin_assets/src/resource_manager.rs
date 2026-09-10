@@ -232,22 +232,19 @@ fn read_picture(reader: &mut Reader<'_>, context: &str) -> Result<Picture> {
 }
 
 /// Read a single-picture resource (`PIC `).
-/// Returns `(flags, pictures)`.
-fn read_single_picture(
-    reader: &mut Reader<'_>,
-    context: &str,
-) -> Result<(u32, Vec<Option<Picture>>)> {
-    let flags = reader.u32(format!("{context} flags"))?;
+fn read_single_picture(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Option<Picture>>> {
+    let _flags = reader.u32(format!("{context} flags"))?;
     let pic = read_picture(reader, &format!("{context} picture 0"))?;
-    Ok((flags, vec![Some(pic)]))
+    Ok(vec![Some(pic)])
 }
 
 /// Read a picture-collection resource (`PICC`).
-fn read_picture_collection(
-    reader: &mut Reader<'_>,
-    context: &str,
-) -> Result<(u32, Vec<Option<Picture>>)> {
-    let flags = reader.u32(format!("{context} flags"))?;
+fn read_picture_collection(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Option<Picture>>> {
+    let _flags = reader.u32(format!("{context} flags"))?;
+    read_picture_slots(reader, context)
+}
+
+fn read_picture_slots(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Option<Picture>>> {
     let count = reader.count_u32(format!("{context} picture count"), 12)?;
     let mut pics = Vec::with_capacity(count);
     for picture_index in 0..count {
@@ -256,7 +253,7 @@ fn read_picture_collection(
             &format!("{context} picture {picture_index}"),
         )?));
     }
-    Ok((flags, pics))
+    Ok(pics)
 }
 
 fn flagged_picture_count(tag: &[u8; 4]) -> Option<usize> {
@@ -276,8 +273,8 @@ fn read_flagged_pictures(
     reader: &mut Reader<'_>,
     count: usize,
     context: &str,
-) -> Result<(u32, Vec<Option<Picture>>)> {
-    let flags = reader.u32(format!("{context} flags"))?;
+) -> Result<Vec<Option<Picture>>> {
+    let _flags = reader.u32(format!("{context} flags"))?;
     let bitmask = reader.u32(format!("{context} picture bitmask"))?;
     let mut pics = Vec::with_capacity(count);
     for i in 0..count {
@@ -290,35 +287,27 @@ fn read_flagged_pictures(
             pics.push(None);
         }
     }
-    Ok((flags, pics))
+    Ok(pics)
 }
 
 /// Read a cursor resource (`CUR `).
 fn read_cursor(
     reader: &mut Reader<'_>,
     context: &str,
-) -> Result<(u32, MouseEntry, Vec<Option<Picture>>)> {
-    let flags = reader.u32(format!("{context} flags"))?;
+) -> Result<(MouseEntry, Vec<Option<Picture>>)> {
+    let _flags = reader.u32(format!("{context} flags"))?;
     let mouse_flags = reader.u16(format!("{context} mouse flags"))?;
     let x = reader.u16(format!("{context} hotspot x"))?;
     let y = reader.u16(format!("{context} hotspot y"))?;
     let frame_length = reader.u16(format!("{context} frame length"))?;
-    let count = reader.count_u32(format!("{context} picture count"), 12)?;
-
-    let mut pics = Vec::with_capacity(count);
-    for picture_index in 0..count {
-        pics.push(Some(read_picture(
-            reader,
-            &format!("{context} picture {picture_index}"),
-        )?));
-    }
+    let pics = read_picture_slots(reader, context)?;
 
     let entry = MouseEntry {
         hotspot: CursorHotspot::new(x as f32, y as f32),
         flags: mouse_flags,
         frame_length,
     };
-    Ok((flags, entry, pics))
+    Ok((entry, pics))
 }
 
 /// Read a string-table resource (`TEXT`).
@@ -693,20 +682,20 @@ impl ResourceManager {
         );
         match type_tag {
             b"PIC " => {
-                let (_, pics) = read_single_picture(reader, &context)?;
+                let pics = read_single_picture(reader, &context)?;
                 self.data.pictures.insert(id, pics);
             }
             b"PICC" => {
-                let (_, pics) = read_picture_collection(reader, &context)?;
+                let pics = read_picture_collection(reader, &context)?;
                 self.data.pictures.insert(id, pics);
             }
             b"BTTN" | b"TOGL" | b"NPTF" | b"SLID" | b"RDO " => {
                 let count = flagged_picture_count(type_tag).expect("matched flagged picture tag");
-                let (_, pics) = read_flagged_pictures(reader, count, &context)?;
+                let pics = read_flagged_pictures(reader, count, &context)?;
                 self.data.pictures.insert(id, pics);
             }
             b"CUR " => {
-                let (_, mouse, pics) = read_cursor(reader, &context)?;
+                let (mouse, pics) = read_cursor(reader, &context)?;
                 self.data.pictures.insert(id, pics);
                 self.data.mouse_entries.insert(id, mouse);
             }
@@ -1575,6 +1564,51 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_and_collection_readers_share_picture_payload_order() {
+        let picture = Picture {
+            width: 1,
+            height: 1,
+            pitch: 2,
+            pixel_format: crate::picture::PixelFormat::Rgb16,
+            data: vec![0x34, 0x12],
+            palette: None,
+        };
+        let encoded = picture
+            .write_sixteen_to_bytes(crate::picture::SixteenPacking::None)
+            .unwrap();
+        for count in [0u32, 2] {
+            let mut collection = 0x12345678u32.to_le_bytes().to_vec();
+            let mut cursor = collection.clone();
+            for field in [5u16, 3, 4, 17] {
+                cursor.extend_from_slice(&field.to_le_bytes());
+            }
+            for payload in [&mut collection, &mut cursor] {
+                payload.extend_from_slice(&count.to_le_bytes());
+                for _ in 0..count {
+                    payload.extend_from_slice(&encoded);
+                }
+            }
+            let mut collection_reader = Reader::new(&collection);
+            let pictures = read_picture_collection(&mut collection_reader, "collection").unwrap();
+            let mut cursor_reader = Reader::new(&cursor);
+            let (entry, cursor_pictures) = read_cursor(&mut cursor_reader, "cursor").unwrap();
+            assert_eq!(pictures.len(), count as usize);
+            assert_eq!(
+                serde_json::to_value(&pictures).unwrap(),
+                serde_json::to_value(&cursor_pictures).unwrap()
+            );
+            for decoded in pictures.iter().flatten() {
+                assert_eq!(decoded.data, picture.data);
+            }
+            assert_eq!(entry.flags, 5);
+            assert_eq!(entry.hotspot, CursorHotspot::new(3.0, 4.0));
+            assert_eq!(entry.frame_length, 17);
+            assert_eq!(collection_reader.remaining(), 0);
+            assert_eq!(cursor_reader.remaining(), 0);
+        }
+    }
 
     #[test]
     fn picture_presence_uses_registered_type_not_reference_bookkeeping() {
