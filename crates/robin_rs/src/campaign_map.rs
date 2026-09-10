@@ -564,7 +564,7 @@ impl CampaignMapModalState {
         if let Some(node) = self.graph.nodes.get(self.selected_progress) {
             self.scroll_views[HISTORY_VIEW].set_total(node.plays.len());
             if self.details_open {
-                self.scroll_views[TEXT_VIEW].set_total(detail_lines(node, &self.assets).len());
+                self.scroll_views[TEXT_VIEW].set_total(detail_lines(node, &self.assets).count());
             }
             if reveal || initialize {
                 self.scroll_views[TREE_VIEW].reveal(node.depth);
@@ -1541,7 +1541,7 @@ fn render_campaign_progress(
             capture_views[HISTORY_VIEW].set_total(node.plays.len());
             capture_views[HISTORY_VIEW].set_offset(history_scroll);
             if let Some(offset) = details_scroll {
-                capture_views[TEXT_VIEW].set_total(detail_lines(node, assets).len());
+                capture_views[TEXT_VIEW].set_total(detail_lines(node, assets).count());
                 capture_views[TEXT_VIEW].set_offset(offset);
             }
         }
@@ -2152,25 +2152,23 @@ fn load_campaign_descriptions(
 
 const DETAIL_VISIBLE_LINES: usize = 16;
 
-fn detail_lines(
-    node: &crate::campaign_progress::CampaignProgressNode,
-    assets: &CampaignMapAssets,
-) -> Vec<String> {
+fn detail_lines<'a>(
+    node: &'a crate::campaign_progress::CampaignProgressNode,
+    assets: &'a CampaignMapAssets,
+) -> impl Iterator<Item = String> + 'a {
     let font = assets.progress_font.as_ref().expect("mission details font");
     let width = campaign_scroll_views(assets)[TEXT_VIEW].content_width() - 32;
-    detail_sections(node)
-        .flat_map(|text| {
-            if text.is_empty() {
-                vec![String::new()]
-            } else {
-                layout::wrap_text_for_box_font(font, text, width, usize::MAX)
-                    .lines
-                    .into_iter()
-                    .map(|line| line.text)
-                    .collect()
-            }
-        })
-        .collect()
+    detail_sections(node).flat_map(move |text| {
+        let blank_line = text.is_empty().then(String::new);
+        let wrapped = (!text.is_empty())
+            .then(|| layout::wrap_text_for_box_font(font, text, width, usize::MAX));
+        blank_line.into_iter().chain(
+            wrapped
+                .into_iter()
+                .flat_map(|wrapped| wrapped.lines)
+                .map(|line| line.text),
+        )
+    })
 }
 
 fn detail_sections(
@@ -2217,7 +2215,6 @@ fn render_mission_details(
     let text_view = &views[TEXT_VIEW];
     let text_scroll = text_view.offset();
     for (row, text) in lines
-        .iter()
         .skip(text_scroll)
         .take(DETAIL_VISIBLE_LINES)
         .enumerate()
@@ -2226,7 +2223,7 @@ fn render_mission_details(
             renderer,
             font,
             transform,
-            text,
+            &text,
             48,
             text_view.row_y(text_scroll + row) + 10,
             text_view.content_width() - 32,
@@ -3033,6 +3030,49 @@ mod browser_tests {
     }
 
     #[test]
+    fn detail_lines_preserve_wrapping_blanks_and_visible_slices() {
+        let mut state = browser();
+        let node = &mut state.graph.nodes[0];
+        node.availability_notes = vec!["First requirement".into(), "".into(), "条件".into()];
+        node.briefing = Some("e\u{0301}clair 👩‍💻 mission briefing with several words. ".repeat(80));
+        let font = state.assets.progress_font.as_ref().unwrap();
+        let width = campaign_scroll_views(&state.assets)[TEXT_VIEW].content_width() - 32;
+        let mut expected = Vec::new();
+        for section in detail_sections(node) {
+            if section.is_empty() {
+                expected.push(String::new());
+            } else {
+                expected.extend(
+                    layout::wrap_text_for_box_font(font, section, width, usize::MAX)
+                        .lines
+                        .into_iter()
+                        .map(|line| line.text),
+                );
+            }
+        }
+        assert!(expected.len() > DETAIL_VISIBLE_LINES);
+        assert_eq!(
+            detail_lines(node, &state.assets).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(detail_lines(node, &state.assets).count(), expected.len());
+        for offset in [0, 1, 5, expected.len() - 1, expected.len()] {
+            assert_eq!(
+                detail_lines(node, &state.assets)
+                    .skip(offset)
+                    .take(DETAIL_VISIBLE_LINES)
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .skip(offset)
+                    .take(DETAIL_VISIBLE_LINES)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
     fn detail_sections_borrow_text_and_preserve_fallback_precedence() {
         let mut state = browser();
         let node = &mut state.graph.nodes[0];
@@ -3181,7 +3221,7 @@ mod browser_tests {
         state.handle_events(vec![GameEvent::MouseWheel(-100)], transform, true);
         assert_eq!(
             state.details_offset(),
-            Some(detail_lines(&state.graph.nodes[0], &state.assets).len() - DETAIL_VISIBLE_LINES)
+            Some(detail_lines(&state.graph.nodes[0], &state.assets).count() - DETAIL_VISIBLE_LINES)
         );
         state.handle_events(vec![GameEvent::MouseWheel(100)], transform, true);
         assert_eq!(state.details_offset(), Some(0));
@@ -3683,7 +3723,7 @@ mod capture_tests {
                         .nodes
                         .iter()
                         .enumerate()
-                        .max_by_key(|(_, node)| detail_lines(node, &state.assets).len())
+                        .max_by_key(|(_, node)| detail_lines(node, &state.assets).count())
                         .unwrap()
                         .0,
                     0,
