@@ -304,7 +304,6 @@ pub(super) fn transform_rhs(
         .flatten()
         .collect();
 
-    let prep_rels: Vec<String> = rhs_preps.keys().cloned().collect();
     let mut loaded_base_script_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
     struct PlannedVariant {
         rel: String,
@@ -317,7 +316,7 @@ pub(super) fn transform_rhs(
     }
     let mut planned_variants = Vec::<PlannedVariant>::new();
     let mut base_extra_ids = std::collections::BTreeMap::<String, BTreeSet<u32>>::new();
-    for rel in &prep_rels {
+    for (rel, variant_prep) in &rhs_preps {
         let Some(name) = rel
             .strip_prefix("Characters/")
             .and_then(|n| n.strip_suffix(".rhs"))
@@ -328,7 +327,6 @@ pub(super) fn transform_rhs(
             continue;
         };
         let base_rel = resolve_family_hub_rel(
-            &prep_rels,
             &rhs_preps,
             &mut loaded_base_script_orders,
             &in_path,
@@ -338,7 +336,6 @@ pub(super) fn transform_rhs(
         // Second hub, when this member is third-or-later in a star-2 family.
         let base2_rel = match variant_base2_names.get(&name.to_ascii_lowercase()) {
             Some(hub2_name) => Some(resolve_family_hub_rel(
-                &prep_rels,
                 &rhs_preps,
                 &mut loaded_base_script_orders,
                 &in_path,
@@ -354,7 +351,6 @@ pub(super) fn transform_rhs(
                 .or_else(|| loaded_base_script_orders.get(hub_rel).map(Vec::as_slice))
                 .expect("hub script order resolved above")
         };
-        let variant_prep = rhs_preps.get(rel).expect("prep listed in prep_rels");
         // Positional pairing over the script frame-id tables (the variant's
         // tables mirror each hub's 1:1); duplicated variant frames that pair
         // with conflicting hub frames fall back per hub.

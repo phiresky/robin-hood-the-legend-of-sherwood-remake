@@ -131,7 +131,6 @@ pub(super) fn family_proxy_bits(
 /// one matches case-insensitively) and ensure its full-profile script order is
 /// available — either from its prep or loaded into `loaded_orders`.
 pub(super) fn resolve_family_hub_rel(
-    prep_rels: &[String],
     rhs_preps: &std::collections::BTreeMap<String, RhsChunkPrep>,
     loaded_orders: &mut std::collections::BTreeMap<String, Vec<u32>>,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
@@ -139,8 +138,8 @@ pub(super) fn resolve_family_hub_rel(
     variant_rel: &str,
 ) -> Result<String> {
     let disk_rel = format!("Characters/{hub_name}.rhs");
-    let hub_rel = prep_rels
-        .iter()
+    let hub_rel = rhs_preps
+        .keys()
         .find(|rel| rel.eq_ignore_ascii_case(&disk_rel))
         .cloned()
         .unwrap_or(disk_rel);
@@ -162,6 +161,73 @@ pub(super) fn resolve_family_hub_rel(
         loaded_orders.insert(hub_rel.clone(), order);
     }
     Ok(hub_rel)
+}
+
+#[cfg(test)]
+mod hub_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn prepared_hubs_preserve_first_sorted_case_match_without_loading() {
+        let preps = ["Characters/HERO.rhs", "Characters/Hero.rhs"]
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    RhsChunkPrep {
+                        rhs_data: None,
+                        matched_profiles: 0,
+                        script_order: vec![1, 2],
+                        used_sprite_ids: BTreeSet::new(),
+                        base_rel: None,
+                        base_ids: Default::default(),
+                        base2_rel: None,
+                        base2_ids: Default::default(),
+                    },
+                )
+            })
+            .into();
+        let mut loaded = Default::default();
+        let resolved = resolve_family_hub_rel(
+            &preps,
+            &mut loaded,
+            &|_| panic!("prepared hub must not be loaded again"),
+            "hero",
+            "Characters/variant.rhs",
+        )
+        .unwrap();
+        assert_eq!(resolved, "Characters/HERO.rhs");
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn cached_hubs_are_reused_and_missing_hubs_keep_context() {
+        let preps = Default::default();
+        let mut loaded =
+            std::collections::BTreeMap::from([("Characters/Hero.rhs".to_owned(), vec![1, 2])]);
+        assert_eq!(
+            resolve_family_hub_rel(
+                &preps,
+                &mut loaded,
+                &|_| panic!("cached hub must not be loaded again"),
+                "Hero",
+                "Characters/variant.rhs",
+            )
+            .unwrap(),
+            "Characters/Hero.rhs"
+        );
+        let error = resolve_family_hub_rel(
+            &preps,
+            &mut loaded,
+            &|_| None,
+            "Missing",
+            "Characters/variant.rhs",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Characters/Missing.rhs"));
+        assert!(error.contains("Characters/variant.rhs"));
+        assert_eq!(loaded.len(), 1);
+    }
 }
 
 /// Positional variant->hub frame pairing over two script frame-id orders:
