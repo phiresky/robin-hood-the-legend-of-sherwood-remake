@@ -946,28 +946,22 @@ fn format_exact_saved_time(
     time_zone: Option<&TimeZone>,
     text: &impl SaveMetadataText,
 ) -> String {
-    let Ok(seconds) = parse_save_timestamp(timestamp) else {
-        return text.invalid_timestamp();
-    };
-    let Ok(seconds) = i64::try_from(seconds) else {
-        return text.invalid_timestamp();
-    };
-    let Ok(timestamp) = Timestamp::from_second(seconds) else {
-        return text.invalid_timestamp();
-    };
-    let Some(time_zone) = time_zone else {
-        return text.local_time_unavailable();
-    };
-    timestamp
-        .to_zoned(time_zone.clone())
-        .strftime("%Y-%m-%d %H:%M:%S %Z")
-        .to_string()
+    format_local_saved_time(timestamp, time_zone, text, "%Y-%m-%d %H:%M:%S %Z")
 }
 
 fn format_compact_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
     text: &impl SaveMetadataText,
+) -> String {
+    format_local_saved_time(timestamp, time_zone, text, "%Y-%m-%d %H:%M")
+}
+
+fn format_local_saved_time(
+    timestamp: &str,
+    time_zone: Option<&TimeZone>,
+    text: &impl SaveMetadataText,
+    format: &str,
 ) -> String {
     let Ok(seconds) = parse_save_timestamp(timestamp) else {
         return text.invalid_timestamp();
@@ -983,7 +977,7 @@ fn format_compact_saved_time(
     };
     timestamp
         .to_zoned(time_zone.clone())
-        .strftime("%Y-%m-%d %H:%M")
+        .strftime(format)
         .to_string()
 }
 
@@ -1538,6 +1532,48 @@ mod tests {
         assert_eq!(
             format_exact_saved_time("10", None, &text),
             "local time unavailable"
+        );
+    }
+
+    #[test]
+    fn local_time_formats_share_validation_before_timezone_availability() {
+        let text = EnglishSaveMetadataText;
+        for timestamp in [
+            "",
+            "not-a-clock",
+            "-1",
+            "18446744073709551616",
+            "18446744073709551615",
+            "9223372036854775807",
+        ] {
+            for zone in [None, Some(&TimeZone::UTC)] {
+                assert_eq!(
+                    format_exact_saved_time(timestamp, zone, &text),
+                    "invalid timestamp"
+                );
+                assert_eq!(
+                    format_compact_saved_time(timestamp, zone, &text),
+                    "invalid timestamp"
+                );
+            }
+        }
+        for timestamp in ["0", "59", "86400"] {
+            assert_eq!(
+                format_exact_saved_time(timestamp, None, &text),
+                "local time unavailable"
+            );
+            assert_eq!(
+                format_compact_saved_time(timestamp, None, &text),
+                "local time unavailable"
+            );
+        }
+        assert_eq!(
+            format_compact_saved_time("59", Some(&TimeZone::UTC), &text),
+            "1970-01-01 00:00"
+        );
+        assert_eq!(
+            format_exact_saved_time("59", Some(&TimeZone::UTC), &text),
+            "1970-01-01 00:00:59 UTC"
         );
     }
 
