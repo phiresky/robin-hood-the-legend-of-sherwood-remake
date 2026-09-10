@@ -633,15 +633,15 @@ fn render_portrait_text_gpu(
     let slot_count = portrait_slot_count(sw, items.len());
 
     for (slot, item) in items.iter().enumerate() {
-        let pc_id = item.members[0];
+        let pc_id = item.members()[0];
         let entity = match engine.get_entity(pc_id) {
             Some(e) => e,
             None => continue,
         };
 
-        let is_selected = match item.target {
+        let is_selected = match item.target() {
             PortraitTarget::Pc(_) => engine.hero_selection(local_seat).contains(&pc_id),
-            _ => engine.tactical_selection(local_seat) == item.members.as_ref(),
+            _ => engine.tactical_selection(local_seat) == item.members(),
         };
         let is_burned = matches!(entity, Entity::Pc(pc) if pc.pc.life_points <= 0);
         if is_burned {
@@ -664,12 +664,12 @@ fn render_portrait_text_gpu(
         let vis_top = (sh - pos_visage) as i32;
         let mut name =
             entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default();
-        if !matches!(item.target, PortraitTarget::Pc(_)) {
-            name = allied_portrait_name(name, item.members.len());
+        if !matches!(item.target(), PortraitTarget::Pc(_)) {
+            name = allied_portrait_name(name, item.members().len());
         }
         if !name.is_empty() && !sword_visible {
             let vip =
-                matches!(item.target, PortraitTarget::Pc(_)) && is_vip_character(assets, entity);
+                matches!(item.target(), PortraitTarget::Pc(_)) && is_vip_character(assets, entity);
             let display_name = prepare_portrait_name(&name, vip);
             let name_x = x + TEXT_OFFSET_X;
             let name_y = vis_top + TEXT_OFFSET_Y;
@@ -814,7 +814,7 @@ fn render_ammo_counts_gpu(
     let slot_count = portrait_slot_count(sw, items.len());
 
     for (slot, item) in items.iter().enumerate() {
-        let PortraitTarget::Pc(pc_id) = item.target else {
+        let PortraitTarget::Pc(pc_id) = item.target() else {
             continue;
         };
         if !engine.hero_selection(local_seat).contains(&pc_id) {

@@ -25,6 +25,7 @@ use robin_engine::sprite::BBox;
 use robin_engine::tactical_control::{
     CombatStance, TacticalDuty, TacticalFormation, TacticalPinnedGroup,
 };
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -1329,20 +1330,39 @@ pub enum PortraitTarget {
     AlliedGroup(u32),
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct PortraitBarItem<'a> {
-    pub target: PortraitTarget,
-    pub members: Cow<'a, [EntityId]>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum PortraitBarItem<'a> {
+    Pc(EntityId),
+    AlliedGroup {
+        id: u32,
+        members: Cow<'a, [EntityId]>,
+    },
+    AlliedSelection(Cow<'a, [EntityId]>),
 }
 
 impl PortraitBarItem<'_> {
+    pub(crate) fn target(&self) -> PortraitTarget {
+        match self {
+            Self::Pc(id) => PortraitTarget::Pc(*id),
+            Self::AlliedGroup { id, .. } => PortraitTarget::AlliedGroup(*id),
+            Self::AlliedSelection(_) => PortraitTarget::AlliedSelection,
+        }
+    }
+
+    pub(crate) fn members(&self) -> &[EntityId] {
+        match self {
+            Self::Pc(id) => std::slice::from_ref(id),
+            Self::AlliedGroup { members, .. } | Self::AlliedSelection(members) => members,
+        }
+    }
+
     fn queue_strip_identity(&self) -> crate::host::QueueStripIdentity {
         use crate::host::QueueStripIdentity;
-        match self.target {
+        match self.target() {
             PortraitTarget::Pc(id) => QueueStripIdentity::Pc(id),
             PortraitTarget::AlliedGroup(id) => QueueStripIdentity::AlliedGroup(id),
             PortraitTarget::AlliedSelection => {
-                let mut members = self.members.to_vec();
+                let mut members = self.members().to_vec();
                 members.sort_unstable();
                 QueueStripIdentity::AlliedSelection(members)
             }
@@ -1383,13 +1403,10 @@ fn build_portrait_page<'a>(
         .take(capacity)
         .map(|index| {
             if let Some(&pc) = pcs.get(index) {
-                PortraitBarItem {
-                    target: PortraitTarget::Pc(pc),
-                    members: Cow::Owned(vec![pc]),
-                }
+                PortraitBarItem::Pc(pc)
             } else if let Some(group) = groups.get(index - pcs.len()) {
-                PortraitBarItem {
-                    target: PortraitTarget::AlliedGroup(group.id),
+                PortraitBarItem::AlliedGroup {
+                    id: group.id,
                     members: Cow::Borrowed(&group.members),
                 }
             } else {
@@ -1397,10 +1414,7 @@ fn build_portrait_page<'a>(
                     include_selection,
                     "portrait page index must refer to an existing item"
                 );
-                PortraitBarItem {
-                    target: PortraitTarget::AlliedSelection,
-                    members: Cow::Borrowed(selection),
-                }
+                PortraitBarItem::AlliedSelection(Cow::Borrowed(selection))
             }
         })
         .collect();
@@ -1618,7 +1632,7 @@ pub(crate) fn prepare_auto_queue_animations(
     let (items, _) = portrait_bar_items(engine, seat, screen_width);
     let mut prepared = Vec::with_capacity(items.len());
     for item in items {
-        if let PortraitTarget::Pc(id) = item.target {
+        if let PortraitTarget::Pc(id) = item.target() {
             let entity = engine
                 .get_entity(id)
                 .expect("displayed portrait must have an entity");
@@ -1629,11 +1643,11 @@ pub(crate) fn prepare_auto_queue_animations(
             }
         }
         assert!(
-            !item.members.is_empty(),
+            !item.members().is_empty(),
             "automatic queue strip cannot have an empty member list"
         );
         let count = item
-            .members
+            .members()
             .iter()
             .map(|id| engine.automatic_quick_action_count(*id))
             .sum();
@@ -1699,7 +1713,7 @@ fn render_allied_portrait(
     sh: u16,
     hovered_action: Option<u8>,
 ) {
-    let selected = engine.tactical_selection(seat) == item.members.as_ref();
+    let selected = engine.tactical_selection(seat) == item.members();
     let top_scroll = if selected {
         POSITION_TOP_SCROLL
     } else {
@@ -1715,7 +1729,7 @@ fn render_allied_portrait(
         sh,
         selected,
     );
-    let visage_kind = allied_visage_kind(engine, profiles, &item.members);
+    let visage_kind = allied_visage_kind(engine, profiles, item.members());
     let visage = portraits.allied_visages[visage_kind.index()]
         .as_ref()
         .unwrap_or_else(|| panic!("allied visage {visage_kind:?} was not loaded"));
@@ -1740,7 +1754,7 @@ fn render_allied_portrait(
     // soldiers. A group counts as fighting while any surviving member is in
     // a sword action or has an active melee opponent. Match hero portraits:
     // the overlay stays visible on the open portrait and blinks while closed.
-    let is_sword_fighting = item.members.iter().any(|member| {
+    let is_sword_fighting = item.members().iter().any(|member| {
         engine.get_entity(*member).is_some_and(|entity| {
             entity
                 .actor_data()
@@ -1775,7 +1789,7 @@ fn render_allied_portrait(
     // Pin/unpin button remains visible in both open and closed states.
     let pin_x = x + ALLIED_PIN_LEFT;
     let pin_y = sh - top_scroll - ALLIED_PIN_RISE;
-    let pin_index = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
+    let pin_index = if matches!(item.target(), PortraitTarget::AlliedGroup(_)) {
         1
     } else {
         0
@@ -1805,7 +1819,7 @@ fn render_allied_portrait(
         engine,
         seat,
         item.queue_strip_identity(),
-        &item.members,
+        item.members(),
         x,
         i32::from(sh - top_scroll + 4),
     );
@@ -1814,7 +1828,7 @@ fn render_allied_portrait(
         let action_top = sh - POSITION_ACTION;
         let action_bottom = sh - POSITION_BOTTOM_SCROLL;
         let order = item
-            .members
+            .members()
             .first()
             .and_then(|soldier| engine.tactical_order(*soldier));
         let button_w = ELEMENT_WIDTH / 3;
@@ -2224,7 +2238,7 @@ pub fn draw_panel(
         let x2 = x + ELEMENT_WIDTH;
 
         let item = &portrait_items[slot as usize];
-        if !matches!(item.target, PortraitTarget::Pc(_)) {
+        if !matches!(item.target(), PortraitTarget::Pc(_)) {
             let hovered = hovered_allied_action
                 .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
                 .map(|(_, button)| button);
@@ -2233,7 +2247,7 @@ pub fn draw_panel(
             );
             continue;
         }
-        let PortraitTarget::Pc(pc_id) = item.target else {
+        let PortraitTarget::Pc(pc_id) = item.target() else {
             unreachable!()
         };
         let entity = engine.get_entity(pc_id);
@@ -3628,14 +3642,14 @@ pub fn hit_test_portrait_detailed(
     if paged {
         let representative = items
             .first()
-            .and_then(|item| item.members.first())
+            .and_then(|item| item.members().first())
             .copied()
             .expect("paged portrait bar has no representative entity");
         if click_x <= 30.0 {
             return Some(PortraitHit {
                 slot: 0,
                 pc_id: representative,
-                target: items[0].target,
+                target: items[0].target(),
                 area: PortraitHitArea::PageLeft,
                 is_burned: false,
             });
@@ -3644,7 +3658,7 @@ pub fn hit_test_portrait_detailed(
             return Some(PortraitHit {
                 slot: 0,
                 pc_id: representative,
-                target: items[0].target,
+                target: items[0].target(),
                 area: PortraitHitArea::PageRight,
                 is_burned: false,
             });
@@ -3654,7 +3668,7 @@ pub fn hit_test_portrait_detailed(
     for (slot, item) in items.iter().enumerate().take(num_slots) {
         let x = slot_left_x(screen_width, slot as u16, slot_count) as f32;
         let pin_right = x + f32::from(ALLIED_PIN_LEFT + ALLIED_PIN_ICON_SIZE);
-        let x2 = if matches!(item.target, PortraitTarget::Pc(_)) {
+        let x2 = if matches!(item.target(), PortraitTarget::Pc(_)) {
             x + ELEMENT_WIDTH as f32
         } else {
             pin_right
@@ -3664,9 +3678,9 @@ pub fn hit_test_portrait_detailed(
             continue;
         }
 
-        let pc_id = item.members[0];
-        if !matches!(item.target, PortraitTarget::Pc(_)) {
-            let selected = engine.tactical_selection(local_seat) == item.members.as_ref();
+        let pc_id = item.members()[0];
+        if !matches!(item.target(), PortraitTarget::Pc(_)) {
+            let selected = engine.tactical_selection(local_seat) == item.members();
             let top_scroll_top = if selected {
                 (sh - POSITION_TOP_SCROLL) as f32
             } else {
@@ -3698,7 +3712,7 @@ pub fn hit_test_portrait_detailed(
             return Some(PortraitHit {
                 slot: slot as u8,
                 pc_id,
-                target: item.target,
+                target: item.target(),
                 area,
                 is_burned: false,
             });
@@ -3722,7 +3736,7 @@ pub fn hit_test_portrait_detailed(
                         return Some(PortraitHit {
                             slot: slot as u8,
                             pc_id,
-                            target: item.target,
+                            target: item.target(),
                             area: PortraitHitArea::QuickAction(slot_idx),
                             is_burned: false,
                         });
@@ -3776,7 +3790,7 @@ pub fn hit_test_portrait_detailed(
             return Some(PortraitHit {
                 slot: slot as u8,
                 pc_id,
-                target: item.target,
+                target: item.target(),
                 area,
                 is_burned,
             });
@@ -3840,7 +3854,7 @@ pub fn hit_test_portrait_detailed(
         return Some(PortraitHit {
             slot: slot as u8,
             pc_id,
-            target: item.target,
+            target: item.target(),
             area,
             is_burned,
         });
@@ -3995,14 +4009,16 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
 #[cfg(test)]
 mod tests {
     fn queue_item(target: PortraitTarget, members: &[u32]) -> PortraitBarItem<'static> {
-        PortraitBarItem {
-            target,
-            members: Cow::Owned(
-                members
-                    .iter()
-                    .map(|id| EntityId::Soldier(robin_engine::entity_id::SoldierId(*id)))
-                    .collect(),
-            ),
+        let members = Cow::Owned(
+            members
+                .iter()
+                .map(|id| EntityId::Soldier(robin_engine::entity_id::SoldierId(*id)))
+                .collect(),
+        );
+        match target {
+            PortraitTarget::AlliedGroup(id) => PortraitBarItem::AlliedGroup { id, members },
+            PortraitTarget::AlliedSelection => PortraitBarItem::AlliedSelection(members),
+            PortraitTarget::Pc(_) => panic!("queue_item fixture expects an allied target"),
         }
     }
 
@@ -4033,26 +4049,41 @@ mod tests {
     }
 
     #[test]
+    fn hero_portrait_members_borrow_its_inline_entity_id() {
+        let id = EntityId::Pc(robin_engine::entity_id::PcId(3));
+        let item = PortraitBarItem::Pc(id);
+        let PortraitBarItem::Pc(stored_id) = &item else {
+            unreachable!();
+        };
+        assert_eq!(item.target(), PortraitTarget::Pc(id));
+        assert_eq!(item.members(), &[id]);
+        assert_eq!(item.members().as_ptr(), std::ptr::from_ref(stored_id));
+        assert_eq!(
+            item.queue_strip_identity(),
+            crate::host::QueueStripIdentity::Pc(id)
+        );
+        assert_eq!(item.clone().members(), &[id]);
+    }
+
+    #[test]
     fn borrowed_portrait_members_keep_order_while_identity_owns_a_sorted_copy() {
         let source = queue_item(PortraitTarget::AlliedSelection, &[8, 7]);
-        let item = PortraitBarItem {
-            target: source.target,
-            members: Cow::Borrowed(source.members.as_ref()),
-        };
-        assert_eq!(item.members.as_ptr(), source.members.as_ptr());
+        let item = PortraitBarItem::AlliedSelection(Cow::Borrowed(source.members()));
+        assert_eq!(item.members().as_ptr(), source.members().as_ptr());
         let copy = item.clone();
-        assert!(matches!(copy.members, Cow::Borrowed(_)));
-        assert_eq!(copy.members.as_ptr(), source.members.as_ptr());
+        assert!(matches!(
+            &copy,
+            PortraitBarItem::AlliedSelection(Cow::Borrowed(_))
+        ));
+        assert_eq!(copy.members().as_ptr(), source.members().as_ptr());
         let identity = item.queue_strip_identity();
         assert_eq!(
             identity,
             queue_item(PortraitTarget::AlliedSelection, &[7, 8]).queue_strip_identity()
         );
         assert_eq!(
-            item.members.as_ref(),
-            queue_item(PortraitTarget::AlliedSelection, &[8, 7])
-                .members
-                .as_ref()
+            item.members(),
+            queue_item(PortraitTarget::AlliedSelection, &[8, 7]).members()
         );
         drop(copy);
         drop(item);
@@ -4198,11 +4229,11 @@ mod tests {
                             assert_eq!(paged, expected_paged);
                             let values: Vec<_> = actual
                                 .iter()
-                                .map(|item| (item.target, item.members.to_vec()))
+                                .map(|item| (item.target(), item.members().to_vec()))
                                 .collect();
                             assert_eq!(values, expected);
                             for item in actual {
-                                let source = match item.target {
+                                let source = match item.target() {
                                     PortraitTarget::Pc(_) => continue,
                                     PortraitTarget::AlliedGroup(id) => groups
                                         .iter()
@@ -4212,8 +4243,15 @@ mod tests {
                                         .as_slice(),
                                     PortraitTarget::AlliedSelection => selection,
                                 };
-                                assert!(matches!(item.members, Cow::Borrowed(_)));
-                                assert_eq!(item.members.as_ptr(), source.as_ptr());
+                                assert!(matches!(
+                                    &item,
+                                    PortraitBarItem::AlliedSelection(Cow::Borrowed(_))
+                                        | PortraitBarItem::AlliedGroup {
+                                            members: Cow::Borrowed(_),
+                                            ..
+                                        }
+                                ));
+                                assert_eq!(item.members().as_ptr(), source.as_ptr());
                             }
                         }
                     }
