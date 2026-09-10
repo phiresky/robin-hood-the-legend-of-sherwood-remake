@@ -633,8 +633,7 @@ pub(super) fn load_mission_sprites(
     // (red combat) sprites from DEFAULT.RES.
     let dynamic_ambience_visuals = host
         .application_context()
-        .active_profile_snapshot()
-        .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+        .with_active_profile(|profile| profile.graphic_config.dynamic_ambience_visuals)
         .unwrap_or_else(|error| panic!("mission sprite setup requires an active profile: {error}"));
     let visual_shadow_color = if dynamic_ambience_visuals {
         engine.weather().night_color
@@ -1641,8 +1640,7 @@ pub(super) fn prepare_mission(
     // mission inputs are sealed.
     let dynamic_visuals = host
         .application_context()
-        .active_profile_snapshot()
-        .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+        .with_active_profile(|profile| profile.graphic_config.dynamic_ambience_visuals)
         .unwrap_or_else(|error| {
             panic!("mission presentation preparation requires an active profile: {error}")
         });
@@ -2190,9 +2188,8 @@ pub(super) fn init_audio_backend(
         // is, so this lands in 2D with a non-fatal warning.
         let sound_config = host
             .application_context()
-            .active_profile_snapshot()
-            .unwrap_or_else(|error| panic!("audio setup requires an active profile: {error}"))
-            .sound_config;
+            .with_active_profile(|profile| profile.sound_config)
+            .unwrap_or_else(|error| panic!("audio setup requires an active profile: {error}"));
         let want_3d = sound_config.sound_3d;
         if let Err(e) = host.audio.sound.initialize(backend, want_3d) {
             tracing::warn!("Sound manager init failed: {}", e);

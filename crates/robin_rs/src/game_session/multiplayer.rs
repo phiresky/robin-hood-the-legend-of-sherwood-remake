@@ -304,11 +304,9 @@ pub(super) fn drain_net_inputs(
                             } else {
                                 if let Err(error) =
                                     attach_snapshot_spellforge_runtime(&snapshot, assets, || {
-                                        host.application_context().active_profile_snapshot().map(
-                                            |profile| {
-                                                profile.gameplay_config.enable_spellforge_missions
-                                            },
-                                        )
+                                        host.application_context().with_active_profile(|profile| {
+                                            profile.gameplay_config.enable_spellforge_missions
+                                        })
                                     })
                                 {
                                     panic!(
@@ -368,9 +366,9 @@ pub(super) fn drain_net_inputs(
                     Ok(snapshot) => {
                         if let Err(error) =
                             attach_snapshot_spellforge_runtime(&snapshot, assets, || {
-                                host.application_context().active_profile_snapshot().map(
-                                    |profile| profile.gameplay_config.enable_spellforge_missions,
-                                )
+                                host.application_context().with_active_profile(|profile| {
+                                    profile.gameplay_config.enable_spellforge_missions
+                                })
                             })
                         {
                             panic!(
@@ -1298,8 +1296,7 @@ fn resolve_browser_join_publication(
 ) -> Result<bool, String> {
     let saved = args
         .global_options
-        .active_profile_snapshot()
-        .map(|profile| profile.multiplayer_config.publish_browser_join_links)
+        .with_active_profile(|profile| profile.multiplayer_config.publish_browser_join_links)
         .map_err(|error| {
             format!("multiplayer: cannot read browser publication preference: {error}")
         })?;

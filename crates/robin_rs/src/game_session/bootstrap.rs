@@ -457,8 +457,7 @@ impl MissionBootstrap {
         let dynamic_visuals = self
             .host
             .application_context()
-            .active_profile_snapshot()
-            .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
+            .with_active_profile(|profile| profile.graphic_config.dynamic_ambience_visuals)
             .unwrap_or_else(|error| {
                 panic!("mission visual setup requires an active profile: {error}")
             });
@@ -616,19 +615,18 @@ impl MissionLoadingScreen {
             .map(|mission| mission.profile(profiles).proto_level_filename.clone());
         let loading_pak =
             resolve_loading_pak(application_context, proto_level_filename.as_deref(), None);
-        let profile = application_context
-            .active_profile_snapshot()
+        let renderer_config = application_context
+            .with_active_profile(|profile| MissionRendererConfig {
+                scale_mode: profile.graphic_config.scale_mode,
+                shader_preset: profile.graphic_config.shader_preset.clone(),
+                native_refresh_presentation: profile.graphic_config.native_refresh_presentation,
+                texture_effect: profile.graphic_config.texture_effect,
+                upscale_parameters: profile.graphic_config.upscale_parameters,
+                texture_effect_parameters: profile.graphic_config.texture_effect_parameters,
+            })
             .unwrap_or_else(|error| {
                 panic!("mission renderer setup requires an active profile: {error}")
             });
-        let renderer_config = MissionRendererConfig {
-            scale_mode: profile.graphic_config.scale_mode,
-            shader_preset: profile.graphic_config.shader_preset,
-            native_refresh_presentation: profile.graphic_config.native_refresh_presentation,
-            texture_effect: profile.graphic_config.texture_effect,
-            upscale_parameters: profile.graphic_config.upscale_parameters,
-            texture_effect_parameters: profile.graphic_config.texture_effect_parameters,
-        };
         let renderer = loading_pak.and_then(|path| {
             let datadir_kind = match detect_demo_mode_with_context(application_context)
                 .map(|(_, _, _, location)| location)
@@ -1509,11 +1507,10 @@ impl InteractiveMissionBuilder {
 
         let graphic_config = args
             .global_options
-            .active_profile_snapshot()
+            .with_active_profile(|profile| profile.graphic_config.clone())
             .unwrap_or_else(|error| {
                 panic!("mission display setup requires an active profile: {error}")
-            })
-            .graphic_config;
+            });
         window.set_logical_resolution_policy(&graphic_config);
         let mut loading = MissionLoadingScreen::open(
             window,
