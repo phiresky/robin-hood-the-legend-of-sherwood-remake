@@ -172,8 +172,10 @@ impl RewindBuffer {
     pub fn rewind_to(&mut self, assets: &LevelAssets, target_frame: u32) -> Option<Engine> {
         // Prune cache entries past the current target — they're the
         // "future" we've already rewound past and won't revisit.
-        if let Some(cache) = &mut self.session {
-            cache.split_off(&(target_frame + 1));
+        if let Some(cache) = &mut self.session
+            && let Some(first_future_frame) = target_frame.checked_add(1)
+        {
+            cache.split_off(&first_future_frame);
         }
 
         // Fast path: target itself is cached.
@@ -328,6 +330,43 @@ impl Default for RewindBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_pruning_keeps_the_target_and_handles_the_maximum_frame() {
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
+            .expect("fixture engine");
+        let frames = [0, 4, u32::MAX];
+        for target in frames {
+            let mut buffer = RewindBuffer::new();
+            buffer.session = Some(
+                frames
+                    .into_iter()
+                    .map(|frame| (frame, Snapshot::new(frame, &engine)))
+                    .collect(),
+            );
+            let restored = buffer
+                .rewind_to(&assets, target)
+                .expect("cached target exists");
+            assert_eq!(
+                robin_engine::replay::state_hash(&restored),
+                robin_engine::replay::state_hash(&engine)
+            );
+            assert_eq!(
+                buffer
+                    .session
+                    .as_ref()
+                    .unwrap()
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                frames
+                    .into_iter()
+                    .filter(|frame| *frame <= target)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
 
     #[test]
     fn adopted_state_between_sparse_boundaries_journals_immediately() {
