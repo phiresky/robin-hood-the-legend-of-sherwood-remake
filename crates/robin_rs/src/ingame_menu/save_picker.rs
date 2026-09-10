@@ -231,14 +231,7 @@ impl PickerModel {
     }
 
     pub fn request_delete_named(&mut self, name: SlotName) -> Result<(), String> {
-        let slot = self
-            .slots
-            .iter()
-            .find(|slot| slot.name == name)
-            .ok_or_else(|| "the selected save is no longer available".to_string())?;
-        if slot.autosave {
-            return Err("autosaves cannot be manually deleted".into());
-        }
+        self.validate_deletion(&name)?;
         self.delete_confirmation = Some(name);
         self.operation_error = None;
         Ok(())
@@ -253,15 +246,20 @@ impl PickerModel {
         if !confirmed {
             return Ok(None);
         }
+        self.validate_deletion(&name)?;
+        Ok(Some(name))
+    }
+
+    fn validate_deletion(&self, name: &SlotName) -> Result<(), String> {
         let slot = self
             .slots
             .iter()
-            .find(|slot| slot.name == name)
+            .find(|slot| &slot.name == name)
             .ok_or_else(|| "the selected save is no longer available".to_string())?;
         if slot.autosave {
             return Err("autosaves cannot be manually deleted".into());
         }
-        Ok(Some(name))
+        Ok(())
     }
 
     pub fn finish_delete(&mut self, slots: Vec<PickerSlot>, error: Option<String>) {
@@ -327,6 +325,54 @@ mod tests {
         m.refresh(vec![slot("Savegame_000", 0)]);
         assert_eq!(m.selected_row(), None);
         assert!(m.confirm_delete(true).is_err());
+    }
+
+    #[test]
+    fn deletion_revalidates_latest_snapshot_and_consumes_confirmation_once() {
+        for missing in [false, true] {
+            for confirmed in [false, true] {
+                let mut picker = model();
+                let name = SlotName::new("Savegame_000").unwrap();
+                picker.request_delete_named(name).unwrap();
+                let mut protected = slot("Savegame_000", 0);
+                protected.autosave = true;
+                picker.refresh(if missing { vec![] } else { vec![protected] });
+                let expected = if !confirmed {
+                    Ok(None)
+                } else if missing {
+                    Err("the selected save is no longer available".into())
+                } else {
+                    Err("autosaves cannot be manually deleted".into())
+                };
+                assert_eq!(picker.confirm_delete(confirmed), expected);
+                assert_eq!(
+                    picker.confirm_delete(true),
+                    Err("no delete confirmation is pending".into())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_deletion_request_preserves_pending_identity_and_error() {
+        let mut picker = model();
+        let pending = SlotName::new("Savegame_000").unwrap();
+        picker.request_delete_named(pending.clone()).unwrap();
+        picker.report_error("previous storage failure".into());
+        let mut protected = slot("Savegame_001", 1);
+        protected.autosave = true;
+        picker.refresh(vec![slot("Savegame_000", 0), protected]);
+        for (name, message) in [
+            ("Savegame_001", "autosaves cannot be manually deleted"),
+            ("Savegame_002", "the selected save is no longer available"),
+        ] {
+            assert_eq!(
+                picker.request_delete_named(SlotName::new(name).unwrap()),
+                Err(message.into())
+            );
+            assert_eq!(picker.operation_error(), Some("previous storage failure"));
+        }
+        assert_eq!(picker.confirm_delete(true), Ok(Some(pending)));
     }
 
     #[test]
