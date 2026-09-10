@@ -103,6 +103,14 @@ fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Vec<u8
     let mut reader = decoder
         .read_info()
         .map_err(|e| format!("decode {source}: {e}"))?;
+    let width = u16::try_from(reader.info().width)
+        .map_err(|_| format!("sprite width exceeds u16 for {source}"))?;
+    let height = u16::try_from(reader.info().height)
+        .map_err(|_| format!("sprite height exceeds u16 for {source}"))?;
+    let rgba_len = usize::from(width)
+        .checked_mul(usize::from(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| format!("sprite RGBA output size overflows for {source}"))?;
     let mut buf = vec![
         0;
         reader
@@ -112,26 +120,26 @@ fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Vec<u8
     let info = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("read frame {source}: {e}"))?;
-    let data = &buf[..info.buffer_size()];
+    buf.truncate(info.buffer_size());
     let rgba = match info.color_type {
-        png::ColorType::Rgba => data.to_vec(),
+        png::ColorType::Rgba => buf,
         png::ColorType::Rgb => {
-            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for px in data.as_chunks::<3>().0 {
+            let mut out = Vec::with_capacity(rgba_len);
+            for px in buf.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             out
         }
         png::ColorType::Grayscale => {
-            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for &value in data {
+            let mut out = Vec::with_capacity(rgba_len);
+            for &value in &buf {
                 out.extend_from_slice(&[value, value, value, 255]);
             }
             out
         }
         png::ColorType::GrayscaleAlpha => {
-            let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for px in data.as_chunks::<2>().0 {
+            let mut out = Vec::with_capacity(rgba_len);
+            for px in buf.as_chunks::<2>().0 {
                 out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
             }
             out
@@ -142,10 +150,6 @@ fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Vec<u8
             ));
         }
     };
-    let width =
-        u16::try_from(info.width).map_err(|_| format!("sprite width exceeds u16 for {source}"))?;
-    let height = u16::try_from(info.height)
-        .map_err(|_| format!("sprite height exceeds u16 for {source}"))?;
     Ok((width, height, rgba))
 }
 
@@ -649,6 +653,78 @@ mod tests {
             Err(ResourcePreparationError::Unavailable { .. })
         ));
     }
+    #[test]
+    fn png_decoder_rejects_oversized_headers_before_pixel_decoding() {
+        for (width, height, expected) in [
+            (65_536, 1, "sprite width exceeds u16"),
+            (1, 65_536, "sprite height exceeds u16"),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_chunk(png::chunk::IDAT, &[]).unwrap();
+            drop(writer);
+            let error = decode_png_rgba_bytes(&bytes, "oversized test").unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn png_decoder_preserves_supported_color_and_depth_conversions() {
+        for (color, depth, source, expected) in [
+            (
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                vec![1, 2, 3, 4, 5, 6],
+                vec![1, 2, 3, 255, 4, 5, 6, 255],
+            ),
+            (
+                png::ColorType::Rgba,
+                png::BitDepth::Eight,
+                vec![1, 2, 3, 0, 4, 5, 6, 127],
+                vec![1, 2, 3, 0, 4, 5, 6, 127],
+            ),
+            (
+                png::ColorType::Grayscale,
+                png::BitDepth::Eight,
+                vec![17, 231],
+                vec![17, 17, 17, 255, 231, 231, 231, 255],
+            ),
+            (
+                png::ColorType::GrayscaleAlpha,
+                png::BitDepth::Eight,
+                vec![17, 0, 231, 127],
+                vec![17, 17, 17, 0, 231, 231, 231, 127],
+            ),
+            (
+                png::ColorType::Rgb,
+                png::BitDepth::Sixteen,
+                vec![1, 255, 2, 255, 3, 255, 4, 255, 5, 255, 6, 255],
+                vec![1, 2, 3, 255, 4, 5, 6, 255],
+            ),
+            (
+                png::ColorType::Grayscale,
+                png::BitDepth::Sixteen,
+                vec![17, 255, 231, 255],
+                vec![17, 17, 17, 255, 231, 231, 231, 255],
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+            encoder.set_color(color);
+            encoder.set_depth(depth);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&source).unwrap();
+            writer.finish().unwrap();
+            assert_eq!(
+                decode_png_rgba_bytes(&bytes, "color test").unwrap(),
+                (2, 1, expected)
+            );
+        }
+    }
+
     #[test]
     fn png_decoder_expands_indexed_pixels_and_palette_transparency() {
         let mut encoded = Vec::new();
