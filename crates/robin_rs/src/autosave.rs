@@ -1083,7 +1083,6 @@ fn encode_browser_blob<T: Serialize>(value: &T) -> Result<String> {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 fn decode_browser_blob<T: for<'de> Deserialize<'de>>(encoded: &str) -> Result<T> {
-    use base64::Engine as _;
     use sha2::{Digest, Sha256};
     let blob: BrowserBlob =
         serde_json::from_str(encoded).context("parsing browser autosave envelope")?;
@@ -1093,11 +1092,12 @@ fn decode_browser_blob<T: for<'de> Deserialize<'de>>(encoded: &str) -> Result<T>
             blob.version
         );
     }
-    let compressed = base64::engine::general_purpose::STANDARD
-        .decode(blob.compressed_base64)
-        .context("decoding browser autosave base64")?;
-    let json = zstd::stream::decode_all(std::io::Cursor::new(compressed))
-        .context("decompressing browser autosave value")?;
+    let compressed = base64::read::DecoderReader::new(
+        blob.compressed_base64.as_bytes(),
+        &base64::engine::general_purpose::STANDARD,
+    );
+    let json = zstd::stream::decode_all(compressed)
+        .context("decoding and decompressing browser autosave value")?;
     let actual = hex::encode(Sha256::digest(&json));
     if actual != blob.sha256 {
         bail!(
@@ -1258,6 +1258,40 @@ fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) ->
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn streamed_browser_decoding_rejects_truncated_and_trailing_base64() {
+        let value = vec!["payload"; 2048];
+        let encoded = encode_browser_blob(&value).unwrap();
+        let original: BrowserBlob = serde_json::from_str(&encoded).unwrap();
+        for suffix in ["!", " ", "=", "AAAA", "!!!!", "\n"] {
+            let malformed = BrowserBlob {
+                version: 1,
+                sha256: original.sha256.clone(),
+                compressed_base64: format!("{}{suffix}", original.compressed_base64),
+            };
+            assert!(
+                decode_browser_blob::<Vec<String>>(&serde_json::to_string(&malformed).unwrap())
+                    .is_err(),
+                "accepted suffix {suffix:?}"
+            );
+        }
+        for removed in [1, 2, 3, 4, 8] {
+            let malformed = BrowserBlob {
+                version: 1,
+                sha256: original.sha256.clone(),
+                compressed_base64: original.compressed_base64
+                    [..original.compressed_base64.len() - removed]
+                    .into(),
+            };
+            assert!(
+                decode_browser_blob::<Vec<String>>(&serde_json::to_string(&malformed).unwrap())
+                    .is_err(),
+                "accepted truncated input by {removed}"
+            );
+        }
+        assert_eq!(decode_browser_blob::<Vec<String>>(&encoded).unwrap(), value);
+    }
+
     #[test]
     fn streamed_browser_encoding_matches_materialized_compression() {
         use base64::Engine as _;
