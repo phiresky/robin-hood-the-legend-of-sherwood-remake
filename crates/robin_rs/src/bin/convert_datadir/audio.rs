@@ -316,6 +316,27 @@ pub(super) fn insert_audio_duration(
 /// would force multi-MB downloads for one sound.
 const AUDIO_BUNDLE_MAX_MEMBER: u32 = 262_144;
 
+fn append_bundle_member(
+    input: impl std::io::Read,
+    expected: u32,
+    bundle: &mut Vec<u8>,
+) -> Result<()> {
+    use std::io::Read as _;
+    let start = bundle.len();
+    let result = input.take(u64::from(expected) + 1).read_to_end(bundle);
+    match result {
+        Ok(read) if read == expected as usize => Ok(()),
+        Ok(read) => {
+            bundle.truncate(start);
+            bail!("bundle member read {read} bytes but was cataloged as {expected}");
+        }
+        Err(error) => {
+            bundle.truncate(start);
+            Err(error).context("read bundle member")
+        }
+    }
+}
+
 /// Concatenate small catalog assets into one file per logical group
 /// (recorded in [`AUDIO_ASSET_GROUPS`] during catalog construction; a file
 /// referenced by several groups moves to the "shared" bundle). Rewrites the
@@ -377,17 +398,11 @@ pub(super) fn bundle_grouped_audio(
         let mut bytes = Vec::new();
         let mut offsets = Vec::with_capacity(members.len());
         for file in &members {
-            let member_bytes = fs::read(data_out.join(file))
-                .with_context(|| format!("read bundle member {file}"))?;
-            let expected = file_refs[file].1 as usize;
-            if member_bytes.len() != expected {
-                bail!(
-                    "bundle member {file} is {} bytes on disk but cataloged as {expected}",
-                    member_bytes.len()
-                );
-            }
+            let input = fs::File::open(data_out.join(file))
+                .with_context(|| format!("open bundle member {file}"))?;
             offsets.push(u32::try_from(bytes.len()).context("audio bundle exceeds u32")?);
-            bytes.extend_from_slice(&member_bytes);
+            append_bundle_member(input, file_refs[file].1, &mut bytes)
+                .with_context(|| format!("bundle member {file}"))?;
         }
         let digest = Sha256::digest(&bytes);
         let hash = hex::encode(&digest[..6]);
@@ -556,6 +571,39 @@ pub(super) fn write_shipping_dependency(
 #[cfg(test)]
 mod boot_trim_tests {
     use super::*;
+
+    #[test]
+    fn bundle_member_append_is_bounded_and_preserves_prefix_on_failure() {
+        let mut bundle = b"prefix".to_vec();
+        append_bundle_member(&b"abc"[..], 3, &mut bundle).unwrap();
+        assert_eq!(bundle, b"prefixabc");
+        append_bundle_member(&b""[..], 0, &mut bundle).unwrap();
+        assert!(append_bundle_member(&b"ab"[..], 3, &mut bundle).is_err());
+        assert_eq!(bundle, b"prefixabc");
+        // An unbounded source must fail after expected + 1 bytes, not
+        // attempt to read the whole stream.
+        assert!(append_bundle_member(std::io::repeat(0), 3, &mut bundle).is_err());
+        assert_eq!(bundle, b"prefixabc");
+        assert!(append_bundle_member(&b"x"[..], 0, &mut bundle).is_err());
+        assert_eq!(bundle, b"prefixabc");
+    }
+
+    #[test]
+    fn bundle_member_append_rolls_back_partial_io_failure() {
+        use std::io::Read as _;
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct FailedRead;
+        impl std::io::Read for FailedRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("injected read failure"))
+            }
+        }
+        let mut bundle = b"prefix".to_vec();
+        let error =
+            append_bundle_member((&b"abc"[..]).chain(FailedRead), 4, &mut bundle).unwrap_err();
+        assert!(format!("{error:#}").contains("injected read failure"));
+        assert_eq!(bundle, b"prefix");
+    }
 
     #[test]
     fn standalone_audio_name_retains_its_full_lowercase_digest() {
