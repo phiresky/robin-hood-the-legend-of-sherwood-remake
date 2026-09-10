@@ -397,7 +397,7 @@ pub(super) fn build_rle_jxl_chunk(
             // Split into sub-atlases under the pixel cap. Cell dims are
             // the sub-atlas max, so splitting also tightens cells when a
             // group mixes frame sizes.
-            let mut sub_atlases: Vec<&[u32]> = Vec::new();
+            let mut sub_atlases: Vec<(&[u32], usize, usize)> = Vec::new();
             let mut start = 0usize;
             while start < members.len() {
                 let mut end = start;
@@ -415,25 +415,22 @@ pub(super) fn build_rle_jxl_chunk(
                     (cell_w, cell_h) = (w, h);
                     end += 1;
                 }
-                sub_atlases.push(&members[start..end]);
+                sub_atlases.push((&members[start..end], cell_w, cell_h));
                 start = end;
             }
             let mut group_jxl: Vec<(Vec<u8>, Vec<(u32, u16, u16)>)> = Vec::new();
             let mut group_jxl_bytes = 0usize;
             let mut low_psnr: Vec<u32> = Vec::new();
-            for sub in &sub_atlases {
-                let frames: Vec<&RleJxlCandidate> =
-                    sub.iter().map(|id| &candidates[by_id[id]]).collect();
-                let cell_w = frames.iter().map(|f| f.width as usize).max().unwrap();
-                let cell_h = frames.iter().map(|f| f.height as usize).max().unwrap();
-                let cols = (frames.len() as f64).sqrt().ceil() as usize;
-                let rows = frames.len().div_ceil(cols);
+            for (sub, cell_w, cell_h) in sub_atlases {
+                let cols = (sub.len() as f64).sqrt().ceil() as usize;
+                let rows = sub.len().div_ceil(cols);
                 let (atlas_w, atlas_h) = (cols * cell_w, rows * cell_h);
                 // Gutters start fully transparent, so the edge extension
                 // below flows sprite color across cell boundaries too.
                 let mut rgba = vec![0u8; atlas_w * atlas_h * 4];
-                let mut placements = Vec::with_capacity(frames.len());
-                for (k, frame) in frames.iter().enumerate() {
+                let mut placements = Vec::with_capacity(sub.len());
+                for (k, id) in sub.iter().enumerate() {
+                    let frame = &candidates[by_id[id]];
                     let (x0, y0) = ((k % cols) * cell_w, (k / cols) * cell_h);
                     let src = rle_jxl::canvas_to_rgba(&frame.pixels)?;
                     for y in 0..frame.height as usize {
