@@ -150,19 +150,20 @@ pub(super) fn digest_file(path: &Path) -> Result<(u64, String)> {
     use sha2::{Digest as _, Sha256};
 
     let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let byte_length = file
-        .metadata()
-        .with_context(|| format!("stat {}", path.display()))?
-        .len();
     let mut hasher = Sha256::new();
+    let mut byte_length = 0_u64;
     let mut buffer = [0_u8; 128 * 1024];
     loop {
-        let read = std::io::Read::read(&mut file, &mut buffer)
-            .with_context(|| format!("read {}", path.display()))?;
-        if read == 0 {
-            break;
-        }
+        let read = match std::io::Read::read(&mut file, &mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+        };
         hasher.update(&buffer[..read]);
+        byte_length = byte_length
+            .checked_add(read as u64)
+            .context("hashed file byte length exceeds u64")?;
     }
     Ok((
         byte_length,
@@ -273,6 +274,23 @@ pub(super) fn prepare_shipping_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_file_digest_matches_bytes_and_length() {
+        use sha2::{Digest as _, Sha256};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("content.bin");
+        for length in [0, 1, 8191, 8192, 8193, 128 * 1024, 400_000] {
+            let bytes: Vec<u8> = (0..length).map(|index| (index % 251) as u8).collect();
+            fs::write(&path, &bytes).unwrap();
+            assert_eq!(
+                digest_file(&path).unwrap(),
+                (length as u64, hex::encode(Sha256::digest(&bytes)))
+            );
+        }
+        assert!(digest_file(&temp.path().join("missing.bin")).is_err());
+    }
+
     #[test]
     fn stale_manifest_stage_is_not_published_as_runtime_content() {
         use robin_rs::multiplayer::content_identity::{
