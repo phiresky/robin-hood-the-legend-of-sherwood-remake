@@ -57,7 +57,19 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(source) => Some(source),
+            Self::Reader(source) => Some(source),
+            Self::BadMagic { .. }
+            | Self::BadVersion { .. }
+            | Self::BadUtf8 { .. }
+            | Self::UnknownTypeTag(_)
+            | Self::TrailingBytes { .. } => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
@@ -248,6 +260,43 @@ mod tests {
     use super::*;
 
     use crate::original_data::{self, demo_scb_path};
+
+    #[test]
+    fn parser_errors_preserve_typed_sources() {
+        use std::error::Error as _;
+
+        let io_error = Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let source = io_error
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let truncated = parse_bytes(b"SBSCRI").unwrap_err();
+        let source = truncated
+            .source()
+            .unwrap()
+            .downcast_ref::<binary_reader::Error>()
+            .unwrap();
+        assert_eq!(truncated.to_string(), format!("malformed .scb: {source}"));
+
+        for error in [
+            Error::BadMagic { found: [0; 8] },
+            Error::BadVersion {
+                found: 0.0,
+                expected: SCB_VERSION,
+            },
+            Error::BadUtf8 {
+                field: "class".into(),
+                offset: 0,
+            },
+            Error::UnknownTypeTag(255),
+            Error::TrailingBytes { left: 1 },
+        ] {
+            assert!(error.source().is_none());
+        }
+    }
 
     #[test]
     fn rejects_non_scb_magic() {

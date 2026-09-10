@@ -147,21 +147,3 @@ pub struct ScbFile {
     pub version: f32,
     pub classes: Vec<ClassEntry>,
 }
-
-/// Sim-side error surface. The parser-specific `Error` lives in
-/// `robin_assets::scb` and converts into `ScriptError::Load`.
-#[derive(Debug)]
-pub enum Error {
-    /// Stringified parser error from `robin_assets::scb::Error`.
-    Parse(String),
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Parse(s) => write!(f, "scb parse error: {s}"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}

@@ -7,7 +7,7 @@
 use std::fmt;
 
 use crate::interp::{Frame, HostFunctions, StopReason, Vm};
-use crate::scb::{self, Function, ScbFile};
+use crate::scb::{Function, ScbFile};
 use crate::vm::{self, Instruction};
 
 // ───────────────────────── Errors ─────────────────────────
@@ -15,8 +15,6 @@ use crate::vm::{self, Instruction};
 /// Errors from script manager operations.
 #[derive(Debug)]
 pub enum ScriptError {
-    /// The `.scb` file could not be loaded or parsed.
-    Load(scb::Error),
     /// Malformed bytecode; preparation never substitutes an instruction.
     InvalidInstruction {
         class: String,
@@ -40,7 +38,6 @@ pub enum ScriptError {
 impl fmt::Display for ScriptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ScriptError::Load(e) => write!(f, "script load error: {e}"),
             ScriptError::InvalidInstruction {
                 class,
                 address,
@@ -65,12 +62,6 @@ impl fmt::Display for ScriptError {
 }
 
 impl std::error::Error for ScriptError {}
-
-impl From<scb::Error> for ScriptError {
-    fn from(e: scb::Error) -> Self {
-        ScriptError::Load(e)
-    }
-}
 
 // ───────────────────────── ScriptProgram ─────────────────────────
 
@@ -511,6 +502,7 @@ impl ScriptInstance {
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+    use crate::scb;
 
     fn program(opcodes: &[u8]) -> ScbFile {
         ScbFile {
