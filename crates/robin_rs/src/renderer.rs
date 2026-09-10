@@ -2395,19 +2395,17 @@ impl Renderer {
             return false;
         }
 
-        let left = mask_rect.left().max(sprite_rect.left()).max(0);
-        let top = mask_rect.top().max(sprite_rect.top()).max(0);
-        let right = mask_rect
-            .right()
-            .min(sprite_rect.right())
-            .min(self.frame.width as i32);
-        let bottom = mask_rect
-            .bottom()
-            .min(sprite_rect.bottom())
-            .min(self.frame.height as i32);
-        if left >= right || top >= bottom {
+        let viewport = Rect::new(0, 0, self.frame.width.into(), self.frame.height.into());
+        let Some(overlap) = mask_rect
+            .intersection(sprite_rect)
+            .and_then(|overlap| overlap.intersection(viewport))
+        else {
             return true;
-        }
+        };
+        let left = overlap.left();
+        let top = overlap.top();
+        let right = overlap.right();
+        let bottom = overlap.bottom();
 
         let sw = frame_holder.sprite_width(bank_id) as usize;
         let sh = frame_holder.sprite_height(bank_id) as usize;
@@ -3138,13 +3136,11 @@ fn src_dst_uv(
 /// (assuming the original uv is `[0,0,1,1]` over the full `dst`).
 /// Returns `None` if fully clipped away.
 fn clip_dst_to_uv(dst: Rect, clip: Rect) -> Option<(Rect, [f32; 4])> {
-    let x0 = i64::from(dst.x.max(clip.x));
-    let y0 = i64::from(dst.y.max(clip.y));
-    let x1 = (i64::from(dst.x) + i64::from(dst.w)).min(i64::from(clip.x) + i64::from(clip.w));
-    let y1 = (i64::from(dst.y) + i64::from(dst.h)).min(i64::from(clip.y) + i64::from(clip.h));
-    if x1 <= x0 || y1 <= y0 {
-        return None;
-    }
+    let clipped = dst.intersection(clip)?;
+    let x0 = i64::from(clipped.x);
+    let y0 = i64::from(clipped.y);
+    let x1 = x0 + i64::from(clipped.w);
+    let y1 = y0 + i64::from(clipped.h);
     // A nonempty intersection proves both destination dimensions are positive.
     let dw = dst.w as f32;
     let dh = dst.h as f32;
@@ -3152,15 +3148,7 @@ fn clip_dst_to_uv(dst: Rect, clip: Rect) -> Option<(Rect, [f32; 4])> {
     let v0 = (y0 - i64::from(dst.y)) as f32 / dh;
     let u1 = (x1 - i64::from(dst.x)) as f32 / dw;
     let v1 = (y1 - i64::from(dst.y)) as f32 / dh;
-    Some((
-        Rect {
-            x: x0 as i32,
-            y: y0 as i32,
-            w: (x1 - x0) as i32,
-            h: (y1 - y0) as i32,
-        },
-        [u0, v0, u1, v1],
-    ))
+    Some((clipped, [u0, v0, u1, v1]))
 }
 
 /// Per-second FPS counter + per-frame draw / upload counts logged at

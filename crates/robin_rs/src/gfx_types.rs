@@ -100,6 +100,26 @@ impl Rect {
         self.y + self.h
     }
 
+    /// Return the nonempty overlap, treating nonpositive extents as empty.
+    /// Edges may extend beyond the coordinate range without overflowing.
+    pub(crate) fn intersection(self, other: Self) -> Option<Self> {
+        let x = self.x.max(other.x);
+        let y = self.y.max(other.y);
+        let right =
+            (i64::from(self.x) + i64::from(self.w)).min(i64::from(other.x) + i64::from(other.w));
+        let bottom =
+            (i64::from(self.y) + i64::from(self.h)).min(i64::from(other.y) + i64::from(other.h));
+        let w = right - i64::from(x);
+        let h = bottom - i64::from(y);
+        // A positive overlap cannot exceed either input's positive i32 extent.
+        (w > 0 && h > 0).then_some(Self {
+            x,
+            y,
+            w: w as i32,
+            h: h as i32,
+        })
+    }
+
     /// Hit-test a point against this rect (inclusive of the top-left
     /// edge, exclusive of the bottom-right).
     #[inline]
@@ -223,6 +243,42 @@ mod tests {
                 h,
             };
             assert!(!empty.contains_point((i32::MIN, i32::MIN)));
+        }
+    }
+
+    #[test]
+    fn rect_intersection_handles_boundaries_and_empty_extents() {
+        for origin in [i32::MIN, 0, i32::MAX - 5] {
+            let a = Rect::new(origin, origin, 10, 10);
+            let b = Rect::new(origin + 2, origin + 3, 10, 4);
+            let expected = Some(Rect::new(origin + 2, origin + 3, 8, 4));
+            assert_eq!(a.intersection(b), expected);
+            assert_eq!(b.intersection(a), expected);
+            assert_eq!(a.intersection(a), Some(a));
+        }
+        let a = Rect::new(0, 0, 10, 10);
+        for b in [
+            Rect::new(10, 0, 1, 1),
+            Rect::new(0, 10, 1, 1),
+            Rect::new(i32::MIN, i32::MIN, 1, 1),
+            Rect::new(i32::MAX, i32::MAX, 1, 1),
+            Rect::new(0, 0, 0, 1),
+            Rect::new(0, 0, 1, 0),
+            Rect {
+                x: i32::MIN,
+                y: i32::MIN,
+                w: i32::MIN,
+                h: i32::MIN,
+            },
+            Rect {
+                x: 5,
+                y: 5,
+                w: -1,
+                h: 1,
+            },
+        ] {
+            assert_eq!(a.intersection(b), None);
+            assert_eq!(b.intersection(a), None);
         }
     }
 
