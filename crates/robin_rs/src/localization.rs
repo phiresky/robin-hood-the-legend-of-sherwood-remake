@@ -771,24 +771,40 @@ fn auto_language(installed: &[LanguagePack]) -> Option<&LanguagePack> {
 }
 
 fn locale_eq(a: &str, b: &str) -> bool {
-    normalize_locale(a) == normalize_locale(b)
+    normalized_locale_bytes(a).eq(normalized_locale_bytes(b))
 }
 
 fn locale_primary(locale: &str) -> String {
-    normalize_locale(locale)
-        .split('-')
+    locale
+        .split(['.', '@', '-', '_'])
         .next()
         .unwrap_or_default()
-        .to_owned()
+        .to_ascii_lowercase()
 }
 
-fn normalize_locale(locale: &str) -> String {
+fn normalized_locale_bytes(locale: &str) -> impl Iterator<Item = u8> + '_ {
     locale
         .split(['.', '@'])
         .next()
         .unwrap_or(locale)
-        .replace('_', "-")
-        .to_ascii_lowercase()
+        .bytes()
+        .map(|byte| {
+            if byte == b'_' {
+                b'-'
+            } else {
+                byte.to_ascii_lowercase()
+            }
+        })
+}
+
+fn normalize_locale(locale: &str) -> String {
+    let mut normalized = locale
+        .split(['.', '@'])
+        .next()
+        .unwrap_or(locale)
+        .replace('_', "-");
+    normalized.make_ascii_lowercase();
+    normalized
 }
 
 fn default_preference_store() -> PreferenceStore {
@@ -1282,6 +1298,51 @@ mod tests {
             serde_json::from_str(r#"{"selection":"auto"}"#).unwrap();
         assert_eq!(decoded.selection, LanguageSelection::Auto);
         assert!(decoded.show_in_options);
+    }
+
+    #[test]
+    fn borrowed_locale_comparisons_preserve_normalization_rules() {
+        let normalize = |locale: &str| {
+            locale
+                .split(['.', '@'])
+                .next()
+                .unwrap_or(locale)
+                .replace('_', "-")
+                .to_ascii_lowercase()
+        };
+        let locales = [
+            "",
+            "en-US",
+            "EN_us.UTF-8",
+            "en",
+            "en@latin",
+            "en_US@latin.UTF-8",
+            "pt_BR",
+            "pt-PT",
+            "ZH_tw.UTF-8",
+            "zh-Hant-TW",
+            "@latin",
+            ".UTF-8",
+            "_en",
+            "-en",
+            "é_FR",
+            "É_fr",
+            " de-DE ",
+            "en__US",
+            "en--us",
+        ];
+        for left in locales {
+            let normalized = normalize(left);
+            assert_eq!(normalize_locale(left), normalized);
+            assert_eq!(locale_primary(left), normalized.split('-').next().unwrap());
+            for right in locales {
+                assert_eq!(
+                    locale_eq(left, right),
+                    normalized == normalize(right),
+                    "{left:?} vs {right:?}"
+                );
+            }
+        }
     }
 
     #[test]
