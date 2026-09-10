@@ -743,11 +743,12 @@ fn mount_for_launch_inner(
     Ok(guard)
 }
 
-/// Find the newest `lib_*.zip` under `lib_dir`, by name (the upstream
-/// uploads are date-stamped).  Returns `None` if the directory is
-/// missing or empty.
+/// Select the lexicographically greatest ZIP filename under `lib_dir`.
+/// Upstream library uploads are normally date-stamped `lib_*.zip`, but
+/// locally renamed ZIPs are accepted too. Extension matching ignores ASCII
+/// case; filename ordering does not. Missing or empty directories yield `None`.
 pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
-    let mut entries: Vec<PathBuf> = fs::read_dir(lib_dir)
+    fs::read_dir(lib_dir)
         .ok()?
         .flatten()
         .map(|e| e.path())
@@ -757,14 +758,36 @@ pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
                     .and_then(|f| f.to_str())
                     .is_some_and(|f| f.to_ascii_lowercase().ends_with(".zip"))
         })
-        .collect();
-    entries.sort();
-    entries.pop()
+        .max()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_selection_uses_filename_order_and_accepts_renamed_archives() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path();
+        assert_eq!(find_lib_zip(&directory.join("missing")), None);
+        assert_eq!(find_lib_zip(directory), None);
+        fs::create_dir(directory.join("zzzz.zip")).unwrap();
+        fs::write(directory.join("zzzz.txt"), b"not an archive").unwrap();
+        assert_eq!(find_lib_zip(directory), None);
+
+        // Newer files on disk do not override lexicographically greater names.
+        for name in ["lib_2026.zip", "lib_2025.ZIP", "LIB_9999.zip"] {
+            fs::write(directory.join(name), b"archive candidate").unwrap();
+        }
+        assert_eq!(
+            find_lib_zip(directory),
+            Some(directory.join("lib_2026.zip"))
+        );
+        fs::write(directory.join("renamed.ZiP"), b"archive candidate").unwrap();
+        assert_eq!(find_lib_zip(directory), Some(directory.join("renamed.ZiP")));
+        fs::write(directory.join(".zip"), b"hidden archive candidate").unwrap();
+        assert_eq!(find_lib_zip(directory), Some(directory.join("renamed.ZiP")));
+    }
 
     #[test]
     fn combined_discovery_preserves_sources_and_skips_identical_roots() {
