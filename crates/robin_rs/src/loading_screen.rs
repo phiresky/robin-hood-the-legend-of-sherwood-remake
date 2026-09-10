@@ -177,6 +177,14 @@ impl HeightField {
     /// # Panics
     /// Panics if either dimension is zero, the size overflows, or `pixel_data.len() != width * height`.
     pub fn from_rgb565(pixel_data: &[u16], width: u32, height: u32) -> Self {
+        Self::from_rgb565_pixels(pixel_data.iter().copied(), width, height)
+    }
+
+    fn from_rgb565_pixels(
+        pixel_data: impl ExactSizeIterator<Item = u16>,
+        width: u32,
+        height: u32,
+    ) -> Self {
         let expected = Self::pixel_count(width, height);
         assert_eq!(
             pixel_data.len(),
@@ -187,8 +195,7 @@ impl HeightField {
         );
 
         let grayscale: Vec<u8> = pixel_data
-            .iter()
-            .map(|&color| {
+            .map(|color| {
                 let (r, g, b) = robin_util::color::rgb565_to_rgb8(color);
                 height_luminance(r, g, b)
             })
@@ -444,12 +451,11 @@ pub fn format_version_string(major: u16, minor: u16, release_name: &str) -> Stri
 // ---------------------------------------------------------------------------
 
 /// Convert little-endian u8 pixel data to u16 words.
-fn bytes_to_u16_pixels(data: &[u8]) -> Vec<u16> {
+fn bytes_to_u16_pixels(data: &[u8]) -> impl ExactSizeIterator<Item = u16> + '_ {
     data.as_chunks::<2>()
         .0
         .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect()
 }
 
 /// Active loading screen renderer. Owns a temporary [`Renderer`] and the
@@ -577,9 +583,6 @@ impl LoadingScreenRenderer {
             return None;
         }
 
-        let initial_pixels = bytes_to_u16_pixels(&pic_initial.data);
-        let final_pixels = bytes_to_u16_pixels(&pic_final.data);
-        let mask_pixels = bytes_to_u16_pixels(&pic_mask.data);
         // `Picture::load_sixteen_from_stream` is the RGB565 path used by
         // the shipped loading paks. Keep this explicit because the shader
         // upload depends on the RGB565 layout.
@@ -598,7 +601,13 @@ impl LoadingScreenRenderer {
             assets_picture::PixelFormat::Rgb16,
             "loading-screen mask must be RGB565"
         );
-        let height_field = HeightField::from_rgb565(&mask_pixels, width as u32, height as u32);
+        let initial_pixels: Vec<_> = bytes_to_u16_pixels(&pic_initial.data).collect();
+        let final_pixels: Vec<_> = bytes_to_u16_pixels(&pic_final.data).collect();
+        let height_field = HeightField::from_rgb565_pixels(
+            bytes_to_u16_pixels(&pic_mask.data),
+            width as u32,
+            height as u32,
+        );
         // Create a renderer at the image's native resolution. Presentation
         // handles aspect-correct scaling (letterbox) to the actual window.
         let mut renderer = Renderer::new(window, width, height, scale_mode);
@@ -611,7 +620,7 @@ impl LoadingScreenRenderer {
         )?;
         // GPU textures own the uploaded pixels. Do not retain the CPU images
         // during font preparation or the subsequent mission load.
-        drop((initial_pixels, final_pixels, mask_pixels, height_field));
+        drop((initial_pixels, final_pixels, height_field));
 
         // Paint the framebuffer black and present *before* loading any
         // pictures/fonts, so the previous frame (main menu, window-

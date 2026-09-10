@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn streamed_loading_mask_matches_owned_pixels_and_preserves_byte_pairing() {
+    let pixels = [0, 0xFFFF, 0xF800, 0x07E0, 0x001F, 0x2964];
+    let mut bytes: Vec<u8> = pixels.into_iter().flat_map(u16::to_le_bytes).collect();
+    let expected = HeightField::from_rgb565(&pixels, 3, 2);
+    for trailing_byte in [false, true] {
+        if trailing_byte {
+            bytes.push(0xAB);
+        }
+        let decoded = bytes_to_u16_pixels(&bytes);
+        assert_eq!(decoded.len(), pixels.len());
+        let actual = HeightField::from_rgb565_pixels(decoded, 3, 2);
+        assert_eq!(actual.data, expected.data);
+        assert_eq!((actual.width, actual.height), (3, 2));
+    }
+}
+
+#[test]
 fn packed_height_fields_match_equivalent_rgb_for_all_sixteen_bit_values() {
     let pixels: Vec<u16> = (0..=u16::MAX).collect();
     for is_565 in [false, true] {
