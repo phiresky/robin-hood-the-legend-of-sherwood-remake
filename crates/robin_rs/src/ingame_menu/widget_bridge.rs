@@ -258,18 +258,19 @@ pub fn make_button_with_resource(
     // `create_with_resource` leaves `renderer` as `None`; give it a
     // bitmap renderer so hit testing against `bbox` works (the actual
     // rendering is done by the bridge, not the widget's renderer).
-    let renderer_base = match btn.base.renderer.base() {
-        Some(b) => b.clone(),
-        None => RendererBase {
+    btn.base.renderer = bitmap_renderer(bbox, resource_id);
+    Widget::Button(btn)
+}
+
+/// Fresh bridge widgets have no renderer state to preserve.
+fn bitmap_renderer(bbox: ScreenBBox, resource_id: crate::ui::ResourceId) -> WidgetRenderer {
+    WidgetRenderer::Bitmap(RendererBitmap {
+        base: RendererBase {
             bbox,
             resource_id,
             ..Default::default()
         },
-    };
-    btn.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
-        base: renderer_base,
-    });
-    Widget::Button(btn)
+    })
 }
 
 /// Create a [`FrameWnd`] with the given buttons.
@@ -301,17 +302,7 @@ pub fn make_picture_with_resource(
     let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     pic.base.create_with_resource("", bbox, 0, resource_id);
     pic.base.with_focus = false;
-    let renderer_base = match pic.base.renderer.base() {
-        Some(b) => b.clone(),
-        None => RendererBase {
-            bbox,
-            resource_id,
-            ..Default::default()
-        },
-    };
-    pic.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
-        base: renderer_base,
-    });
+    pic.base.renderer = bitmap_renderer(bbox, resource_id);
     Widget::Picture(pic)
 }
 
@@ -330,17 +321,7 @@ pub fn make_multi_picture_with_resource(
     pic.base.create_with_resource("", bbox, 0, resource_id);
     pic.base.with_focus = false;
     pic.select_picture(sub_picture);
-    let renderer_base = match pic.base.renderer.base() {
-        Some(b) => b.clone(),
-        None => RendererBase {
-            bbox,
-            resource_id,
-            ..Default::default()
-        },
-    };
-    pic.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
-        base: renderer_base,
-    });
+    pic.base.renderer = bitmap_renderer(bbox, resource_id);
     Widget::MultiPicture(pic)
 }
 
@@ -1455,4 +1436,38 @@ mod noisy_tracker_tests {
         assert!(input.buttons.contains(MouseButtons::LEFT_CLICK));
         assert!(!input.buttons.contains(MouseButtons::LEFT_DOWN));
     }
+}
+
+#[test]
+fn bitmap_widget_constructors_preserve_geometry_resource_and_interaction_flags() {
+    use robin_engine::coordinates::ScreenPoint;
+    let button = make_button_with_resource(1, "Sell", false, 99, 10, 20, 30, 40);
+    let picture = make_picture_with_resource(2, 99, 10, 20, 30, 40);
+    let multi = make_multi_picture_with_resource(3, 99, 7, 10, 20, 30, 40);
+    for widget in [&button, &picture, &multi] {
+        let base = widget.base();
+        assert!(base.created);
+        let renderer = base
+            .renderer
+            .base()
+            .expect("bitmap widget owns hit-test geometry");
+        assert!(matches!(base.renderer, WidgetRenderer::Bitmap(_)));
+        assert_eq!(renderer.resource_id, 99);
+        assert_eq!(renderer.bbox.top_left(), ScreenPoint::new(10.0, 20.0));
+        assert_eq!(renderer.bbox.bottom_right(), ScreenPoint::new(40.0, 60.0));
+        assert_eq!(base.bbox.top_left(), renderer.bbox.top_left());
+        assert_eq!(base.bbox.bottom_right(), renderer.bbox.bottom_right());
+    }
+    assert_eq!(button.base().text, "Sell");
+    assert!(!button.base().enabled);
+    assert!(!picture.base().with_focus);
+    assert!(!multi.base().with_focus);
+    let Widget::Button(button) = button else {
+        unreachable!()
+    };
+    assert!(button.is_menu_button);
+    let Widget::MultiPicture(multi) = multi else {
+        unreachable!()
+    };
+    assert_eq!(multi.sub_picture, 7);
 }
