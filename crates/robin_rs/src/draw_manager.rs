@@ -12,15 +12,6 @@ use robin_engine::coordinates::{MapBBox, MapPoint, ScreenPoint};
 use robin_engine::sprite::BBox;
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// Default gauge width in pixels.
-pub const GAUGE_WIDTH: f32 = 64.0;
-/// Default gauge height in pixels.
-pub const GAUGE_HEIGHT: f32 = 14.0;
-
-// ---------------------------------------------------------------------------
 // DrawManager
 // ---------------------------------------------------------------------------
 
@@ -125,12 +116,6 @@ impl DrawManager {
             result.y *= self.zoom_factor;
         }
         result
-    }
-
-    /// Check if a point is within the drawing area after zoom.
-    #[cfg(test)]
-    fn check_point_for_drawing(x: i16, y: i16, width: u16, height: u16) -> bool {
-        x >= 0 && (x as u16) < width && y >= 0 && (y as u16) < height
     }
 
     // -- Clipping helpers --
@@ -788,27 +773,5 @@ mod tests {
         assert_eq!(back.zoom_factor(), 0.5);
         assert_eq!(back.color_depth(), 16);
         assert_eq!(back.view_rect().x_min(), 10.0);
-    }
-
-    #[test]
-    fn test_dotted_line_short_segment_math() {
-        // Test the short-segment early-return math without needing a Renderer.
-        // When the segment is shorter than `start`, draw_dotted_line just
-        // decrements start by the segment length and returns.
-        // Here we verify that logic directly.
-        let distance = 10.0f32; // segment length
-        let mut start = 100.0f32;
-        // This is the early-return path: distance < start
-        assert!(distance < start);
-        start -= distance;
-        assert!((start - 90.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_check_point_for_drawing() {
-        assert!(DrawManager::check_point_for_drawing(0, 0, 100, 100));
-        assert!(DrawManager::check_point_for_drawing(99, 99, 100, 100));
-        assert!(!DrawManager::check_point_for_drawing(-1, 0, 100, 100));
-        assert!(!DrawManager::check_point_for_drawing(100, 0, 100, 100));
     }
 }
