@@ -28,6 +28,34 @@ mod lifecycle_tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     #[test]
+    fn voice_pack_backends_report_their_required_resource_failures() {
+        let mut pack = crate::localization::LanguagePack {
+            locale: "en".into(),
+            native_name: "English".into(),
+            data_root: String::new(),
+            has_voice: true,
+            has_cinematics: false,
+            voice_uses_english_fallback: false,
+            cinematics_use_english_fallback: false,
+            mission_names: Default::default(),
+        };
+        let files = Arc::new(SbFileSystem::new(Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        let profiles = ProfileManager::new();
+        assert_eq!(
+            build_exclamations_for_language(&pack, None, &profiles, files.clone()).unwrap_err(),
+            "shipping voice pack en has no shipping datadir"
+        );
+        pack.data_root = "missing-voice-fixture".into();
+        let error = build_exclamations_for_language(&pack, None, &profiles, files).unwrap_err();
+        assert!(
+            error.starts_with("voice pack en actors.res failed to load:"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn speech_definition_reads_are_unique_and_sorted_by_actor_id() {
         let mut profiles = ProfileManager::new();
         for id in [0x0042_0041, 0, 0x0042_0041, 0x41, 0x41, 0xff] {
@@ -1042,39 +1070,25 @@ pub fn build_exclamations_for_language(
     profiles: &ProfileManager,
     files: Arc<SbFileSystem>,
 ) -> Result<Vec<Vec<(u32, Vec<String>)>>, String> {
-    let mut resources = if pack.data_root.is_empty() {
+    let source = format!("canonical locale {}", pack.locale);
+    if pack.data_root.is_empty() {
         let shipping = shipping.ok_or_else(|| {
             format!(
                 "shipping voice pack {} has no shipping datadir",
                 pack.locale
             )
         })?;
-        match shipping.locale_resource(&pack.locale, "Data/Sounds/Exclamations/actors.res") {
-            Ok(Some(resources)) => resources.clone(),
-            Ok(None) => return Err(format!("voice pack {} has no actors.res", pack.locale)),
-            Err(error) => {
-                return Err(format!(
-                    "voice pack {} actors.res lookup failed: {error:#}",
-                    pack.locale
-                ));
-            }
-        }
-    } else {
-        let mut resources = ResourceManager::with_files(files.clone());
-        let path = format!("{}/Data/Sounds/Exclamations/actors.res", pack.data_root);
-        resources.attach_resource_file(&path).map_err(|error| {
-            format!(
-                "voice pack {} actors.res failed to load: {error:#}",
-                pack.locale
-            )
-        })?;
-        resources
-    };
-
-    let source = format!("canonical locale {}", pack.locale);
-    if pack.data_root.is_empty() {
-        // The resource lookup above already requires this same shipping authority.
-        let shipping = shipping.expect("shipping voice resources were resolved above");
+        let mut resources =
+            match shipping.locale_resource(&pack.locale, "Data/Sounds/Exclamations/actors.res") {
+                Ok(Some(resources)) => resources.clone(),
+                Ok(None) => return Err(format!("voice pack {} has no actors.res", pack.locale)),
+                Err(error) => {
+                    return Err(format!(
+                        "voice pack {} actors.res lookup failed: {error:#}",
+                        pack.locale
+                    ));
+                }
+            };
         build_exclamations_from(
             profiles,
             Some(shipping),
@@ -1090,6 +1104,14 @@ pub fn build_exclamations_for_language(
             true,
         )
     } else {
+        let mut resources = ResourceManager::with_files(files.clone());
+        let path = format!("{}/Data/Sounds/Exclamations/actors.res", pack.data_root);
+        resources.attach_resource_file(&path).map_err(|error| {
+            format!(
+                "voice pack {} actors.res failed to load: {error:#}",
+                pack.locale
+            )
+        })?;
         build_exclamations_from(
             profiles,
             shipping,
