@@ -4116,14 +4116,17 @@ ticks before being stopped intentionally. No archive extraction was used.
 ### RFC 6902 package update (2026-09-10)
 
 Following the JSON Patch merge (`12552c5f2`), the current package is
-`.tmp/fabri18-sprite-gallery-vq-jxl-json-patch.zip` (**18,437,728 bytes**,
+`.tmp/fabri18-sprite-gallery-vq-jxl-json-patch.zip` (**18,437,937 bytes**,
 17.58 MiB). SHA-256:
-`b2365174f8c9db2bc41526c364b7686a959ee2004d055717bacd69142868ac7b`.
+`5264903ab9fc9cc5bde62401536f515bc5f91c7707cab50cc22a2c607bb3fd4f`.
 It replaces the removed `soldier-profiles.patch.json` with 579 standard
 operations in `Data/Configuration/profiles.patch.json`, using the migrated
 source-mod patch plus explicit authored animation-profile names for all 51
-additions. Sprites, JXL map, mission descriptor and other payloads are unchanged;
-only the profile patch and README differ from the previous flat archive.
+additions. The mission descriptor also explicitly marks the 51 Fabri18 allies
+with `command_interface: "tactical_orders"` and `mission_role: "tactical_ally"`;
+friendly allegiance alone does not enable tactical control. The 42 enemy
+soldiers, sprites, JXL map and other payloads are unchanged. The profile patch,
+mission descriptor and README differ from the previous flat archive.
 The archive remains flat and is installed directly into `mods/`.
 
 The current Rust `cpf_to_json --patch` loader accepted the patch

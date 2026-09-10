@@ -328,6 +328,8 @@ def write_gallery(destination: Path, additions: list[dict], preview_frames: list
                 ],
                 "profile": addition["filename"].lower().replace(" ", "_"),
                 "allegiance": 0,
+                "command_interface": "tactical_orders",
+                "mission_role": "tactical_ally",
                 "direction": (index * 3) % 16,
             }
         )

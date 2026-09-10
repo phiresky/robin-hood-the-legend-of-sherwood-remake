@@ -728,6 +728,35 @@ fn move_keyboard_selection(frame: &FrameWnd, selection: &mut u32, direction: i32
     }
 }
 
+/// Build presentation-only profiles for a saved campaign. Overlay missions
+/// launched with `--mission` have a forced profile even when their asset
+/// descriptor uses BuiltIn. Browsing their history does not restore assets.
+fn campaign_browser_profiles(
+    profiles: &engine_profiles::ProfileManager,
+    campaign: &Campaign,
+    descriptor: &robin_engine::mission_assets::MissionAssetDescriptor,
+) -> Result<engine_profiles::ProfileManager, String> {
+    let mission = campaign
+        .current_mission_idx
+        .and_then(|index| campaign.missions.get(index))
+        .ok_or_else(|| "saved campaign has no valid current mission".to_owned())?;
+    let index = mission
+        .profile_idx
+        .ok_or_else(|| "saved current mission has no profile index".to_owned())?
+        as usize;
+    let mut view = profiles.clone();
+    if index == view.missions.len() {
+        view.add_forced_mission(
+            descriptor.proto_level_filename.clone(),
+            descriptor.mission_basename.clone(),
+            descriptor.mission_basename.clone(),
+        );
+    } else if index > view.missions.len() {
+        return Err(format!("saved campaign references missing profile {index}"));
+    }
+    Ok(view)
+}
+
 /// Dispatch a button click to either an immediate return or an in-place
 /// sub-menu.  Returns `Some` when the main menu should exit with that
 /// choice; `None` when control should stay on the menu.
@@ -755,6 +784,11 @@ async fn dispatch_click(
                     .map_err(|error| format!("Cannot open Campaign Manager: {error:#}"))?;
                 // Reconstruct only the static descriptor used for presentation.
                 // No mission assets are mounted and no saved simulation is applied.
+                view_profiles = campaign_browser_profiles(
+                    profiles,
+                    save.engine.campaign(),
+                    &save.header.mission_assets,
+                )?;
                 crate::game_session::install_and_validate_saved_profile(&mut view_profiles, &save)?;
                 save.engine.campaign().clone()
             } else {
@@ -1109,6 +1143,35 @@ fn substitute_i(template: &str, value: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn campaign_browser_restores_overlay_profile_without_changing_runtime_catalog() {
+        let mut profiles = engine_profiles::ProfileManager::new();
+        profiles.missions.push(Default::default());
+        let mut campaign = Campaign::default();
+        let mut mission = robin_engine::mission::Mission::new();
+        mission.profile_idx = Some(1);
+        campaign.missions.push(mission);
+        campaign.current_mission_idx = Some(0);
+        let descriptor = robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+            "Fabri18SpriteGallery",
+            "OpenBattlefield",
+            "OpenBattlefield",
+        )
+        .unwrap();
+        let view = campaign_browser_profiles(&profiles, &campaign, &descriptor).unwrap();
+        assert_eq!(profiles.missions.len(), 1);
+        assert_eq!(view.missions.len(), 2);
+        assert_eq!(view.missions[1].id, 1);
+        assert_eq!(view.missions[1].mission_filename, "Fabri18SpriteGallery");
+        assert_eq!(view.missions[1].proto_level_filename, "OpenBattlefield");
+        let existing = campaign_browser_profiles(&view, &campaign, &descriptor).unwrap();
+        assert_eq!(existing.missions.len(), 2);
+        campaign.missions[0].profile_idx = Some(2);
+        assert!(campaign_browser_profiles(&profiles, &campaign, &descriptor).is_err());
+        campaign.current_mission_idx = None;
+        assert!(campaign_browser_profiles(&profiles, &campaign, &descriptor).is_err());
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn menu_audio_context(
