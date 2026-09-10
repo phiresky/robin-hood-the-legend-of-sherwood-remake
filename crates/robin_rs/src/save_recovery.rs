@@ -398,11 +398,11 @@ pub async fn open_for_launch(
         format!("{original_error}; save recovery UI: Data/Interface/DEFAULT.RES unavailable")
     })?;
     let mut cursor = crate::cursor::CursorRenderer::new();
-    cursor.init(&mut renderer);
+    cursor.init(&renderer);
     if !cursor.load_cursor(
         robin_engine::resource_ids::RHMOUSE_DEFAULT,
         &mut resources.res,
-        &mut renderer,
+        &renderer,
     ) {
         tracing::warn!("Save recovery: default cursor unavailable, using fallback arrow");
     }

@@ -445,7 +445,7 @@ impl<'a> ModalCursor<'a> {
 pub fn default_modal_cursor<'a>(
     cursor: &'a mut CursorRenderer,
     cursor_res: &mut ResourceManager,
-    renderer: &mut Renderer,
+    renderer: &Renderer,
 ) -> ModalCursor<'a> {
     if cursor.current_cursor_id() != resource_ids::RHMOUSE_DEFAULT {
         cursor.load_cursor(resource_ids::RHMOUSE_DEFAULT, cursor_res, renderer);

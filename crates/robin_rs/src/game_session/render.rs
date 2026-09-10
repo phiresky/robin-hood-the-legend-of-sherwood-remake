@@ -1062,7 +1062,7 @@ pub(super) fn update_mouse_and_cursor(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     external_actions: &mut Vec<engine_api::ExternalAction>,
-    renderer: &mut crate::renderer::Renderer,
+    renderer: &crate::renderer::Renderer,
     cursor_res: &mut robin_assets::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     threaded_input: &crate::input::ThreadedInput,

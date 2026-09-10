@@ -269,15 +269,15 @@ pub(crate) async fn show_main_menu(
     }
     let mut menu_audio = MainMenuAudio::new(application_context);
 
-    // Cursor — hide the OS cursor and render the in-game arrow sprite
+    // Cursor — prepare the in-game arrow sprite (the window hides the OS cursor).
     // (the default cursor is set at start-up, before the menu comes up).
     // Reuses the DEFAULT.RES already opened by `IngameMenuResources`.
     let mut cursor_renderer = CursorRenderer::new();
-    cursor_renderer.init(&mut renderer);
+    cursor_renderer.init(&renderer);
     if !cursor_renderer.load_cursor(
         resource_ids::RHMOUSE_DEFAULT,
         &mut menu_resources.res,
-        &mut renderer,
+        &renderer,
     ) {
         tracing::warn!("Main menu: failed to load RHMOUSE_DEFAULT cursor — using fallback arrow");
     }

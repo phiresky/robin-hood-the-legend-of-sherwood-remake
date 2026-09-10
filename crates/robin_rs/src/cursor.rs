@@ -156,7 +156,7 @@ impl CursorRenderer {
 
     /// Create a fallback arrow cursor. OS cursor visibility is owned by the
     /// window layer, which hides it when constructing the window.
-    pub fn init(&mut self, renderer: &mut Renderer) {
+    pub fn init(&mut self, renderer: &Renderer) {
         self.create_fallback_cursor(renderer);
     }
 
@@ -167,7 +167,7 @@ impl CursorRenderer {
 
     /// Create a simple 16x16 arrow cursor as a fallback when no resource
     /// cursor is loaded.
-    fn create_fallback_cursor(&mut self, renderer: &mut Renderer) {
+    fn create_fallback_cursor(&mut self, renderer: &Renderer) {
         let w: u16 = 16;
         let h: u16 = 16;
 
@@ -260,7 +260,7 @@ impl CursorRenderer {
         &mut self,
         cursor_id: ResourceId,
         resource_manager: &mut ResourceManager,
-        renderer: &mut Renderer,
+        renderer: &Renderer,
     ) -> bool {
         // Get cursor metadata
         let (hotspot, frame_length, shadowed) = match resource_manager.get_mouse_entry(cursor_id) {
@@ -487,7 +487,7 @@ impl CursorRenderer {
 fn upload_picture_to_gpu_frame(
     pic: &Picture,
     shadowed: bool,
-    renderer: &mut Renderer,
+    renderer: &Renderer,
 ) -> Option<CursorFrame> {
     let w = pic.width;
     let h = pic.height;
@@ -505,7 +505,7 @@ fn upload_pixels_to_gpu_frame(
     h: u16,
     pixels: impl ExactSizeIterator<Item = u16>,
     shadowed: bool,
-    renderer: &mut Renderer,
+    renderer: &Renderer,
 ) -> Option<CursorFrame> {
     if pixels.len() != w as usize * h as usize {
         return None;
