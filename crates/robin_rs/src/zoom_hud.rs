@@ -1,6 +1,6 @@
 //! Zoom HUD buttons (zoom-in / zoom-out).
 //!
-//! The two zoom widgets sit on the lower panel.  Their enable mask
+//! The two zoom widgets sit on the top-right parchment scroll.  Their enable mask
 //! comes from `Engine::is_zoom_up_possible` / `is_zoom_down_possible`
 //! and an in-flight transition pins the active widget to
 //! visually-pressed for the duration of the zoom animation.  Every
@@ -87,7 +87,7 @@ pub struct ZoomHudLayout {
 }
 
 impl ZoomHudLayout {
-    /// Derive button rects from the current screen resolution and the
+    /// Derive button rects from the current screen width and the
     /// loaded sprite dimensions.
     ///
     /// Both widgets sit at `x = width - 26`, with zoom-in at screen
@@ -97,7 +97,7 @@ impl ZoomHudLayout {
     /// the BTTN sprite dimensions when available; when the resource is
     /// missing we fall back to a 24x24 hit box; drawing still skips the
     /// missing sprite.
-    pub fn for_resolution(screen_w: u32, _screen_h: u32, sprites: &ZoomButtonSprites) -> Self {
+    pub fn for_screen_width(screen_w: u32, sprites: &ZoomButtonSprites) -> Self {
         const FALLBACK_W: u32 = 24;
         const FALLBACK_H: u32 = 24;
 
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn layout_top_right_of_screen() {
         let sprites = ZoomButtonSprites::default();
-        let layout = ZoomHudLayout::for_resolution(800, 600, &sprites);
+        let layout = ZoomHudLayout::for_screen_width(800, &sprites);
         assert_eq!(layout.zoom_up.x(), 800 - 26);
         assert_eq!(layout.zoom_down.x(), 800 - 26);
         assert_eq!(layout.zoom_up.y(), 0);
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn hit_test_respects_enable() {
         let sprites = ZoomButtonSprites::default();
-        let layout = ZoomHudLayout::for_resolution(800, 600, &sprites);
+        let layout = ZoomHudLayout::for_screen_width(800, &sprites);
         let pt = (layout.zoom_up.x() + 1, layout.zoom_up.y() + 1);
         let both = ZoomButtonEnable {
             zoom_up: true,

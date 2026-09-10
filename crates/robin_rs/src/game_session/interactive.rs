@@ -219,7 +219,7 @@ impl MissionHud {
     pub(super) fn resize(&mut self, width: u32, height: u32) {
         self.sherwood_layout =
             SherwoodHudLayout::for_resolution(width, height, &self.sherwood_sprites);
-        self.zoom_layout = ZoomHudLayout::for_resolution(width, height, &self.zoom_sprites);
+        self.zoom_layout = ZoomHudLayout::for_screen_width(width, &self.zoom_sprites);
         self.corner_layout = CornerHudLayout::for_resolution(width, height, &self.corner_sprites);
         self.stature_layout =
             StatureHudLayout::for_resolution(width, height, &self.stature_sprites);
@@ -690,7 +690,7 @@ impl InteractiveFrontendAssembly {
         let sherwood_sprites = SherwoodButtonSprites::load(&mut cursor, &mut renderer);
         let sherwood_layout = SherwoodHudLayout::for_resolution(width, height, &sherwood_sprites);
         let zoom_sprites = ZoomButtonSprites::load(&mut cursor, &mut renderer);
-        let zoom_layout = ZoomHudLayout::for_resolution(width, height, &zoom_sprites);
+        let zoom_layout = ZoomHudLayout::for_screen_width(width, &zoom_sprites);
         let corner_sprites = CornerButtonSprites::load(&mut cursor, &mut renderer);
         let corner_layout = CornerHudLayout::for_resolution(
             renderer.screen_width() as u32,
