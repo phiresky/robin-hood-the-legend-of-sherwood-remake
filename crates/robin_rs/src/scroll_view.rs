@@ -181,11 +181,13 @@ impl ScrollView {
         let row = self.offset + ((self.axis(x, y) - self.origin()) / self.row_height) as usize;
         self.visible_range().contains(&row).then_some(row)
     }
-    fn drag_to(&mut self, y: i32, grab: i32) {
-        let usable = (self.length() - 2) as usize;
-        self.offset = (((y - self.origin() - 1 - grab).max(0) as usize * self.total + usable / 2)
-            / usable)
-            .min(self.max_offset());
+    fn drag_to(&mut self, axis_position: i32, grab: i32) {
+        let usable = (self.length() - 2) as u128;
+        let relative = i64::from(axis_position) - i64::from(self.origin()) - 1 - i64::from(grab);
+        // Preserve the integer ratio and half-up rounding without overflowing
+        // pointer differences or the product with a usize-sized content count.
+        let scaled = relative.max(0) as u128 * self.total as u128 + usable / 2;
+        self.offset = (scaled / usable).min(self.max_offset() as u128) as usize;
     }
     /// Returns true when scrolling consumed the event. Pass the current mouse
     /// position in virtual coordinates for wheel events, which carry no position.
@@ -426,6 +428,49 @@ mod tests {
         v.set_total(2);
         assert_eq!(v.visible_range(), 0..2);
     }
+    #[test]
+    fn drag_scaling_preserves_legacy_rounding_for_ordinary_lists() {
+        for horizontal in [false, true] {
+            for total in [0, 1, 5, 6, 100, 10_000] {
+                let mut v = view();
+                v.horizontal = horizontal;
+                v.set_total(total);
+                for grab in [0, 1, 8, 16] {
+                    for position in -20..250 {
+                        let usable = (v.length() - 2) as usize;
+                        let expected = (((position - v.origin() - 1 - grab).max(0) as usize
+                            * total
+                            + usable / 2)
+                            / usable)
+                            .min(v.max_offset());
+                        v.drag_to(position, grab);
+                        assert_eq!(v.offset(), expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn drag_scaling_handles_extreme_coordinates_and_large_content_counts() {
+        let mut v = view();
+        v.set_total(usize::MAX);
+        v.drag_to(i32::MIN, 8);
+        assert_eq!(v.offset(), 0);
+        v.drag_to(i32::MAX, 8);
+        assert_eq!(v.offset(), v.max_offset());
+        // At one track pixel, round total / 101 to the nearest row.
+        v.drag_to(v.origin() + 2, 0);
+        assert_eq!(v.offset(), ((usize::MAX as u128 + 50) / 101) as usize);
+
+        v.bounds[1] = i32::MIN;
+        v.drag_to(i32::MAX, 0);
+        assert_eq!(v.offset(), v.max_offset());
+        v.bounds[1] = i32::MAX - v.bounds[3];
+        v.drag_to(i32::MIN, 8);
+        assert_eq!(v.offset(), 0);
+    }
+
     #[test]
     fn dragging_outside_view_consumes_release_and_cancellation_stops_drag() {
         let mut v = view();
