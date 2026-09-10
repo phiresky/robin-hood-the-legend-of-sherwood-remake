@@ -1208,7 +1208,49 @@ fn player_name_display_borrows_plain_text_and_places_caret_at_unicode_boundaries
     assert_eq!(player_name_display("", 0, false), "");
 }
 
-const ADVANCED_RULE_COUNT: usize = 18;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+enum AdvancedRule {
+    LegacyScript,
+    EnemyFighting,
+    EnemyShooting,
+    EnemyIq,
+    EnemyHealth,
+    ReactionTime,
+    GuardViewDistance,
+    GuardViewAngle,
+    GuardNoiseSensitivity,
+    BlipRange,
+    Carnage,
+    SmallCapacity,
+    LargeCapacity,
+    AutoHeal,
+    NetPreview,
+    FriendlyFire,
+    SpecialDelay,
+    Punch,
+}
+
+/// Display order shared by keyboard navigation, hit testing, and rendering.
+const ADVANCED_RULES: [AdvancedRule; 18] = [
+    AdvancedRule::LegacyScript,
+    AdvancedRule::EnemyFighting,
+    AdvancedRule::EnemyShooting,
+    AdvancedRule::EnemyIq,
+    AdvancedRule::EnemyHealth,
+    AdvancedRule::ReactionTime,
+    AdvancedRule::GuardViewDistance,
+    AdvancedRule::GuardViewAngle,
+    AdvancedRule::GuardNoiseSensitivity,
+    AdvancedRule::BlipRange,
+    AdvancedRule::Carnage,
+    AdvancedRule::SmallCapacity,
+    AdvancedRule::LargeCapacity,
+    AdvancedRule::AutoHeal,
+    AdvancedRule::NetPreview,
+    AdvancedRule::FriendlyFire,
+    AdvancedRule::SpecialDelay,
+    AdvancedRule::Punch,
+];
 
 fn preset_index(difficulty: DifficultyLevel) -> usize {
     match difficulty {
@@ -1239,9 +1281,9 @@ fn step_value(value: &mut u16, direction: i8, step: u16, min: u16, max: u16) {
     };
 }
 
-fn adjust_custom_rule(rules: &mut DifficultyRules, row: usize, direction: i8) {
-    match row {
-        0 => {
+fn adjust_custom_rule(rules: &mut DifficultyRules, rule: AdvancedRule, direction: i8) {
+    match rule {
+        AdvancedRule::LegacyScript => {
             rules.legacy_level = match (rules.legacy_level, direction < 0) {
                 (LegacyDifficultyLevel::Easy, true) => LegacyDifficultyLevel::Easy,
                 (LegacyDifficultyLevel::Easy, false) => LegacyDifficultyLevel::Medium,
@@ -1251,131 +1293,142 @@ fn adjust_custom_rule(rules: &mut DifficultyRules, row: usize, direction: i8) {
                 (LegacyDifficultyLevel::Hard, false) => LegacyDifficultyLevel::Hard,
             }
         }
-        1 => step_value(&mut rules.enemy_fighting_percent, direction, 10, 25, 400),
-        2 => step_value(&mut rules.enemy_shooting_percent, direction, 10, 25, 400),
-        3 => step_value(&mut rules.enemy_iq_percent, direction, 10, 25, 400),
-        4 => step_value(&mut rules.enemy_life_points_percent, direction, 10, 25, 400),
-        5 => step_value(&mut rules.reaction_time_percent, direction, 5, 10, 400),
-        6 => step_value(
+        AdvancedRule::EnemyFighting => {
+            step_value(&mut rules.enemy_fighting_percent, direction, 10, 25, 400)
+        }
+        AdvancedRule::EnemyShooting => {
+            step_value(&mut rules.enemy_shooting_percent, direction, 10, 25, 400)
+        }
+        AdvancedRule::EnemyIq => step_value(&mut rules.enemy_iq_percent, direction, 10, 25, 400),
+        AdvancedRule::EnemyHealth => {
+            step_value(&mut rules.enemy_life_points_percent, direction, 10, 25, 400)
+        }
+        AdvancedRule::ReactionTime => {
+            step_value(&mut rules.reaction_time_percent, direction, 5, 10, 400)
+        }
+        AdvancedRule::GuardViewDistance => step_value(
             &mut rules.hostile_soldier_view_distance_percent,
             direction,
             5,
             25,
             200,
         ),
-        7 => step_value(
+        AdvancedRule::GuardViewAngle => step_value(
             &mut rules.hostile_soldier_view_angle_percent,
             direction,
             5,
             25,
             200,
         ),
-        8 => step_value(
+        AdvancedRule::GuardNoiseSensitivity => step_value(
             &mut rules.hostile_soldier_noise_sensitivity_percent,
             direction,
             5,
             25,
             200,
         ),
-        9 => step_value(
+        AdvancedRule::BlipRange => step_value(
             &mut rules.blip_detection_range_percent,
             direction,
             5,
             10,
             200,
         ),
-        10 => step_value(&mut rules.carnage_percent, direction, 10, 25, 400),
-        11 => step_value(&mut rules.six_capacity, direction, 1, 0, 99),
-        12 => step_value(&mut rules.twelve_capacity, direction, 1, 0, 99),
-        13 => step_value(
+        AdvancedRule::Carnage => step_value(&mut rules.carnage_percent, direction, 10, 25, 400),
+        AdvancedRule::SmallCapacity => step_value(&mut rules.six_capacity, direction, 1, 0, 99),
+        AdvancedRule::LargeCapacity => step_value(&mut rules.twelve_capacity, direction, 1, 0, 99),
+        AdvancedRule::AutoHeal => step_value(
             &mut rules.pc_auto_heal_interval_frames,
             direction,
             10,
             0,
             3600,
         ),
-        14 => rules.accurate_net_preview = !rules.accurate_net_preview,
-        15 => rules.protect_allies_from_pc_arrows = !rules.protect_allies_from_pc_arrows,
-        16 => step_value(&mut rules.special_strike_base_frames, direction, 1, 0, 60),
-        17 => step_value(
+        AdvancedRule::NetPreview => rules.accurate_net_preview = !rules.accurate_net_preview,
+        AdvancedRule::FriendlyFire => {
+            rules.protect_allies_from_pc_arrows = !rules.protect_allies_from_pc_arrows
+        }
+        AdvancedRule::SpecialDelay => {
+            step_value(&mut rules.special_strike_base_frames, direction, 1, 0, 60)
+        }
+        AdvancedRule::Punch => step_value(
             &mut rules.pc_punch_concussion_percent,
             direction,
             10,
             25,
             400,
         ),
-        _ => panic!("advanced difficulty row {row} is out of range"),
     }
     rules
         .validate()
         .expect("difficulty editor produced invalid rules");
 }
 
-fn advanced_rule_label_id(row: usize) -> &'static str {
-    match row {
-        0 => MT_PORT_DIFF_LEGACY_SCRIPT,
-        1 => MT_PORT_DIFF_ENEMY_FIGHTING,
-        2 => MT_PORT_DIFF_ENEMY_SHOOTING,
-        3 => MT_PORT_DIFF_ENEMY_IQ,
-        4 => MT_PORT_DIFF_ENEMY_HEALTH,
-        5 => MT_PORT_DIFF_REACTION_TIME,
-        6 => MT_PORT_DIFF_GUARD_VIEW_DISTANCE,
-        7 => MT_PORT_DIFF_GUARD_VIEW_ANGLE,
-        8 => MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY,
-        9 => MT_PORT_DIFF_BLIP_RANGE,
-        10 => MT_PORT_DIFF_CARNAGE,
-        11 => MT_PORT_DIFF_SMALL_CAPACITY,
-        12 => MT_PORT_DIFF_LARGE_CAPACITY,
-        13 => MT_PORT_DIFF_AUTO_HEAL,
-        14 => MT_PORT_DIFF_NET_PREVIEW,
-        15 => MT_PORT_DIFF_FRIENDLY_FIRE,
-        16 => MT_PORT_DIFF_SPECIAL_DELAY,
-        17 => MT_PORT_DIFF_PUNCH,
-        _ => panic!("advanced difficulty row {row} is out of range"),
+fn advanced_rule_label_id(rule: AdvancedRule) -> &'static str {
+    match rule {
+        AdvancedRule::LegacyScript => MT_PORT_DIFF_LEGACY_SCRIPT,
+        AdvancedRule::EnemyFighting => MT_PORT_DIFF_ENEMY_FIGHTING,
+        AdvancedRule::EnemyShooting => MT_PORT_DIFF_ENEMY_SHOOTING,
+        AdvancedRule::EnemyIq => MT_PORT_DIFF_ENEMY_IQ,
+        AdvancedRule::EnemyHealth => MT_PORT_DIFF_ENEMY_HEALTH,
+        AdvancedRule::ReactionTime => MT_PORT_DIFF_REACTION_TIME,
+        AdvancedRule::GuardViewDistance => MT_PORT_DIFF_GUARD_VIEW_DISTANCE,
+        AdvancedRule::GuardViewAngle => MT_PORT_DIFF_GUARD_VIEW_ANGLE,
+        AdvancedRule::GuardNoiseSensitivity => MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY,
+        AdvancedRule::BlipRange => MT_PORT_DIFF_BLIP_RANGE,
+        AdvancedRule::Carnage => MT_PORT_DIFF_CARNAGE,
+        AdvancedRule::SmallCapacity => MT_PORT_DIFF_SMALL_CAPACITY,
+        AdvancedRule::LargeCapacity => MT_PORT_DIFF_LARGE_CAPACITY,
+        AdvancedRule::AutoHeal => MT_PORT_DIFF_AUTO_HEAL,
+        AdvancedRule::NetPreview => MT_PORT_DIFF_NET_PREVIEW,
+        AdvancedRule::FriendlyFire => MT_PORT_DIFF_FRIENDLY_FIRE,
+        AdvancedRule::SpecialDelay => MT_PORT_DIFF_SPECIAL_DELAY,
+        AdvancedRule::Punch => MT_PORT_DIFF_PUNCH,
     }
 }
 
 fn advanced_rule_value(
-    resources: &IngameMenuResources,
+    menu_text: &crate::ingame_menu::resources::MenuText,
     rules: DifficultyRules,
-    row: usize,
+    rule: AdvancedRule,
 ) -> String {
     let percent = |value: u16| format!("{value}%");
     let yes_no = |value: bool| {
-        resources.menu_text.get(if value {
+        menu_text.get(if value {
             MT_INFOBULLE_BUTTON_YES
         } else {
             MT_INFOBULLE_BUTTON_NO
         })
     };
-    match row {
-        0 => difficulty_to_string(
-            &resources.menu_text,
+    match rule {
+        AdvancedRule::LegacyScript => difficulty_to_string(
+            menu_text,
             match rules.legacy_level {
                 LegacyDifficultyLevel::Easy => DifficultyLevel::Easy,
                 LegacyDifficultyLevel::Medium => DifficultyLevel::Medium,
                 LegacyDifficultyLevel::Hard => DifficultyLevel::Hard,
             },
         ),
-        1 => percent(rules.enemy_fighting_percent),
-        2 => percent(rules.enemy_shooting_percent),
-        3 => percent(rules.enemy_iq_percent),
-        4 => percent(rules.enemy_life_points_percent),
-        5 => percent(rules.reaction_time_percent),
-        6 => percent(rules.hostile_soldier_view_distance_percent),
-        7 => percent(rules.hostile_soldier_view_angle_percent),
-        8 => percent(rules.hostile_soldier_noise_sensitivity_percent),
-        9 => percent(rules.blip_detection_range_percent),
-        10 => percent(rules.carnage_percent),
-        11 => rules.six_capacity.to_string(),
-        12 => rules.twelve_capacity.to_string(),
-        13 if rules.pc_auto_heal_interval_frames == 0 => yes_no(false),
-        13 => format!("{} frames", rules.pc_auto_heal_interval_frames),
-        14 => yes_no(rules.accurate_net_preview),
-        15 => yes_no(rules.protect_allies_from_pc_arrows),
-        16 => format!("{} frames", rules.special_strike_base_frames),
-        17 => percent(rules.pc_punch_concussion_percent),
-        _ => panic!("advanced difficulty row {row} is out of range"),
+        AdvancedRule::EnemyFighting => percent(rules.enemy_fighting_percent),
+        AdvancedRule::EnemyShooting => percent(rules.enemy_shooting_percent),
+        AdvancedRule::EnemyIq => percent(rules.enemy_iq_percent),
+        AdvancedRule::EnemyHealth => percent(rules.enemy_life_points_percent),
+        AdvancedRule::ReactionTime => percent(rules.reaction_time_percent),
+        AdvancedRule::GuardViewDistance => percent(rules.hostile_soldier_view_distance_percent),
+        AdvancedRule::GuardViewAngle => percent(rules.hostile_soldier_view_angle_percent),
+        AdvancedRule::GuardNoiseSensitivity => {
+            percent(rules.hostile_soldier_noise_sensitivity_percent)
+        }
+        AdvancedRule::BlipRange => percent(rules.blip_detection_range_percent),
+        AdvancedRule::Carnage => percent(rules.carnage_percent),
+        AdvancedRule::SmallCapacity => rules.six_capacity.to_string(),
+        AdvancedRule::LargeCapacity => rules.twelve_capacity.to_string(),
+        AdvancedRule::AutoHeal if rules.pc_auto_heal_interval_frames == 0 => yes_no(false),
+        AdvancedRule::AutoHeal => format!("{} frames", rules.pc_auto_heal_interval_frames),
+        AdvancedRule::NetPreview => yes_no(rules.accurate_net_preview),
+        AdvancedRule::FriendlyFire => yes_no(rules.protect_allies_from_pc_arrows),
+        AdvancedRule::SpecialDelay => format!("{} frames", rules.special_strike_base_frames),
+        AdvancedRule::Punch => percent(rules.pc_punch_concussion_percent),
     }
 }
 
@@ -1450,20 +1503,20 @@ async fn show_difficulty_prompt(
                     keycode: Keycode::Down,
                     ..
                 } if matches!(difficulty, DifficultyLevel::Custom(_)) => {
-                    focused_rule = (focused_rule + 1).min(ADVANCED_RULE_COUNT - 1);
+                    focused_rule = (focused_rule + 1).min(ADVANCED_RULES.len() - 1);
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Left,
                     ..
                 } if matches!(difficulty, DifficultyLevel::Custom(_)) => {
-                    adjust_custom_rule(&mut custom_rules, focused_rule, -1);
+                    adjust_custom_rule(&mut custom_rules, ADVANCED_RULES[focused_rule], -1);
                     difficulty = DifficultyLevel::Custom(custom_rules);
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Right,
                     ..
                 } if matches!(difficulty, DifficultyLevel::Custom(_)) => {
-                    adjust_custom_rule(&mut custom_rules, focused_rule, 1);
+                    adjust_custom_rule(&mut custom_rules, ADVANCED_RULES[focused_rule], 1);
                     difficulty = DifficultyLevel::Custom(custom_rules);
                 }
                 GameEvent::MouseUp(x, y, 1) => {
@@ -1485,10 +1538,10 @@ async fn show_difficulty_prompt(
                         && vy >= RULE_Y
                     {
                         let row = ((vy - RULE_Y) / RULE_H) as usize;
-                        if row < ADVANCED_RULE_COUNT {
+                        if row < ADVANCED_RULES.len() {
                             focused_rule = row;
                             let direction = if vx < RULE_X + RULE_W / 2 { -1 } else { 1 };
-                            adjust_custom_rule(&mut custom_rules, row, direction);
+                            adjust_custom_rule(&mut custom_rules, ADVANCED_RULES[row], direction);
                             difficulty = DifficultyLevel::Custom(custom_rules);
                         }
                     }
@@ -1540,15 +1593,15 @@ async fn show_difficulty_prompt(
             }
 
             let rules = difficulty.rules();
-            for row in 0..ADVANCED_RULE_COUNT {
+            for (row, rule) in ADVANCED_RULES.into_iter().enumerate() {
                 let marker =
                     if matches!(difficulty, DifficultyLevel::Custom(_)) && row == focused_rule {
                         ">"
                     } else {
                         " "
                     };
-                let label = resources.menu_text.get_port(advanced_rule_label_id(row));
-                let value = advanced_rule_value(resources, rules, row);
+                let label = resources.menu_text.get_port(advanced_rule_label_id(rule));
+                let value = advanced_rule_value(&resources.menu_text, rules, rule);
                 let text = format!("{marker} {label}: {value}");
                 render_text_virt_font(
                     renderer,
@@ -1853,12 +1906,59 @@ mod tests {
     #[test]
     fn custom_editor_steps_every_numeric_rule_within_valid_ranges() {
         let mut rules = DifficultyRules::MEDIUM;
-        for row in 0..ADVANCED_RULE_COUNT {
-            adjust_custom_rule(&mut rules, row, 1);
+        for rule in ADVANCED_RULES {
+            adjust_custom_rule(&mut rules, rule, 1);
             rules.validate().unwrap();
-            adjust_custom_rule(&mut rules, row, -1);
+            adjust_custom_rule(&mut rules, rule, -1);
             rules.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn advanced_rule_order_has_unique_editable_labeled_rows() {
+        let text = crate::ingame_menu::resources::MenuText::english_fallbacks_only();
+        let unique: std::collections::HashSet<_> = ADVANCED_RULES.into_iter().collect();
+        assert_eq!(unique.len(), ADVANCED_RULES.len());
+        let expected_labels = [
+            MT_PORT_DIFF_LEGACY_SCRIPT,
+            MT_PORT_DIFF_ENEMY_FIGHTING,
+            MT_PORT_DIFF_ENEMY_SHOOTING,
+            MT_PORT_DIFF_ENEMY_IQ,
+            MT_PORT_DIFF_ENEMY_HEALTH,
+            MT_PORT_DIFF_REACTION_TIME,
+            MT_PORT_DIFF_GUARD_VIEW_DISTANCE,
+            MT_PORT_DIFF_GUARD_VIEW_ANGLE,
+            MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY,
+            MT_PORT_DIFF_BLIP_RANGE,
+            MT_PORT_DIFF_CARNAGE,
+            MT_PORT_DIFF_SMALL_CAPACITY,
+            MT_PORT_DIFF_LARGE_CAPACITY,
+            MT_PORT_DIFF_AUTO_HEAL,
+            MT_PORT_DIFF_NET_PREVIEW,
+            MT_PORT_DIFF_FRIENDLY_FIRE,
+            MT_PORT_DIFF_SPECIAL_DELAY,
+            MT_PORT_DIFF_PUNCH,
+        ];
+        assert_eq!(ADVANCED_RULES.map(advanced_rule_label_id), expected_labels);
+        for rule in ADVANCED_RULES {
+            assert!(!text.get_port(advanced_rule_label_id(rule)).is_empty());
+            assert!(!advanced_rule_value(&text, DifficultyRules::MEDIUM, rule).is_empty());
+        }
+        assert_eq!(
+            advanced_rule_value(&text, DifficultyRules::MEDIUM, AdvancedRule::LegacyScript),
+            difficulty_to_string(&text, DifficultyLevel::Medium),
+        );
+        let mut rules = DifficultyRules::MEDIUM;
+        rules.pc_auto_heal_interval_frames = 0;
+        assert_eq!(
+            advanced_rule_value(&text, rules, AdvancedRule::AutoHeal),
+            text.get(MT_INFOBULLE_BUTTON_NO),
+        );
+        rules.pc_auto_heal_interval_frames = 10;
+        assert_eq!(
+            advanced_rule_value(&text, rules, AdvancedRule::AutoHeal),
+            "10 frames"
+        );
     }
 
     #[test]
