@@ -125,82 +125,63 @@ fn evaluation_mark(evaluation: AchievementEvaluation) -> &'static str {
 
 /// Human-readable frozen attempt details for terminal debriefing/history UI.
 pub fn format_attempt_summary(results: MissionAchievementResults) -> String {
+    use std::fmt::Write;
+
     let metrics = results.metrics();
-    let evaluation = |id| evaluation_mark(results.evaluation(id));
-    let mut lines = vec!["Achievement conditions".to_owned()];
+    let mut summary = String::from("Achievement conditions");
     if results.provenance() == AchievementTrackingProvenance::LegacyImportIncomplete {
-        lines.push("Evidence unavailable for imported Original save".to_owned());
+        summary.push_str("\nEvidence unavailable for imported Original save");
     }
 
-    let clean_hands = results.evaluation(AchievementId::CleanHands);
-    lines.push(if clean_hands == AchievementEvaluation::Unverifiable {
-        format!(
-            "{}: {}",
-            "Clean Hands",
-            evaluation(AchievementId::CleanHands)
-        )
-    } else {
-        format!(
-            "{}: {} ({} {}, {} {})",
-            "Clean Hands",
-            evaluation(AchievementId::CleanHands),
-            "player-caused deaths",
-            metrics.player_caused_deaths,
-            "NPC-caused deaths",
-            metrics.npc_caused_deaths,
-        )
-    });
-
-    let ghost = results.evaluation(AchievementId::Ghost);
-    lines.push(if ghost == AchievementEvaluation::Unverifiable {
-        format!("{}: {}", "Ghost", evaluation(AchievementId::Ghost))
-    } else {
-        format!(
-            "{}: {} ({} {}, {} {})",
-            "Ghost",
-            evaluation(AchievementId::Ghost),
-            metrics.unique_hostile_observers,
-            "observers",
-            metrics.unique_observed_player_characters,
-            "heroes",
-        )
-    });
-
-    let pile = results.evaluation(AchievementId::PileOBones);
-    lines.push(if pile == AchievementEvaluation::Unverifiable {
-        format!(
-            "{}: {}",
-            "Pile-o-Bones",
-            evaluation(AchievementId::PileOBones)
-        )
-    } else {
-        format!(
-            "{}: {} ({}/10)",
-            "Pile-o-Bones",
-            evaluation(AchievementId::PileOBones),
-            metrics.max_bodies_in_one_building,
-        )
-    });
-
-    for id in AchievementId::ALL.into_iter().skip(3) {
-        if results.evaluation(id) == AchievementEvaluation::NotApplicable {
+    for (id, label) in [
+        (AchievementId::CleanHands, "Clean Hands"),
+        (AchievementId::Ghost, "Ghost"),
+        (AchievementId::PileOBones, "Pile-o-Bones"),
+    ] {
+        let evaluation = results.evaluation(id);
+        write!(summary, "\n{label}: {}", evaluation_mark(evaluation))
+            .expect("writing to String cannot fail");
+        if evaluation == AchievementEvaluation::Unverifiable {
             continue;
         }
-        lines.push(format!("{}: {}", id.name(), evaluation(id)));
-        lines.push(id.description().to_owned());
-    }
-    if results.provenance() == AchievementTrackingProvenance::MissionStart {
-        lines.push(format!("Enemies killed: {}/{}; rich civilians knocked out: {}/{}; beggars exhausted: {}/{}; banners purchased: {}/{}", metrics.dead_enemies, metrics.encountered_hostiles, metrics.rich_civilians_knocked_out, metrics.rich_civilians, metrics.beggars_exhausted, metrics.beggars, metrics.banners_purchased, metrics.purchasable_banners));
+        match id {
+            AchievementId::CleanHands => write!(
+                summary,
+                " (player-caused deaths {}, NPC-caused deaths {})",
+                metrics.player_caused_deaths, metrics.npc_caused_deaths,
+            ),
+            AchievementId::Ghost => write!(
+                summary,
+                " ({} observers, {} heroes)",
+                metrics.unique_hostile_observers, metrics.unique_observed_player_characters,
+            ),
+            AchievementId::PileOBones => {
+                write!(summary, " ({}/10)", metrics.max_bodies_in_one_building,)
+            }
+            _ => unreachable!("only the three counter achievements are formatted here"),
+        }
+        .expect("writing to String cannot fail");
     }
 
-    if results.provenance() == AchievementTrackingProvenance::MissionStart {
-        lines.push(format!(
-            "{}: {}",
-            "Time",
-            format_speedrun_clock(metrics.duration_frames),
-        ));
+    for id in AchievementId::ALL.into_iter().skip(3) {
+        let evaluation = results.evaluation(id);
+        if evaluation == AchievementEvaluation::NotApplicable {
+            continue;
+        }
+        write!(
+            summary,
+            "\n{}: {}\n{}",
+            id.name(),
+            evaluation_mark(evaluation),
+            id.description(),
+        )
+        .expect("writing to String cannot fail");
     }
-    lines.join("\n")
+    if results.provenance() == AchievementTrackingProvenance::MissionStart {
+        write!(summary, "\nEnemies killed: {}/{}; rich civilians knocked out: {}/{}; beggars exhausted: {}/{}; banners purchased: {}/{}\nTime: {}", metrics.dead_enemies, metrics.encountered_hostiles, metrics.rich_civilians_knocked_out, metrics.rich_civilians, metrics.beggars_exhausted, metrics.beggars, metrics.banners_purchased, metrics.purchasable_banners, format_speedrun_clock(metrics.duration_frames))
+            .expect("writing to String cannot fail");
+    }
+    summary
 }
 
 fn format_speedrun_clock(frames: u32) -> String {
@@ -543,6 +524,36 @@ mod tests {
             AchievementAggregationInput::default(),
         );
         assert_eq!(format_aggregation_progress(progress), "IN PROGRESS");
+    }
+
+    #[test]
+    fn attempt_summary_preserves_complete_and_imported_text() {
+        use robin_engine::achievement::{AchievementId, MissionAchievementState};
+
+        for (mut state, mut expected, mark, suffix) in [
+            (
+                MissionAchievementState::from_mission_start(),
+                String::from(
+                    "Achievement conditions\nClean Hands: FAILED (player-caused deaths 0, NPC-caused deaths 0)\nGhost: FAILED (0 observers, 0 heroes)\nPile-o-Bones: FAILED (0/10)",
+                ),
+                "FAILED",
+                "\nEnemies killed: 0/0; rich civilians knocked out: 0/0; beggars exhausted: 0/0; banners purchased: 0/0\nTime: 00:00.00",
+            ),
+            (
+                MissionAchievementState::from_incomplete_legacy_import(),
+                String::from(
+                    "Achievement conditions\nEvidence unavailable for imported Original save\nClean Hands: N/A\nGhost: N/A\nPile-o-Bones: N/A",
+                ),
+                "N/A",
+                "",
+            ),
+        ] {
+            for id in AchievementId::ALL.into_iter().skip(3) {
+                expected.push_str(&format!("\n{}: {mark}\n{}", id.name(), id.description()));
+            }
+            expected.push_str(suffix);
+            assert_eq!(format_attempt_summary(*state.finalize_success()), expected);
+        }
     }
 
     #[test]
