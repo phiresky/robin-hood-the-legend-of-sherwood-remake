@@ -311,8 +311,7 @@ fn verify_web_content_package(manifest_path: &Path) -> Result<String, String> {
             return Err(format!("web content manifest repeats {}", file.path));
         }
     }
-    let actual_paths: BTreeSet<String> = actual.keys().cloned().collect();
-    if actual_paths != expected {
+    if !actual.keys().eq(expected.iter()) {
         return Err("web content package has missing or unexpected files".to_string());
     }
     Ok(manifest.native_content_sha256)
@@ -462,6 +461,16 @@ mod tests {
             verify_web_content_package(&manifest_path).expect("verified Demo package"),
             identity
         );
+
+        let extra = root.path().join("unlisted.bin");
+        std::fs::write(&extra, b"extra").expect("extra package file");
+        assert!(
+            verify_web_content_package(&manifest_path)
+                .unwrap_err()
+                .contains("missing or unexpected files")
+        );
+        std::fs::remove_file(extra).expect("remove extra fixture file");
+        verify_web_content_package(&manifest_path).expect("restored exact package");
 
         std::fs::write(root.path().join("missions/one.rhmission.zst"), b"changed")
             .expect("tamper mission");

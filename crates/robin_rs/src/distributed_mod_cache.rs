@@ -725,8 +725,7 @@ impl DistributedModCache {
         Ok(())
     }
 
-    fn remove_unindexed_complete_files(&mut self) -> Result<(), String> {
-        let indexed = self.index.entries.keys().cloned().collect::<BTreeSet<_>>();
+    fn remove_unindexed_complete_files(&self) -> Result<(), String> {
         for entry in std::fs::read_dir(&self.root)
             .map_err(|error| format!("read cache directory {}: {error}", self.root.display()))?
         {
@@ -740,7 +739,7 @@ impl DistributedModCache {
                 let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                     return Err(format!("non-UTF-8 cache filename {}", path.display()));
                 };
-                if !indexed.contains(stem) {
+                if !self.index.entries.contains_key(stem) {
                     std::fs::remove_file(&path).map_err(|error| {
                         format!("remove unindexed cache entry {}: {error}", path.display())
                     })?;
@@ -1002,6 +1001,27 @@ mod tests {
             .unwrap();
         let lease = reopened.finish_partial(hash, encoded.len() as u64).unwrap();
         assert_eq!(lease.validated.package.manifest.full_mod_sha256, hash);
+    }
+
+    #[test]
+    fn reopening_removes_only_unindexed_complete_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_string_lossy();
+        let (encoded, hash) = package("Indexed");
+        let mut cache = DistributedModCache::open(&root).unwrap();
+        drop(cache.install(encoded.clone(), hash).unwrap());
+        let indexed = cache.complete_path(&hash);
+        let orphan = cache.root.join("unindexed.rhmod");
+        let unrelated = cache.root.join("notes.txt");
+        std::fs::write(&orphan, b"orphan").unwrap();
+        std::fs::write(&unrelated, b"keep").unwrap();
+        drop(cache);
+
+        let mut cache = DistributedModCache::open(&root).unwrap();
+        assert!(!orphan.exists());
+        assert_eq!(std::fs::read(indexed).unwrap(), encoded);
+        assert_eq!(std::fs::read(unrelated).unwrap(), b"keep");
+        assert_eq!(cache.acquire(hash).unwrap().unwrap().encoded(), encoded);
     }
 
     #[test]
