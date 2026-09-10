@@ -44,7 +44,14 @@ use crate::touch_input::{TouchClassifier, TouchOutput};
 use robin_engine::graphic_config::GraphicConfig;
 
 #[cfg(not(target_arch = "wasm32"))]
-const GAME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+// The unoptimized native async launch chain can consume nearly 8 MiB before
+// wgpu encodes the final loading-screen pass. That pass needs another ~44 KiB;
+// an 8 MiB thread hits its guard page (Fabri18 custom-mission crash, 2026-09-10).
+// Use 32 MiB, matching the wasm linker reserve in .cargo/config.toml, to leave
+// headroom for rendering as well as the simulation-only launch path.
+// TODO: reduce the large async poll frames in run_rust_game_active and mission
+// bootstrap so native debug builds need less stack.
+const GAME_THREAD_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 static NATIVE_REFRESH_PRESENTATION: AtomicBool = AtomicBool::new(true);
 
