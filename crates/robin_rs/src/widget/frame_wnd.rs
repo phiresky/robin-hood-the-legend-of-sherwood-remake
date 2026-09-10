@@ -345,6 +345,13 @@ impl FrameWnd {
         events
     }
 
+    fn non_excluded_widgets_mut(&mut self) -> impl Iterator<Item = &mut Widget> {
+        let excluded = &self.excluded;
+        self.widgets
+            .iter_mut()
+            .filter(move |widget| !excluded.contains(&widget.id()))
+    }
+
     // ── Refresh ────────────────────────────────────────────────────
 
     /// Probe all widgets for refresh needs.
@@ -355,10 +362,7 @@ impl FrameWnd {
             return probes;
         }
 
-        for widget in &mut self.widgets {
-            if self.excluded.contains(&widget.id()) {
-                continue;
-            }
+        for widget in self.non_excluded_widgets_mut() {
             if let Some(probe) = widget.probe_refresh(counter) {
                 probes.push(probe);
             }
@@ -372,10 +376,7 @@ impl FrameWnd {
         if !self.enabled {
             return;
         }
-        for widget in &mut self.widgets {
-            if self.excluded.contains(&widget.id()) {
-                continue;
-            }
+        for widget in self.non_excluded_widgets_mut() {
             widget.refresh();
         }
     }
@@ -385,10 +386,7 @@ impl FrameWnd {
         if !self.enabled {
             return;
         }
-        for widget in &mut self.widgets {
-            if self.excluded.contains(&widget.id()) {
-                continue;
-            }
+        for widget in self.non_excluded_widgets_mut() {
             widget.restore();
         }
     }
@@ -398,10 +396,7 @@ impl FrameWnd {
         if !self.enabled {
             return;
         }
-        for widget in &mut self.widgets {
-            if self.excluded.contains(&widget.id()) {
-                continue;
-            }
+        for widget in self.non_excluded_widgets_mut() {
             if widget.base().bbox.intersects_bbox(region) {
                 widget.restore();
                 widget.refresh();

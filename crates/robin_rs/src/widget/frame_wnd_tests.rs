@@ -487,3 +487,21 @@ fn keyboard_navigation_handles_empty_disabled_and_single_widget_frames() {
         assert_eq!(frame.next_enabled_widget(999, forward), None);
     }
 }
+
+#[test]
+fn render_traversal_preserves_order_and_does_not_touch_excluded_widgets() {
+    let mut frame = FrameWnd::default();
+    for id in [3, 1, 2] {
+        frame.add_widget_absolute(make_button_widget(id, 0.0, 0.0, 10.0, 10.0));
+    }
+    assert!(frame.exclude_widget(1));
+    let mut visited = Vec::new();
+    for widget in frame.non_excluded_widgets_mut() {
+        visited.push(widget.id());
+        widget.base_mut().set_tooltip_text("visited");
+    }
+    assert_eq!(visited, [3, 2]);
+    assert_eq!(frame.widget(1).unwrap().base().tooltip_text, "");
+    assert_eq!(frame.widget(2).unwrap().base().tooltip_text, "visited");
+    assert_eq!(frame.widget(3).unwrap().base().tooltip_text, "visited");
+}
