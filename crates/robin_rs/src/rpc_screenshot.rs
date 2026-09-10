@@ -84,27 +84,7 @@ pub(crate) fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRe
 
     let resized;
     let pixels: &[u8] = if (target_w, target_h) != (used_w, used_h) {
-        // Preserve the 32-bit packed output layout, but reject overflow before
-        // allocating. TODO: give RPC image processing an explicit memory budget.
-        let output_len = target_w
-            .checked_mul(target_h)
-            .and_then(|pixels| pixels.checked_mul(4))
-            .ok_or_else(|| RpcError::invalid_request("screenshot dimensions exceed RGBA layout"))?
-            as usize;
-        let mut out = Vec::new();
-        out.try_reserve_exact(output_len)
-            .map_err(|error| RpcError::internal(format!("allocating screenshot: {error}")))?;
-        out.resize(output_len, 0);
-        for dy in 0..target_h {
-            let sy = (u64::from(dy) * u64::from(used_h) / u64::from(target_h)) as usize;
-            for dx in 0..target_w {
-                let sx = (u64::from(dx) * u64::from(used_w) / u64::from(target_w)) as usize;
-                let si = (sy * used_w as usize + sx) * 4;
-                let di = ((dy * target_w + dx) * 4) as usize;
-                out[di..di + 4].copy_from_slice(&src[si..si + 4]);
-            }
-        }
-        resized = out;
+        resized = resize_rgba_nearest(src, used_w, used_h, target_w, target_h)?;
         used_w = target_w;
         used_h = target_h;
         &resized
@@ -131,6 +111,37 @@ pub(crate) fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRe
         content_type: "image/png",
         data: png_bytes,
     })
+}
+
+/// Resample an already-validated packed RGBA frame with integer nearest sampling.
+fn resize_rgba_nearest(
+    src: &[u8],
+    used_w: u32,
+    used_h: u32,
+    target_w: u32,
+    target_h: u32,
+) -> Result<Vec<u8>, RpcError> {
+    // Preserve the 32-bit packed output layout, but reject overflow before
+    // allocating. TODO: give RPC image processing an explicit memory budget.
+    let output_len = target_w
+        .checked_mul(target_h)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| RpcError::invalid_request("screenshot dimensions exceed RGBA layout"))?
+        as usize;
+    let mut out = Vec::new();
+    out.try_reserve_exact(output_len)
+        .map_err(|error| RpcError::internal(format!("allocating screenshot: {error}")))?;
+    out.resize(output_len, 0);
+    for dy in 0..target_h {
+        let sy = (u64::from(dy) * u64::from(used_h) / u64::from(target_h)) as usize;
+        for dx in 0..target_w {
+            let sx = (u64::from(dx) * u64::from(used_w) / u64::from(target_w)) as usize;
+            let si = (sy * used_w as usize + sx) * 4;
+            let di = ((dy * target_w + dx) * 4) as usize;
+            out[di..di + 4].copy_from_slice(&src[si..si + 4]);
+        }
+    }
+    Ok(out)
 }
 
 fn screenshot_target_dimensions(
@@ -188,6 +199,30 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn nearest_resize_preserves_all_channels_at_fractional_scales() {
+        let source: Vec<u8> = (0..6u8)
+            .flat_map(|index| [index, index + 10, index + 20, index + 30])
+            .collect();
+        for (xs, ys) in [
+            (vec![0], vec![0]),
+            (vec![0, 1], vec![0]),
+            (vec![0, 0, 1, 1, 2], vec![0, 0, 1]),
+            (vec![0, 0, 0, 1, 1, 1, 2, 2], vec![0, 0, 0, 1, 1]),
+        ] {
+            let resized =
+                resize_rgba_nearest(&source, 3, 2, xs.len() as u32, ys.len() as u32).unwrap();
+            let mut expected = Vec::new();
+            for y in &ys {
+                for x in &xs {
+                    let offset = (y * 3 + x) * 4;
+                    expected.extend_from_slice(&source[offset..offset + 4]);
+                }
+            }
+            assert_eq!(resized, expected);
+        }
+    }
 
     #[test]
     fn png_encoding_preserves_pixels_and_nearest_neighbor_resize() {
