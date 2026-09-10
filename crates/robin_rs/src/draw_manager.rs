@@ -176,47 +176,17 @@ impl DrawManager {
         thickness: f32,
         color: u16,
     ) {
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        let distance = (dx * dx + dy * dy).sqrt();
-
-        if distance < *start {
-            if distance != 0.0 {
-                *start -= distance;
-            }
-            return;
-        }
-
-        let inv_dist = 1.0 / distance;
-        let inc_x = dx * inv_dist * spacing;
-        let inc_y = dy * inv_dist * spacing;
-
-        let mut point = MapPoint {
-            x: a.x + *start * dx * inv_dist,
-            y: a.y + *start * dy * inv_dist,
-        };
-
-        let remaining = distance - *start;
-        let num_dots = (remaining / spacing) as u32;
-
-        // Update start for next segment
-        *start = spacing - remaining + (num_dots as f32 * spacing);
-
-        for _ in 0..=num_dots {
+        visit_dotted_line_points(a, b, start, spacing, |point| {
             let dot_box = MapBBox::from_coords(
                 point.x - thickness,
                 point.y - thickness,
                 point.x + thickness,
                 point.y + thickness,
             );
-
             if let Some(clipped) = self.clip_box(&dot_box) {
                 renderer.fill_screen(Some(&clipped), color);
             }
-
-            point.x += inc_x;
-            point.y += inc_y;
-        }
+        });
     }
 
     /// Draw a polyline in projected map coordinates.
@@ -316,6 +286,46 @@ impl DrawManager {
         }
 
         panic!("draw_alpha_polygon called before flush_base_layer/GPU phase");
+    }
+}
+
+/// Traverse dot centers while carrying the spacing phase into the next segment.
+fn visit_dotted_line_points(
+    a: MapPoint,
+    b: MapPoint,
+    start: &mut f32,
+    spacing: f32,
+    mut visit: impl FnMut(MapPoint),
+) {
+    assert!(
+        spacing.is_finite() && spacing > 0.0,
+        "dot spacing must be finite and positive"
+    );
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let distance = (dx * dx + dy * dy).sqrt();
+    if distance == 0.0 {
+        return;
+    }
+    if distance < *start {
+        *start -= distance;
+        return;
+    }
+
+    let inv_dist = 1.0 / distance;
+    let inc_x = dx * inv_dist * spacing;
+    let inc_y = dy * inv_dist * spacing;
+    let mut point = MapPoint {
+        x: a.x + *start * dx * inv_dist,
+        y: a.y + *start * dy * inv_dist,
+    };
+    let remaining = distance - *start;
+    let num_dots = (remaining / spacing) as u32;
+    *start = spacing - remaining + (num_dots as f32 * spacing);
+    for _ in 0..=num_dots {
+        visit(point);
+        point.x += inc_x;
+        point.y += inc_y;
     }
 }
 
@@ -558,6 +568,50 @@ fn clip_map_line_to_box(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dotted_line_traversal_carries_phase_across_short_and_repeated_segments() {
+        let mut phase = 2.0;
+        let mut dots = Vec::new();
+        super::visit_dotted_line_points(
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(10.0, 0.0),
+            &mut phase,
+            3.0,
+            |p| dots.push((p.x, p.y)),
+        );
+        assert_eq!(dots, [(2.0, 0.0), (5.0, 0.0), (8.0, 0.0)]);
+        assert_eq!(phase, 1.0);
+        super::visit_dotted_line_points(
+            MapPoint::new(10.0, 0.0),
+            MapPoint::new(10.5, 0.0),
+            &mut phase,
+            3.0,
+            |_| panic!("short segment has no dot"),
+        );
+        assert_eq!(phase, 0.5);
+        dots.clear();
+        super::visit_dotted_line_points(
+            MapPoint::new(10.5, 0.0),
+            MapPoint::new(14.0, 0.0),
+            &mut phase,
+            3.0,
+            |p| dots.push((p.x, p.y)),
+        );
+        assert_eq!(dots, [(11.0, 0.0), (14.0, 0.0)]);
+        assert_eq!(phase, 3.0);
+        for initial in [0.0, 5.0] {
+            phase = initial;
+            super::visit_dotted_line_points(
+                MapPoint::new(1.0, 2.0),
+                MapPoint::new(1.0, 2.0),
+                &mut phase,
+                3.0,
+                |_| panic!("repeated point must not emit invalid coordinates"),
+            );
+            assert_eq!(phase, initial);
+        }
+    }
+
     #[test]
     fn polygon_edge_table_preserves_closure_order_and_horizontal_filtering() {
         let points = [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]];
