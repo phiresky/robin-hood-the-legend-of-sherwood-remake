@@ -641,7 +641,7 @@ fn render_portrait_text_gpu(
 
         let is_selected = match item.target {
             PortraitTarget::Pc(_) => engine.hero_selection(local_seat).contains(&pc_id),
-            _ => engine.tactical_selection(local_seat) == item.members,
+            _ => engine.tactical_selection(local_seat) == item.members.as_ref(),
         };
         let is_burned = matches!(entity, Entity::Pc(pc) if pc.pc.life_points <= 0);
         if is_burned {
