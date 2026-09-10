@@ -79,11 +79,7 @@ fn trail_color_565() -> u16 {
 pub struct MouseTrailRenderer {
     /// Height of the trail column — the height of the `RHID_MOUSE_TRAIL`
     /// source surface.
-    pub pattern_height: u16,
-    /// Per-row alpha cap — values are `0x1F - (source_pixel_blue_channel)`
-    /// with `blue` being the low 5 bits of the source surface's column 0
-    /// pixels.
-    pub alpha_caps: Vec<u16>,
+    pattern_height: u16,
     /// One persistent GPU texture per alpha level (32 entries).  Each is
     /// 1 pixel wide by `pattern_height` tall, filled with the pre-multiplied
     /// trail colour per row.
@@ -134,20 +130,19 @@ impl MouseTrailRenderer {
         let trail_b_src = trail & 0x001F;
 
         let mut images = Vec::with_capacity(32);
+        let mut column = Vec::with_capacity(alpha_caps.len());
         for j in 1u16..=32 {
-            let column: Vec<u16> = alpha_caps
-                .iter()
-                .map(|&alpha_cap| {
-                    let used_alpha = (alpha_cap * j) >> 5;
-                    if used_alpha == 0 {
-                        return TRANSPARENT_COLOR_KEY_16;
-                    }
-                    let red = (trail_r_src * used_alpha) & 0xF800;
-                    let green = (trail_g_src * used_alpha) & 0x07E0;
-                    let blue = ((trail_b_src * used_alpha) >> 5) & 0x001F;
-                    red | green | blue
-                })
-                .collect();
+            column.clear();
+            column.extend(alpha_caps.iter().map(|&alpha_cap| {
+                let used_alpha = (alpha_cap * j) >> 5;
+                if used_alpha == 0 {
+                    return TRANSPARENT_COLOR_KEY_16;
+                }
+                let red = (trail_r_src * used_alpha) & 0xF800;
+                let green = (trail_g_src * used_alpha) & 0x07E0;
+                let blue = ((trail_b_src * used_alpha) >> 5) & 0x001F;
+                red | green | blue
+            }));
             let image = renderer.create_rgb565_gpu_image(
                 1,
                 pattern_height,
@@ -160,7 +155,6 @@ impl MouseTrailRenderer {
 
         Some(Self {
             pattern_height,
-            alpha_caps,
             images,
         })
     }
