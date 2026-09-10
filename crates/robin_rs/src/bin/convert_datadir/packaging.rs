@@ -145,10 +145,7 @@ pub(super) fn shipping_file_stem(name: &str) -> String {
 pub(super) fn shipping_payload_filename(name: &str, window_log: u32, compressed: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
     let digest = Sha256::digest(compressed);
-    let hash: String = digest[..6]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let hash = hex::encode(&digest[..6]);
     format!(
         "{}-w{window_log}-{hash}.rhmission.zst",
         shipping_file_stem(name)
@@ -236,6 +233,14 @@ pub(super) fn prepare_shipping_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn payload_filename_retains_its_truncated_lowercase_digest() {
+        assert_eq!(
+            shipping_payload_filename("My Mission", 17, b"abc"),
+            "my_mission-w17-ba7816bf8f01.rhmission.zst"
+        );
+    }
+
     #[test]
     fn diagnostic_plan_does_not_change_web_manifest_bytes() {
         use robin_rs::multiplayer::content_identity::{

@@ -391,10 +391,7 @@ pub(super) fn bundle_grouped_audio(
             bytes.extend_from_slice(&member_bytes);
         }
         let digest = Sha256::digest(&bytes);
-        let hash: String = digest[..6]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let hash = hex::encode(&digest[..6]);
         let bundle_rel = format!("audio/bundles/{}-{hash}.bin", shipping_file_stem(&group));
         fs::write(data_out.join(&bundle_rel), &bytes)
             .with_context(|| format!("write {bundle_rel}"))?;
@@ -427,7 +424,7 @@ pub(super) fn bundle_grouped_audio(
 pub(super) fn standalone_audio_filename(bytes: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
     let digest = Sha256::digest(bytes);
-    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hash = hex::encode(digest);
     format!("{hash}.opus")
 }
 
@@ -569,6 +566,14 @@ pub(super) fn write_shipping_dependency(
 #[cfg(test)]
 mod boot_trim_tests {
     use super::*;
+
+    #[test]
+    fn standalone_audio_name_retains_its_full_lowercase_digest() {
+        assert_eq!(
+            standalone_audio_filename(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.opus"
+        );
+    }
 
     #[test]
     fn boot_trim_uses_actual_catalog_source_when_aliases_collide() {
