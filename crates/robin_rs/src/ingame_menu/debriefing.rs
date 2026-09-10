@@ -15,12 +15,13 @@ use robin_engine::mission_stat::MissionStat;
 use robin_engine::pc_status as engine_pc_status;
 
 use crate::gfx_types::GameEvent;
+use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_text_in_box_font,
+    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, WrappedLine, dim_screen,
+    draw_background, enter_modal_gpu_phase, render_text_in_box_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_LOAD, MT_INFOBULLE_BUTTON_OK, MT_INFOBULLE_BUTTON_RECOMMENCER,
@@ -251,7 +252,8 @@ impl DebriefingModalState {
         });
         let (_, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         page.transform = transform;
-        page.render(renderer, resources, cursor);
+        let (font, lines) = page.prepare_body(resources);
+        page.render(renderer, resources, cursor, font, &lines);
         renderer.present();
     }
 
@@ -285,7 +287,7 @@ impl DebriefingModalState {
                 self.finish_page(outcome)
             }
             DebriefingPhase::Stat => {
-                let Some(stat_text) = self.stat_text.clone() else {
+                let Some(stat_text) = self.stat_text.as_ref() else {
                     self.phase = DebriefingPhase::Done;
                     return Some(DebriefingOutcome::Ok);
                 };
@@ -295,7 +297,7 @@ impl DebriefingModalState {
                         renderer,
                         resources,
                         self.title.clone(),
-                        stat_text,
+                        stat_text.clone(),
                         self.restart_allowed,
                         self.restart_snapshot_exists,
                         BodyFont::Debrief,
@@ -632,15 +634,9 @@ impl DebriefingPageState {
         cursor: Option<ModalCursor<'_>>,
     ) -> Option<PageOutcome> {
         let mut outcome = None;
-        let font = match self.body_font {
-            BodyFont::PopupScroll => resources.popup_font_any(),
-            BodyFont::Debrief => resources.debrief_font_any(),
-        }
-        .expect("debriefing body requires its font");
+        let (font, lines) = self.prepare_body(resources);
         let line_h = font.height() as i32;
         let visible = (BODY_H / line_h).max(1) as usize;
-        let lines =
-            super::layout::wrap_text_for_box_font(font, &self.body, BODY_W - 20, usize::MAX).lines;
         let max_scroll = lines.len().saturating_sub(visible);
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         self.transform = transform;
@@ -751,9 +747,22 @@ impl DebriefingPageState {
             });
         }
 
-        self.render(renderer, resources, cursor.as_ref());
+        self.render(renderer, resources, cursor.as_ref(), font, &lines);
         renderer.present();
         outcome
+    }
+
+    /// Prepare once per frame so input bounds and drawing use the same lines.
+    /// Resources are supplied each tick; do not cache across font/theme changes.
+    fn prepare_body<'a>(&self, resources: &'a IngameMenuResources) -> (&'a Font, Vec<WrappedLine>) {
+        let font = match self.body_font {
+            BodyFont::PopupScroll => resources.popup_font_any(),
+            BodyFont::Debrief => resources.debrief_font_any(),
+        }
+        .expect("debriefing body requires its font");
+        let lines =
+            super::layout::wrap_text_for_box_font(font, &self.body, BODY_W - 20, usize::MAX).lines;
+        (font, lines)
     }
 
     fn render(
@@ -761,6 +770,8 @@ impl DebriefingPageState {
         renderer: &mut Renderer,
         resources: &IngameMenuResources,
         cursor: Option<&ModalCursor<'_>>,
+        font: &Font,
+        lines: &[WrappedLine],
     ) {
         enter_modal_gpu_phase(renderer);
         dim_screen(renderer);
@@ -791,42 +802,33 @@ impl DebriefingPageState {
             );
         }
 
-        let body_font_ref = match self.body_font {
-            BodyFont::PopupScroll => resources.popup_font_any(),
-            BodyFont::Debrief => resources.debrief_font_any(),
-        };
-        if let Some(font) = body_font_ref {
-            let visible = (BODY_H / font.height() as i32).max(1) as usize;
-            let lines =
-                super::layout::wrap_text_for_box_font(font, &self.body, BODY_W - 20, usize::MAX)
-                    .lines;
-            self.scroll_line = self.scroll_line.min(lines.len().saturating_sub(visible));
-            let end = (self.scroll_line + visible).min(lines.len());
-            for (row, line) in lines[self.scroll_line..end].iter().enumerate() {
-                super::layout::render_text_virt_font(
-                    renderer,
-                    font,
-                    self.transform,
-                    &line.text,
-                    self.virt_x + BODY_X,
-                    self.virt_y + BODY_Y + row as i32 * font.height() as i32,
-                );
-            }
-            // Scrolling exposes the complete body; OK advances to statistics.
-            if lines.len() > visible {
-                widget_bridge::draw_listbox_scrollbar(
-                    renderer,
-                    self.transform,
-                    resources,
-                    self.virt_x + BODY_X + BODY_W - 16,
-                    self.virt_y + BODY_Y,
-                    16,
-                    BODY_H,
-                    self.scroll_line,
-                    visible,
-                    lines.len(),
-                );
-            }
+        let visible = (BODY_H / font.height() as i32).max(1) as usize;
+        self.scroll_line = self.scroll_line.min(lines.len().saturating_sub(visible));
+        let end = (self.scroll_line + visible).min(lines.len());
+        for (row, line) in lines[self.scroll_line..end].iter().enumerate() {
+            super::layout::render_text_virt_font(
+                renderer,
+                font,
+                self.transform,
+                &line.text,
+                self.virt_x + BODY_X,
+                self.virt_y + BODY_Y + row as i32 * font.height() as i32,
+            );
+        }
+        // Scrolling exposes the complete body; OK advances to statistics.
+        if lines.len() > visible {
+            widget_bridge::draw_listbox_scrollbar(
+                renderer,
+                self.transform,
+                resources,
+                self.virt_x + BODY_X + BODY_W - 16,
+                self.virt_y + BODY_Y,
+                16,
+                BODY_H,
+                self.scroll_line,
+                visible,
+                lines.len(),
+            );
         }
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
@@ -834,10 +836,8 @@ impl DebriefingPageState {
         let mouse_pt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
-        if let Some(font) = body_font_ref {
-            self.tooltip
-                .draw(renderer, font, self.transform, &self.frame, mouse_pt);
-        }
+        self.tooltip
+            .draw(renderer, font, self.transform, &self.frame, mouse_pt);
 
         if let Some(c) = cursor {
             c.draw(renderer, self.transform, &self.input_state);
