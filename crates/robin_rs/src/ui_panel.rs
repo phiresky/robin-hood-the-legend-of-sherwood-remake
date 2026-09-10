@@ -1067,17 +1067,18 @@ impl PortraitCache {
     /// Merry Men names that are already part of campaign/replay identity.
     pub fn reload_localized_names_preserving_generated(
         &mut self,
-        names: [Option<String>; CharacterKind::COUNT],
+        mut names: [Option<String>; CharacterKind::COUNT],
     ) {
         for kind in CharacterKind::VARIANTS {
+            let index = kind.as_index();
             if matches!(
                 kind,
                 CharacterKind::MerryManA | CharacterKind::MerryManB | CharacterKind::MerryManC
-            ) && self.localized_names[kind.as_index()].is_some()
+            ) && self.localized_names[index].is_some()
             {
                 continue;
             }
-            self.localized_names[kind.as_index()] = names[kind.as_index()].clone();
+            self.localized_names[index] = names[index].take();
         }
     }
 
@@ -4255,6 +4256,59 @@ mod tests {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn localized_name_reload_moves_translations_but_retains_existing_generated_names() {
+        for existing in [false, true] {
+            for incoming in [false, true] {
+                let old: [Option<String>; CharacterKind::COUNT] = std::array::from_fn(|index| {
+                    existing.then(|| {
+                        if index == CharacterKind::MerryManB.as_index() {
+                            String::new()
+                        } else {
+                            format!("old {index}")
+                        }
+                    })
+                });
+                let new: [Option<String>; CharacterKind::COUNT] =
+                    std::array::from_fn(|index| incoming.then(|| format!("translated {index}")));
+                let old_pointers = old
+                    .each_ref()
+                    .map(|name| name.as_ref().map(|name| name.as_ptr()));
+                let new_pointers = new
+                    .each_ref()
+                    .map(|name| name.as_ref().map(|name| name.as_ptr()));
+                let expected_old = old.clone();
+                let expected_new = new.clone();
+                let mut cache = PortraitCache::new();
+                cache.install_localized_names(old);
+                cache.reload_localized_names_preserving_generated(new);
+                for kind in CharacterKind::VARIANTS {
+                    let index = kind.as_index();
+                    let preserve = existing
+                        && matches!(
+                            kind,
+                            CharacterKind::MerryManA
+                                | CharacterKind::MerryManB
+                                | CharacterKind::MerryManC
+                        );
+                    let (expected, pointer) = if preserve {
+                        (&expected_old[index], old_pointers[index])
+                    } else {
+                        (&expected_new[index], new_pointers[index])
+                    };
+                    assert_eq!(&cache.localized_names[index], expected, "{kind:?}");
+                    assert_eq!(
+                        cache.localized_names[index]
+                            .as_ref()
+                            .map(|name| name.as_ptr()),
+                        pointer,
+                        "{kind:?}"
+                    );
                 }
             }
         }
