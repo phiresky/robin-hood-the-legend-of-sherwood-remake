@@ -147,7 +147,7 @@ pub async fn play_video(
     let video_params = ictx.stream(video_idx).unwrap().parameters();
     let video_ctx = ffmpeg_next::codec::context::Context::from_parameters(video_params)
         .map_err(|e| e.to_string())?;
-    let video_dec = video_ctx.decoder().video().map_err(|e| e.to_string())?;
+    let mut video_dec = video_ctx.decoder().video().map_err(|e| e.to_string())?;
     let vid_w = video_dec.width();
     let vid_h = video_dec.height();
     tracing::info!(
@@ -225,16 +225,12 @@ pub async fn play_video(
         // Re-open the container so the video pass starts from frame 0
         // (ffmpeg's `seek` API is brittle for variable-rate Ogg; a fresh
         // open is the safest reset).
+        ictx = ffmpeg_next::format::input(&resolved)
+            .map_err(|e| format!("Re-open {} failed: {e}", resolved.display()))?;
     }
 
-    // Re-open if we consumed the container scanning audio.
-    let mut ictx = ffmpeg_next::format::input(&resolved)
-        .map_err(|e| format!("Re-open {} failed: {e}", resolved.display()))?;
-    let video_ctx = ffmpeg_next::codec::context::Context::from_parameters(
-        ictx.stream(video_idx).unwrap().parameters(),
-    )
-    .map_err(|e| e.to_string())?;
-    let mut video_dec = video_ctx.decoder().video().map_err(|e| e.to_string())?;
+    // The audio scan never feeds video packets to video_dec, so its original
+    // codec state is ready for the video pass without opening a second decoder.
 
     // ── kira: kick off audio playback ───────────────────────────────
     let audio_handle = if !audio_frames.is_empty() {
