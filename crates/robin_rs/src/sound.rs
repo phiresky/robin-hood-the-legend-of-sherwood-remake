@@ -1617,63 +1617,56 @@ impl SoundManager {
         let mut resolved_exclamations = Vec::new();
 
         // ── Pass 1: initialize lengths and remove finished sounds ──
-        let mut finished: Vec<PendingSoundInfo> = Vec::new();
-        let mut i = 0;
-        while i < self.runtime.pending_sounds.len() {
-            // Initialize length if needed
-            if self.runtime.pending_sounds[i].length_ms == 0 {
-                self.runtime.pending_sounds[i].start_time_ms = now;
-                let settings = self.runtime.pending_sounds[i].settings.clone();
-                let sv = self.runtime.pending_sounds[i].speech_variant;
-                let entry = self.get_entry_info(&settings, sv, false, loader, rng, sources);
-                let length = entry.as_ref().map_or(0, |i| i.sample_length_ms);
-                self.runtime.pending_sounds[i].length_ms = length;
-                if settings.sound_type == SoundType::Exclamation {
-                    if let Some(actor_id) = self.runtime.pending_sounds[i].actor_id {
+        self.runtime.pending_sounds.retain_mut(|pending| {
+            if pending.length_ms == 0 {
+                pending.start_time_ms = now;
+                let entry = Self::get_entry_info(
+                    &mut self.persisted.sound_cache,
+                    &pending.settings,
+                    pending.speech_variant,
+                    false,
+                    loader,
+                    rng,
+                    sources,
+                );
+                let length = entry.as_ref().map_or(0, |info| info.sample_length_ms);
+                pending.length_ms = length;
+                if pending.settings.sound_type == SoundType::Exclamation {
+                    if let Some(actor_id) = pending.actor_id {
                         resolved_exclamations.push(ResolvedHostExclamation {
                             actor_id,
-                            identifier: settings.identifier,
-                            exclamation_id: settings.identifier as u16,
+                            identifier: pending.settings.identifier,
+                            exclamation_id: pending.settings.identifier as u16,
                             length_ms: length,
                         });
                     }
-                    self.runtime.pending_sounds[i].resolved_entry = entry;
+                    pending.resolved_entry = entry;
                 }
             }
 
-            // Compute elapsed time
-            let elapsed = {
-                let ps = &self.runtime.pending_sounds[i];
-                if ps.length_ms == 0 {
-                    // Sample not available → expire immediately
-                    ps.length_ms
-                } else if ps.settings.sound_type == SoundType::Source
-                    && ps
-                        .source_index
-                        .and_then(|idx| sources.get(idx))
-                        .is_some_and(|s| s.source_kind == SoundSourceKind::Looped)
-                {
-                    0 // Looping sources never expire
-                } else {
-                    time_elapsed(ps.start_time_ms, now)
-                }
-            };
-
-            if elapsed >= self.runtime.pending_sounds[i].length_ms {
-                let ps = &self.runtime.pending_sounds[i];
-                if ps.settings.sound_type == SoundType::Exclamation {
-                    tracing::trace!(
-                        actor_id = ?ps.actor_id,
-                        identifier = ps.settings.identifier,
-                        length_ms = ps.length_ms,
-                        "exclamation expired in Pass 1 (length_ms=0 means sample missing)"
-                    );
-                }
-                finished.push(self.runtime.pending_sounds.remove(i));
+            let elapsed = if pending.length_ms == 0 {
+                0 // Unavailable samples expire immediately.
+            } else if pending.settings.sound_type == SoundType::Source
+                && pending
+                    .source_index
+                    .and_then(|idx| sources.get(idx))
+                    .is_some_and(|source| source.source_kind == SoundSourceKind::Looped)
+            {
+                0 // Looping sources never expire.
             } else {
-                i += 1;
+                time_elapsed(pending.start_time_ms, now)
+            };
+            let finished = elapsed >= pending.length_ms;
+            if finished && pending.settings.sound_type == SoundType::Exclamation {
+                tracing::trace!(
+                    actor_id = ?pending.actor_id,
+                    identifier = pending.settings.identifier,
+                    length_ms = pending.length_ms,
+                    "exclamation expired in Pass 1 (length_ms=0 means sample missing)"
+                );
             }
-        }
+            !finished
+        });
 
         // Handle finished sounds. Channel cleanup stays host-side
         // (audio-backend state, not in the rollback hash); the kind-specific
@@ -1693,7 +1686,7 @@ impl SoundManager {
                 if self.runtime.pending_sounds[i].channel == PendingChannel::Finished {
                     continue;
                 }
-                let settings = self.runtime.pending_sounds[i].settings.clone();
+                let settings = &self.runtime.pending_sounds[i].settings;
                 let low_priority = settings.sound_type == SoundType::Fx
                     && self
                         .persisted
@@ -1703,7 +1696,7 @@ impl SoundManager {
                 if let Some(mut params) = self
                     .persisted
                     .geometry_engine
-                    .get_logical_playing_params(&settings, low_priority)
+                    .get_logical_playing_params(settings, low_priority)
                 {
                     let channel = self.runtime.pending_sounds[i].channel;
                     match channel {
@@ -1739,22 +1732,21 @@ impl SoundManager {
                 continue;
             }
 
-            let settings = self.runtime.pending_sounds[i].settings.clone();
-            let low_priority = settings.sound_type == SoundType::Fx
-                && self
-                    .persisted
-                    .sound_cache
-                    .is_material_fx(settings.identifier);
+            let settings = &self.runtime.pending_sounds[i].settings;
+            let sound_type = settings.sound_type;
+            let identifier = settings.identifier;
+            let low_priority = sound_type == SoundType::Fx
+                && self.persisted.sound_cache.is_material_fx(identifier);
 
             let Some(params) = self
                 .persisted
                 .geometry_engine
-                .get_logical_playing_params(&settings, low_priority)
+                .get_logical_playing_params(settings, low_priority)
             else {
-                if settings.sound_type == SoundType::Exclamation {
+                if sound_type == SoundType::Exclamation {
                     tracing::trace!(
                         actor_id = ?self.runtime.pending_sounds[i].actor_id,
-                        identifier = settings.identifier,
+                        identifier = identifier,
                         "exclamation skipped: no logical playing params"
                     );
                 }
@@ -1763,13 +1755,20 @@ impl SoundManager {
             };
 
             let speech_variant = self.runtime.pending_sounds[i].speech_variant;
-            let entry_info =
-                self.get_entry_info(&settings, speech_variant, true, loader, rng, sources);
+            let entry_info = Self::get_entry_info(
+                &mut self.persisted.sound_cache,
+                settings,
+                speech_variant,
+                true,
+                loader,
+                rng,
+                sources,
+            );
             let Some(info) = entry_info else {
-                if settings.sound_type == SoundType::Exclamation {
+                if sound_type == SoundType::Exclamation {
                     tracing::trace!(
                         actor_id = ?self.runtime.pending_sounds[i].actor_id,
-                        identifier = settings.identifier,
+                        identifier = identifier,
                         "exclamation skipped: no entry_info (sample file missing?)"
                     );
                 }
@@ -1806,7 +1805,7 @@ impl SoundManager {
 
             let play_result = backend.play_request(PlaybackRequest {
                 asset: &info.file_name,
-                category: playback_category(settings.sound_type),
+                category: playback_category(sound_type),
                 looping: info.loop_sample,
                 fraction: position,
                 volume: hw_params.volume_2d,
@@ -1816,10 +1815,10 @@ impl SoundManager {
             if let Some(channel) = play_result {
                 let actor_id = self.runtime.pending_sounds[i].actor_id;
 
-                self.update_channel_info(channel, settings.sound_type, info.cache_key, actor_id);
+                self.update_channel_info(channel, sound_type, info.cache_key, actor_id);
 
                 self.runtime.pending_sounds[i].channel = PendingChannel::Assigned(channel);
-                if settings.sound_type == SoundType::Exclamation {
+                if sound_type == SoundType::Exclamation {
                     tracing::trace!(
                         actor_id = ?actor_id,
                         file = info.file_name.as_str(),
@@ -1828,7 +1827,7 @@ impl SoundManager {
                         "exclamation playing"
                     );
                 }
-            } else if settings.sound_type == SoundType::Exclamation {
+            } else if sound_type == SoundType::Exclamation {
                 tracing::trace!(
                     actor_id = ?self.runtime.pending_sounds[i].actor_id,
                     file = info.file_name.as_str(),
@@ -1901,7 +1900,15 @@ impl SoundManager {
         rng: &mut dyn FnMut(u32) -> u32,
         sources: &SoundSourceManager,
     ) {
-        let info = match self.get_entry_info(settings, None, true, loader, rng, sources) {
+        let info = match Self::get_entry_info(
+            &mut self.persisted.sound_cache,
+            settings,
+            None,
+            true,
+            loader,
+            rng,
+            sources,
+        ) {
             Some(i) => i,
             None => return,
         };
@@ -2050,7 +2057,7 @@ impl SoundManager {
     /// Extract cache entry info (file name, length, etc.) without holding a
     /// borrow on the cache. Calls the appropriate cache getter internally.
     fn get_entry_info(
-        &mut self,
+        cache: &mut SoundCache,
         settings: &SoundSettings,
         speech_variant: Option<u32>,
         sample_present: bool,
@@ -2065,7 +2072,7 @@ impl SoundManager {
                     .and_then(|idx| sources.get(idx))
                     .is_some_and(|s| s.source_kind == SoundSourceKind::Looped);
 
-                let entry = self.persisted.sound_cache.get_source_sample(
+                let entry = cache.get_source_sample(
                     sample_present,
                     settings.identifier,
                     looping,
@@ -2086,14 +2093,14 @@ impl SoundManager {
                     SoundSettingsSource::Position { material: m } => material_from_u8(*m),
                     _ => None,
                 };
-                let idx = self.persisted.sound_cache.get_fx_sample(
+                let idx = cache.get_fx_sample(
                     sample_present,
                     settings.identifier,
                     material,
                     loader,
                     rng,
                 )?;
-                let entry = &self.persisted.sound_cache.fx_cache.entries[idx];
+                let entry = &cache.fx_cache.entries[idx];
                 if sample_present && !entry.is_loaded() {
                     return None;
                 }
@@ -2105,11 +2112,8 @@ impl SoundManager {
                 })
             }
             SoundType::CombatFx => {
-                let entry = self.persisted.sound_cache.get_combat_fx_sample(
-                    sample_present,
-                    settings.identifier,
-                    loader,
-                )?;
+                let entry =
+                    cache.get_combat_fx_sample(sample_present, settings.identifier, loader)?;
                 if sample_present && !entry.is_loaded() {
                     return None;
                 }
@@ -2121,14 +2125,14 @@ impl SoundManager {
                 })
             }
             SoundType::Exclamation => {
-                let idx = self.persisted.sound_cache.get_exclamation_sample(
+                let idx = cache.get_exclamation_sample(
                     sample_present,
                     settings.identifier,
                     speech_variant,
                     loader,
                     rng,
                 )?;
-                let entry = &self.persisted.sound_cache.speech_cache.entries[idx];
+                let entry = &cache.speech_cache.entries[idx];
                 if sample_present && !entry.is_loaded() {
                     return None;
                 }
@@ -2447,6 +2451,54 @@ mod tests {
         assert_eq!(
             manager.runtime.pending_sounds[0].channel,
             PendingChannel::Finished
+        );
+    }
+
+    #[test]
+    fn pending_expiry_preserves_survivor_order_without_stopping_mixer_channels() {
+        let mut manager = SoundManager::new();
+        let mut backend = MockBackend::new();
+        let mut channels = Vec::new();
+        for (actor, length_ms) in [(1u32, 5), (2, 20), (3, 10), (4, 30), (5, 1)] {
+            let channel = backend.play_sound("speech.wav", false).unwrap();
+            channels.push(channel);
+            manager.runtime.pending_sounds.push(PendingSoundInfo {
+                settings: SoundSettings {
+                    sound_type: SoundType::Exclamation,
+                    position: MapPoint::default(),
+                    identifier: actor,
+                    source: SoundSettingsSource::Position { material: 0 },
+                },
+                channel: PendingChannel::Assigned(channel),
+                start_time_ms: 0,
+                length_ms,
+                actor_id: Some(actor),
+                source_index: None,
+                speech_variant: None,
+                resolved_entry: None,
+            });
+        }
+        backend.ticks = 10;
+        let resolved = manager.process_pending_sounds(
+            &mut backend,
+            &|_| panic!("known lengths do not need reloading"),
+            &mut |_| panic!("assigned sounds do not need reselection"),
+            &SoundSourceManager::new(),
+        );
+        assert!(resolved.is_empty());
+        assert_eq!(
+            manager
+                .runtime
+                .pending_sounds
+                .iter()
+                .map(|pending| pending.actor_id)
+                .collect::<Vec<_>>(),
+            [Some(2), Some(4)]
+        );
+        assert!(
+            channels
+                .into_iter()
+                .all(|channel| backend.is_channel_playing(channel))
         );
     }
 
