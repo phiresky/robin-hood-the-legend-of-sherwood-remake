@@ -198,16 +198,9 @@ impl GpuResources {
         let limit = gpu.device.limits().max_texture_dimension_2d;
         let mut ids = std::collections::HashSet::new();
         for &(id, bytes, w, h) in &masks {
-            if w == 0
-                || h == 0
-                || bytes.len() < usize::from(w) * usize::from(h)
-                || u32::from(w).max(u32::from(h)) > limit
-                || !ids.insert(id)
-            {
-                return Err(format!(
-                    "invalid or duplicate sprite mask {id}: {w}x{h}, {} bytes (device limit {limit})",
-                    bytes.len()
-                ));
+            validate_binary_mask(id, bytes.len(), w, h, limit)?;
+            if !ids.insert(id) {
+                return Err(format!("duplicate sprite mask {id}"));
             }
         }
         let enabled = mask_atlas_enabled();
@@ -218,7 +211,7 @@ impl GpuResources {
         let mut pending = Vec::new();
         for mask @ (id, bytes, w, h) in masks {
             if !enabled || u32::from(w) + 2 > edge || u32::from(h) + 2 > edge {
-                assert!(self.upload_mask_alpha(gpu, id, bytes, w, h));
+                self.upload_mask_alpha(gpu, id, bytes, w, h)?;
             } else {
                 pending.push(mask);
             }
@@ -272,13 +265,7 @@ impl GpuResources {
             // Reuse the standalone allocation/upload contract once per page,
             // then share its handles; no additional per-mask GPU allocations.
             let page_id = slots[0].0;
-            assert!(self.upload_mask_alpha(
-                gpu,
-                page_id,
-                &pixels,
-                extent[0] as u16,
-                extent[1] as u16
-            ));
+            self.upload_mask_alpha(gpu, page_id, &pixels, extent[0] as u16, extent[1] as u16)?;
             let page = self
                 .mask_alpha_cache
                 .remove(&page_id)
@@ -315,14 +302,14 @@ impl GpuResources {
         bitmap: &[u8],
         mask_w: u16,
         mask_h: u16,
-    ) -> bool {
-        if mask_w == 0 || mask_h == 0 {
-            return false;
-        }
-        let pixels = mask_w as usize * mask_h as usize;
-        if bitmap.len() < pixels {
-            return false;
-        }
+    ) -> Result<(), String> {
+        let pixels = validate_binary_mask(
+            mask_index,
+            bitmap.len(),
+            mask_w,
+            mask_h,
+            gpu.device.limits().max_texture_dimension_2d,
+        )?;
         // Preserve original binary bytes. The nearest-sampled binary shader
         // tests nonzero, so expanding every byte to 255 would only add a full
         // bitmap allocation/pass (including unused atlas page space).
@@ -379,7 +366,7 @@ impl GpuResources {
                 atlas: None,
             },
         );
-        true
+        Ok(())
     }
 
     pub(super) fn upload_occlusion_depth(
@@ -389,16 +376,19 @@ impl GpuResources {
         depth: &[u16],
         width: u16,
         height: u16,
-    ) -> bool {
+    ) -> Result<(), String> {
+        let encoded_len = validate_depth_mask(
+            depth.len(),
+            width,
+            height,
+            gpu.device.limits().max_texture_dimension_2d,
+        )?;
         let width = u32::from(width);
         let height = u32::from(height);
-        if width == 0 || height == 0 || depth.len() != width as usize * height as usize {
-            return false;
-        }
         upload_counter::inc("occlusion depth");
         // Store the high/low bytes separately. R16Unorm requires an optional
         // native wgpu feature, while Rg8Unorm is portable to WebGL/WebGPU too.
-        let mut encoded = Vec::with_capacity(depth.len() * 2);
+        let mut encoded = Vec::with_capacity(encoded_len);
         for value in depth {
             encoded.extend_from_slice(&value.to_be_bytes());
         }
@@ -454,7 +444,7 @@ impl GpuResources {
                 atlas: None,
             },
         );
-        true
+        Ok(())
     }
 }
 
@@ -593,6 +583,79 @@ impl GpuResources {
 
     pub(super) fn clear_font_atlas_cache(&mut self) {
         self.font_atlas_cache.clear();
+    }
+}
+
+fn mask_pixel_count(width: u16, height: u16, limit: u32) -> Result<usize, String> {
+    if width == 0 || height == 0 || u32::from(width).max(u32::from(height)) > limit {
+        return Err(format!(
+            "invalid mask extent {width}x{height} (device limit {limit})"
+        ));
+    }
+    Ok(usize::from(width) * usize::from(height))
+}
+
+fn validate_binary_mask(
+    id: u32,
+    bytes: usize,
+    width: u16,
+    height: u16,
+    limit: u32,
+) -> Result<usize, String> {
+    let pixels = mask_pixel_count(width, height, limit)
+        .map_err(|error| format!("sprite mask {id}: {error}"))?;
+    if bytes < pixels {
+        return Err(format!(
+            "sprite mask {id}: {width}x{height} requires {pixels} bytes, got {bytes}"
+        ));
+    }
+    Ok(pixels)
+}
+
+fn validate_depth_mask(
+    values: usize,
+    width: u16,
+    height: u16,
+    limit: u32,
+) -> Result<usize, String> {
+    let pixels = mask_pixel_count(width, height, limit)?;
+    if values != pixels {
+        return Err(format!(
+            "occlusion depth {width}x{height} requires {pixels} values, got {values}"
+        ));
+    }
+    pixels
+        .checked_mul(2)
+        .ok_or_else(|| "occlusion depth byte count overflow".to_string())
+}
+
+#[cfg(test)]
+mod mask_upload_tests {
+    use super::*;
+
+    #[test]
+    fn binary_masks_require_a_complete_prefix_and_valid_device_extent() {
+        assert_eq!(validate_binary_mask(7, 6, 3, 2, 8), Ok(6));
+        assert_eq!(validate_binary_mask(7, 9, 3, 2, 8), Ok(6));
+        assert!(
+            validate_binary_mask(7, 5, 3, 2, 8)
+                .unwrap_err()
+                .contains("requires 6 bytes, got 5")
+        );
+        for (width, height, limit) in [(0, 2, 8), (3, 0, 8), (9, 2, 8), (2, 9, 8)] {
+            let error = validate_binary_mask(7, 100, width, height, limit).unwrap_err();
+            assert!(error.contains("sprite mask 7"));
+            assert!(error.contains("invalid mask extent"));
+        }
+    }
+
+    #[test]
+    fn depth_masks_require_exact_shape_and_compute_encoded_size() {
+        assert_eq!(validate_depth_mask(6, 3, 2, 8), Ok(12));
+        assert!(validate_depth_mask(5, 3, 2, 8).is_err());
+        assert!(validate_depth_mask(7, 3, 2, 8).is_err());
+        assert!(validate_depth_mask(6, 3, 2, 2).is_err());
+        assert!(validate_depth_mask(0, 0, 2, 8).is_err());
     }
 }
 

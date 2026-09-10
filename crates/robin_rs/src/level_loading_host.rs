@@ -814,13 +814,9 @@ pub fn apply_background_map(
         .expect("valid mission sprite masks");
     timer.step("mask textures");
     if let Some(depth) = decoded.occlusion_depth.as_deref() {
-        assert!(
-            renderer.upload_occlusion_depth(depth, decoded.width, decoded.height),
-            "invalid continuous occlusion depth {}x{} with {} values",
-            decoded.width,
-            decoded.height,
-            depth.len()
-        );
+        renderer
+            .upload_occlusion_depth(depth, decoded.width, decoded.height)
+            .expect("valid continuous occlusion depth");
     }
 
     timer.step("occlusion depth");

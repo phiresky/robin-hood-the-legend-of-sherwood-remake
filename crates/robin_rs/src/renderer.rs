@@ -2149,14 +2149,19 @@ impl Renderer {
         bitmap: &[u8],
         mask_w: u16,
         mask_h: u16,
-    ) -> bool {
+    ) -> Result<(), String> {
         self.resources
             .upload_mask_alpha(&self.gpu, mask_index, bitmap, mask_w, mask_h)
     }
 
     /// Upload a map-sized R16 ground-depth field. Each texel stores the
     /// map-ground Y of the visible reconstructed surface at that pixel.
-    pub fn upload_occlusion_depth(&mut self, depth: &[u16], width: u16, height: u16) -> bool {
+    pub fn upload_occlusion_depth(
+        &mut self,
+        depth: &[u16],
+        width: u16,
+        height: u16,
+    ) -> Result<(), String> {
         self.resources.upload_occlusion_depth(
             &self.gpu,
             OCCLUSION_DEPTH_TEXTURE_INDEX,
@@ -3781,9 +3786,11 @@ fn verify_mask_atlas_pixels(gpu: GpuContext) {
             .origin[0]
             > 2000
     );
-    assert!(renderer.upload_mask_alpha(21, &narrow, 1, 7));
-    assert!(renderer.upload_mask_alpha(22, &pattern, 3, 2));
-    assert!(renderer.upload_occlusion_depth(&[0, 255, 256, 65535, 32767, 32768], 3, 2));
+    renderer.upload_mask_alpha(21, &narrow, 1, 7).unwrap();
+    renderer.upload_mask_alpha(22, &pattern, 3, 2).unwrap();
+    renderer
+        .upload_occlusion_depth(&[0, 255, 256, 65535, 32767, 32768], 3, 2)
+        .unwrap();
     for depth in [None, Some((Rect::new(0, 0, 31, 19), 0.4))] {
         for (atlas_id, standalone_id) in [(11, 21), (12, 22)] {
             for uv in [
