@@ -1400,7 +1400,7 @@ fn mission_choices(
                 .preparation_files()
                 .expect("multiplayer mission discovery requires initialized application files"),
         ) {
-            let crate::mod_pack::MissionStatus::Ok { map_filename } = &entry.status else {
+            let crate::mod_pack::MissionStatus::Ok { map_filename } = entry.status else {
                 continue;
             };
             if entry.hackable {
@@ -1421,19 +1421,27 @@ fn mission_choices(
                         continue;
                     }
                 };
+            let label = localized_format(
+                application_context,
+                PortTextKey::SpellforgeMpModMissionLabel,
+                &[
+                    ("title", &entry.mod_title),
+                    ("version", &entry.version_label),
+                ],
+            );
             let launch = CustomMissionLaunch {
-                slug: entry.mod_slug.clone(),
-                mod_title: entry.mod_title.clone(),
-                claimed_author: entry.author.clone(),
-                version: entry.version_label.clone(),
-                source_url: entry.source_url.clone(),
-                license: entry.license.clone(),
-                version_zip: entry.version_zip.clone(),
+                slug: entry.mod_slug,
+                mod_title: entry.mod_title,
+                claimed_author: entry.author,
+                version: entry.version_label,
+                source_url: entry.source_url,
+                license: entry.license,
+                version_zip: entry.version_zip,
                 installed_source: Some(installed_source),
                 version_zip_bytes: None,
-                rhm_zip_entry: entry.rhm_zip_entry.clone(),
+                rhm_zip_entry: entry.rhm_zip_entry,
                 rhm_basename: entry.rhm_basename.clone(),
-                map_filename: map_filename.clone(),
+                map_filename,
                 requires_spellforge: entry.requires_spellforge,
             };
             choices.push(MissionChoice {
@@ -1441,14 +1449,7 @@ fn mission_choices(
                 #[cfg(target_arch = "wasm32")]
                 authoritative_basename: entry.rhm_basename.clone(),
                 mission_name: entry.rhm_basename,
-                label: localized_format(
-                    application_context,
-                    PortTextKey::SpellforgeMpModMissionLabel,
-                    &[
-                        ("title", &entry.mod_title),
-                        ("version", &entry.version_label),
-                    ],
-                ),
+                label,
                 custom: Some(launch),
             });
         }
