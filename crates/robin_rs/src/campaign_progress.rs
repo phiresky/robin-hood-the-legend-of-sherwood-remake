@@ -1,6 +1,6 @@
 //! Pure campaign graph and modal Hall-of-Deeds presentation models.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use robin_engine::achievement::{AchievementAggregationSummary, AchievementSet};
 use robin_engine::campaign::Campaign;
@@ -229,12 +229,17 @@ fn mission_plays(
     lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
 ) -> Vec<MissionPlay> {
     let mut plays = Vec::new();
+    let current_run_id = campaign.history_run_id();
+    let mut current_run_sequences = HashSet::new();
     if let Some(history) = lifetime {
         for entry in history
             .attempts()
             .iter()
             .filter(|entry| entry.mission_id() == mission_id)
         {
+            if Some(entry.campaign_run_id()) == current_run_id {
+                current_run_sequences.insert(entry.attempt().sequence());
+            }
             plays.push(MissionPlay {
                 campaign_run_id: Some(entry.campaign_run_id()),
                 attempt: entry.attempt().clone(),
@@ -243,12 +248,9 @@ fn mission_plays(
         }
     }
     for attempt in attempts {
-        if !plays.iter().any(|play| {
-            play.campaign_run_id == campaign.history_run_id()
-                && play.attempt.sequence() == attempt.sequence()
-        }) {
+        if current_run_sequences.insert(attempt.sequence()) {
             plays.push(MissionPlay {
-                campaign_run_id: campaign.history_run_id(),
+                campaign_run_id: current_run_id,
                 attempt: attempt.clone(),
                 recording: None,
             });
@@ -1264,13 +1266,73 @@ mod tests {
         );
         assert_eq!(graph.nodes[0].plays[0].campaign_run_id, Some(2));
         assert_eq!(graph.nodes[0].plays[1].campaign_run_id, Some(1));
-        let unarchived = campaign_with_attempt(3);
+        let mut unarchived = campaign_with_attempt(3);
         let graph = CampaignProgressGraph::build(&unarchived, &profiles, Some(&lifetime));
         assert_eq!(
             graph.nodes[0].plays.len(),
             3,
             "include the active attempt before archival"
         );
+        unarchived.record_mission_attempt(
+            1,
+            MissionAttemptOutcome::Lost,
+            Some(200),
+            Some(3),
+            30,
+            robin_engine::engine::SimConfig::default(),
+            &robin_engine::mission_stat::MissionStat::default(),
+            None,
+        );
+        let attempts = unarchived.missions[1].attempt_history().attempts();
+        assert_eq!(attempts.len(), 2);
+        let repeated = vec![
+            attempts[1].clone(),
+            attempts[0].clone(),
+            attempts[1].clone(),
+        ];
+        let no_run = Campaign::default();
+        for campaign in [&previous_campaign, &current_campaign, &unarchived, &no_run] {
+            for history in [None, Some(&lifetime)] {
+                for mission_id in [10, 999] {
+                    for current in [&[][..], attempts, &repeated[..]] {
+                        // Reference the former growing-vector membership rule.
+                        let mut expected: Vec<_> = history
+                            .into_iter()
+                            .flat_map(|history| history.attempts())
+                            .filter(|entry| entry.mission_id() == mission_id)
+                            .map(|entry| MissionPlay {
+                                campaign_run_id: Some(entry.campaign_run_id()),
+                                attempt: entry.attempt().clone(),
+                                recording: None,
+                            })
+                            .collect();
+                        for attempt in current {
+                            if !expected.iter().any(|play| {
+                                play.campaign_run_id == campaign.history_run_id()
+                                    && play.attempt.sequence() == attempt.sequence()
+                            }) {
+                                expected.push(MissionPlay {
+                                    campaign_run_id: campaign.history_run_id(),
+                                    attempt: attempt.clone(),
+                                    recording: None,
+                                });
+                            }
+                        }
+                        expected.sort_by_key(|play| {
+                            std::cmp::Reverse((
+                                play.attempt.completed_at_unix_seconds(),
+                                play.campaign_run_id,
+                                play.attempt.sequence(),
+                            ))
+                        });
+                        assert_eq!(
+                            mission_plays(campaign, current, mission_id, history),
+                            expected
+                        );
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn lifetime_badge_survives_reset_without_unlocking_an_archived_replay() {
