@@ -867,29 +867,33 @@ fn compact_row_detail(
     text: &impl SaveMetadataText,
 ) -> String {
     let exact = format_compact_saved_time(&save.timestamp, local_time_zone, text);
-    let mut parts = vec![text.compact_saved(&exact)];
+    let mut output = text.compact_saved(&exact);
+    let mut append = |part: &str| {
+        output.push_str(" | ");
+        output.push_str(part);
+    };
     if !save.mission_name.is_empty() && save.text.trim() != save.mission_name.trim() {
-        parts.push(save.mission_name.clone());
+        append(&save.mission_name);
     }
     if let Some(progress) = save.campaign_progress {
-        parts.push(text.compact_campaign_progress(progress));
+        append(&text.compact_campaign_progress(progress));
     }
     if let (Some(done), Some(total)) = (save.missions_done, save.missions_total) {
-        parts.push(text.compact_missions(done, total));
+        append(&text.compact_missions(done, total));
     }
     if let Some(gang) = save.gang_size {
-        parts.push(text.compact_gang_size(gang));
+        append(&text.compact_gang_size(gang));
     }
     if let Some(ransom) = save.ransom {
-        parts.push(text.compact_ransom(ransom));
+        append(&text.compact_ransom(ransom));
     }
     if let Some(blazons) = save.blazons {
-        parts.push(text.compact_blazons(blazons));
+        append(&text.compact_blazons(blazons));
     }
     if let Some(amulets) = save.amulets {
-        parts.push(text.compact_amulets(amulets));
+        append(&text.compact_amulets(amulets));
     }
-    parts.join(" | ")
+    output
 }
 
 fn selected_metadata_lines(
@@ -1583,6 +1587,33 @@ mod tests {
         );
         assert!(lines[0].contains("Mission: unavailable (legacy save)"));
         assert!(lines[0].contains("Player: unavailable (legacy save)"));
+    }
+
+    #[test]
+    fn compact_save_details_preserve_order_zeroes_and_missing_fields() {
+        let mut save = saved_at("3600");
+        save.campaign_progress = Some(0);
+        save.missions_done = Some(0);
+        save.missions_total = Some(12);
+        save.gang_size = Some(0);
+        save.ransom = Some(-1);
+        save.blazons = Some(0);
+        save.amulets = Some(0);
+        assert_eq!(
+            compact_row_detail(&save, Some(&TimeZone::UTC), &EnglishSaveMetadataText),
+            "Saved 1970-01-01 01:00 | The Silver Arrow | 0% campaign | 0/12 missions | Gang 0 | Ransom -1 | Blazons 0 | Amulets 0"
+        );
+        save.text = format!("  {}  ", save.mission_name);
+        save.campaign_progress = None;
+        save.missions_total = None;
+        save.gang_size = None;
+        save.ransom = None;
+        save.blazons = None;
+        save.amulets = None;
+        assert_eq!(
+            compact_row_detail(&save, Some(&TimeZone::UTC), &EnglishSaveMetadataText),
+            "Saved 1970-01-01 01:00"
+        );
     }
 
     #[test]
