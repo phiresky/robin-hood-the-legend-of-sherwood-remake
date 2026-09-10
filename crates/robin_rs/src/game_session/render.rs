@@ -246,8 +246,8 @@ fn portrait_action_hover(hit: PortraitHit) -> Option<(u8, u8)> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct PatrolRouteOverlay {
-    points: Vec<engine_coordinates::MapPoint>,
+struct PatrolRouteOverlay<'a> {
+    points: std::borrow::Cow<'a, [engine_coordinates::MapPoint]>,
     active_waypoint: usize,
 }
 
@@ -256,7 +256,7 @@ fn authored_patrol_route(
     detached: &DetachedPatrolPathStatus,
     has_patrol_path: bool,
     hiking_paths: &[robin_engine::level_data::RawHikingPath],
-) -> Option<(PathId, PatrolRouteOverlay)> {
+) -> Option<(PathId, PatrolRouteOverlay<'static>)> {
     if !has_patrol_path {
         return None;
     }
@@ -292,51 +292,46 @@ fn authored_patrol_route(
                 .map(|waypoint| {
                     engine_coordinates::MapPoint::new(f32::from(waypoint.x), f32::from(waypoint.y))
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             active_waypoint: current_waypoint,
         },
     ))
 }
 
-fn selected_allied_patrol_routes(
-    engine: &PresentationView<'_>,
-    assets: &engine_api::LevelAssets,
+fn selected_allied_patrol_routes<'a>(
+    engine: &'a PresentationView<'_>,
+    assets: &'a engine_api::LevelAssets,
     seat: robin_engine::player_command::PlayerId,
-) -> Vec<PatrolRouteOverlay> {
-    let mut routes = Vec::new();
+) -> impl Iterator<Item = PatrolRouteOverlay<'a>> + 'a {
     let mut shown_authored_paths = HashSet::new();
+    engine
+        .tactical_selection(seat)
+        .iter()
+        .filter_map(move |&soldier_id| {
+            if let Some(order) = engine.tactical_order(soldier_id)
+                && let TacticalDuty::Patrol { points, next } = &order.duty
+            {
+                return Some(PatrolRouteOverlay {
+                    points: std::borrow::Cow::Borrowed(points),
+                    active_waypoint: usize::from(*next),
+                });
+            }
 
-    for &soldier_id in engine.tactical_selection(seat) {
-        if let Some(order) = engine.tactical_order(soldier_id)
-            && let TacticalDuty::Patrol { points, next } = &order.duty
-        {
-            routes.push(PatrolRouteOverlay {
-                points: points.to_vec(),
-                active_waypoint: usize::from(*next),
+            let entity = engine
+                .get_entity(soldier_id)
+                .unwrap_or_else(|| panic!("selected allied soldier {soldier_id:?} disappeared"));
+            let ai = entity.ai_controller().unwrap_or_else(|| {
+                panic!("selected allied soldier {soldier_id:?} has no AI controller")
             });
-            continue;
-        }
-
-        let entity = engine
-            .get_entity(soldier_id)
-            .unwrap_or_else(|| panic!("selected allied soldier {soldier_id:?} disappeared"));
-        let ai = entity.ai_controller().unwrap_or_else(|| {
-            panic!("selected allied soldier {soldier_id:?} has no AI controller")
-        });
-        let Some((path_id, route)) = authored_patrol_route(
-            ai.patrol_path.as_ref(),
-            &ai.detached_patrol_path_status,
-            ai.has_patrol_path,
-            &assets.navigation.hiking_paths,
-        ) else {
-            continue;
-        };
-        if shown_authored_paths.insert(path_id) {
-            routes.push(route);
-        }
-    }
-
-    routes
+            let (path_id, route) = authored_patrol_route(
+                ai.patrol_path.as_ref(),
+                &ai.detached_patrol_path_status,
+                ai.has_patrol_path,
+                &assets.navigation.hiking_paths,
+            )?;
+            shown_authored_paths.insert(path_id).then_some(route)
+        })
 }
 
 fn render_selected_allied_patrol_routes(
@@ -351,8 +346,8 @@ fn render_selected_allied_patrol_routes(
     const ACTIVE_COLOR: u32 = 0xFF_D2_55;
     const DOT_SPACING: f32 = 9.0;
 
-    let routes = selected_allied_patrol_routes(engine, assets, seat);
-    if routes.is_empty() {
+    let mut routes = selected_allied_patrol_routes(engine, assets, seat).peekable();
+    if routes.peek().is_none() {
         return;
     }
 
@@ -2506,6 +2501,7 @@ mod tests {
 
         assert_eq!(resolved_id, path_id);
         assert_eq!(route.active_waypoint, 1);
+        assert!(matches!(route.points, std::borrow::Cow::Owned(_)));
         assert_eq!(
             route.points,
             vec![
