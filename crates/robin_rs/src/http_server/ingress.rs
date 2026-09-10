@@ -177,12 +177,13 @@ impl SessionIngress {
     pub(super) fn take_requests(&mut self) -> Vec<HttpRequest> {
         self.cancel_stopped_work();
         self.poll_captures();
-        self.requests
-            .lock()
-            .expect("session RPC queue poisoned")
-            .drain(..)
-            .filter(|request| request.response_tx.eligible())
-            .collect()
+        let mut pending = {
+            let mut inbox = self.requests.lock().expect("session RPC queue poisoned");
+            std::mem::take(&mut *inbox)
+        };
+        // Eligibility checks and discarded responders do not need inbox access.
+        pending.retain(|request| request.response_tx.eligible());
+        pending.into()
     }
 
     pub(super) fn observe_ranked_input_taint(&mut self, payload: &HttpPayload) {
@@ -741,6 +742,36 @@ mod tests {
             .response_tx
             .send(Ok(serde_json::json!("later").into()));
         assert!(later_reply.try_recv().unwrap().is_ok());
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn extracted_batch_filters_cancelled_requests_without_reordering_survivors() {
+        let router = router();
+        let mut session = SessionIngress::with_router(Some(router.clone()));
+        let mut replies = Vec::new();
+        for index in 0..3 {
+            let (request, reply) = request(HttpPayload::GetReplay);
+            router.lock().unwrap().push_back(request);
+            if index == 1 {
+                drop(reply);
+            } else {
+                replies.push(reply);
+            }
+        }
+        let pending = session.take_requests();
+        assert_eq!(pending.len(), 2);
+        assert!(session.take_requests().is_empty());
+        for (index, request) in pending.into_iter().enumerate() {
+            request
+                .response_tx
+                .send(Ok(serde_json::json!(index).into()));
+        }
+        for (index, reply) in replies.into_iter().enumerate() {
+            assert!(
+                matches!(reply.try_recv().unwrap().unwrap(), ReplyBody::Json(value) if value == serde_json::json!(index))
+            );
+        }
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
