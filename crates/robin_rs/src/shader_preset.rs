@@ -4,8 +4,6 @@ use robin_engine::graphic_config::TextureScaleMode;
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::collections::{HashMap, HashSet};
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
-use std::fs;
-#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::path::{Path, PathBuf};
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::sync::LazyLock;
@@ -278,6 +276,55 @@ fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Result<
 mod tests {
     use super::*;
 
+    #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
+    #[test]
+    fn discovery_keeps_nested_regular_presets_in_label_order() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("nested")).unwrap();
+        std::fs::create_dir(root.path().join("directory.slangp")).unwrap();
+        for name in [
+            "z.slangp",
+            "nested/a.slangp",
+            "ignored.slang",
+            "ignored.SLANGP",
+        ] {
+            std::fs::write(root.path().join(name), b"fixture").unwrap();
+        }
+        let presets = discover_retroarch_presets_in(root.path());
+        assert_eq!(
+            presets
+                .iter()
+                .map(|preset| (preset.id.as_str(), preset.label.as_str()))
+                .collect::<Vec<_>>(),
+            [("nested/a.slangp", "nested / a"), ("z.slangp", "z")]
+        );
+    }
+
+    #[cfg(all(feature = "retroarch-shaders", unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn discovery_skips_cycles_broken_links_and_non_utf8_names() {
+        use std::os::unix::{ffi::OsStringExt, fs::symlink};
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("original.slangp"), b"fixture").unwrap();
+        symlink(root.path(), root.path().join("cycle")).unwrap();
+        symlink("original.slangp", root.path().join("alias.slangp")).unwrap();
+        symlink("missing", root.path().join("broken.slangp")).unwrap();
+        std::fs::write(
+            root.path()
+                .join(std::ffi::OsString::from_vec(b"invalid\xff.slangp".to_vec())),
+            b"fixture",
+        )
+        .unwrap();
+        let presets = discover_retroarch_presets_in(root.path());
+        assert_eq!(
+            presets
+                .iter()
+                .map(|preset| preset.id.as_str())
+                .collect::<Vec<_>>(),
+            ["alias.slangp", "original.slangp"]
+        );
+    }
+
     #[test]
     fn selected_preset_key_borrows_the_exact_configured_value() {
         let selected = String::from(" shaders/custom.slangp ");
@@ -341,27 +388,37 @@ fn preset_path(key: &str) -> PathBuf {
 
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 fn discover_retroarch_presets_uncached() -> Vec<RetroArchPresetInfo> {
-    fn visit(root: &Path, dir: &Path, out: &mut Vec<RetroArchPresetInfo>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                visit(root, &path, out);
-            } else if path.extension().is_some_and(|ext| ext == "slangp") {
-                let Ok(relative) = path.strip_prefix(root) else {
-                    continue;
-                };
-                let id = relative.to_string_lossy().replace('\\', "/");
-                let label = id.trim_end_matches(".slangp").replace('/', " / ");
-                out.push(RetroArchPresetInfo { id, label });
-            }
-        }
-    }
+    discover_retroarch_presets_in(&SLANG_SHADER_ROOT)
+}
 
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
+fn discover_retroarch_presets_in(root: &Path) -> Vec<RetroArchPresetInfo> {
     let mut presets = Vec::new();
-    visit(&SLANG_SHADER_ROOT, &SLANG_SHADER_ROOT, &mut presets);
+    // Follow linked preset collections as before, but detect directory cycles
+    // and bound the number of open directory handles through walkdir.
+    for entry in walkdir::WalkDir::new(root).min_depth(1).follow_links(true) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!("Cannot inspect shader preset collection: {error}");
+                continue;
+            }
+        };
+        let path = entry.path();
+        if !entry.file_type().is_file() || !path.extension().is_some_and(|ext| ext == "slangp") {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .expect("walked preset remains below its root");
+        let Some(relative) = relative.to_str() else {
+            tracing::warn!(path = %path.display(), "Shader preset path is not UTF-8; skipping it");
+            continue;
+        };
+        let id = relative.replace('\\', "/");
+        let label = id.trim_end_matches(".slangp").replace('/', " / ");
+        presets.push(RetroArchPresetInfo { id, label });
+    }
     presets.sort_by(|a, b| a.label.cmp(&b.label));
     presets
 }

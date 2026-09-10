@@ -95,6 +95,7 @@ kira = { version = "0.12", optional = true }
 mint = { version = "0.5", optional = true }
 fs2 = "0.4"
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
+walkdir = { version = "2.5", optional = true }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
@@ -284,7 +285,7 @@ projection-export = ["dep:robin_official_content"]
 auto-update = ["dep:semver", "dep:velopack"]
 # RetroArch .slangp shader-preset support via librashader. This pulls in
 # glslang + SPIRV-Cross; Windows GNU packages must ship libstdc++-6.dll.
-retroarch-shaders = ["dep:librashader"]
+retroarch-shaders = ["dep:librashader", "dep:walkdir"]
 # Browser worker-pool build: parallel VQ sprite decode at mission install via
 # wasm-bindgen-rayon.  Requires the atomics/shared-memory build produced by
 # scripts/build-wasm-threads.sh; the plain wasm build must not enable this.

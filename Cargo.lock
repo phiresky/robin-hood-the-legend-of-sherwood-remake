@@ -6250,6 +6250,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "velopack",
+ "walkdir",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
