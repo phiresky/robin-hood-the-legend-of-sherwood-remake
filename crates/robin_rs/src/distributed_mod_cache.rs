@@ -193,34 +193,26 @@ impl DistributedModCache {
                 last_used: self.index.access_counter,
             },
         );
-        let evicted = match self.evict_to_limits(Some(expected_full_mod_sha256)) {
+        let publication = self
+            .evict_to_limits(Some(expected_full_mod_sha256))
+            .and_then(|evicted| {
+                self.save_index()?;
+                Ok(evicted)
+            });
+        let evicted = match publication {
             Ok(evicted) => evicted,
             Err(error) => {
                 self.index = prior;
                 if !had_prior {
-                    let _ = std::fs::remove_file(self.complete_path(&expected_full_mod_sha256));
+                    remove_unindexed_file(&self.complete_path(&expected_full_mod_sha256));
                 }
                 return Err(error);
             }
         };
-        if let Err(error) = self.save_index() {
-            self.index = prior;
-            if !had_prior {
-                let _ = std::fs::remove_file(self.complete_path(&expected_full_mod_sha256));
-            }
-            return Err(error);
-        }
         for path in evicted {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => tracing::warn!(
-                    "failed to remove unindexed distributed-mod cache entry {}: {error}",
-                    path.display()
-                ),
-            }
+            remove_unindexed_file(&path);
         }
-        let _ = std::fs::remove_file(self.partial_path(&expected_full_mod_sha256));
+        remove_unindexed_file(&self.partial_path(&expected_full_mod_sha256));
         self.pins.pin(expected_full_mod_sha256);
         Ok(DistributedModCacheLease {
             validated,
@@ -265,7 +257,7 @@ impl DistributedModCache {
                     "validated complete cache entry has {encoded_bytes} bytes, but the host offer for the same immutable hash declares {total_bytes}"
                 ));
             }
-            let _ = std::fs::remove_file(self.partial_path(&full_mod_sha256));
+            remove_unindexed_file(&self.partial_path(&full_mod_sha256));
             return Ok(total_bytes);
         }
         let partial_path = self.partial_path(&full_mod_sha256);
@@ -833,6 +825,19 @@ impl DistributedModCache {
     }
 }
 
+/// Cleanup is best-effort once the index no longer depends on this file.
+/// Missing files are expected; other failures must remain observable.
+fn remove_unindexed_file(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(
+            "failed to remove unindexed distributed-mod cache entry {}: {error}",
+            path.display()
+        ),
+    }
+}
+
 fn discard_partial_path(path: &Path) -> std::io::Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.file_type().is_dir() {
@@ -949,6 +954,37 @@ mod tests {
         .unwrap();
         let hash = validated.package.manifest.full_mod_sha256;
         (validated.package.encode().unwrap(), hash)
+    }
+
+    #[test]
+    fn failed_index_publication_restores_install_state_and_allows_retry() {
+        for had_prior in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut cache = DistributedModCache::open(temp.path().to_str().unwrap()).unwrap();
+            let (encoded, hash) = package("Publication rollback");
+            if had_prior {
+                drop(cache.install(encoded.clone(), hash).unwrap());
+            }
+            let prior = serde_json::to_value(&cache.index).unwrap();
+            let index_path = cache.root.join(CACHE_INDEX_FILE);
+            let backup = cache.root.join("previous-index.json");
+            if had_prior {
+                std::fs::rename(&index_path, &backup).unwrap();
+            }
+            std::fs::create_dir(&index_path).unwrap();
+            assert!(cache.install(encoded.clone(), hash).is_err());
+            assert_eq!(serde_json::to_value(&cache.index).unwrap(), prior);
+            assert_eq!(cache.complete_path(&hash).exists(), had_prior);
+            assert!(!cache.pins.contains(&hash));
+            std::fs::remove_dir(&index_path).unwrap();
+            if had_prior {
+                std::fs::rename(&backup, &index_path).unwrap();
+            }
+            drop(cache.install(encoded.clone(), hash).unwrap());
+            drop(cache);
+            let mut reopened = DistributedModCache::open(temp.path().to_str().unwrap()).unwrap();
+            assert_eq!(reopened.acquire(hash).unwrap().unwrap().encoded(), encoded);
+        }
     }
 
     #[test]
