@@ -244,6 +244,22 @@ pub(super) fn insert_standalone_audio(
         u32::try_from(bytes.len()).context("standalone Opus asset exceeds u32 byte length")?;
     let logical = standalone_audio_logical_key(relative);
     let filename = standalone_audio_filename(bytes);
+    let asset = ShippingAudioAsset {
+        file: format!("audio/assets/{filename}"),
+        encoded_size,
+        duration_ms,
+        bundle_offset: None,
+    };
+    let entry = catalog.entry(logical);
+    if let std::collections::btree_map::Entry::Occupied(existing) = &entry {
+        if existing.get() != &asset {
+            bail!(
+                "conflicting standalone shipping audio for {}: {:?} vs {asset:?}",
+                existing.key(),
+                existing.get()
+            );
+        }
+    }
     let output = assets_dir.join(&filename);
     if output.exists() {
         let existing = fs::read(&output)
@@ -255,31 +271,14 @@ pub(super) fn insert_standalone_audio(
         publication::publish_bytes(&output, bytes)
             .with_context(|| format!("write audio asset {}", output.display()))?;
     }
-    let file = format!("audio/assets/{filename}");
     AUDIO_ASSET_GROUPS
         .lock()
         .expect("audio group recorder poisoned")
-        .entry(file.clone())
+        .entry(asset.file.clone())
         .or_default()
         .insert(group.to_owned());
-    let asset = ShippingAudioAsset {
-        file,
-        encoded_size,
-        duration_ms,
-        bundle_offset: None,
-    };
-    match catalog.entry(logical) {
-        std::collections::btree_map::Entry::Vacant(entry) => {
-            entry.insert(asset);
-        }
-        std::collections::btree_map::Entry::Occupied(entry) if entry.get() == &asset => {}
-        std::collections::btree_map::Entry::Occupied(entry) => {
-            bail!(
-                "conflicting standalone shipping audio for {}: {:?} vs {asset:?}",
-                entry.key(),
-                entry.get()
-            );
-        }
+    if let std::collections::btree_map::Entry::Vacant(entry) = entry {
+        entry.insert(asset);
     }
     Ok(())
 }
@@ -589,6 +588,63 @@ pub(super) fn write_shipping_dependency(
 #[cfg(test)]
 mod boot_trim_tests {
     use super::*;
+
+    #[test]
+    fn conflicting_catalog_insert_has_no_file_or_group_side_effects() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut catalog = std::collections::BTreeMap::new();
+        let original_bytes = b"catalog conflict regression original";
+        insert_standalone_audio(
+            &mut catalog,
+            directory.path(),
+            "original",
+            "effect.wav",
+            original_bytes,
+            100,
+        )
+        .unwrap();
+        let before = catalog.clone();
+        let rejected_bytes = b"catalog conflict regression rejected";
+        assert!(
+            insert_standalone_audio(
+                &mut catalog,
+                directory.path(),
+                "rejected-content",
+                "effect.wav",
+                rejected_bytes,
+                100
+            )
+            .is_err()
+        );
+        assert!(
+            !directory
+                .path()
+                .join(standalone_audio_filename(rejected_bytes))
+                .exists()
+        );
+        assert!(
+            insert_standalone_audio(
+                &mut catalog,
+                directory.path(),
+                "rejected-duration",
+                "effect.wav",
+                original_bytes,
+                200
+            )
+            .is_err()
+        );
+        assert_eq!(catalog, before);
+        let groups = AUDIO_ASSET_GROUPS.lock().unwrap();
+        assert!(!groups.contains_key(&format!(
+            "audio/assets/{}",
+            standalone_audio_filename(rejected_bytes)
+        )));
+        assert!(
+            !groups[&format!("audio/assets/{}", standalone_audio_filename(original_bytes))]
+                .contains("rejected-duration")
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn empty_group_records_do_not_bypass_catalog_validation() {
