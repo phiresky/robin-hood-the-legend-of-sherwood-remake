@@ -391,18 +391,9 @@ impl Thumbnail {
             .with_context(|| format!("decoding thumbnail PNG frame {}", path.display()))?;
         let data = &buf[..info.buffer_size()];
         let expected_pixels = usize::from(width) * usize::from(height);
-        let mut pixels = Vec::with_capacity(expected_pixels);
-        match info.color_type {
-            png::ColorType::Rgb => {
-                for chunk in data.as_chunks::<3>().0 {
-                    pixels.push(robin_util::color::rgb565(chunk[0], chunk[1], chunk[2]));
-                }
-            }
-            png::ColorType::Rgba => {
-                for chunk in data.as_chunks::<4>().0 {
-                    pixels.push(robin_util::color::rgb565(chunk[0], chunk[1], chunk[2]));
-                }
-            }
+        let channels = match info.color_type {
+            png::ColorType::Rgb => 3,
+            png::ColorType::Rgba => 4,
             other => {
                 bail!(
                     "unsupported thumbnail PNG color type {:?} for {}",
@@ -410,15 +401,22 @@ impl Thumbnail {
                     path.display()
                 );
             }
+        };
+        let chunks = data.chunks_exact(channels);
+        if !chunks.remainder().is_empty() {
+            bail!("incomplete thumbnail PNG pixel for {}", path.display());
         }
-        if pixels.len() != expected_pixels {
+        if chunks.len() != expected_pixels {
             bail!(
                 "thumbnail PNG pixel count mismatch for {}: expected {}, got {}",
                 path.display(),
                 expected_pixels,
-                pixels.len()
+                chunks.len()
             );
         }
+        let pixels = chunks
+            .map(|chunk| robin_util::color::rgb565(chunk[0], chunk[1], chunk[2]))
+            .collect();
         Ok(Self {
             width,
             height,
@@ -1908,6 +1906,41 @@ mod tests {
         let resolved = default_save_directory();
         assert_eq!(resolved, dir.path());
         unsafe { std::env::remove_var("ROBINHOOD_SAVE_DIR") };
+    }
+
+    #[test]
+    fn thumbnail_rgb_and_rgba_decoding_share_colors_and_ignore_alpha() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("channels.png");
+        let source = [
+            [255, 0, 0, 0],
+            [0, 255, 0, 50],
+            [0, 0, 255, 128],
+            [123, 45, 67, 255],
+        ];
+        let expected: Vec<_> = source
+            .iter()
+            .map(|p| robin_util::color::rgb565(p[0], p[1], p[2]))
+            .collect();
+        for (color, channels) in [(png::ColorType::Rgb, 3), (png::ColorType::Rgba, 4)] {
+            let pixels: Vec<u8> = source
+                .iter()
+                .flat_map(|pixel| pixel[..channels].iter().copied())
+                .collect();
+            let mut encoded = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut encoded, 2, 2);
+                encoder.set_color(color);
+                encoder.set_depth(png::BitDepth::Eight);
+                let mut writer = encoder.write_header().unwrap();
+                writer.write_image_data(&pixels).unwrap();
+                writer.finish().unwrap();
+            }
+            fs::write(&path, encoded).unwrap();
+            let thumbnail = Thumbnail::read_from(&path).unwrap();
+            assert_eq!((thumbnail.width, thumbnail.height), (2, 2));
+            assert_eq!(thumbnail.pixels, expected);
+        }
     }
 
     #[test]
