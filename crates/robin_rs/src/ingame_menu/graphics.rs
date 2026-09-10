@@ -664,15 +664,34 @@ fn draw_preset_list(
     }
 }
 
-fn fit_label(font: &crate::native_font::Font, label: &str, max_w: i32) -> String {
-    if font.text_width(label) <= max_w {
-        return label.to_string();
+fn fit_label<'a>(
+    font: &crate::native_font::Font,
+    label: &'a str,
+    max_w: i32,
+) -> std::borrow::Cow<'a, str> {
+    fit_label_by(label, max_w, |candidate| font.text_width(candidate))
+}
+
+fn fit_label_by(
+    label: &str,
+    max_w: i32,
+    measure: impl Fn(&str) -> i32,
+) -> std::borrow::Cow<'_, str> {
+    if measure(label) <= max_w {
+        return std::borrow::Cow::Borrowed(label);
     }
-    let mut out = label.to_string();
-    while !out.is_empty() && font.text_width(&format!("{out}...")) > max_w {
+    let mut out = String::with_capacity(label.len() + 3);
+    out.push_str(label);
+    out.push_str("...");
+    // Preserve the existing scalar-at-a-time removal and whole-candidate
+    // measurement; kerning means character widths cannot simply be added.
+    while out.len() > 3 && measure(&out) > max_w {
+        out.truncate(out.len() - 3);
         out.pop();
+        out.push_str("...");
     }
-    format!("{out}...")
+    // Legacy graphics labels retain the ellipsis even if it cannot fit.
+    std::borrow::Cow::Owned(out)
 }
 
 fn adjust_parameter(config: &mut GraphicConfig, effect_page: bool, index: usize, increase: bool) {
@@ -984,4 +1003,21 @@ fn selecting_builtin_presets_clears_stale_import_feedback() {
         assert_eq!(config.shader_preset, "bundled-preset");
         assert!(status.is_empty());
     }
+}
+
+#[test]
+fn graphics_label_fitting_preserves_scalar_boundaries_and_ellipsis_policy() {
+    let measure = |value: &str| value.chars().count() as i32;
+    assert!(matches!(
+        fit_label_by("é🏹", 2, measure),
+        std::borrow::Cow::Borrowed("é🏹")
+    ));
+    assert_eq!(fit_label_by("é🏹罗宾AB", 5, measure), "é🏹...");
+    assert_eq!(fit_label_by("abcdef", 3, measure), "...");
+    assert_eq!(fit_label_by("abcdef", 0, measure), "...");
+    assert_eq!(fit_label_by("", -1, measure), "...");
+    assert_eq!(
+        fit_label_by("abcdef", 2, |value| if value == "abcd..." { 2 } else { 10 }),
+        "abcd..."
+    );
 }
