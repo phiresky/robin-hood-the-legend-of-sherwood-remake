@@ -92,35 +92,35 @@ impl WidgetSlider {
     /// Call after [`WidgetBase::bbox`] is set — sub-buttons are sized
     /// relative to the current bbox.
     pub fn set_step_count(&mut self, step_count: u32) {
-        self.buttons = if step_count >= 2 {
-            self.rebuild_buttons(step_count)
-        } else {
-            Vec::new()
-        };
+        self.buttons.clear();
+        if step_count >= 2 {
+            self.rebuild_buttons(step_count);
+        }
         self.tracking = self.tracking.min(step_count.saturating_sub(1));
         self.sync_button_selection();
     }
 
-    fn rebuild_buttons(&self, step_count: u32) -> Vec<WidgetRadioButton> {
+    fn rebuild_buttons(&mut self, step_count: u32) {
+        self.buttons.reserve(step_count as usize);
         let Some(rect) = self.base.bbox.0 else {
             // No bbox yet — fall back to zero-sized children; the
             // caller is expected to call `set_position` before input.
-            return (0..step_count).map(WidgetRadioButton::new).collect();
+            self.buttons
+                .extend((0..step_count).map(WidgetRadioButton::new));
+            return;
         };
         let left = rect.min().x;
         let top = rect.min().y;
         let bottom = rect.max().y;
         let total_w = rect.max().x - left;
         let count_f = step_count as f32;
-        (0..step_count)
-            .map(|i| {
-                let x0 = left + (i as f32 / count_f) * total_w;
-                let x1 = left + ((i + 1) as f32 / count_f) * total_w;
-                let mut btn = WidgetRadioButton::new(i);
-                btn.base.bbox = ScreenBBox::from_coords(x0, top, x1, bottom);
-                btn
-            })
-            .collect()
+        self.buttons.extend((0..step_count).map(|i| {
+            let x0 = left + (i as f32 / count_f) * total_w;
+            let x1 = left + ((i + 1) as f32 / count_f) * total_w;
+            let mut btn = WidgetRadioButton::new(i);
+            btn.base.bbox = ScreenBBox::from_coords(x0, top, x1, bottom);
+            btn
+        }));
     }
 
     /// Number of discrete ticks.
@@ -521,5 +521,49 @@ fn missing_last_tracked_field_uses_option_default() {
     assert_eq!(
         serde_json::to_value(restored).unwrap(),
         serde_json::to_value(original).unwrap()
+    );
+}
+
+#[test]
+fn changing_step_count_reuses_storage_but_resets_child_widgets() {
+    let mut slider = WidgetSlider::new(5);
+    slider.base.bbox = ScreenBBox::from_coords(10.0, 20.0, 110.0, 40.0);
+    slider.set_step_count(4);
+    let pointer = slider.buttons.as_ptr();
+    let capacity = slider.buttons.capacity();
+    slider.set_value(1.0);
+    slider.buttons[0].base.set_text("old label");
+    slider.buttons[0].group_focused = true;
+
+    slider.set_step_count(2);
+    assert_eq!(slider.buttons.as_ptr(), pointer);
+    assert_eq!(slider.buttons.capacity(), capacity);
+    assert_eq!(slider.tick_index(), 1);
+    for (index, button) in slider.buttons.iter().enumerate() {
+        assert_eq!(button.base.id, index as u32);
+        assert!(button.base.text.is_empty());
+        assert!(!button.group_focused);
+        assert_eq!(button.second_state, index == 1);
+        assert_eq!(
+            button.base.bbox,
+            ScreenBBox::from_coords(
+                10.0 + index as f32 * 50.0,
+                20.0,
+                60.0 + index as f32 * 50.0,
+                40.0
+            )
+        );
+    }
+    slider.set_step_count(0);
+    assert!(slider.buttons.is_empty());
+    assert_eq!(slider.buttons.capacity(), capacity);
+    slider.base.bbox = ScreenBBox::new();
+    slider.set_step_count(4);
+    assert_eq!(slider.buttons.as_ptr(), pointer);
+    assert!(
+        slider
+            .buttons
+            .iter()
+            .all(|button| button.base.bbox.0.is_none())
     );
 }
