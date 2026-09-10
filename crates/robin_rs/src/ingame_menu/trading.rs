@@ -49,15 +49,22 @@ struct TradingRow {
     unit_price: u16,
 }
 
+/// A sale emitted by the modal, awaiting host correlation and then a receipt.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PendingSale {
+    request_id: Option<u64>,
+    prod_type: Type,
+    quantity: TradeQuantity,
+}
+
 pub struct TradingModalState {
     rows: Vec<TradingRow>,
     selected: usize,
     focus: usize,
     ransom: i32,
     pending_confirmation: Option<(Type, TradeQuantity)>,
-    /// `(assigned request id, item, quantity)` for the one command in flight.
     /// The id is filled by the host immediately after this state emits Sell.
-    awaiting_receipt: Option<(Option<u64>, Type, TradeQuantity)>,
+    awaiting_receipt: Option<PendingSale>,
     status: String,
     frame: FrameWnd,
     input: ModalInputState,
@@ -332,7 +339,11 @@ impl TradingModalState {
             return None;
         }
         self.pending_confirmation = None;
-        self.awaiting_receipt = Some((None, row.prod_type, quantity));
+        self.awaiting_receipt = Some(PendingSale {
+            request_id: None,
+            prod_type: row.prod_type,
+            quantity,
+        });
         self.status = resources.menu_text.get(MT_STR_TRADE_WAITING);
         Some(TradingOutcome::Sell {
             prod_type: row.prod_type,
@@ -352,17 +363,21 @@ impl TradingModalState {
             .awaiting_receipt
             .as_mut()
             .expect("assigning a Sherwood request id without an awaiting sale");
-        assert_eq!((pending.1, pending.2), (prod_type, quantity));
-        assert!(pending.0.replace(request_id).is_none());
+        assert_eq!((pending.prod_type, pending.quantity), (prod_type, quantity));
+        assert!(
+            pending.request_id.is_none(),
+            "Sherwood sale already has a request id"
+        );
+        pending.request_id = Some(request_id);
     }
 
     fn apply_receipt(&mut self, resources: &IngameMenuResources, receipt: TradeReceipt) {
         if self.awaiting_receipt
-            != Some((
-                Some(receipt.request_id),
-                receipt.prod_type,
-                receipt.quantity,
-            ))
+            != Some(PendingSale {
+                request_id: Some(receipt.request_id),
+                prod_type: receipt.prod_type,
+                quantity: receipt.quantity,
+            })
         {
             tracing::warn!(
                 request_id = receipt.request_id,
