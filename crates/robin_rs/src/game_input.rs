@@ -63,7 +63,7 @@ pub fn resolve_left_click_with_planning(
     let local_seat = host.transport.local_seat();
     let selected = engine.hero_selection(local_seat);
     let num_selected = selected.len();
-    let tactical_selected = engine.tactical_selection(local_seat).to_vec();
+    let tactical_selected = engine.tactical_selection(local_seat);
 
     // The optional allied-control layer keeps soldier selection separate from
     // the original PC selection so scripts and hero action bars retain their
@@ -213,7 +213,8 @@ pub fn resolve_left_click_with_planning(
             ) {
                 host.frontend.input.gestures.element_old_click = Some(target_id);
                 return tactical_selected
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .map(|actor| PlayerCommand::EnterSwordfight {
                         actor,
                         target: target_id,
@@ -222,8 +223,8 @@ pub fn resolve_left_click_with_planning(
                     .collect();
             }
             return vec![PlayerCommand::MoveTacticalUnits {
-                formation: selected_tactical_formation(engine, &tactical_selected),
-                soldiers: tactical_selected,
+                formation: selected_tactical_formation(engine, tactical_selected),
+                soldiers: tactical_selected.to_vec(),
                 destination: map_pt,
                 running: is_double,
             }];
@@ -339,18 +340,14 @@ pub fn resolve_left_click_with_planning(
             .get_entity(target_id)
             .map(|e| e.is_soldier())
             .unwrap_or(false);
-        let selected: Vec<EntityId> = selected
+        // Soldier targets accept the whole selection; other sword-focus targets
+        // use only the leading hero. Borrow both selections until commands own IDs.
+        let engager_limit = if target_is_soldier { usize::MAX } else { 1 };
+        return selected
             .iter()
-            .chain(tactical_selected.iter())
+            .chain(tactical_selected)
             .copied()
-            .collect();
-        let engagers: Vec<EntityId> = if target_is_soldier {
-            selected
-        } else {
-            selected.into_iter().take(1).collect()
-        };
-        return engagers
-            .into_iter()
+            .take(engager_limit)
             .map(|pc_id| PlayerCommand::EnterSwordfight {
                 actor: pc_id,
                 target: target_id,
@@ -400,8 +397,8 @@ pub fn resolve_left_click_with_planning(
             if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty()
             {
                 commands.push(PlayerCommand::MoveTacticalUnits {
-                    formation: selected_tactical_formation(engine, &tactical_selected),
-                    soldiers: tactical_selected.clone(),
+                    formation: selected_tactical_formation(engine, tactical_selected),
+                    soldiers: tactical_selected.to_vec(),
                     destination: map_pt,
                     running: true,
                 });
@@ -462,8 +459,8 @@ pub fn resolve_left_click_with_planning(
         }];
         if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
             commands.push(PlayerCommand::MoveTacticalUnits {
-                formation: selected_tactical_formation(engine, &tactical_selected),
-                soldiers: tactical_selected.clone(),
+                formation: selected_tactical_formation(engine, tactical_selected),
+                soldiers: tactical_selected.to_vec(),
                 destination: patch.waypoint,
                 running: is_double,
             });
@@ -518,8 +515,8 @@ pub fn resolve_left_click_with_planning(
     }];
     if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
         commands.push(PlayerCommand::MoveTacticalUnits {
-            formation: selected_tactical_formation(engine, &tactical_selected),
-            soldiers: tactical_selected.clone(),
+            formation: selected_tactical_formation(engine, tactical_selected),
+            soldiers: tactical_selected.to_vec(),
             destination: map_pt,
             running: is_double,
         });
