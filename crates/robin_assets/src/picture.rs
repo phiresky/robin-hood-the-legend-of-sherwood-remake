@@ -472,7 +472,7 @@ impl Picture {
                 self.pixel_format
             );
         }
-        let (pitch, expected) = Self::sixteen_layout(self.width, self.height)?;
+        let (pitch, expected) = Self::rgb565_layout(self.width, self.height)?;
         if self.pitch != pitch || self.data.len() != expected {
             bail!(
                 "Sixteen source buffer is inconsistent: expected pitch {pitch} and {expected} bytes, got pitch {} and {} bytes",
@@ -521,14 +521,24 @@ impl Picture {
         Self::decode_sixteen_payload(x_size, y_size, packing, payload)
     }
 
-    fn sixteen_layout(width: u16, height: u16) -> Result<(u16, usize)> {
+    fn rgb565_layout(width: u16, height: u16) -> Result<(u16, usize)> {
         let pitch = width
             .checked_mul(2)
-            .context("Sixteen row pitch exceeds u16")?;
+            .context("RGB565 row pitch exceeds u16")?;
         let length = usize::from(pitch)
             .checked_mul(usize::from(height))
-            .context("Sixteen pixel byte length exceeds address space")?;
+            .context("RGB565 pixel byte length exceeds address space")?;
         Ok((pitch, length))
+    }
+
+    fn jxl_rgb565_layout(w: usize, h: usize) -> Result<(u16, u16, u16)> {
+        if w == 0 || h == 0 {
+            bail!("jxl: decoded image has zero dimensions");
+        }
+        let width = u16::try_from(w).context("jxl picture width exceeds u16")?;
+        let height = u16::try_from(h).context("jxl picture height exceeds u16")?;
+        let (pitch, _) = Self::rgb565_layout(width, height)?;
+        Ok((width, height, pitch))
     }
 
     fn decode_sixteen_payload(
@@ -537,7 +547,7 @@ impl Picture {
         packing: SixteenPacking,
         payload: &[u8],
     ) -> Result<Self> {
-        let (pitch, expected) = Self::sixteen_layout(width, height)?;
+        let (pitch, expected) = Self::rgb565_layout(width, height)?;
         let data = match packing {
             SixteenPacking::None => {
                 if payload.len() != expected {
@@ -610,9 +620,7 @@ impl Picture {
         };
 
         let (w, h) = dec_with_image.basic_info().size;
-        if w == 0 || h == 0 {
-            bail!("jxl: decoded image has zero dimensions");
-        }
+        let (width, height, pitch) = Self::jxl_rgb565_layout(w, h)?;
 
         // Maps are 3-channel by construction (see `transcode_sixteen_to_jxl`
         // in the converter — it feeds cjxl an RGB-only PNG). Anything with
@@ -644,7 +652,10 @@ impl Picture {
         };
 
         let stride = w * 3;
-        let mut rgb = vec![0u8; stride * h];
+        let byte_length = stride
+            .checked_mul(h)
+            .context("jxl RGB buffer size overflow")?;
+        let mut rgb = vec![0u8; byte_length];
         let mut output_bufs = vec![JxlOutputBuffer::new(&mut rgb, h, stride)];
         let mut runner = rayon_jxl_runner(parallel);
         let runner_ref = runner
@@ -695,9 +706,9 @@ impl Picture {
         }
 
         Ok(Self {
-            width: w as u16,
-            height: h as u16,
-            pitch: (w * 2) as u16,
+            width,
+            height,
+            pitch,
             pixel_format: PixelFormat::Rgb16,
             data,
             palette: None,
@@ -724,9 +735,7 @@ impl Picture {
         };
 
         let (w, h) = dec_with_image.basic_info().size;
-        if w == 0 || h == 0 {
-            bail!("jxl: decoded image has zero dimensions");
-        }
+        let (width, height, pitch) = Self::jxl_rgb565_layout(w, h)?;
         if dec_with_image.basic_info().extra_channels.is_empty() {
             bail!("jxl: keyed interface picture has no alpha channel");
         }
@@ -749,7 +758,10 @@ impl Picture {
         };
 
         let stride = w * 4;
-        let mut rgba = vec![0u8; stride * h];
+        let byte_length = stride
+            .checked_mul(h)
+            .context("jxl RGBA buffer size overflow")?;
+        let mut rgba = vec![0u8; byte_length];
         let mut output_bufs = vec![JxlOutputBuffer::new(&mut rgba, h, stride)];
         match dec_with_frame.process(&mut input, &mut output_bufs, None) {
             Ok(ProcessingResult::Complete { .. }) => {}
@@ -794,9 +806,9 @@ impl Picture {
         }
 
         Ok(Self {
-            width: w as u16,
-            height: h as u16,
-            pitch: (w * 2) as u16,
+            width,
+            height,
+            pitch,
             pixel_format: PixelFormat::Rgb16,
             data,
             palette: None,
@@ -1431,6 +1443,28 @@ mod tests {
                 expected_error
             );
             assert_eq!(file.tell(), file.get_size());
+        }
+    }
+
+    #[test]
+    fn jxl_rgb565_layout_rejects_unrepresentable_dimensions() {
+        assert_eq!(Picture::jxl_rgb565_layout(2, 3).unwrap(), (2, 3, 4));
+        assert_eq!(
+            Picture::jxl_rgb565_layout(32_767, 65_535).unwrap(),
+            (32_767, 65_535, 65_534)
+        );
+        for (width, height) in [
+            (0, 1),
+            (1, 0),
+            (32_768, 1),
+            (65_536, 1),
+            (1, 65_536),
+            (usize::MAX, usize::MAX),
+        ] {
+            assert!(
+                Picture::jxl_rgb565_layout(width, height).is_err(),
+                "{width}x{height} must not fit an RGB565 Picture"
+            );
         }
     }
 
