@@ -345,9 +345,9 @@ impl Thumbnail {
 
     /// Read a thumbnail written by [`write_to`](Self::write_to).
     pub fn read_from(path: &Path) -> Result<Self> {
-        let bytes =
-            fs::read(path).with_context(|| format!("reading thumbnail {}", path.display()))?;
-        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let file = fs::File::open(path)
+            .with_context(|| format!("reading thumbnail {}", path.display()))?;
+        let decoder = png::Decoder::new(std::io::BufReader::new(file));
         let mut reader = decoder
             .read_info()
             .with_context(|| format!("decoding thumbnail PNG header {}", path.display()))?;
@@ -1933,6 +1933,10 @@ mod tests {
         fs::write(&path, b"not a png").unwrap();
         assert!(Thumbnail::read_optional_from(&path).is_err());
         let thumbnail = Thumbnail::from_pixels(1, 1, vec![0]).unwrap();
+        thumbnail.write_to(&path).unwrap();
+        let encoded = fs::read(&path).unwrap();
+        fs::write(&path, &encoded[..encoded.len() / 2]).unwrap();
+        assert!(Thumbnail::read_optional_from(&path).is_err());
         thumbnail.write_to(&path).unwrap();
         assert_eq!(
             Thumbnail::read_optional_from(&path)
