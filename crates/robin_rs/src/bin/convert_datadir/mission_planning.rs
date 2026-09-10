@@ -6,6 +6,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pc_dependencies_use_the_normalized_physical_profile() {
+        let mut profiles = ProfileManager::default();
+        for (filename, exclamation_id) in [("RobinHood", 7), ("RobinTown", 9), ("Hero", 0)] {
+            profiles
+                .characters
+                .push(robin_engine::profiles::CharacterProfile {
+                    filename: filename.into(),
+                    profile_name: "Player".into(),
+                    exclamation_id,
+                    ..Default::default()
+                });
+        }
+        for (forest, filename, voice) in [(true, "RobinHood", 7), (false, "RobinTown", 9)] {
+            let mut build = ShippingMissionBuild::default();
+            for index in [0, 1, 2, 0] {
+                add_pc_dependencies(&mut build, &profiles, index, forest, &|_| None).unwrap();
+            }
+            assert_eq!(build.required_rhs_profiles.len(), 2);
+            assert_eq!(
+                build.required_rhs_profiles[&format!("Characters/{filename}.rhs")],
+                BTreeSet::from(["Player".into()])
+            );
+            assert!(
+                build
+                    .required_rhs_profiles
+                    .contains_key("Characters/Hero.rhs")
+            );
+            assert_eq!(build.required_exclamation_ids, BTreeSet::from([voice]));
+            assert!(add_pc_dependencies(&mut build, &profiles, 3, forest, &|_| None).is_err());
+        }
+        profiles.characters.remove(1);
+        let mut build = ShippingMissionBuild::default();
+        assert!(add_pc_dependencies(&mut build, &profiles, 0, false, &|_| None).is_err());
+        assert!(build.required_rhs_profiles.is_empty());
+        assert!(build.required_exclamation_ids.is_empty());
+    }
+
+    #[test]
     #[ignore = "requires original installation in ROBINHOOD_DATA_DIR"]
     fn original_missions_have_resolvable_actor_dependencies() {
         let root = std::env::var_os("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
@@ -59,8 +97,10 @@ mod tests {
                         .map(|pc| pc.profile_index as usize),
                 )
             {
-                normalize_robin_profile_index(&profiles, index, forest)
-                    .unwrap_or_else(|error| panic!("{}: {error:#}", profile.mission_filename));
+                add_pc_dependencies(&mut build, &profiles, index, forest, &|rel| {
+                    resolve_data_file(&data, rel)
+                })
+                .unwrap_or_else(|error| panic!("{}: {error:#}", profile.mission_filename));
             }
             checked += 1;
         }
@@ -119,6 +159,29 @@ mod tests {
                 .contains("civilian profile index 2")
         );
     }
+}
+
+fn add_pc_dependencies(
+    build: &mut ShippingMissionBuild,
+    profiles: &ProfileManager,
+    index: usize,
+    forest_level: bool,
+    in_path: &impl Fn(&str) -> Option<PathBuf>,
+) -> Result<()> {
+    let index = normalize_robin_profile_index(profiles, index, forest_level)?;
+    add_required_character_rhs_profiles_for_index(
+        &mut build.required_rhs_profiles,
+        profiles,
+        index,
+        in_path,
+    )?;
+    let profile = &profiles.characters[index];
+    if profile.exclamation_id != 0 {
+        build
+            .required_exclamation_ids
+            .insert(profile.exclamation_id);
+    }
+    Ok(())
 }
 
 fn add_npc_dependencies(
@@ -300,6 +363,20 @@ pub(super) fn plan_missions(
                 .map(|civilian| civilian.profile_number),
         )
         .with_context(|| format!("NPC dependencies for mission {}", mp.mission_filename))?;
+        for index in mp
+            .required_character_indices
+            .iter()
+            .map(|&index| index as usize)
+            .chain(
+                mission
+                    .pcs_to_rescue
+                    .iter()
+                    .map(|pc| pc.profile_index as usize),
+            )
+        {
+            add_pc_dependencies(&mut build, cpf, index, forest_level, &in_path)
+                .with_context(|| format!("PC dependencies for mission {}", mp.mission_filename))?;
+        }
         let required_rhs_profiles = &mut build.required_rhs_profiles;
         // Demo boot hardcodes its party; preserve those profiles even when
         // the mission script does not name them directly.
@@ -340,22 +417,6 @@ pub(super) fn plan_missions(
         if !mission.header.map_filename.is_empty() {
             build.map_names.insert(mission.header.map_filename.clone());
         }
-        for &idx in &mp.required_character_indices {
-            let idx = normalize_robin_profile_index(cpf, idx as usize, forest_level)?;
-            add_required_character_rhs_profiles_for_index(
-                required_rhs_profiles,
-                cpf,
-                idx,
-                &in_path,
-            )?;
-            if let Some(profile) = cpf.characters.get(idx)
-                && profile.exclamation_id != 0
-            {
-                build
-                    .required_exclamation_ids
-                    .insert(profile.exclamation_id);
-            }
-        }
         for p in &mission.mission_patches {
             add_required_animation_rhs_profile(
                 required_rhs_profiles,
@@ -386,23 +447,6 @@ pub(super) fn plan_missions(
                     &fx.sprite,
                     &in_path,
                 );
-            }
-        }
-        for pc in &mission.pcs_to_rescue {
-            let profile_index =
-                normalize_robin_profile_index(cpf, pc.profile_index as usize, forest_level)?;
-            add_required_character_rhs_profiles_for_index(
-                required_rhs_profiles,
-                cpf,
-                profile_index,
-                &in_path,
-            )?;
-            if let Some(profile) = cpf.characters.get(profile_index)
-                && profile.exclamation_id != 0
-            {
-                build
-                    .required_exclamation_ids
-                    .insert(profile.exclamation_id);
             }
         }
         for bonus in &mission.bonuses {
