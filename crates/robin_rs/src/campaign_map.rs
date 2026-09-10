@@ -543,8 +543,8 @@ impl CampaignMapModalState {
         self.scroll_views[TREE_VIEW].set_total(total_depths);
         self.scroll_views[GALLERY_VIEW].set_total(self.graph.nodes.len().div_ceil(4));
         self.scroll_views[AWARDS_VIEW].set_total(
-            crate::achievement_hud::permanent_badge_presentations(Default::default())
-                .len()
+            crate::achievement_hud::permanent_badge_ids()
+                .count()
                 .div_ceil(2),
         );
         if let Some(node) = self.graph.nodes.get(self.selected_progress) {
@@ -1464,8 +1464,8 @@ fn render_campaign_progress(
             .set_total(graph.nodes.iter().map(|n| n.depth + 1).max().unwrap_or(0));
         capture_views[GALLERY_VIEW].set_total(graph.nodes.len().div_ceil(4));
         capture_views[AWARDS_VIEW].set_total(
-            crate::achievement_hud::permanent_badge_presentations(Default::default())
-                .len()
+            crate::achievement_hud::permanent_badge_ids()
+                .count()
                 .div_ceil(2),
         );
         if let Some(node) = graph.nodes.get(selected) {
@@ -1599,7 +1599,6 @@ fn render_campaign_progress(
         earned.union_with(graph.campaign_achievements.earned());
         let card_width = (views[AWARDS_VIEW].content_width() - 48) / 2;
         for (index, badge) in crate::achievement_hud::permanent_badge_presentations(earned)
-            .iter()
             .skip(views[AWARDS_VIEW].offset() * 2)
             .take(4)
             .enumerate()

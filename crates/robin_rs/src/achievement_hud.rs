@@ -77,17 +77,18 @@ pub fn mission_badge_presentations(
         .collect()
 }
 
+/// Stable catalogue order without constructing labels or other presentation data.
+pub(crate) fn permanent_badge_ids() -> impl Iterator<Item = AchievementId> {
+    AchievementId::ALL.into_iter().filter(|id| {
+        id.aggregation_policy()
+            != robin_engine::achievement::AchievementAggregationPolicy::MissionOnly
+    })
+}
+
 pub fn permanent_badge_presentations(
     earned: robin_engine::achievement::AchievementSet,
-) -> Vec<AchievementBadgePresentation> {
-    AchievementId::ALL
-        .into_iter()
-        .filter(|id| {
-            id.aggregation_policy()
-                != robin_engine::achievement::AchievementAggregationPolicy::MissionOnly
-        })
-        .map(|id| badge_presentation(id, earned, &mut |_| None))
-        .collect()
+) -> impl Iterator<Item = AchievementBadgePresentation> {
+    permanent_badge_ids().map(move |id| badge_presentation(id, earned, &mut |_| None))
 }
 
 fn aggregation_status_text(status: AchievementAggregationStatus) -> &'static str {
@@ -118,7 +119,6 @@ pub fn achievement_aggregation_presentations(
     summary: AchievementAggregationSummary,
 ) -> Vec<AchievementAggregationPresentation> {
     permanent_badge_presentations(summary.earned())
-        .into_iter()
         .map(|badge| {
             let progress = summary.get(badge.id);
             AchievementAggregationPresentation {
@@ -371,6 +371,52 @@ mod tests {
         achievement_aggregation_presentations, format_aggregation_progress, format_attempt_summary,
         format_speedrun_time, mission_badge_presentations,
     };
+
+    #[test]
+    fn permanent_badge_catalogue_and_lazy_pages_share_order_and_earned_state() {
+        use robin_engine::achievement::{
+            AchievementAggregationPolicy, AchievementId, AchievementSet,
+        };
+        let expected_ids: Vec<_> = AchievementId::ALL
+            .into_iter()
+            .filter(|id| id.aggregation_policy() != AchievementAggregationPolicy::MissionOnly)
+            .collect();
+        assert_eq!(
+            super::permanent_badge_ids().collect::<Vec<_>>(),
+            expected_ids
+        );
+        assert_eq!(super::permanent_badge_ids().count(), expected_ids.len());
+        for earned in [
+            AchievementSet::empty(),
+            AchievementSet::from_ids([AchievementId::Ghost]),
+            AchievementSet::from_ids(AchievementId::ALL),
+        ] {
+            let badges: Vec<_> = super::permanent_badge_presentations(earned).collect();
+            assert_eq!(
+                badges.iter().map(|badge| badge.id).collect::<Vec<_>>(),
+                expected_ids
+            );
+            for badge in &badges {
+                assert_eq!(badge.earned, earned.contains(badge.id));
+                assert_eq!(badge.label, badge.id.name());
+            }
+            for offset in 0..=badges.len() + 1 {
+                let page: Vec<_> = super::permanent_badge_presentations(earned)
+                    .skip(offset)
+                    .take(4)
+                    .collect();
+                assert_eq!(
+                    page,
+                    badges
+                        .iter()
+                        .skip(offset)
+                        .take(4)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
 
     #[test]
     fn speedrun_time_uses_exact_25_hz_clock() {
