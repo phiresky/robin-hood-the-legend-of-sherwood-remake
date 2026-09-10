@@ -89,50 +89,57 @@ impl ColumnLayout {
         self.ratios.is_empty()
     }
 
-    /// Lay out cells against a row spanning `[row_x, row_x + row_width]`.
+    /// Iterate borrowed cells without allocating a per-row buffer, against a row spanning `[row_x, row_x + row_width]`.
     ///
     /// Empty cells are skipped; the preceding non-empty cell absorbs
     /// their width. Only the first N-1 pipes are split; extra pipes stay in
     /// the final cell. With no configured columns, the whole row is one cell.
-    pub fn layout_row<'a>(&self, text: &'a str, row_x: f32, row_width: f32) -> Vec<LayoutCell<'a>> {
-        if self.ratios.is_empty() {
-            return vec![LayoutCell {
-                text,
-                span_x: row_x,
-                span_w: row_width,
-                align: ColumnAlign::Left,
-            }];
-        }
+    pub fn layout_row<'a>(
+        &'a self,
+        text: &'a str,
+        row_x: f32,
+        row_width: f32,
+    ) -> impl Iterator<Item = LayoutCell<'a>> + 'a {
+        let single_cell = self.ratios.is_empty().then_some(LayoutCell {
+            text,
+            span_x: row_x,
+            span_w: row_width,
+            align: ColumnAlign::Left,
+        });
         let mut cells = text.splitn(self.ratios.len(), '|').peekable();
-        let mut out = Vec::with_capacity(self.ratios.len());
         let mut cursor = row_x;
         let mut i = 0;
-        while i < self.ratios.len() {
-            let mut span_w = self.ratios[i] * row_width;
-            let cell_text = cells.next().unwrap_or("");
-            // Absorb following empty columns into this span.
-            let mut j = i + 1;
-            while j < self.ratios.len() {
-                if cells.peek().is_none_or(|text| text.is_empty()) {
-                    cells.next();
-                    span_w += self.ratios[j] * row_width;
-                    j += 1;
-                } else {
-                    break;
+        let configured_cells = std::iter::from_fn(move || {
+            while i < self.ratios.len() {
+                let mut span_w = self.ratios[i] * row_width;
+                let cell_text = cells.next().unwrap_or("");
+                // Absorb following empty columns into this span.
+                let mut j = i + 1;
+                while j < self.ratios.len() {
+                    if cells.peek().is_none_or(|text| text.is_empty()) {
+                        cells.next();
+                        span_w += self.ratios[j] * row_width;
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let column = i;
+                let span_x = cursor;
+                cursor += span_w;
+                i = j;
+                if !cell_text.is_empty() {
+                    return Some(LayoutCell {
+                        text: cell_text,
+                        span_x,
+                        span_w,
+                        align: self.aligns[column],
+                    });
                 }
             }
-            if !cell_text.is_empty() {
-                out.push(LayoutCell {
-                    text: cell_text,
-                    span_x: cursor,
-                    span_w,
-                    align: self.aligns[i],
-                });
-            }
-            cursor += span_w;
-            i = j;
-        }
-        out
+            None
+        });
+        single_cell.into_iter().chain(configured_cells)
     }
 }
 
@@ -680,7 +687,7 @@ mod tests {
     #[test]
     fn column_layout_empty_renders_single_cell() {
         let cl = ColumnLayout::default();
-        let cells = cl.layout_row("only-text", 0.0, 100.0);
+        let cells: Vec<_> = cl.layout_row("only-text", 0.0, 100.0).collect();
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].text, "only-text");
         assert_eq!(cells[0].span_x, 0.0);
@@ -713,11 +720,35 @@ mod tests {
         ] {
             let actual: Vec<_> = layout
                 .layout_row(text, 10.0, 100.0)
-                .into_iter()
                 .map(|cell| (cell.text, cell.span_x, cell.span_w, cell.align))
                 .collect();
             assert_eq!(actual, expected, "{text}");
         }
+    }
+
+    #[test]
+    fn column_layout_streams_borrowed_unicode_cells_and_stays_exhausted() {
+        let layout = ColumnLayout::new(&[
+            (0.25, ColumnAlign::Left),
+            (0.25, ColumnAlign::Center),
+            (0.5, ColumnAlign::Right),
+        ]);
+        let text = String::from("é||🏹|中");
+        let mut cells = layout.layout_row(&text, 10.0, 100.0);
+        let first = cells.next().unwrap();
+        assert_eq!((first.text, first.span_x, first.span_w), ("é", 10.0, 50.0));
+        assert_eq!(first.text.as_ptr(), text.as_ptr());
+        let last = cells.next().unwrap();
+        assert_eq!((last.text, last.span_x, last.span_w), ("🏹|中", 60.0, 50.0));
+        assert_eq!(last.text.as_ptr(), text["é||".len()..].as_ptr());
+        assert!(cells.next().is_none());
+        assert!(cells.next().is_none());
+
+        let empty = ColumnLayout::default();
+        let mut cells = empty.layout_row("", 0.0, 100.0);
+        assert_eq!(cells.next().unwrap().text, "");
+        assert!(cells.next().is_none());
+        assert!(cells.next().is_none());
     }
 
     #[test]
@@ -727,7 +758,7 @@ mod tests {
             (0.5, ColumnAlign::Center),
             (0.25, ColumnAlign::Right),
         ]);
-        let cells = cl.layout_row("a|b|c", 10.0, 100.0);
+        let cells: Vec<_> = cl.layout_row("a|b|c", 10.0, 100.0).collect();
         assert_eq!(cells.len(), 3);
         assert_eq!(
             (cells[0].text, cells[0].span_x, cells[0].span_w),
@@ -753,7 +784,7 @@ mod tests {
             (0.4, ColumnAlign::Left),
         ]);
         // Single-cell text → first column spans the full row width.
-        let cells = cl.layout_row("< New Save >", 0.0, 100.0);
+        let cells: Vec<_> = cl.layout_row("< New Save >", 0.0, 100.0).collect();
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].text, "< New Save >");
         assert_eq!(cells[0].span_x, 0.0);
@@ -769,7 +800,7 @@ mod tests {
         ]);
         // Middle cell empty → first column spans cols 0+1, third column
         // renders at its own offset.
-        let cells = cl.layout_row("a||c", 0.0, 100.0);
+        let cells: Vec<_> = cl.layout_row("a||c", 0.0, 100.0).collect();
         assert_eq!(cells.len(), 2);
         assert_eq!(cells[0].text, "a");
         assert!((cells[0].span_x - 0.0).abs() < 1e-3);
@@ -785,7 +816,7 @@ mod tests {
         // Extra pipes past the column count stay in the trailing cell —
         // the file name column shouldn't swallow a pipe buried in a save
         // display name.
-        let cells = cl.layout_row("a|b|c", 0.0, 100.0);
+        let cells: Vec<_> = cl.layout_row("a|b|c", 0.0, 100.0).collect();
         assert_eq!(cells.len(), 2);
         assert_eq!(cells[0].text, "a");
         assert_eq!(cells[1].text, "b|c");
