@@ -1035,7 +1035,6 @@ pub(crate) fn render_ground_marks(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &PresentationView<'_>,
-    _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
     if host
@@ -1839,7 +1838,6 @@ pub(crate) fn render_selection_outlines_gpu(
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &PresentationView<'_>,
-    _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
     let view = presentation.view;
@@ -2034,7 +2032,6 @@ pub(crate) fn render_bg_animations_gpu(
     engine: &PresentationView<'_>,
     host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
-    _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
     let bg_animation_ids = engine.bg_animation_ids();

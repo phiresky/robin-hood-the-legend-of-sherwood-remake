@@ -434,7 +434,6 @@ pub fn render_hud_text(
     local_seat: PlayerId,
     camera: &ViewportState,
     assets: &LevelAssets,
-    _draw_order: &[EntityId],
     portraits: &PortraitCache,
     renderer: &mut Renderer,
     fonts: &HudFonts,

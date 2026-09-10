@@ -1364,7 +1364,7 @@ fn render_frame_with_hud(
     // Original-game parity: elevation-zero
     // background animations before ShowDetectionPolygon. Elevated patch FX
     // stay in the normal sorted entity pass.
-    render_bg_animations_gpu(engine, host, &presentation, assets, renderer);
+    render_bg_animations_gpu(engine, host, &presentation, renderer);
 
     // Darken the map inside the selected view element's vision cone (if
     // any). The original game draws this immediately after background animations and
@@ -1420,7 +1420,7 @@ fn render_frame_with_hud(
     // Draw the destination markers (ground marks).  Drawn AFTER the
     // selection marks but BEFORE entity rendering, so ground marks
     // render on top of selection circles but behind characters.
-    render_ground_marks(host, &presentation, engine, assets, renderer);
+    render_ground_marks(host, &presentation, engine, renderer);
 
     // ── GPU phase: entity sprites (cached as ARGB textures) ──
     // Display-order sort is hoisted to the main loop so it runs
@@ -1449,7 +1449,7 @@ fn render_frame_with_hud(
     // ── GPU phase: selection / hover outlines ──
     // Draws coloured outline masks for selected PCs and the hovered
     // entity (focused by the cursor).
-    render_selection_outlines_gpu(host, &presentation, engine, assets, renderer);
+    render_selection_outlines_gpu(host, &presentation, engine, renderer);
     // One-frame Mark() consumption happens after the last display-refresh
     // sample, so every presentation of this fixed tick sees the same marks.
 
@@ -1969,7 +1969,6 @@ fn render_frame_with_hud(
             local_seat,
             host.viewport(),
             assets,
-            &host.frontend.presentation.draw_order.ids,
             portrait_cache,
             renderer,
             fonts,
