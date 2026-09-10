@@ -35,6 +35,8 @@ mod resolver;
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 mod sample_cache;
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+use robin_util::asset_fs::AssetBytes;
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 use std::io::Cursor;
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
@@ -255,9 +257,9 @@ fn load_streaming_sound(
 
 /// Both decoder modes use the supplied reader and the same legacy metadata repair.
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-fn read_audio_cursor(files: &SbFileSystem, path: &Path) -> Result<Cursor<Vec<u8>>, String> {
+fn read_audio_cursor(files: &SbFileSystem, path: &Path) -> Result<Cursor<AssetBytes>, String> {
     let bytes = files
-        .read_all(&path.to_string_lossy())
+        .read_shared(&path.to_string_lossy())
         .map_err(|status| format!("audio reader failed for {}: {status}", path.display()))?;
     repair_legacy_vorbis_comment(bytes).map(Cursor::new)
 }
@@ -271,7 +273,8 @@ fn read_audio_cursor(files: &SbFileSystem, path: &Path) -> Result<Cursor<Vec<u8>
 const LEGACY_VORBIS_COMMENT: &[u8] = b"\x03vorbis\x20\0\0\0Xiphophorus libVorbis I 20010813\x01\0\0\0\x1e\0\0\0Sonic Foundry OggVorbis Beta 3\x01";
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-fn repair_legacy_vorbis_comment(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+fn repair_legacy_vorbis_comment(bytes: impl Into<AssetBytes>) -> Result<AssetBytes, String> {
+    let bytes = bytes.into();
     if !bytes.starts_with(b"OggS")
         || !bytes
             .windows(LEGACY_VORBIS_COMMENT.len())
@@ -313,7 +316,7 @@ fn repair_legacy_vorbis_comment(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     }
     if repaired {
         tracing::debug!("normalized legacy Sonic Foundry Vorbis encoder comment");
-        Ok(writer.into_inner())
+        Ok(writer.into_inner().into())
     } else {
         Ok(bytes)
     }
@@ -942,7 +945,7 @@ mod tests {
         }
         let original = writer.into_inner();
         let repaired = repair_legacy_vorbis_comment(original.clone()).unwrap();
-        assert_ne!(repaired, original);
+        assert_ne!(repaired.as_ref(), original);
         // PacketReader validates CRCs in the rewritten container as well.
         let mut reader = ogg::PacketReader::new(Cursor::new(&repaired));
         for (index, expected) in packets.iter().enumerate() {
@@ -963,8 +966,10 @@ mod tests {
         }
         assert!(reader.read_packet().unwrap().is_none());
         assert_eq!(
-            repair_legacy_vorbis_comment(repaired.clone()).unwrap(),
-            repaired
+            repair_legacy_vorbis_comment(repaired.clone())
+                .unwrap()
+                .as_ref(),
+            repaired.as_ref()
         );
     }
 
@@ -979,11 +984,16 @@ mod tests {
             .unwrap();
         let original = writer.into_inner();
         assert_eq!(
-            repair_legacy_vorbis_comment(original.clone()).unwrap(),
+            repair_legacy_vorbis_comment(original.clone())
+                .unwrap()
+                .as_ref(),
             original
         );
         let wav = b"RIFF non-Ogg input".to_vec();
-        assert_eq!(repair_legacy_vorbis_comment(wav.clone()).unwrap(), wav);
+        assert_eq!(
+            repair_legacy_vorbis_comment(wav.clone()).unwrap().as_ref(),
+            wav
+        );
     }
 
     #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
@@ -995,7 +1005,11 @@ mod tests {
             let path = Path::new(&root).join("DATA/Musics").join(name);
             let bytes = std::fs::read(&path).expect("read original music");
             let repaired = repair_legacy_vorbis_comment(bytes.clone()).unwrap();
-            assert_ne!(repaired, bytes, "fixture must contain legacy comment");
+            assert_ne!(
+                repaired.as_ref(),
+                bytes,
+                "fixture must contain legacy comment"
+            );
             let original = StaticSoundData::from_cursor(Cursor::new(bytes)).unwrap();
             let normalized = StaticSoundData::from_cursor(Cursor::new(repaired)).unwrap();
             assert_eq!(normalized.sample_rate, original.sample_rate);
@@ -1037,6 +1051,27 @@ mod tests {
             resolver::resolve_music(&files, wav.to_str().unwrap()).unwrap(),
             ogg
         );
+    }
+
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    #[test]
+    fn audio_cursor_reuses_shared_bytes_and_survives_asset_replacement() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let path = Path::new("Data/Sounds/shared-cursor.wav");
+        let bytes = one_second_wav();
+        assets.install_preloaded_asset(path, bytes.clone()).unwrap();
+        let files = SbFileSystem::new(assets.clone());
+        let shared = files.read_shared(path.to_str().unwrap()).unwrap();
+        let cursor = read_audio_cursor(&files, path).unwrap();
+        assert_eq!(cursor.get_ref().as_ptr(), shared.as_ptr());
+        assets
+            .install_preloaded_asset(path, vec![0; bytes.len()])
+            .unwrap();
+        drop(shared);
+        drop(files);
+        drop(assets);
+        assert_eq!(cursor.get_ref().as_ref(), bytes);
+        assert!(StaticSoundData::from_cursor(cursor).is_ok());
     }
 
     #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
