@@ -700,8 +700,8 @@ impl SaveGameManager {
         self.reconcile_quick_slots()?;
         // Validate and serialize before touching either published quick slot.
         // A failed capture must not rotate a player's recoverable saves.
-        let mut current = self
-            .find_by_filename(save_file::special_slots::QUICK)
+        let quick_index = self.find_by_filename(save_file::special_slots::QUICK);
+        let mut current = quick_index
             .map(|index| self.catalog[index].clone())
             .unwrap_or_else(|| {
                 SaveGame::new(
@@ -730,7 +730,7 @@ impl SaveGameManager {
         let mut recovery = QuickSaveRecovery {
             slots: vec![(current, Sha256::digest(&bytes).into())],
         };
-        if let Some(index) = self.find_by_filename(save_file::special_slots::QUICK)
+        if let Some(index) = quick_index
             && self.slot_file_exists(index)
         {
             let previous_digest = recovery::payload_digest(&self.save_path(index))
@@ -748,7 +748,7 @@ impl SaveGameManager {
         }
         save_file::atomic_write(&self.quick_recovery_path(), &serde_json::to_vec(&recovery)?)?;
         // Rotate: QuickSave → ExQuickSave
-        if let Some(quick_idx) = self.find_by_filename(save_file::special_slots::QUICK)
+        if let Some(quick_idx) = quick_index
             && self.slot_file_exists(quick_idx)
         {
             // Ensure an ExQuickSave slot exists, then copy the file.
