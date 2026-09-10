@@ -179,9 +179,11 @@ impl TouchClassifier {
                 if matches!(self.state, GestureState::PointerDrag { .. }) {
                     output.push(TouchOutput::PointerCancel);
                 }
-                let (first, second) = self.two_points();
-                let ((first_x, first_y), (second_x, second_y)) = self.two_origins();
-                let (centroid_x, centroid_y, distance) = transform_geometry(first, second);
+                let (first, second) = self.two_touches();
+                let (first_x, first_y) = first.origin();
+                let (second_x, second_y) = second.origin();
+                let (centroid_x, centroid_y, distance) =
+                    transform_geometry(first.current(), second.current());
                 self.state = GestureState::Transform {
                     last_centroid_x: centroid_x,
                     last_centroid_y: centroid_y,
@@ -214,7 +216,7 @@ impl TouchClassifier {
     }
 
     pub(crate) fn moved(&mut self, id: u64, x: f64, y: f64, now_ms: u32) -> Vec<TouchOutput> {
-        if self.ignored_touches.contains(&id) || !self.touches.contains_key(&id) {
+        if self.ignored_touches.contains(&id) {
             return Vec::new();
         }
         let Some(point) = self.touches.get_mut(&id) else {
@@ -337,25 +339,17 @@ impl TouchClassifier {
             }
             return Vec::new();
         }
-        if !self.touches.contains_key(&id) {
+        let Some(point) = self.touches.get(&id) else {
             return Vec::new();
-        }
+        };
         let final_transform_update = !cancelled
             && matches!(self.state, GestureState::Transform { .. })
-            && self
-                .touches
-                .get(&id)
-                .is_some_and(|point| point.x != x || point.y != y);
+            && (point.x != x || point.y != y);
         let mut output = if final_transform_update {
             self.moved(id, x, y, now_ms)
         } else {
             Vec::new()
         };
-        let Some(point) = self.touches.get_mut(&id) else {
-            return Vec::new();
-        };
-        point.x = x;
-        point.y = y;
         let state = self.state;
         output.extend(match state {
             GestureState::PendingTap {
@@ -444,32 +438,14 @@ impl TouchClassifier {
     }
 
     fn two_points(&self) -> ((f64, f64), (f64, f64)) {
-        let mut values = self.touches.values().copied();
-        let first = values
-            .next()
-            .expect("two-point gesture lost first touch")
-            .current();
-        let second = values
-            .next()
-            .expect("two-point gesture lost second touch")
-            .current();
-        assert!(
-            values.next().is_none(),
-            "touch classifier tracked too many pointers"
-        );
-        (first, second)
+        let (first, second) = self.two_touches();
+        (first.current(), second.current())
     }
 
-    fn two_origins(&self) -> ((f64, f64), (f64, f64)) {
+    fn two_touches(&self) -> (TouchPoint, TouchPoint) {
         let mut values = self.touches.values().copied();
-        let first = values
-            .next()
-            .expect("two-point gesture lost first touch")
-            .origin();
-        let second = values
-            .next()
-            .expect("two-point gesture lost second touch")
-            .origin();
+        let first = values.next().expect("two-point gesture lost first touch");
+        let second = values.next().expect("two-point gesture lost second touch");
         assert!(
             values.next().is_none(),
             "touch classifier tracked too many pointers"
@@ -507,6 +483,58 @@ fn distance(first: (f64, f64), second: (f64, f64)) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_contact_updates_leave_each_gesture_unchanged() {
+        let mut touch = TouchClassifier::default();
+        for phase in 0..5 {
+            match phase {
+                1 => {
+                    touch.started(1, 10.0, 20.0, 0);
+                }
+                2 => {
+                    touch.moved(1, 40.0, 20.0, 10);
+                }
+                3 => {
+                    touch.started(2, 60.0, 20.0, 20);
+                }
+                4 => {
+                    touch.ended(1, 45.0, 20.0, 30, false);
+                }
+                _ => {}
+            }
+            let before = serde_json::to_value(&touch).unwrap();
+            assert!(touch.moved(99, 100.0, 200.0, 40).is_empty());
+            assert!(touch.ended(99, 100.0, 200.0, 50, false).is_empty());
+            assert!(touch.ended(99, 100.0, 200.0, 60, true).is_empty());
+            assert_eq!(serde_json::to_value(&touch).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn transform_uses_origins_for_start_and_current_points_for_geometry() {
+        let mut touch = TouchClassifier::default();
+        touch.started(20, 10.0, 20.0, 0);
+        touch.moved(20, 14.0, 20.0, 10);
+        assert_eq!(
+            touch.started(10, 30.0, 20.0, 20),
+            vec![TouchOutput::TransformStart {
+                first_x: 30.0,
+                first_y: 20.0,
+                second_x: 10.0,
+                second_y: 20.0,
+            }]
+        );
+        assert!(matches!(
+            touch.state,
+            GestureState::Transform {
+                last_centroid_x: 22.0,
+                last_centroid_y: 20.0,
+                last_distance: 16.0,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn tap_is_emitted_as_atomic_release_classified_click() {
