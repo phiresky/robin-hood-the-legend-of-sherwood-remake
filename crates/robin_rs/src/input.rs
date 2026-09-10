@@ -19,7 +19,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::gfx_types::{GameEvent, Keycode};
+use crate::gfx_types::GameEvent;
+#[cfg(test)]
+use crate::gfx_types::Keycode;
 
 /// Mouse button identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -208,29 +210,10 @@ impl ThreadedInput {
             .push(GameEvent::MouseUp(x, y, Self::event_button(button)));
     }
 
-    /// Simulate a key press by enqueuing a synthetic `KeyDown` event.
-    /// No in-game caller exists today; kept so any future synthetic-key
-    /// path doesn't have to re-introduce the queue.
-    pub fn push_key(&mut self, physical_key: KeyCode) {
-        self.synthetic_events.push(GameEvent::KeyDown {
-            physical_key: Some(physical_key),
-            keycode: Keycode::Unknown,
-        });
-    }
-
-    /// Simulate a key release.  See [`push_key`](Self::push_key).
-    pub fn release_key(&mut self, physical_key: KeyCode) {
-        self.synthetic_events.push(GameEvent::KeyUp {
-            physical_key: Some(physical_key),
-            keycode: Keycode::Unknown,
-        });
-    }
-
     /// Drain synthetic events queued by in-process input producers.
     ///
-    /// Mirrors the original queued-input handoff for generated mouse
-    /// motion/buttons and keyboard presses; platform events still enter
-    /// through the direct per-frame `GameEvent` pipeline.
+    /// Hands off generated mouse motion and button events. Platform keyboard
+    /// and mouse events enter through the direct per-frame `GameEvent` pipeline.
     pub fn drain_synthetic_events(&mut self) -> Vec<GameEvent> {
         std::mem::take(&mut self.synthetic_events)
     }
@@ -537,28 +520,6 @@ mod tests {
         ti.push_button(MouseButton::Left);
         ti.set_enabled(true);
         assert!(ti.drain_synthetic_events().is_empty());
-    }
-
-    #[test]
-    fn synthetic_keys_drain_as_game_events() {
-        let mut ti = ThreadedInput::new();
-        ti.push_key(KeyCode::Backspace);
-        ti.release_key(KeyCode::Backspace);
-        let evs = ti.drain_synthetic_events();
-        assert!(matches!(
-            evs[0],
-            GameEvent::KeyDown {
-                physical_key: Some(KeyCode::Backspace),
-                ..
-            }
-        ));
-        assert!(matches!(
-            evs[1],
-            GameEvent::KeyUp {
-                physical_key: Some(KeyCode::Backspace),
-                ..
-            }
-        ));
     }
 
     #[test]
