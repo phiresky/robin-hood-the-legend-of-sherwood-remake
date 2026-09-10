@@ -5,8 +5,8 @@
 //! pre-baked, then in the GPU phase iterates `engine.titbit_manager()
 //! .titbits()` and queues each one as a textured GPU draw.
 //!
-//! Sprite frames are uploaded through the wgpu renderer and cached by surface
-//! id; this module owns only the game-facing row/frame metadata.
+//! This module owns the uploaded frame textures and row metadata; draws borrow
+//! their views into the renderer's frame queue.
 //!
 //! The data side (`TitbitManager`, `TitbitInfo`, lifecycle) lives in
 //! `robin_engine::titbit`.
@@ -18,7 +18,6 @@ use crate::host::HostTitbitPreview;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PresentationView;
-use robin_engine::graphic_config::TextureScaleMode;
 
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
 use robin_assets::resource_manager::ResourceManager;
@@ -155,7 +154,7 @@ impl TitbitRenderer {
     }
 
     /// Load all titbit sprite rows from the resource manager and upload
-    /// them as GPU textures owned by `creator`.
+    /// retain the GPU textures in this renderer.
     ///
     /// `shadow_color` is the current ambience's night color
     /// (`engine.weather().night_color`).  Pass `0` to use the day default.
@@ -164,7 +163,6 @@ impl TitbitRenderer {
         resource_manager: &mut ResourceManager,
         gpu: &crate::window::GpuContext,
         shadow_color: u16,
-        scale_mode: TextureScaleMode,
     ) {
         let shadow_color = if shadow_color == 0 {
             DEFAULT_SHADOW_COLOR
@@ -204,7 +202,6 @@ impl TitbitRenderer {
                 wipe_shadow,
                 shadow_level,
                 alpha_mode,
-                scale_mode,
             );
             if !frames.is_empty() {
                 total_frames += frames.len();
@@ -814,7 +811,6 @@ fn floor_bottom(anchor: f32, extent: u16) -> i32 {
 /// (`0x001F`) replaced by the day-ambience shadow color, and that shadow
 /// color baked to a semi-transparent alpha so the GPU blend produces
 /// the same dim grey shadow effect as the original software blit path.
-#[allow(clippy::too_many_arguments)]
 fn load_row(
     resource_manager: &mut ResourceManager,
     gpu: &crate::window::GpuContext,
@@ -823,7 +819,6 @@ fn load_row(
     wipe_shadow: bool,
     shadow_level: u16,
     alpha_mode: TitbitAlphaMode,
-    _scale_mode: TextureScaleMode,
 ) -> Vec<TitbitFrame> {
     let pictures = match resource_manager.get_pictures(resource_id) {
         Ok(p) => p,
@@ -880,40 +875,13 @@ fn load_row(
             alpha_mode,
         );
 
-        let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&format!("titbit res={resource_id}")),
-            size: wgpu::Extent3d {
-                width: crop_w as u32,
-                height: crop_h as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+        let (tex, view) = crate::renderer::upload_rgba_texture(
+            gpu,
             &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(crop_w as u32 * 4),
-                rows_per_image: Some(crop_h as u32),
-            },
-            wgpu::Extent3d {
-                width: crop_w as u32,
-                height: crop_h as u32,
-                depth_or_array_layers: 1,
-            },
+            crop_w as u32,
+            crop_h as u32,
+            &format!("titbit res={resource_id}"),
         );
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         frames.push(TitbitFrame {
             _texture: tex,

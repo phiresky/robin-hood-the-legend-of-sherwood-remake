@@ -882,12 +882,9 @@ impl MissionPresentation {
             &self.renderer,
             shadow_color,
         );
-        self.sprites.titbit_renderer.load(
-            &mut resources.cursor,
-            gpu,
-            shadow_color,
-            self.renderer.scale_mode(),
-        );
+        self.sprites
+            .titbit_renderer
+            .load(&mut resources.cursor, gpu, shadow_color);
     }
 }
 
