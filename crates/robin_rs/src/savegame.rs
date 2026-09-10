@@ -860,7 +860,7 @@ impl SaveGameManager {
                 let bytes =
                     serde_json::to_vec_pretty(&save).context("serialize owned save payload")?;
                 let receipt = SpecialSaveRecovery {
-                    slot: metadata.clone(),
+                    slot: metadata,
                     digest: Sha256::digest(&bytes).into(),
                 };
                 persistence::publish_payload(&recovery_path, &path, &receipt, &bytes, true)?;
@@ -869,7 +869,7 @@ impl SaveGameManager {
                 {
                     tracing::warn!("Owned save thumbnail failed (payload completed): {err:#}");
                 }
-                Ok(metadata)
+                Ok(receipt.slot)
             })?;
             Ok(SaveWriteStatus::Queued)
         }
@@ -1577,7 +1577,7 @@ impl SaveGameManager {
         );
         metadata.validate_published_metadata()?;
         let receipt = SpecialSaveRecovery {
-            slot: metadata.clone(),
+            slot: metadata,
             digest: Sha256::digest(bytes).into(),
         };
         let overwrite =
@@ -1622,7 +1622,7 @@ impl SaveGameManager {
             return Err(error).context("save payload publication failed");
         }
         self.publish_thumbnail(index, thumbnail);
-        let result = self.finish_publication(index, metadata);
+        let result = self.finish_publication(index, receipt.slot);
         if let Err(error) = &result {
             self.operation_error = Some(format!(
                 "save index publication failed: {error:#}; reopen the save store"
