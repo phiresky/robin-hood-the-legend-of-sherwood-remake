@@ -28,16 +28,6 @@ pub struct AchievementBadgePresentation {
     pub earned: bool,
 }
 
-/// One campaign- or lifetime-envelope result, kept separate from the
-/// per-mission badge row so the UI never turns an aggregate status into a
-/// fabricated mission award.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AchievementAggregationPresentation {
-    pub badge: AchievementBadgePresentation,
-    pub progress: AchievementAggregationProgress,
-    pub compact_status: String,
-}
-
 fn badge_presentation(
     id: AchievementId,
     earned: robin_engine::achievement::AchievementSet,
@@ -115,19 +105,13 @@ pub fn format_aggregation_progress(progress: AchievementAggregationProgress) -> 
     }
 }
 
-pub fn achievement_aggregation_presentations(
+/// Count only permanent-envelope achievements, without formatting badge labels.
+pub(crate) fn permanent_achievement_counts(
     summary: AchievementAggregationSummary,
-) -> Vec<AchievementAggregationPresentation> {
-    permanent_badge_presentations(summary.earned())
-        .map(|badge| {
-            let progress = summary.get(badge.id);
-            AchievementAggregationPresentation {
-                badge,
-                progress,
-                compact_status: format_aggregation_progress(progress),
-            }
-        })
-        .collect()
+) -> (usize, usize) {
+    permanent_badge_ids().fold((0, 0), |(earned, total), id| {
+        (earned + usize::from(summary.get(id).earned()), total + 1)
+    })
 }
 
 fn evaluation_mark(evaluation: AchievementEvaluation) -> &'static str {
@@ -368,8 +352,8 @@ pub fn render_trackers(
 #[cfg(test)]
 mod tests {
     use super::{
-        achievement_aggregation_presentations, format_aggregation_progress, format_attempt_summary,
-        format_speedrun_time, mission_badge_presentations,
+        format_aggregation_progress, format_attempt_summary, format_speedrun_time,
+        mission_badge_presentations, permanent_achievement_counts,
     };
 
     #[test]
@@ -445,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_presentations_keep_four_typed_statuses_distinct() {
+    fn aggregate_counts_and_formatting_keep_four_typed_statuses_distinct() {
         use robin_engine::achievement::{
             AchievementAggregationInput, AchievementAggregationStatus, AchievementId,
             AchievementSet,
@@ -475,29 +459,36 @@ mod tests {
                     ..Default::default()
                 },
             });
-        let presentations = achievement_aggregation_presentations(summary);
-
+        for (id, status, text) in [
+            (
+                AchievementId::CleanHands,
+                AchievementAggregationStatus::InProgress,
+                "IN PROGRESS 1/3",
+            ),
+            (
+                AchievementId::Ghost,
+                AchievementAggregationStatus::Earned,
+                "MET 3/3",
+            ),
+            (
+                AchievementId::PileOBones,
+                AchievementAggregationStatus::Unverifiable,
+                "N/A 0/1",
+            ),
+            (
+                super::permanent_badge_ids().nth(3).unwrap(),
+                AchievementAggregationStatus::MissingRequirements,
+                "MISSING 0/1",
+            ),
+        ] {
+            let progress = summary.get(id);
+            assert_eq!(progress.status, status);
+            assert_eq!(format_aggregation_progress(progress), text);
+        }
         assert_eq!(
-            presentations[0].progress.status,
-            AchievementAggregationStatus::InProgress
+            permanent_achievement_counts(summary),
+            (1, super::permanent_badge_ids().count())
         );
-        assert_eq!(presentations[0].compact_status, "IN PROGRESS 1/3");
-        assert_eq!(
-            presentations[1].progress.status,
-            AchievementAggregationStatus::Earned
-        );
-        assert!(presentations[1].badge.earned);
-        assert_eq!(presentations[1].compact_status, "MET 3/3");
-        assert_eq!(
-            presentations[2].progress.status,
-            AchievementAggregationStatus::Unverifiable
-        );
-        assert_eq!(presentations[2].compact_status, "N/A 0/1");
-        assert_eq!(
-            presentations[3].progress.status,
-            AchievementAggregationStatus::MissingRequirements
-        );
-        assert_eq!(presentations[3].compact_status, "MISSING 0/1");
         assert_eq!(
             summary.earned(),
             AchievementSet::from_ids([AchievementId::Ghost])

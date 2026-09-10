@@ -1971,19 +1971,12 @@ fn render_achievement_aggregation_summary(
     font: &Font,
     y: i32,
 ) {
-    let entries = crate::achievement_hud::achievement_aggregation_presentations(summary);
-    let earned = entries
-        .iter()
-        .filter(|entry| entry.progress.earned())
-        .count();
+    let (earned, total) = crate::achievement_hud::permanent_achievement_counts(summary);
     layout::render_text_virt_font(
         renderer,
         font,
         transform,
-        &format!(
-            "{scope_label}: {earned}/{} achievements earned",
-            entries.len()
-        ),
+        &format!("{scope_label}: {earned}/{total} achievements earned"),
         25,
         y,
     );
