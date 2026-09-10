@@ -55,13 +55,6 @@ impl StatureButton {
             StatureButton::Down => PlayerCommand::CrouchDown,
         }
     }
-
-    fn index(self) -> usize {
-        match self {
-            StatureButton::Up => 0,
-            StatureButton::Down => 1,
-        }
-    }
 }
 
 /// Per-frame enable mask derived from [`Stature`] and the focus-latch
@@ -421,7 +414,7 @@ pub fn draw_with_sprites(
 /// `ZoomTooltipTracker` exactly — shared HUD hover delay.
 #[derive(Default, Clone)]
 pub struct StatureTooltipTracker {
-    inner: crate::ui_panel::RequirementsTooltipTracker,
+    inner: crate::ui_panel::HoverTooltipTracker<StatureButton>,
 }
 
 impl StatureTooltipTracker {
@@ -430,15 +423,11 @@ impl StatureTooltipTracker {
     }
 
     pub fn update(&mut self, hovered: Option<StatureButton>) {
-        self.inner.update(hovered.map(StatureButton::index));
+        self.inner.update(hovered);
     }
 
     pub fn ready_button(&self) -> Option<StatureButton> {
-        self.inner.ready_slot().and_then(|i| match i {
-            0 => Some(StatureButton::Up),
-            1 => Some(StatureButton::Down),
-            _ => None,
-        })
+        self.inner.ready_slot()
     }
 }
 

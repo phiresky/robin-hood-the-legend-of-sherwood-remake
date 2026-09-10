@@ -59,18 +59,6 @@ pub enum SherwoodButton {
     SherwoodTrading,
 }
 
-impl SherwoodButton {
-    fn index(self) -> usize {
-        match self {
-            SherwoodButton::DisplayCampaignMap => 0,
-            SherwoodButton::GoToExit => 1,
-            SherwoodButton::StartMission => 2,
-            SherwoodButton::QuitMission => 3,
-            SherwoodButton::SherwoodTrading => 4,
-        }
-    }
-}
-
 /// Which Sherwood buttons are interactable this frame.
 ///
 /// The enable toggles are derived from initialization (GoToExit
@@ -592,11 +580,11 @@ pub fn draw_with_sprites(
 }
 
 /// Hover tracker for the four Sherwood button tooltips.  Thin wrapper
-/// around the shared `RequirementsTooltipTracker` keyed on
-/// [`SherwoodButton::index`], matching [`crate::zoom_hud::ZoomTooltipTracker`].
+/// around the shared hover tracker keyed directly on `SherwoodButton`,
+/// matching [`crate::zoom_hud::ZoomTooltipTracker`].
 #[derive(Default, Clone)]
 pub struct SherwoodTooltipTracker {
-    inner: crate::ui_panel::RequirementsTooltipTracker,
+    inner: crate::ui_panel::HoverTooltipTracker<SherwoodButton>,
 }
 
 impl SherwoodTooltipTracker {
@@ -605,18 +593,11 @@ impl SherwoodTooltipTracker {
     }
 
     pub fn update(&mut self, hovered: Option<SherwoodButton>) {
-        self.inner.update(hovered.map(SherwoodButton::index));
+        self.inner.update(hovered);
     }
 
     pub fn ready_button(&self) -> Option<SherwoodButton> {
-        self.inner.ready_slot().and_then(|i| match i {
-            0 => Some(SherwoodButton::DisplayCampaignMap),
-            1 => Some(SherwoodButton::GoToExit),
-            2 => Some(SherwoodButton::StartMission),
-            3 => Some(SherwoodButton::QuitMission),
-            4 => Some(SherwoodButton::SherwoodTrading),
-            _ => None,
-        })
+        self.inner.ready_slot()
     }
 }
 

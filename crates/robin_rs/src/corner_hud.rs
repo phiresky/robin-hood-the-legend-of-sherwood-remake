@@ -53,16 +53,6 @@ pub enum CornerButton {
     QuickStart,
 }
 
-impl CornerButton {
-    fn index(self) -> usize {
-        match self {
-            CornerButton::Clock => 0,
-            CornerButton::Sight => 1,
-            CornerButton::QuickStart => 2,
-        }
-    }
-}
-
 /// Per-button enable / pressed state for this frame.
 ///
 /// - Clock: always drawable; click is gated on a PC being selected.
@@ -465,7 +455,7 @@ pub fn draw_with_sprites(
 /// `ZoomTooltipTracker`.
 #[derive(Default, Clone)]
 pub struct CornerTooltipTracker {
-    inner: crate::ui_panel::RequirementsTooltipTracker,
+    inner: crate::ui_panel::HoverTooltipTracker<CornerButton>,
 }
 
 impl CornerTooltipTracker {
@@ -474,16 +464,11 @@ impl CornerTooltipTracker {
     }
 
     pub fn update(&mut self, hovered: Option<CornerButton>) {
-        self.inner.update(hovered.map(CornerButton::index));
+        self.inner.update(hovered);
     }
 
     pub fn ready_button(&self) -> Option<CornerButton> {
-        self.inner.ready_slot().and_then(|i| match i {
-            0 => Some(CornerButton::Clock),
-            1 => Some(CornerButton::Sight),
-            2 => Some(CornerButton::QuickStart),
-            _ => None,
-        })
+        self.inner.ready_slot()
     }
 }
 

@@ -3193,23 +3193,35 @@ pub const REQUIREMENTS_TOOLTIP_DELAY_TICKS: u32 = 75;
 /// [`hit_test_requirements_bar`] rather than on a `WidgetId`.  The
 /// counter is frame-count-based (not wall-clock), so pausing the frame
 /// loop pauses the delay too.
-#[derive(Default, Clone)]
-pub struct RequirementsTooltipTracker {
-    hovered_slot: Option<usize>,
+pub type RequirementsTooltipTracker = HoverTooltipTracker<usize>;
+
+/// Fixed-tick hover delay retaining the caller's target type without slot conversions.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct HoverTooltipTracker<T> {
+    hovered_slot: Option<T>,
     /// Ticks accumulated with the cursor on `hovered_slot`.  Saturates
     /// at `u32::MAX` so a very long idle hover can't wrap back below
     /// the threshold.
     hover_ticks: u32,
 }
 
-impl RequirementsTooltipTracker {
+impl<T> Default for HoverTooltipTracker<T> {
+    fn default() -> Self {
+        Self {
+            hovered_slot: None,
+            hover_ticks: 0,
+        }
+    }
+}
+
+impl<T: Copy + PartialEq> HoverTooltipTracker<T> {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Call once per frame with the slot currently under the cursor.
     /// Resets the tick counter when the target slot changes.
-    pub fn update(&mut self, hovered: Option<usize>) {
+    pub fn update(&mut self, hovered: Option<T>) {
         if hovered != self.hovered_slot {
             self.hovered_slot = hovered;
             self.hover_ticks = 0;
@@ -3221,7 +3233,7 @@ impl RequirementsTooltipTracker {
     /// Returns `Some(slot_idx)` when the cursor has been idle over the
     /// same slot long enough for the tooltip to appear.  Strictly
     /// greater-than the threshold.
-    pub fn ready_slot(&self) -> Option<usize> {
+    pub fn ready_slot(&self) -> Option<T> {
         let idx = self.hovered_slot?;
         if self.hover_ticks > REQUIREMENTS_TOOLTIP_DELAY_TICKS {
             Some(idx)
@@ -4545,6 +4557,29 @@ mod tests {
             }),
             MT_INFOBULLE_QG_OTHER_PC
         );
+    }
+
+    #[test]
+    fn typed_hover_tracker_preserves_delay_reset_and_saturation() {
+        use crate::corner_hud::CornerButton;
+        let mut tracker = HoverTooltipTracker::<CornerButton>::new();
+        assert_eq!(tracker.ready_slot(), None);
+        tracker.update(Some(CornerButton::Sight));
+        for _ in 0..REQUIREMENTS_TOOLTIP_DELAY_TICKS {
+            tracker.update(Some(CornerButton::Sight));
+        }
+        assert_eq!(tracker.ready_slot(), None);
+        tracker.update(Some(CornerButton::Sight));
+        assert_eq!(tracker.ready_slot(), Some(CornerButton::Sight));
+        tracker.hover_ticks = u32::MAX;
+        tracker.update(Some(CornerButton::Sight));
+        assert_eq!(tracker.hover_ticks, u32::MAX);
+        assert_eq!(tracker.ready_slot(), Some(CornerButton::Sight));
+        tracker.update(Some(CornerButton::Clock));
+        assert_eq!(tracker.ready_slot(), None);
+        assert_eq!(tracker.hover_ticks, 0);
+        tracker.update(None);
+        assert_eq!(tracker.ready_slot(), None);
     }
 
     #[test]

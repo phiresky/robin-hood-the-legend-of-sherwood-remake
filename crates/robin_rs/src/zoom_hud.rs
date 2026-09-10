@@ -45,16 +45,6 @@ pub enum ZoomButton {
     ZoomDown,
 }
 
-impl ZoomButton {
-    /// Stable slot index used by the tooltip tracker.
-    fn index(self) -> usize {
-        match self {
-            ZoomButton::ZoomUp => 0,
-            ZoomButton::ZoomDown => 1,
-        }
-    }
-}
-
 /// Which zoom buttons are interactable this frame.
 ///
 /// Derived from `Engine::is_zoom_possible`, `is_zoom_up_possible`
@@ -366,12 +356,12 @@ pub fn draw_with_sprites(
 }
 
 /// Hover tracker for the zoom button tooltips.  Thin wrapper around the
-/// shared `RequirementsTooltipTracker` that keys on a `ZoomButton` slot
-/// index (0 = up, 1 = down).  See `RequirementsTooltipTracker` docs
+/// shared hover tracker keyed directly on `ZoomButton`. See
+/// `RequirementsTooltipTracker` docs
 /// for the delay semantics.
 #[derive(Default, Clone)]
 pub struct ZoomTooltipTracker {
-    inner: crate::ui_panel::RequirementsTooltipTracker,
+    inner: crate::ui_panel::HoverTooltipTracker<ZoomButton>,
 }
 
 impl ZoomTooltipTracker {
@@ -380,18 +370,14 @@ impl ZoomTooltipTracker {
     }
 
     pub fn update(&mut self, hovered: Option<ZoomButton>) {
-        self.inner.update(hovered.map(ZoomButton::index));
+        self.inner.update(hovered);
     }
 
     /// Returns the zoom button whose tooltip is currently ready to
     /// paint, or `None` when the hover hasn't crossed the idle
     /// threshold yet.
     pub fn ready_button(&self) -> Option<ZoomButton> {
-        self.inner.ready_slot().and_then(|i| match i {
-            0 => Some(ZoomButton::ZoomUp),
-            1 => Some(ZoomButton::ZoomDown),
-            _ => None,
-        })
+        self.inner.ready_slot()
     }
 }
 
