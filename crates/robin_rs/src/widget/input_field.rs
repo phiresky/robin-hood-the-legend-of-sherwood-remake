@@ -287,27 +287,22 @@ impl WidgetInputField {
 
             match key {
                 KeyCode::ArrowLeft => {
-                    if self.caret_offset > 0 {
-                        self.caret_offset -= 1;
-                    }
+                    self.move_caret_left();
+                    // Keyboard navigation reveals the caret even at an endpoint.
                     self.caret_visible = true;
                     return Vec::new();
                 }
                 KeyCode::ArrowRight => {
-                    if self.caret_offset < self.edit_text.chars().count() {
-                        self.caret_offset += 1;
-                    }
+                    self.move_caret_right();
                     self.caret_visible = true;
                     return Vec::new();
                 }
                 KeyCode::Home => {
-                    self.caret_offset = 0;
-                    self.caret_visible = true;
+                    self.move_caret_home();
                     return Vec::new();
                 }
                 KeyCode::End => {
-                    self.caret_offset = self.edit_text.chars().count();
-                    self.caret_visible = true;
+                    self.move_caret_end();
                     return Vec::new();
                 }
                 KeyCode::Backspace => return self.remove_before_caret().into_iter().collect(),
@@ -621,6 +616,39 @@ mod tests {
             text_input: text,
             capture: None,
         }
+    }
+
+    #[test]
+    fn keyboard_navigation_uses_scalar_offsets_and_reveals_endpoint_carets() {
+        for (key, start, expected) in [
+            (KeyCode::ArrowLeft, 0, 0),
+            (KeyCode::ArrowLeft, 2, 1),
+            (KeyCode::ArrowRight, 3, 3),
+            (KeyCode::ArrowRight, 1, 2),
+            (KeyCode::Home, 2, 0),
+            (KeyCode::End, 1, 3),
+        ] {
+            let mut field = make_editable_field();
+            field.set_text("é🏹中");
+            field.caret_offset = start;
+            field.caret_visible = true;
+            let mut raw = crate::input::KeyboardState::default();
+            let mut keyboard = UiKeyboard::default();
+            keyboard.refresh(&raw, 0);
+            raw.keys.insert(key);
+            keyboard.refresh(&raw, 1);
+            raw.keys.clear();
+            keyboard.refresh(&raw, 2);
+            assert!(field.process_input(&make_input(&keyboard, "")).is_empty());
+            assert_eq!(field.caret_offset, expected);
+            assert_eq!(field.edit_text, "é🏹中");
+            assert!(field.caret_visible);
+        }
+        let mut direct = make_editable_field();
+        direct.caret_visible = false;
+        direct.move_caret_left();
+        direct.move_caret_right();
+        assert!(!direct.caret_visible);
     }
 
     #[test]
