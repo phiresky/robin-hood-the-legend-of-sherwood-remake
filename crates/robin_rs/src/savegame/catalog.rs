@@ -175,16 +175,15 @@ impl SlotCatalog {
     }
 
     pub(super) fn sort_by_time(&mut self) {
-        self.entries.sort_by(|a, b| {
-            match (
-                a.metadata.timestamp.parse::<u64>().ok(),
-                b.metadata.timestamp.parse::<u64>().ok(),
-            ) {
-                (Some(a), Some(b)) => a.cmp(&b),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => a.name.as_str().cmp(b.name.as_str()),
-            }
+        self.entries.sort_by_cached_key(|entry| {
+            let timestamp = entry.metadata.timestamp.parse::<u64>().ok();
+            // Parse once per row. Valid equal timestamps retain insertion
+            // order; malformed legacy timestamps sort last, by slot name.
+            (
+                timestamp.is_none(),
+                timestamp,
+                timestamp.is_none().then(|| entry.name.as_str().to_owned()),
+            )
         });
     }
 
@@ -284,6 +283,42 @@ mod tests {
         slot.blazons = Some(0);
         slot.amulets = Some(0);
         slot
+    }
+
+    #[test]
+    fn timestamp_sort_preserves_equal_time_order_and_handle_identity() {
+        let mut catalog = SlotCatalog::default();
+        let mut handles = Vec::new();
+        for (name, timestamp) in [
+            ("BadZ", "invalid"),
+            ("Later", "10"),
+            ("TieZ", "2"),
+            ("BadA", "18446744073709551616"),
+            ("TieA", "02"),
+            ("First", "0"),
+            ("Maximum", "18446744073709551615"),
+        ] {
+            let mut metadata = SaveGame::new(name.into(), name.into(), 1);
+            metadata.timestamp = timestamp.into();
+            catalog.insert_fixture(metadata, SlotState::Draft);
+            handles.push(catalog.handle(catalog.len() - 1).unwrap());
+        }
+        for _ in 0..2 {
+            catalog.sort_by_time();
+            assert_eq!(
+                catalog
+                    .iter()
+                    .map(|slot| slot.filename.as_str())
+                    .collect::<Vec<_>>(),
+                ["First", "TieZ", "TieA", "Later", "Maximum", "BadA", "BadZ"]
+            );
+            for handle in &handles {
+                assert_eq!(
+                    &catalog.handle(catalog.resolve(handle).unwrap()).unwrap(),
+                    handle
+                );
+            }
+        }
     }
 
     #[test]
