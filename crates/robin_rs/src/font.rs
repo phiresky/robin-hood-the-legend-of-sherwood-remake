@@ -416,72 +416,24 @@ impl TrueTypeFont {
         }
     }
 
-    /// Width of a single character. Kerning out-params are always 0 for
-    /// TrueType.
-    pub fn get_char_width(&self, ch: u32, left_kerning: &mut i32, right_kerning: &mut i32) -> u32 {
-        *left_kerning = 0;
-        *right_kerning = 0;
-
+    /// Truncated horizontal advance of one Unicode codepoint.
+    /// This compatibility path does not apply pair kerning.
+    pub fn get_char_width_total(&self, ch: u32) -> u32 {
         let Some(ref f) = self.font else { return 0 };
         let Some(c) = char::from_u32(ch) else {
             return 0;
         };
-
         let scaled = f.as_scaled(self.px_scale());
-        let glyph_id = f.glyph_id(c);
-        scaled.h_advance(glyph_id) as u32
+        scaled.h_advance(f.glyph_id(c)) as u32
     }
 
-    /// Width of a character (simple form, including kerning).
-    pub fn get_char_width_total(&self, ch: u32) -> u32 {
-        let mut lk = 0i32;
-        let mut rk = 0i32;
-        let w = self.get_char_width(ch, &mut lk, &mut rk);
-        (lk + w as i32 + rk) as u32
-    }
-
-    /// Compute width of a string of Unicode codepoints.
-    pub fn get_string_width(
-        &self,
-        chars: &[u32],
-        left_kerning: &mut i32,
-        right_kerning: &mut i32,
-    ) -> i32 {
-        let mut result: i32 = 0;
-        *left_kerning = 0;
-        *right_kerning = 0;
-
-        let extra = self.get_extra_spacing();
-        let last = chars.len().wrapping_sub(1);
-
-        for (i, &ch) in chars.iter().enumerate() {
-            let mut cur_lk: i32 = 0;
-            let mut cur_rk: i32 = 0;
-            let w = self.get_char_width(ch, &mut cur_lk, &mut cur_rk) as i32;
-            result += w + extra;
-
-            if i == 0 {
-                *left_kerning = cur_lk;
-            } else {
-                result += cur_lk;
-            }
-
-            if i == last {
-                *right_kerning = cur_rk;
-            } else {
-                result += cur_rk;
-            }
-        }
-
-        result
-    }
-
-    /// Simple string width (with kerning folded in).
+    /// Sum of per-character advances. Truncate each advance before adding,
+    /// matching the legacy metrics rather than rounding the final total.
     pub fn get_string_width_total(&self, chars: &[u32]) -> i32 {
-        let mut lk = 0i32;
-        let mut rk = 0i32;
-        let w = self.get_string_width(chars, &mut lk, &mut rk);
-        lk + w + rk
+        chars
+            .iter()
+            .map(|&ch| self.get_char_width_total(ch) as i32)
+            .sum()
     }
 
     // -- Glyph rasterisation -------------------------------------------------
@@ -663,22 +615,17 @@ mod tests {
     #[test]
     fn test_char_width() {
         let f = make_test_font();
-        let mut lk = 0i32;
-        let mut rk = 0i32;
-
         // 'A' should have a positive width
-        let w = f.get_char_width('A' as u32, &mut lk, &mut rk);
+        let w = f.get_char_width_total('A' as u32);
         assert!(w > 0, "width of 'A' should be positive, got {}", w);
-        assert_eq!(lk, 0);
-        assert_eq!(rk, 0);
 
         // Space should have a positive width
-        let ws = f.get_char_width(' ' as u32, &mut lk, &mut rk);
+        let ws = f.get_char_width_total(' ' as u32);
         assert!(ws > 0, "width of space should be positive, got {}", ws);
 
         // 'i' should be narrower than 'W'
-        let wi = f.get_char_width('i' as u32, &mut lk, &mut rk);
-        let ww = f.get_char_width('W' as u32, &mut lk, &mut rk);
+        let wi = f.get_char_width_total('i' as u32);
+        let ww = f.get_char_width_total('W' as u32);
         assert!(wi < ww, "'i' ({}) should be narrower than 'W' ({})", wi, ww);
     }
 
@@ -703,6 +650,33 @@ mod tests {
         let hh: Vec<u32> = "HelloHello".chars().map(|c| c as u32).collect();
         let w2 = f.get_string_width_total(&hh);
         assert_eq!(w2, w * 2, "double string should be double width");
+    }
+
+    #[test]
+    fn string_width_preserves_per_character_truncation_and_invalid_codepoints() {
+        let font = make_test_font();
+        let chars = [
+            'A' as u32,
+            'V' as u32,
+            'i' as u32,
+            ' ' as u32,
+            0xd800,
+            u32::MAX,
+        ];
+        let face = font.font.as_ref().unwrap();
+        let scaled = face.as_scaled(font.px_scale());
+        let expected: i32 = chars
+            .iter()
+            .filter_map(|&code| char::from_u32(code))
+            .map(|ch| scaled.h_advance(face.glyph_id(ch)) as u32 as i32)
+            .sum();
+        assert_eq!(font.get_string_width_total(&chars), expected);
+        assert_eq!(font.get_char_width_total(0xd800), 0);
+        assert_eq!(font.get_char_width_total(u32::MAX), 0);
+        assert_eq!(
+            TrueTypeFont::new_invalid().get_string_width_total(&chars),
+            0
+        );
     }
 
     #[test]

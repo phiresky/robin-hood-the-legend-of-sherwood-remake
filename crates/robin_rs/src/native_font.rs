@@ -445,14 +445,9 @@ impl Font {
 /// [`load_font_by_name`].
 pub fn load_font_config(files: &SbFileSystem) -> Result<HashMap<String, FontEntry>> {
     let config_path = format!("{FONT_PATH}manager.cfg");
-    let mut file = files
-        .open(&config_path, 0)
-        .map_err(|e| anyhow::anyhow!("cannot open '{}': error {}", config_path, e))?;
-
-    let size = file.get_size() as usize;
-    let mut buf = vec![0u8; size];
-    file.serialize_bytes(&mut buf)
-        .map_err(|e| anyhow::anyhow!("read config: {e}"))?;
+    let buf = files
+        .read_shared(&config_path)
+        .map_err(|e| anyhow::anyhow!("cannot read '{}': error {}", config_path, e))?;
 
     let text = String::from_utf8_lossy(&buf);
     let result = parse_font_config(&text);
