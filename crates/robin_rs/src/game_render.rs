@@ -1326,12 +1326,7 @@ pub(crate) fn render_entities_gpu(
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
 
-        let margin = (256.0 * zoom).ceil() as i32;
-        if screen_x < -margin
-            || screen_y < -margin
-            || screen_x > screen_w + margin
-            || screen_y > screen_h + margin
-        {
+        if outside_sprite_cull_margin((screen_x, screen_y), (screen_w, screen_h), zoom) {
             continue;
         }
 
@@ -1912,12 +1907,7 @@ pub(crate) fn render_selection_outlines_gpu(
         let world_y = visual_pos.y;
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
-        let margin = (256.0 * zoom).ceil() as i32;
-        if screen_x < -margin
-            || screen_y < -margin
-            || screen_x > screen_w + margin
-            || screen_y > screen_h + margin
-        {
+        if outside_sprite_cull_margin((screen_x, screen_y), (screen_w, screen_h), zoom) {
             continue;
         }
 
@@ -2064,14 +2054,9 @@ fn render_fx_entities_gpu<I>(
             continue;
         }
 
-        let margin = (256.0 * zoom).ceil() as i32;
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
-        if screen_x < -margin
-            || screen_y < -margin
-            || screen_x > screen_w + margin
-            || screen_y > screen_h + margin
-        {
+        if outside_sprite_cull_margin((screen_x, screen_y), (screen_w, screen_h), zoom) {
             continue;
         }
 
@@ -2268,4 +2253,34 @@ fn sprite_origin_preserves_floor_before_zoom_and_signed_truncation() {
         .screen_origin,
         (0, 0),
     );
+}
+
+/// Keep anchors on the margin boundary visible, matching the legacy sprite passes.
+fn outside_sprite_cull_margin((x, y): (i32, i32), (width, height): (i32, i32), zoom: f32) -> bool {
+    let margin = (256.0 * zoom).ceil() as i32;
+    x < -margin || y < -margin || x > width + margin || y > height + margin
+}
+
+#[test]
+fn sprite_culling_preserves_inclusive_zoom_scaled_edges() {
+    for (zoom, margin) in [(0.25, 64), (0.501, 129), (1.0, 256), (1.5, 384)] {
+        for point in [
+            (-margin, 0),
+            (0, -margin),
+            (100 + margin, 0),
+            (0, 80 + margin),
+            (0, 0),
+            (100, 80),
+        ] {
+            assert!(!outside_sprite_cull_margin(point, (100, 80), zoom));
+        }
+        for point in [
+            (-margin - 1, 0),
+            (0, -margin - 1),
+            (101 + margin, 0),
+            (0, 81 + margin),
+        ] {
+            assert!(outside_sprite_cull_margin(point, (100, 80), zoom));
+        }
+    }
 }
