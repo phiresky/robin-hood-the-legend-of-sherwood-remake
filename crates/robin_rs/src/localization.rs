@@ -734,12 +734,22 @@ fn resolve_selection<'a>(
 }
 
 fn auto_language(installed: &[LanguagePack]) -> Option<&LanguagePack> {
+    if installed.is_empty() {
+        return None;
+    }
     let system = sys_locale::get_locale().unwrap_or_default();
+    auto_language_for_locale(installed, &system)
+}
+
+fn auto_language_for_locale<'a>(
+    installed: &'a [LanguagePack],
+    system: &str,
+) -> Option<&'a LanguagePack> {
     installed
         .iter()
-        .find(|pack| locale_eq(&pack.locale, &system))
+        .find(|pack| locale_eq(&pack.locale, system))
         .or_else(|| {
-            let primary = locale_primary(&system);
+            let primary = locale_primary(system);
             (!primary.is_empty())
                 .then(|| {
                     installed
@@ -1325,6 +1335,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn automatic_language_precedence_is_exact_then_primary_then_english_then_first() {
+        let installed = ["de-DE", "pt-PT", "pt-BR", "en-US"].map(|locale| LanguagePack {
+            locale: locale.into(),
+            native_name: locale.into(),
+            data_root: String::new(),
+            has_voice: false,
+            has_cinematics: false,
+            voice_uses_english_fallback: false,
+            cinematics_use_english_fallback: false,
+            mission_names: Default::default(),
+        });
+        for (system, expected) in [
+            ("PT_br.UTF-8", "pt-BR"),
+            ("pt-AO", "pt-PT"),
+            ("de_AT@euro", "de-DE"),
+            ("ja-JP", "en-US"),
+            ("", "en-US"),
+            (".UTF-8", "en-US"),
+        ] {
+            assert_eq!(
+                auto_language_for_locale(&installed, system).unwrap().locale,
+                expected
+            );
+        }
+        assert_eq!(
+            auto_language_for_locale(&installed[..3], "ja-JP")
+                .unwrap()
+                .locale,
+            "de-DE"
+        );
+        assert!(auto_language_for_locale(&[], "en-US").is_none());
+        let reordered = [installed[2].clone(), installed[1].clone()];
+        assert_eq!(
+            auto_language_for_locale(&reordered, "pt-AO")
+                .unwrap()
+                .locale,
+            "pt-BR"
+        );
+        assert_eq!(
+            auto_language_for_locale(&reordered, "pt-PT")
+                .unwrap()
+                .locale,
+            "pt-PT"
+        );
     }
 
     #[test]
