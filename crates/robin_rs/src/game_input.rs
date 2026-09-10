@@ -1738,21 +1738,14 @@ pub fn resolve_swordfight(
     let combat_rules = engine.sim_config();
 
     for pc_id in selected_units(engine, local_seat) {
-        let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
-            let h = entity.human_data()?;
-            let is_sword = !h.opponents.is_empty();
-            let elem = entity.element_data();
-            let pos = elem.position_map();
-            let dir_sector = elem.direction();
-            let dir_arr = crate::shadow_polygon::sector_to_direction(dir_sector);
-            let facing =
-                robin_engine::coordinates::ScreenVec::new(dir_arr[0], dir_arr[1] * ASPECT_RATIO);
-            Some((is_sword, pos, facing))
-        }) else {
+        let Some(entity) = engine.get_entity(pc_id) else {
+            continue;
+        };
+        let Some(human) = entity.human_data() else {
             continue;
         };
 
-        if !is_sword {
+        if human.opponents.is_empty() {
             // Non-swordfighting PC: click on sword target = engage.
             // The seek walks (running=false) since this is the single-
             // click path.
@@ -1774,7 +1767,14 @@ pub fn resolve_swordfight(
             continue;
         }
 
-        let pc_screen = host.frontend.viewport.map_to_screen_unclamped(pos_map);
+        let element = entity.element_data();
+        let direction = crate::shadow_polygon::sector_to_direction(element.direction());
+        let facing_dir =
+            robin_engine::coordinates::ScreenVec::new(direction[0], direction[1] * ASPECT_RATIO);
+        let pc_screen = host
+            .frontend
+            .viewport
+            .map_to_screen_unclamped(element.position_map());
         let evaluation = host.frontend.mouse_way().evaluate_detailed(
             pc_screen,
             facing_dir,
@@ -1840,11 +1840,7 @@ pub fn resolve_swordfight(
                     continue;
                 };
 
-                let already_opponent = engine
-                    .get_entity(pc_id)
-                    .and_then(|e| e.human_data())
-                    .map(|h| h.opponents.contains(&target_id))
-                    .unwrap_or(false);
+                let already_opponent = human.opponents.contains(&target_id);
 
                 host.frontend.input.gestures.element_old_click = Some(target_id);
                 if already_opponent {
@@ -1881,11 +1877,10 @@ pub fn resolve_swordfight(
                     continue;
                 };
                 let composite = pattern_to_composite(recognised);
-                let principal = engine
-                    .get_entity(pc_id)
-                    .and_then(|e| e.human_data())
-                    .and_then(|h| h.opponents.first().copied());
-                let Some(target_id) = principal else { continue };
+                let target_id = *human
+                    .opponents
+                    .first()
+                    .expect("engaged swordfighter must retain its principal opponent");
 
                 let with_seek = command_supports_sword_seek(strike_cmd)
                     && sword_strike_target_is_in_same_sector(engine, pc_id, target_id);
