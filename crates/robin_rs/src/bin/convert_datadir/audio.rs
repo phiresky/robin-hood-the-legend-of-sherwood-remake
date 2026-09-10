@@ -69,9 +69,10 @@ impl AudioKind {
 /// Logical bundle groups recorded during catalog construction, keyed by the
 /// content-addressed asset file. A file referenced from several groups lands
 /// in the "shared" bundle (see `bundle_grouped_audio`).
-static AUDIO_ASSET_GROUPS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+type AudioAssetGroups = std::collections::BTreeMap<String, std::collections::BTreeSet<String>>;
+
+static AUDIO_ASSET_GROUPS: std::sync::LazyLock<std::sync::Mutex<AudioAssetGroups>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(AudioAssetGroups::new()));
 
 // Converter-only provenance: remember the exact source used for each catalog
 // entry, rather than inferring it from a WAV/OGG alias during boot cleanup.
@@ -348,13 +349,21 @@ pub(super) fn bundle_grouped_audio(
     dd: &mut robin_assets::shipping_datadir::ShippingDatadir,
     data_out: &Path,
 ) -> Result<()> {
-    use sha2::{Digest as _, Sha256};
-    use std::collections::BTreeMap;
     let groups_by_file = std::mem::take(
         &mut *AUDIO_ASSET_GROUPS
             .lock()
             .expect("audio group recorder poisoned"),
     );
+    bundle_recorded_audio(dd, data_out, groups_by_file)
+}
+
+fn bundle_recorded_audio(
+    dd: &mut robin_assets::shipping_datadir::ShippingDatadir,
+    data_out: &Path,
+    groups_by_file: AudioAssetGroups,
+) -> Result<()> {
+    use sha2::{Digest as _, Sha256};
+    use std::collections::BTreeMap;
     if groups_by_file.is_empty() {
         return Ok(());
     }
@@ -571,6 +580,83 @@ pub(super) fn write_shipping_dependency(
 #[cfg(test)]
 mod boot_trim_tests {
     use super::*;
+
+    #[test]
+    fn recorded_audio_bundles_preserve_bytes_aliases_and_large_files() {
+        use robin_assets::shipping_datadir::ShippingAudioAsset;
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("audio/assets")).unwrap();
+        let inputs = std::collections::BTreeMap::from([
+            ("a", vec![1]),
+            ("b", vec![2, 3]),
+            ("shared", vec![4, 5, 6]),
+            ("large", vec![7; AUDIO_BUNDLE_MAX_MEMBER as usize]),
+        ]);
+        let mut dd = robin_assets::shipping_datadir::ShippingDatadir::default();
+        let mut groups = AudioAssetGroups::new();
+        for (name, bytes) in &inputs {
+            let file = format!("audio/assets/{name}.opus");
+            fs::write(directory.path().join(&file), bytes).unwrap();
+            dd.audio_assets.insert(
+                (*name).to_owned(),
+                ShippingAudioAsset {
+                    file: file.clone(),
+                    encoded_size: bytes.len() as u32,
+                    duration_ms: 123,
+                    bundle_offset: None,
+                },
+            );
+            groups.insert(
+                file,
+                if *name == "shared" {
+                    ["voice", "effects"]
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect()
+                } else {
+                    ["voice"].into_iter().map(str::to_owned).collect()
+                },
+            );
+        }
+        let alias = dd.audio_assets["a"].clone();
+        dd.audio_assets.insert("alias".into(), alias);
+        fs::write(directory.path().join("notes.txt"), b"keep").unwrap();
+        bundle_recorded_audio(&mut dd, directory.path(), groups).unwrap();
+        for (name, expected) in &inputs {
+            let asset = &dd.audio_assets[*name];
+            let bytes = fs::read(directory.path().join(&asset.file)).unwrap();
+            let start = asset.bundle_offset.unwrap_or(0) as usize;
+            assert_eq!(&bytes[start..start + asset.encoded_size as usize], expected);
+            assert_eq!(asset.duration_ms, 123);
+            assert_eq!(
+                directory
+                    .path()
+                    .join(format!("audio/assets/{name}.opus"))
+                    .exists(),
+                *name == "large"
+            );
+        }
+        assert_eq!(dd.audio_assets["a"], dd.audio_assets["alias"]);
+        assert_eq!(dd.audio_assets["a"].file, dd.audio_assets["b"].file);
+        assert_eq!(dd.audio_assets["a"].bundle_offset, Some(0));
+        assert_eq!(dd.audio_assets["b"].bundle_offset, Some(1));
+        assert!(
+            dd.audio_assets["shared"]
+                .file
+                .starts_with("audio/bundles/shared-")
+        );
+        assert_eq!(dd.audio_assets["large"].bundle_offset, None);
+        assert_eq!(
+            fs::read_dir(directory.path().join("audio/bundles"))
+                .unwrap()
+                .count(),
+            2
+        );
+        assert_eq!(
+            fs::read(directory.path().join("notes.txt")).unwrap(),
+            b"keep"
+        );
+    }
 
     #[test]
     fn bundle_member_append_is_bounded_and_preserves_prefix_on_failure() {
