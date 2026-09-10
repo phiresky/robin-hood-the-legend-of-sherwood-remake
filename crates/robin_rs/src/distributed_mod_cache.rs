@@ -903,14 +903,11 @@ fn hex_hash(hash: &[u8; 32]) -> String {
 }
 
 fn parse_hash(value: &str) -> Result<[u8; 32], String> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(format!("invalid distributed-mod cache hash `{value}`"));
-    }
     let mut hash = [0u8; 32];
-    for (index, byte) in hash.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-            .map_err(|error| format!("parse cache hash `{value}`: {error}"))?;
-    }
+    // Existing native indexes accept either hex case; unlike wire digests,
+    // their parser must not silently become lowercase-only.
+    hex::decode_to_slice(value, &mut hash)
+        .map_err(|_| format!("invalid distributed-mod cache hash `{value}`"))?;
     Ok(hash)
 }
 
@@ -919,6 +916,28 @@ mod tests {
     use super::*;
     use crate::distributed_mod::DistributedModPackage;
     use std::io::Cursor;
+
+    #[test]
+    fn cache_hash_parser_preserves_case_compatibility_and_rejects_malformed_input() {
+        let hash = std::array::from_fn(|index| index as u8 * 7);
+        let lower = hex_hash(&hash);
+        assert_eq!(parse_hash(&lower).unwrap(), hash);
+        assert_eq!(parse_hash(&lower.to_ascii_uppercase()).unwrap(), hash);
+        let mixed = lower[..32].to_ascii_uppercase() + &lower[32..];
+        assert_eq!(parse_hash(&mixed).unwrap(), hash);
+        for invalid in [
+            String::new(),
+            "0".repeat(63),
+            "0".repeat(65),
+            "g".repeat(64),
+            "é".repeat(32),
+        ] {
+            assert_eq!(
+                parse_hash(&invalid).unwrap_err(),
+                format!("invalid distributed-mod cache hash `{invalid}`")
+            );
+        }
+    }
 
     fn rhm(map: &str) -> Vec<u8> {
         let mut bytes = vec![0; 34];
