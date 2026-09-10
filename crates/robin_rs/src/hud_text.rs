@@ -327,39 +327,60 @@ fn render_text_in_box_gpu(
     let line_height = (font.height() as i32 - NATIVE_FONT_LINE_SUBTRACT).max(1);
     let mut y = box_y;
 
+    visit_wrapped_hud_lines(
+        text,
+        effective_w,
+        |line| font.text_width(line),
+        |line| {
+            if !line.is_empty() {
+                let tw = font.text_width(line);
+                let cx = match alignment {
+                    Alignment::Left => box_x + KERNING_MARGIN,
+                    Alignment::Centered => box_x + KERNING_MARGIN + (effective_w - tw) / 2,
+                    Alignment::Right => box_x + box_w - KERNING_MARGIN - tw,
+                };
+                render_text_with_shadow_gpu(renderer, font, shadow, line, cx, y);
+            }
+            y += line_height;
+        },
+    );
+}
+
+/// HUD wrapping measures complete candidate strings, including font kerning.
+/// Empty segments occupy a line; the legacy short-orphan rule counts bytes.
+fn visit_wrapped_hud_lines(
+    text: &str,
+    width: i32,
+    measure: impl Fn(&str) -> i32,
+    mut emit: impl FnMut(&str),
+) {
+    let mut line = String::new();
     for segment in text.split('\n') {
         let words: Vec<&str> = segment.split_whitespace().collect();
         if words.is_empty() {
-            y += line_height;
+            emit("");
             continue;
         }
-
         let mut i = 0;
         while i < words.len() {
-            let mut line = String::from(words[i]);
+            line.clear();
+            line.push_str(words[i]);
             let mut j = i + 1;
             while j < words.len() {
-                let candidate = format!("{} {}", line, words[j]);
-                if font.text_width(&candidate) > effective_w {
+                let previous_len = line.len();
+                line.push(' ');
+                line.push_str(words[j]);
+                if measure(&line) > width {
+                    line.truncate(previous_len);
                     break;
                 }
-                line = candidate;
                 j += 1;
             }
-
             if j < words.len() && j + 1 == words.len() && words[j].len() <= 5 && j > i + 1 {
                 j -= 1;
-                line = words[i..j].join(" ");
+                line.truncate(line.len() - words[j].len() - 1);
             }
-
-            let tw = font.text_width(&line);
-            let cx = match alignment {
-                Alignment::Left => box_x + KERNING_MARGIN,
-                Alignment::Centered => box_x + KERNING_MARGIN + (effective_w - tw) / 2,
-                Alignment::Right => box_x + box_w - KERNING_MARGIN - tw,
-            };
-            render_text_with_shadow_gpu(renderer, font, shadow, &line, cx, y);
-            y += line_height;
+            emit(&line);
             i = j;
         }
     }
@@ -872,6 +893,30 @@ fn render_ammo_counts_gpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_wrapping_preserves_blank_lines_orphans_and_whole_candidate_metrics() {
+        let wrap = |text: &str, width| {
+            let mut lines = Vec::new();
+            visit_wrapped_hud_lines(
+                text,
+                width,
+                |s| s.chars().count() as i32,
+                |line| lines.push(line.to_owned()),
+            );
+            lines
+        };
+        assert_eq!(wrap("", 10), [""]);
+        assert_eq!(wrap("a\n \nb\n", 10), ["a", "", "b", ""]);
+        assert_eq!(wrap("  one   two  ", 10), ["one two"]);
+        assert_eq!(wrap("one two end", 7), ["one", "two end"]);
+        assert_eq!(wrap("one two longer", 7), ["one two", "longer"]);
+        assert_eq!(wrap("a éé fin", 4), ["a", "éé", "fin"]);
+        assert_eq!(wrap("oversized", 2), ["oversized"]);
+        let mut lines = Vec::new();
+        visit_wrapped_hud_lines("a b", 2, |_| 1, |line| lines.push(line.to_owned()));
+        assert_eq!(lines, ["a b"]);
+    }
 
     #[test]
     fn hud_font_fallbacks_reuse_loaded_fonts_without_retrying_assets() {
