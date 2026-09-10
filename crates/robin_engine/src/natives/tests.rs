@@ -2883,10 +2883,10 @@ fn briefing_and_objective_writes_share_the_live_canonical_model() {
         .short_briefings
         .as_ref()
         .expect("live short-briefing model");
-    assert_eq!(briefings.get_id(true, 0), Some(7));
-    assert_eq!(briefings.is_entry_done(true, 0), Some(true));
-    assert_eq!(briefings.get_id(false, 0), Some(11));
-    assert_eq!(briefings.is_entry_done(false, 0), Some(true));
+    assert_eq!(briefings.entries(true)[0].id, 7);
+    assert!(briefings.entries(true)[0].done);
+    assert_eq!(briefings.entries(false)[0].id, 11);
+    assert!(briefings.entries(false)[0].done);
     assert!(context.script_effects().engine_commands().is_empty());
 }
 

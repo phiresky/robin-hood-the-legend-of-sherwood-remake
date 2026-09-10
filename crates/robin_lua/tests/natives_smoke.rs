@@ -468,8 +468,8 @@ fn add_and_complete_objective_mutate_live_model() {
             },
         )
         .unwrap();
-    assert_eq!(briefings.get_id(true, 0), Some(7));
-    assert_eq!(briefings.is_entry_done(true, 0), Some(true));
+    assert_eq!(briefings.entries(true)[0].id, 7);
+    assert!(briefings.entries(true)[0].done);
     assert!(host.engine_commands().is_empty());
 }
 
@@ -1106,8 +1106,8 @@ fn native_dispatch_preserves_script_effects_queue_order() {
             EngineCommand::DisplayMap { show: false },
         ] if *zoom == 2.0
     ));
-    assert_eq!(briefings.get_id(true, 0), Some(10));
-    assert_eq!(briefings.is_entry_done(true, 0), Some(true));
-    assert_eq!(briefings.get_id(false, 0), Some(11));
-    assert_eq!(briefings.is_entry_done(false, 0), Some(false));
+    assert_eq!(briefings.entries(true)[0].id, 10);
+    assert!(briefings.entries(true)[0].done);
+    assert_eq!(briefings.entries(false)[0].id, 11);
+    assert!(!briefings.entries(false)[0].done);
 }

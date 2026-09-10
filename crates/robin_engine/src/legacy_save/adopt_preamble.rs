@@ -252,16 +252,13 @@ mod tests {
         assert!(!engine.mission_domain.state.quit_interrupted);
         assert_eq!(engine.mission_domain.short_briefings.count(true), 2);
         assert_eq!(
-            engine.mission_domain.short_briefings.get_id(true, 0),
-            Some(10)
+            engine.mission_domain.short_briefings.entries(true)[0].id,
+            10
         );
+        assert!(engine.mission_domain.short_briefings.entries(true)[0].done);
         assert_eq!(
-            engine.mission_domain.short_briefings.is_entry_done(true, 0),
-            Some(true)
-        );
-        assert_eq!(
-            engine.mission_domain.short_briefings.get_id(false, 0),
-            Some(30)
+            engine.mission_domain.short_briefings.entries(false)[0].id,
+            30
         );
     }
 

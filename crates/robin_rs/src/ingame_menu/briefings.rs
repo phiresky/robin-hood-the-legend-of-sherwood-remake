@@ -5,7 +5,7 @@
 //! [`robin_engine::short_briefings`]; this file owns the visual layout.
 
 use crate::renderer::Renderer;
-use robin_engine::short_briefings::ShortBriefings;
+use robin_engine::short_briefings::{ShortBriefing, ShortBriefings};
 
 use super::layout::{
     MenuRect, MenuTransform, TextAlign, draw_background, measure_text_height_in_box_font,
@@ -36,10 +36,12 @@ pub fn draw_short_briefings(
     lookup: &dyn Fn(u32) -> Option<String>,
 ) {
     let mut cursor_y = rect.y;
+    let primary = briefings.entries(true);
+    let secondary = briefings.entries(false);
 
-    if briefings.count(true) > 0 {
+    if !primary.is_empty() {
         cursor_y = draw_section(
-            renderer, resources, transform, rect, cursor_y, briefings, true, lookup,
+            renderer, resources, transform, rect, cursor_y, primary, lookup,
         );
     }
 
@@ -47,7 +49,7 @@ pub fn draw_short_briefings(
     // The separator bitmap is a required asset; if it's missing we log
     // a warning and skip the advance entirely rather than emit a
     // half-positioned 10 px stub.
-    if briefings.count(true) > 0 && briefings.count(false) > 0 {
+    if !primary.is_empty() && !secondary.is_empty() {
         if let Some(sep) = resources.separator {
             let sep_w = sep.width.min(rect.w);
             let sep_h = sep.height;
@@ -60,34 +62,26 @@ pub fn draw_short_briefings(
         }
     }
 
-    if briefings.count(false) > 0 {
+    if !secondary.is_empty() {
         draw_section(
-            renderer, resources, transform, rect, cursor_y, briefings, false, lookup,
+            renderer, resources, transform, rect, cursor_y, secondary, lookup,
         );
     }
 }
 
 /// Render a single primary/secondary briefing section and return the new
 /// cursor Y after the last entry.
-#[allow(clippy::too_many_arguments)]
 fn draw_section(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     transform: MenuTransform,
     rect: &MenuRect,
     start_y: i32,
-    briefings: &ShortBriefings,
-    primary: bool,
+    entries: &[ShortBriefing],
     lookup: &dyn Fn(u32) -> Option<String>,
 ) -> i32 {
-    let count = briefings.count(primary);
     let mut y = start_y;
-    for i in 0..count {
-        let done = briefings.is_entry_done(primary, i).unwrap_or(false);
-        let id = match briefings.get_id(primary, i) {
-            Some(id) => id,
-            None => continue,
-        };
+    for &ShortBriefing { id, done } in entries {
         let text = lookup(id)
             .unwrap_or_else(|| panic!("required localized short briefing string {id} is missing"));
 

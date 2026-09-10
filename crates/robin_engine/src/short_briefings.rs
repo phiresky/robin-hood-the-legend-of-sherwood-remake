@@ -80,33 +80,19 @@ impl ShortBriefings {
         self.primaries.iter().any(|e| e.id == id) || self.secondaries.iter().any(|e| e.id == id)
     }
 
-    /// Number of briefings of the given type.
-    pub fn count(&self, primary: bool) -> usize {
+    /// Entries in authored insertion order, with each ID and completion flag
+    /// borrowed together. The slice cannot change while it is being displayed.
+    pub fn entries(&self, primary: bool) -> &[ShortBriefing] {
         if primary {
-            self.primaries.len()
+            &self.primaries
         } else {
-            self.secondaries.len()
+            &self.secondaries
         }
     }
 
-    /// Get briefing ID at index within the primary or secondary list.
-    pub fn get_id(&self, primary: bool, index: usize) -> Option<u32> {
-        let list = if primary {
-            &self.primaries
-        } else {
-            &self.secondaries
-        };
-        list.get(index).map(|e| e.id)
-    }
-
-    /// Check whether the entry at index is done.
-    pub fn is_entry_done(&self, primary: bool, index: usize) -> Option<bool> {
-        let list = if primary {
-            &self.primaries
-        } else {
-            &self.secondaries
-        };
-        list.get(index).map(|e| e.done)
+    /// Number of briefings of the given type.
+    pub fn count(&self, primary: bool) -> usize {
+        self.entries(primary).len()
     }
 
     /// Clear all briefings.
@@ -148,10 +134,10 @@ mod tests {
         let mut sb = ShortBriefings::default();
         sb.add(0, true);
         sb.add(1, true);
-        assert_eq!(sb.is_entry_done(true, 0), Some(false));
+        assert!(!sb.entries(true)[0].done);
         sb.mark_done(0);
-        assert_eq!(sb.is_entry_done(true, 0), Some(true));
-        assert_eq!(sb.is_entry_done(true, 1), Some(false));
+        assert!(sb.entries(true)[0].done);
+        assert!(!sb.entries(true)[1].done);
     }
 
     #[test]
@@ -159,7 +145,7 @@ mod tests {
         let mut sb = ShortBriefings::default();
         sb.add(10, false);
         sb.mark_done(10);
-        assert_eq!(sb.is_entry_done(false, 0), Some(true));
+        assert!(sb.entries(false)[0].done);
     }
 
     #[test]
@@ -173,13 +159,13 @@ mod tests {
     }
 
     #[test]
-    fn get_id() {
+    fn entries_preserve_ids_and_order() {
         let mut sb = ShortBriefings::default();
         sb.add(42, true);
         sb.add(99, false);
-        assert_eq!(sb.get_id(true, 0), Some(42));
-        assert_eq!(sb.get_id(false, 0), Some(99));
-        assert_eq!(sb.get_id(true, 5), None);
+        assert_eq!(sb.entries(true)[0].id, 42);
+        assert_eq!(sb.entries(false)[0].id, 99);
+        assert!(sb.entries(true).get(5).is_none());
     }
 
     #[test]
@@ -198,10 +184,10 @@ mod tests {
         let sb = ShortBriefings::with_all_briefings(3);
         assert_eq!(sb.count(true), 3);
         assert_eq!(sb.count(false), 0);
-        assert_eq!(sb.get_id(true, 0), Some(0));
-        assert_eq!(sb.get_id(true, 1), Some(1));
-        assert_eq!(sb.get_id(true, 2), Some(2));
-        assert_eq!(sb.is_entry_done(true, 0), Some(false));
+        assert_eq!(sb.entries(true)[0].id, 0);
+        assert_eq!(sb.entries(true)[1].id, 1);
+        assert_eq!(sb.entries(true)[2].id, 2);
+        assert!(!sb.entries(true)[0].done);
     }
 
     #[test]
@@ -220,12 +206,19 @@ mod tests {
         sb.mark_done(0);
 
         let json = serde_json::to_string(&sb).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+            serde_json::json!({
+                "primaries": [{"id": 0, "done": true}, {"id": 1, "done": false}],
+                "secondaries": [{"id": 10, "done": false}]
+            })
+        );
         let restored: ShortBriefings = serde_json::from_str(&json).unwrap();
 
         assert_eq!(restored.count(true), 2);
         assert_eq!(restored.count(false), 1);
-        assert_eq!(restored.is_entry_done(true, 0), Some(true));
-        assert_eq!(restored.is_entry_done(true, 1), Some(false));
-        assert_eq!(restored.get_id(false, 0), Some(10));
+        assert!(restored.entries(true)[0].done);
+        assert!(!restored.entries(true)[1].done);
+        assert_eq!(restored.entries(false)[0].id, 10);
     }
 }
