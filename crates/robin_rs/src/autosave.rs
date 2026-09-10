@@ -1274,6 +1274,19 @@ mod tests {
             payload.header.multiplayer_diagnostic = diagnostic;
             let metadata = metadata_from_payload("Autosave_123_0000", &payload, &profiles).unwrap();
             assert_eq!(metadata.multiplayer_diagnostic, diagnostic);
+            let mut manual = SaveGame::new("QuickSave".into(), "Keep my label".into(), 99);
+            manual.timestamp = "obsolete".into();
+            manual.player_name = "Previous player".into();
+            manual.update_snapshot_metadata(&payload.header, payload.engine.campaign(), &profiles);
+            // Both writers must project every snapshot field identically;
+            // only these destination-owned fields may differ.
+            let expected = SaveGame {
+                filename: "QuickSave".into(),
+                text: "Keep my label".into(),
+                special: Some(crate::savegame::SpecialSlot::QuickSave),
+                ..metadata
+            };
+            assert_eq!(manual, expected);
         }
     }
 
