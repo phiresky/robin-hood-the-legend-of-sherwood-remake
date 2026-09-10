@@ -155,11 +155,26 @@ impl NativeFont {
 
         // ── Glyph picture (16-bit) ──────────────────────────────────
         let glyph_pic = Picture::load_sixteen_from_stream(&mut file).context("glyph picture")?;
+        if height > u32::from(glyph_pic.height) {
+            bail!(
+                "font '{name}' declares height {height}, but the glyph picture has only {} rows",
+                glyph_pic.height
+            );
+        }
         let glyph_width = glyph_pic.width;
         let glyph_pixels = bytes_to_u16(&glyph_pic.data);
 
         // ── Alpha picture (16-bit) ──────────────────────────────────
         let alpha_pic = Picture::load_sixteen_from_stream(&mut file).context("alpha picture")?;
+        if alpha_pic.width < glyph_width || u32::from(alpha_pic.height) < height {
+            // TODO: Verify undersized alpha masks against original font assets
+            // before changing the renderer's flat-index compatibility fallback.
+            tracing::warn!(
+                "Native font '{name}' has an undersized alpha mask ({}x{} for {glyph_width}x{height}); using legacy flat-index/transparent fallback",
+                alpha_pic.width,
+                alpha_pic.height
+            );
+        }
         let alpha_width = alpha_pic.width;
         let alpha_pixels = bytes_to_u16(&alpha_pic.data);
 
@@ -670,6 +685,47 @@ mod tests {
                 error.to_string().contains("font character count"),
                 "{error:#}"
             );
+        }
+    }
+
+    #[test]
+    fn native_font_validates_glyph_rows_before_rendering() {
+        let picture = Picture {
+            width: 1,
+            height: 2,
+            pitch: 2,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: vec![0xff; 4],
+            palette: None,
+        };
+        let encoded = picture
+            .write_sixteen_to_bytes(robin_assets::picture::SixteenPacking::None)
+            .unwrap();
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let files = SbFileSystem::new(vfs.clone());
+        for height in [1u32, 2, 3, u32::MAX] {
+            let mut bytes = SBFONT_TAG.to_vec();
+            bytes.extend_from_slice(&0x100u32.to_le_bytes());
+            bytes.extend_from_slice(&[0; FONT_NAME_LEN]);
+            for value in [0u32, 0, height, 1, 1, 0] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.extend_from_slice(&encoded);
+            bytes.extend_from_slice(&encoded);
+            vfs.install_preloaded_asset("glyph-rows.sbf", bytes)
+                .unwrap();
+            match NativeFont::load("glyph-rows.sbf", &files) {
+                Ok(font) => {
+                    assert!(height <= 2);
+                    let (rgba, width, actual_height) = font.build_rgba_atlas();
+                    assert_eq!((width, actual_height), (1, height));
+                    assert_eq!(rgba.len(), height as usize * 4);
+                }
+                Err(error) => {
+                    assert!(height > 2, "{error:#}");
+                    assert!(error.to_string().contains("glyph picture has only 2 rows"));
+                }
+            }
         }
     }
 
