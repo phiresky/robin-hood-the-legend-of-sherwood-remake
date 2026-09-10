@@ -768,25 +768,29 @@ fn list_scrollbar_width(resources: &IngameMenuResources) -> i32 {
 
 /// Build the listbox row label. The original menu adds only
 /// original-game save text to the list box.
-fn row_label(
+fn row_label<'a>(
     row: ListRow,
-    save_manager: &SaveGameManager,
+    save_manager: &'a SaveGameManager,
     visible: &[usize],
     text: &impl SaveMetadataText,
-) -> String {
+) -> Cow<'a, str> {
     match row {
-        ListRow::New => text.new_save_label(),
+        ListRow::New => Cow::Owned(text.new_save_label()),
         ListRow::Existing(v_idx) => {
             let slot = visible[v_idx];
             let save = save_manager
                 .get(slot)
                 .expect("visible slot must resolve to a save");
-            if save.is_autosave() {
-                format!("Autosave - {}", save.text)
-            } else {
-                save.text.clone()
-            }
+            existing_save_row_label(save)
         }
+    }
+}
+
+pub(crate) fn existing_save_row_label(save: &SaveGame) -> Cow<'_, str> {
+    if save.is_autosave() {
+        Cow::Owned(format!("Autosave - {}", save.text))
+    } else {
+        Cow::Borrowed(&save.text)
     }
 }
 
@@ -1447,6 +1451,19 @@ mod tests {
         assert_eq!(save.operation_error(), Some("payload publication failed"));
         save.dismiss_error();
         assert_eq!(save.operation_error(), None);
+    }
+
+    #[test]
+    fn save_row_labels_borrow_unmodified_text_and_own_autosave_prefixes() {
+        let save = published_metadata("Savegame_000");
+        let label = existing_save_row_label(&save);
+        assert!(matches!(label, Cow::Borrowed(_)));
+        assert_eq!(label.as_ptr(), save.text.as_ptr());
+        assert_eq!(label, "The Silver Arrow");
+        let autosave = published_metadata("Autosave_100_0000");
+        let label = existing_save_row_label(&autosave);
+        assert!(matches!(label, Cow::Owned(_)));
+        assert_eq!(label, "Autosave - The Silver Arrow");
     }
 
     #[test]

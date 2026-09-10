@@ -1731,7 +1731,7 @@ impl SaveLoadTaskState {
                 let (selected, label, details) = if self.mode == SaveLoadMode::Save && row == 0 {
                     (
                         self.model.selected_row() == Some(ListRow::New),
-                        "< New Save >".to_string(),
+                        std::borrow::Cow::Borrowed("< New Save >"),
                         [
                             "Name optional - creates a new save slot".to_string(),
                             String::new(),
@@ -1743,11 +1743,7 @@ impl SaveLoadTaskState {
                     let save = save_manager.get(slot).expect("visible save slot exists");
                     (
                         self.model.selected_row() == Some(ListRow::Existing(index)),
-                        if save.is_autosave() {
-                            format!("Autosave - {}", save.text)
-                        } else {
-                            save.text.clone()
-                        },
+                        crate::ingame_menu::save_load::existing_save_row_label(save),
                         crate::ingame_menu::save_load::cooperative_save_row_detail_lines(
                             save,
                             self.detailed_metadata,
