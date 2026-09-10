@@ -97,7 +97,7 @@ impl Default for CursorRenderer {
 
 pub struct CursorRenderer {
     /// All uploaded frames for the currently loaded cursor. Empty before
-    /// a cursor is loaded / after `destroy`. The fallback arrow lives
+    /// a cursor is loaded / after clearing failed uploads. The fallback arrow lives
     /// here as a single-frame animation.
     frames: Vec<CursorFrame>,
 
@@ -115,9 +115,6 @@ pub struct CursorRenderer {
     frame_length: u16,
     /// Ticks accumulated toward the next frame advance.
     frame_timer: u16,
-
-    /// Whether the OS cursor has been hidden.
-    os_cursor_hidden: bool,
 
     /// Wall-clock sampling used by refresh-rate UI loops. Gameplay continues
     /// to call `advance_animation` once per fixed simulation presentation.
@@ -138,7 +135,6 @@ impl CursorRenderer {
             current_frame: 0,
             frame_length: 1,
             frame_timer: 0,
-            os_cursor_hidden: false,
             ui_animation_sample: None,
             pulse_clock: web_time::Instant::now(),
             ui_animation_accumulated_us: 0,
@@ -158,17 +154,10 @@ impl CursorRenderer {
         )
     }
 
-    /// Initialize: hide the OS cursor and create a fallback arrow cursor.
+    /// Create a fallback arrow cursor. OS cursor visibility is owned by the
+    /// window layer, which hides it when constructing the window.
     pub fn init(&mut self, renderer: &mut Renderer) {
-        self.hide_os_cursor();
         self.create_fallback_cursor(renderer);
-    }
-
-    /// Hide the OS cursor. The wgpu/winit window handles cursor
-    /// visibility via `set_cursor_visible(false)` at construction
-    /// time, so this is now just a state-bookkeeping flag.
-    fn hide_os_cursor(&mut self) {
-        self.os_cursor_hidden = true;
     }
 
     /// Release every uploaded frame currently owned by the cursor renderer.
@@ -670,7 +659,6 @@ mod tests {
         assert_eq!(cr.hotspot_y, 0.0);
         assert_eq!(cr.current_cursor_id, -1);
         assert_eq!(cr.current_frame, 0);
-        assert!(!cr.os_cursor_hidden);
     }
 
     #[test]
