@@ -396,11 +396,13 @@ impl MouseWay {
         }
 
         let input = normalized_resampled(self.points.iter().map(|point| (point.x, point.y)));
-        let legacy_similarity = score_legacy_pattern(legacy, &input, direction).unwrap_or(0.0);
-        let best_legacy_similarity = LEGACY_PATTERNS
+        let legacy_scores = score_legacy_patterns(&input, direction);
+        let legacy_similarity = LEGACY_PATTERNS
             .into_iter()
-            .filter_map(|pattern| score_legacy_pattern(pattern, &input, direction))
-            .fold(0.0_f32, f32::max);
+            .zip(legacy_scores)
+            .find_map(|(pattern, score)| (pattern == legacy).then_some(score))
+            .unwrap_or(0.0);
+        let best_legacy_similarity = legacy_scores.into_iter().fold(0.0_f32, f32::max);
 
         let mut ranked = NORMALIZED_COMPOSITE_TEMPLATES
             .each_ref()
@@ -595,37 +597,34 @@ static NORMALIZED_COMPOSITE_TEMPLATES: LazyLock<
     })
 });
 
-fn score_legacy_pattern(
-    pattern: MouseWayPattern,
+fn score_legacy_patterns(
     input: &[(f32, f32)],
     direction: ScreenVec,
-) -> Option<f32> {
-    let (_, template) = NORMALIZED_LEGACY_TEMPLATES
-        .iter()
-        .find(|(candidate, _)| *candidate == pattern)?;
-    let actor_relative = matches!(
-        pattern,
-        MouseWayPattern::ThrustA
-            | MouseWayPattern::ThrustB
-            | MouseWayPattern::ThrustD
-            | MouseWayPattern::ThrustE
-    );
-    let scored_input = if actor_relative {
-        rotate_to_north(input, direction)
-    } else {
-        Cow::Borrowed(input)
-    };
-    let cyclic = matches!(
-        pattern,
-        MouseWayPattern::ThrustC | MouseWayPattern::ThrustH | MouseWayPattern::ThrustI
-    );
-    let rotation_invariant = matches!(pattern, MouseWayPattern::ThrustF | MouseWayPattern::ThrustG);
-    Some(path_similarity(
-        &scored_input,
-        template,
-        cyclic,
-        rotation_invariant,
-    ))
+) -> [f32; LEGACY_PATTERNS.len()] {
+    let actor_relative_input = rotate_to_north(input, direction);
+    NORMALIZED_LEGACY_TEMPLATES
+        .each_ref()
+        .map(|(pattern, template)| {
+            let actor_relative = matches!(
+                pattern,
+                MouseWayPattern::ThrustA
+                    | MouseWayPattern::ThrustB
+                    | MouseWayPattern::ThrustD
+                    | MouseWayPattern::ThrustE
+            );
+            let scored_input = if actor_relative {
+                actor_relative_input.as_ref()
+            } else {
+                input
+            };
+            let cyclic = matches!(
+                pattern,
+                MouseWayPattern::ThrustC | MouseWayPattern::ThrustH | MouseWayPattern::ThrustI
+            );
+            let rotation_invariant =
+                matches!(pattern, MouseWayPattern::ThrustF | MouseWayPattern::ThrustG);
+            path_similarity(scored_input, template, cyclic, rotation_invariant)
+        })
 }
 
 fn rotate_to_north(points: &[(f32, f32)], direction: ScreenVec) -> Cow<'_, [(f32, f32)]> {
@@ -958,6 +957,51 @@ pub fn is_self_intersecting(points: &VecDeque<ScreenPoint>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batched_legacy_scores_match_individual_scoring_bit_for_bit() {
+        for source in LEGACY_PATTERNS {
+            let input = normalized_resampled(legacy_template(source).unwrap().iter().copied());
+            for direction in [
+                ScreenVec::ZERO,
+                ScreenVec::new(0.0, -10.0),
+                ScreenVec::new(3.0, 7.0),
+            ] {
+                let scores = score_legacy_patterns(&input, direction);
+                for (pattern, score) in LEGACY_PATTERNS.into_iter().zip(scores) {
+                    let template =
+                        normalized_resampled(legacy_template(pattern).unwrap().iter().copied());
+                    let rotated;
+                    let scored = match pattern {
+                        MouseWayPattern::ThrustA
+                        | MouseWayPattern::ThrustB
+                        | MouseWayPattern::ThrustD
+                        | MouseWayPattern::ThrustE => {
+                            rotated = rotate_to_north(&input, direction);
+                            rotated.as_ref()
+                        }
+                        _ => input.as_slice(),
+                    };
+                    let expected = path_similarity(
+                        scored,
+                        &template,
+                        matches!(
+                            pattern,
+                            MouseWayPattern::ThrustC
+                                | MouseWayPattern::ThrustH
+                                | MouseWayPattern::ThrustI
+                        ),
+                        matches!(pattern, MouseWayPattern::ThrustF | MouseWayPattern::ThrustG),
+                    );
+                    assert_eq!(
+                        score.to_bits(),
+                        expected.to_bits(),
+                        "{source:?} scored as {pattern:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn prepared_templates_match_fresh_normalization_bit_for_bit_in_catalogue_order() {
