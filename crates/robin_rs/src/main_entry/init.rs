@@ -42,6 +42,9 @@ pub enum InitErrorCategory {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum InitError {
+    #[error("Game data selection cancelled")]
+    DataDirectoryCancelled,
+
     #[error("Unable to install datadir {path}: file error {status}")]
     DataDirectoryInstall { path: String, status: i32 },
 
@@ -128,9 +131,9 @@ pub enum InitError {
 impl InitError {
     pub const fn category(&self) -> InitErrorCategory {
         match self {
-            Self::DataDirectoryInstall { .. } | Self::DataDirectoryMissing { .. } => {
-                InitErrorCategory::DataDirectory
-            }
+            Self::DataDirectoryInstall { .. }
+            | Self::DataDirectoryMissing { .. }
+            | Self::DataDirectoryCancelled => InitErrorCategory::DataDirectory,
             #[cfg(target_os = "android")]
             Self::DataDirectoryChange { .. } | Self::DataDirectoryAndroidAssetsMissing { .. } => {
                 InitErrorCategory::DataDirectory
@@ -386,11 +389,9 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(Path::to_path_buf));
-        // Fall back to the working directory when nothing was found or the
-        // player cancelled the picker; a loose unmarked `Data/` there keeps
-        // working, anything else hits the descriptive error below.
-        let chosen = crate::datadir_locator::resolve_datadir(exe_dir.as_deref())
-            .unwrap_or_else(|| PathBuf::from("."));
+        // Only non-interactive discovery may fall back to loose, unmarked Data/.
+        // Cancelling the picker must stop startup before installing any data.
+        let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
         tracing::info!("using primary datadir {}", chosen.display());
         let status = files.set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
@@ -421,6 +422,37 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
     add_overlay_data_dirs(files)?;
     add_language_folder_with_files(files)?;
     Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn startup_data_dir(
+    resolution: crate::datadir_locator::DataDirResolution,
+) -> Result<PathBuf, InitError> {
+    use crate::datadir_locator::DataDirResolution;
+    match resolution {
+        DataDirResolution::Selected(path) => Ok(path),
+        DataDirResolution::Unavailable => Ok(PathBuf::from(".")),
+        DataDirResolution::Cancelled => Err(InitError::DataDirectoryCancelled),
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
+#[test]
+fn datadir_cancellation_does_not_fall_back_to_working_directory() {
+    use crate::datadir_locator::DataDirResolution;
+    assert!(matches!(
+        startup_data_dir(DataDirResolution::Cancelled),
+        Err(InitError::DataDirectoryCancelled)
+    ));
+    assert_eq!(
+        startup_data_dir(DataDirResolution::Unavailable).unwrap(),
+        PathBuf::from(".")
+    );
+    let selected = PathBuf::from("/chosen/game");
+    assert_eq!(
+        startup_data_dir(DataDirResolution::Selected(selected.clone())).unwrap(),
+        selected
+    );
 }
 
 /// Android uses a pre-converted shipping datadir bundled as an APK

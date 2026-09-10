@@ -64,6 +64,10 @@ fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
             tracing::info!("Rust initialization complete.");
             c
         }
+        Err(robin_rs::main_entry::InitError::DataDirectoryCancelled) => {
+            tracing::info!("Game data selection cancelled; exiting.");
+            return 0;
+        }
         Err(e) => {
             tracing::error!("{}", e);
             return 1;
