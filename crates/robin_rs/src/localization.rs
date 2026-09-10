@@ -7,6 +7,7 @@
 //! deliberately absent from simulation saves, hashes, replays, and network
 //! commands.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -759,12 +760,16 @@ fn locale_eq(a: &str, b: &str) -> bool {
     normalized_locale_bytes(a).eq(normalized_locale_bytes(b))
 }
 
-fn locale_primary(locale: &str) -> String {
-    locale
+fn locale_primary(locale: &str) -> Cow<'_, str> {
+    let primary = locale
         .split(['.', '@', '-', '_'])
         .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase()
+        .unwrap_or_default();
+    if primary.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Owned(primary.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(primary)
+    }
 }
 
 fn normalized_locale_bytes(locale: &str) -> impl Iterator<Item = u8> + '_ {
@@ -1068,9 +1073,7 @@ pub const FEATURE40_PORT_TEXT_KEYS: &[PortTextKey] = &[
 ];
 
 pub fn port_text(locale: Option<&str>, key: PortTextKey) -> &'static str {
-    let language = locale
-        .map(locale_primary)
-        .unwrap_or_else(|| "en".to_owned());
+    let language = locale.map(locale_primary).unwrap_or(Cow::Borrowed("en"));
     match key {
         PortTextKey::CampaignClassicMap => {
             return if language == "de" {
@@ -1133,10 +1136,7 @@ pub fn port_text(locale: Option<&str>, key: PortTextKey) -> &'static str {
     {
         return text;
     }
-    let primary = locale
-        .map(locale_primary)
-        .unwrap_or_else(|| "en".to_owned());
-    match (primary.as_str(), key) {
+    match (language.as_ref(), key) {
         ("de", PortTextKey::Language) => "Sprache",
         ("de", PortTextKey::Automatic) => "Automatisch",
         ("de", PortTextKey::Apply) => "Anwenden",
@@ -1409,6 +1409,24 @@ mod tests {
                 Err(LocalizationError::Unavailable(locale)) if locale == "fr-FR"
             ));
         }
+    }
+
+    #[test]
+    fn lowercase_primary_tags_borrow_only_the_original_prefix() {
+        for (locale, expected) in [
+            ("en_US.UTF-8", "en"),
+            ("zh-Hant-TW", "zh"),
+            ("é_FR", "é"),
+            ("", ""),
+        ] {
+            let primary = locale_primary(locale);
+            assert!(matches!(primary, Cow::Borrowed(_)));
+            assert_eq!(primary, expected);
+            assert_eq!(primary.as_ptr(), locale.as_ptr());
+        }
+        let primary = locale_primary("ZH_tw.UTF-8");
+        assert!(matches!(primary, Cow::Owned(_)));
+        assert_eq!(primary, "zh");
     }
 
     #[test]
