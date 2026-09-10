@@ -524,11 +524,6 @@ impl ConsoleOverlay {
         // lines appear above the response text in scrollback, which is
         // the natural reading order.
         self.drain_engine_output(dev);
-        // Only retain non-empty / non-duplicate-of-last lines for
-        // ↑ recall; mirrors typical shell behaviour.
-        if self.cmd_history.last().map(String::as_str) != Some(trimmed) {
-            self.cmd_history.push(line.clone());
-        }
         match response {
             FrameConsoleResponse::Ok(text) => {
                 if !text.is_empty() {
@@ -567,6 +562,21 @@ impl ConsoleOverlay {
                 // tick via `take_pending_deity_invoked`.
                 self.pending_deity_invoked = true;
             }
+        }
+        self.remember_command(line);
+    }
+
+    /// Keep the original text for recall, comparing surrounding whitespace
+    /// consistently on both commands when suppressing consecutive duplicates.
+    fn remember_command(&mut self, line: String) {
+        let trimmed = line.trim();
+        if !trimmed.is_empty()
+            && self
+                .cmd_history
+                .last()
+                .is_none_or(|previous| previous.trim() != trimmed)
+        {
+            self.cmd_history.push(line);
         }
     }
 
@@ -1048,6 +1058,42 @@ mod tests {
         c.cursor = 2;
         c.tab_complete(&dev);
         assert_eq!(c.input, "CASH ");
+    }
+
+    #[test]
+    fn history_retention_moves_original_text_and_compares_trimmed_duplicates() {
+        let mut c = ConsoleOverlay::new();
+        let first = String::from("  HELP\t");
+        let first_buffer = first.as_ptr();
+        c.remember_command(first);
+        assert_eq!(c.cmd_history, ["  HELP\t"]);
+        assert_eq!(c.cmd_history[0].as_ptr(), first_buffer);
+        for duplicate in ["HELP", " HELP ", "\tHELP\n", ""] {
+            c.remember_command(duplicate.into());
+            assert_eq!(c.cmd_history, ["  HELP\t"]);
+        }
+        c.remember_command("FREEZE".into());
+        c.remember_command("HELP".into()); // Only consecutive duplicates are suppressed.
+        c.remember_command("help".into()); // Preserve case-sensitive history policy.
+        c.remember_command("CALL  café".into());
+        c.remember_command("CALL café".into()); // Internal whitespace remains significant.
+        assert_eq!(
+            c.cmd_history,
+            [
+                "  HELP\t",
+                "FREEZE",
+                "HELP",
+                "help",
+                "CALL  café",
+                "CALL café"
+            ]
+        );
+
+        c.history_prev();
+        assert_eq!(c.input, "CALL café");
+        let mut empty = ConsoleOverlay::new();
+        empty.remember_command(" \t\n".into());
+        assert!(empty.cmd_history.is_empty());
     }
 
     #[test]
