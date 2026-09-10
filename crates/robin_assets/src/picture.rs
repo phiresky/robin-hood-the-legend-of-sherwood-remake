@@ -149,8 +149,9 @@ pub(crate) fn read_bytes(file: &mut SbFile, len: usize) -> Result<Vec<u8>> {
 /// and the `bzip2` dependency is scoped native-only.
 #[cfg(not(target_arch = "wasm32"))]
 fn decompress_sixteen_bzip(compressed: &[u8], expected: usize) -> Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(expected);
+    let mut out = Vec::new();
     bzip2::read::BzDecoder::new(compressed)
+        .take(expected as u64 + 1)
         .read_to_end(&mut out)
         .context("bzip2 decompression of Sixteen picture failed")?;
     Ok(out)
@@ -469,8 +470,16 @@ impl Picture {
                 self.pixel_format
             );
         }
-        let payload = match packing {
-            SixteenPacking::None => self.data.clone(),
+        let (pitch, expected) = Self::sixteen_layout(self.width, self.height)?;
+        if self.pitch != pitch || self.data.len() != expected {
+            bail!(
+                "Sixteen source buffer is inconsistent: expected pitch {pitch} and {expected} bytes, got pitch {} and {} bytes",
+                self.pitch,
+                self.data.len()
+            );
+        }
+        let payload: std::borrow::Cow<'_, [u8]> = match packing {
+            SixteenPacking::None => std::borrow::Cow::Borrowed(&self.data),
             SixteenPacking::Zip => {
                 // Use Z_DEFAULT_COMPRESSION (level 6) so byte-level diffing
                 // against original `.res` files is closer (still
@@ -480,15 +489,19 @@ impl Picture {
                     flate2::Compression::default(),
                 );
                 enc.write_all(&self.data).context("zlib encode")?;
-                enc.finish().context("zlib finalize")?
+                std::borrow::Cow::Owned(enc.finish().context("zlib finalize")?)
             }
-            SixteenPacking::Bzip => compress_sixteen_bzip(&self.data)?,
+            SixteenPacking::Bzip => std::borrow::Cow::Owned(compress_sixteen_bzip(&self.data)?),
         };
         let mut out = Vec::with_capacity(12 + payload.len());
         out.extend_from_slice(&self.width.to_le_bytes());
         out.extend_from_slice(&self.height.to_le_bytes());
         out.extend_from_slice(&(packing as u32).to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(
+            &u32::try_from(payload.len())
+                .context("Sixteen packed payload exceeds u32")?
+                .to_le_bytes(),
+        );
         out.extend_from_slice(&payload);
         Ok(out)
     }
@@ -496,7 +509,6 @@ impl Picture {
     /// Inline Sixteen-format decoder for an in-memory blob, to support
     /// the shipping `dd.raw` path without needing an `SbFile` cursor type.
     pub fn load_sixteen_from_bytes(bytes: &[u8]) -> Result<Self> {
-        use std::io::Read;
         let mut reader = Reader::new(bytes);
         let x_size = reader.u16("Sixteen frame width")?;
         let y_size = reader.u16("Sixteen frame height")?;
@@ -504,22 +516,56 @@ impl Picture {
         let packed_size = reader.u32("Sixteen frame packed size")? as usize;
         let packing = SixteenPacking::from_u32(packing_raw)?;
         let payload = reader.take(packed_size, "Sixteen frame payload")?;
-        let expected = x_size as usize * y_size as usize * 2;
+        Self::decode_sixteen_payload(x_size, y_size, packing, payload)
+    }
+
+    fn sixteen_layout(width: u16, height: u16) -> Result<(u16, usize)> {
+        let pitch = width
+            .checked_mul(2)
+            .context("Sixteen row pitch exceeds u16")?;
+        let length = usize::from(pitch)
+            .checked_mul(usize::from(height))
+            .context("Sixteen pixel byte length exceeds address space")?;
+        Ok((pitch, length))
+    }
+
+    fn decode_sixteen_payload(
+        width: u16,
+        height: u16,
+        packing: SixteenPacking,
+        payload: &[u8],
+    ) -> Result<Self> {
+        let (pitch, expected) = Self::sixteen_layout(width, height)?;
         let data = match packing {
-            SixteenPacking::None => payload.to_vec(),
+            SixteenPacking::None => {
+                if payload.len() != expected {
+                    bail!(
+                        "Sixteen pixel payload: expected {expected} bytes, got {}",
+                        payload.len()
+                    );
+                }
+                payload.to_vec()
+            }
             SixteenPacking::Zip => {
-                let mut out = Vec::with_capacity(expected);
+                let mut out = Vec::new();
                 flate2::read::ZlibDecoder::new(payload)
+                    .take(expected as u64 + 1)
                     .read_to_end(&mut out)
                     .context("zlib decompression of Sixteen picture failed")?;
                 out
             }
             SixteenPacking::Bzip => decompress_sixteen_bzip(payload, expected)?,
         };
+        if data.len() != expected {
+            bail!(
+                "Sixteen pixel payload: expected {expected} bytes, got {}",
+                data.len()
+            );
+        }
         Ok(Self {
-            width: x_size,
-            height: y_size,
-            pitch: x_size * 2,
+            width,
+            height,
+            pitch,
             pixel_format: PixelFormat::Rgb16,
             data,
             palette: None,
@@ -764,35 +810,12 @@ impl Picture {
         let packing = SixteenPacking::from_u32(read_u32(file)?)?;
         let packed_size = read_u32(file)? as usize;
 
-        let expected = x_size as usize * y_size as usize * 2;
-
-        let data = match packing {
-            SixteenPacking::None => read_bytes(file, packed_size)?,
-            SixteenPacking::Zip => {
-                let compressed = read_bytes(file, packed_size)?;
-                let mut out = Vec::with_capacity(expected);
-                flate2::read::ZlibDecoder::new(&compressed[..])
-                    .read_to_end(&mut out)
-                    .context("zlib decompression of Sixteen picture failed")?;
-                out
-            }
-            SixteenPacking::Bzip => {
-                let compressed = read_bytes(file, packed_size)?;
-                decompress_sixteen_bzip(&compressed, expected)?
-            }
-        };
-
-        // Note: on big-endian the u16 pixels would need byte-swapping.
-        // We target little-endian (x86/x64) only.
-
-        Ok(Self {
-            width: x_size,
-            height: y_size,
-            pitch: x_size * 2,
-            pixel_format: PixelFormat::Rgb16,
-            data,
-            palette: None,
-        })
+        let remaining = file.get_size().saturating_sub(file.tell());
+        if packed_size as u64 > remaining {
+            bail!("Sixteen packed payload exceeds remaining stream bytes");
+        }
+        let payload = read_bytes(file, packed_size)?;
+        Self::decode_sixteen_payload(x_size, y_size, packing, &payload)
     }
 
     // =======================================================================
@@ -1299,6 +1322,70 @@ mod tests {
         assert_eq!(PixelFormat::Rgb16.bits_per_pixel(), 16);
         assert_eq!(PixelFormat::Rgb24.bits_per_pixel(), 24);
         assert_eq!(PixelFormat::Rgb32.bits_per_pixel(), 32);
+    }
+
+    #[test]
+    fn sixteen_decoders_share_exact_size_and_stream_boundary_checks() {
+        let picture = Picture {
+            width: 2,
+            height: 1,
+            pitch: 4,
+            pixel_format: PixelFormat::Rgb16,
+            data: vec![1, 2, 3, 4],
+            palette: None,
+        };
+        let packings = [
+            SixteenPacking::None,
+            SixteenPacking::Zip,
+            #[cfg(not(target_arch = "wasm32"))]
+            SixteenPacking::Bzip,
+        ];
+        for packing in packings {
+            let bytes = picture.write_sixteen_to_bytes(packing).unwrap();
+            assert_eq!(
+                Picture::load_sixteen_from_bytes(&bytes).unwrap().data,
+                picture.data
+            );
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            let mut stream_bytes = bytes.clone();
+            stream_bytes.extend_from_slice(&42u32.to_le_bytes());
+            vfs.install_preloaded_asset("sixteen-fixture.bin", stream_bytes)
+                .unwrap();
+            let files = robin_data_io::sbfile::SbFileSystem::new(vfs.clone());
+            let mut file = files.open("sixteen-fixture.bin", 0).unwrap();
+            assert_eq!(
+                Picture::load_sixteen_from_stream(&mut file).unwrap().data,
+                picture.data
+            );
+            assert_eq!(read_u32(&mut file).unwrap(), 42);
+
+            for width in [1u16, 3, 32_768] {
+                let mut invalid = bytes.clone();
+                invalid[..2].copy_from_slice(&width.to_le_bytes());
+                assert!(Picture::load_sixteen_from_bytes(&invalid).is_err());
+                vfs.install_preloaded_asset("sixteen-fixture.bin", invalid)
+                    .unwrap();
+                let mut file = files.open("sixteen-fixture.bin", 0).unwrap();
+                assert!(Picture::load_sixteen_from_stream(&mut file).is_err());
+            }
+            assert!(Picture::load_sixteen_from_bytes(&bytes[..bytes.len() - 1]).is_err());
+            let mut oversized = bytes.clone();
+            oversized[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+            vfs.install_preloaded_asset("sixteen-fixture.bin", oversized)
+                .unwrap();
+            let mut file = files.open("sixteen-fixture.bin", 0).unwrap();
+            assert!(Picture::load_sixteen_from_stream(&mut file).is_err());
+        }
+        let mut invalid = picture.clone();
+        invalid.pitch = 3;
+        assert!(
+            invalid
+                .write_sixteen_to_bytes(SixteenPacking::None)
+                .is_err()
+        );
+        invalid.pitch = 4;
+        invalid.data.pop();
+        assert!(invalid.write_sixteen_to_bytes(SixteenPacking::Zip).is_err());
     }
 
     #[test]
