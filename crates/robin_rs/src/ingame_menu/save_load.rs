@@ -929,11 +929,11 @@ fn selected_metadata_lines(
     lines
 }
 
-fn metadata_value(value: &str, text: &impl SaveMetadataText) -> String {
+fn metadata_value<'a>(value: &'a str, text: &impl SaveMetadataText) -> Cow<'a, str> {
     if value.is_empty() {
-        text.legacy_value_unavailable()
+        Cow::Owned(text.legacy_value_unavailable())
     } else {
-        value.to_string()
+        Cow::Borrowed(value)
     }
 }
 
@@ -1584,6 +1584,20 @@ mod tests {
             format_exact_saved_time("0", Some(&TimeZone::UTC), &text),
             "1970-01-01 00:00:00 UTC"
         );
+    }
+
+    #[test]
+    fn metadata_values_borrow_present_text_without_trimming() {
+        let text = EnglishSaveMetadataText;
+        for value in ["The Silver Arrow", "Alice", "  ", " é "] {
+            let rendered = metadata_value(value, &text);
+            assert!(matches!(rendered, Cow::Borrowed(_)));
+            assert_eq!(rendered, value);
+            assert_eq!(rendered.as_ptr(), value.as_ptr());
+        }
+        let missing = metadata_value("", &text);
+        assert!(matches!(missing, Cow::Owned(_)));
+        assert_eq!(missing, text.legacy_value_unavailable());
     }
 
     #[test]
