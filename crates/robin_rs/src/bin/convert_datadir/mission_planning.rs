@@ -6,6 +6,76 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires original installation in ROBINHOOD_DATA_DIR"]
+    fn original_missions_have_resolvable_actor_dependencies() {
+        let root = std::env::var_os("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        let data = find_data_dir(Path::new(&root)).unwrap();
+        let cpf_path = resolve_data_file(&data, "Configuration/profile.cpf").expect("profile.cpf");
+        let mut file = SbFile::open(&cpf_path.to_string_lossy(), SB_FILE_READ).unwrap();
+        let mut profiles = ProfileManager::new();
+        profiles.load_all_legacy_cpf(&mut file).unwrap();
+        let beggar_ids = profiles
+            .civilians
+            .iter()
+            .enumerate()
+            .filter(|(_, profile)| profile.civilian_type == CivilianType::Beggar)
+            .map(|(index, _)| index as u32)
+            .collect();
+        let mut checked = 0;
+        for profile in &profiles.missions {
+            let Some(rhp) = resolve_data_file(
+                &data,
+                &format!("Levels/{}.rhp", profile.proto_level_filename),
+            ) else {
+                continue;
+            };
+            let Some(rhm) =
+                resolve_data_file(&data, &format!("Levels/{}.rhm", profile.mission_filename))
+            else {
+                continue;
+            };
+            let (proto, mission) = parse_level_pair(&rhp, &rhm, &beggar_ids).unwrap();
+            let forest = proto
+                .misc
+                .as_ref()
+                .expect("MISC forest metadata")
+                .forest_level;
+            let mut build = ShippingMissionBuild::default();
+            add_npc_dependencies(
+                &mut build,
+                &profiles,
+                mission.soldiers.iter().map(|actor| actor.profile_number),
+                mission.civilians.iter().map(|actor| actor.profile_number),
+            )
+            .unwrap_or_else(|error| panic!("{}: {error:#}", profile.mission_filename));
+            for index in profile
+                .required_character_indices
+                .iter()
+                .map(|&index| index as usize)
+                .chain(
+                    mission
+                        .pcs_to_rescue
+                        .iter()
+                        .map(|pc| pc.profile_index as usize),
+                )
+            {
+                normalize_robin_profile_index(&profiles, index, forest)
+                    .unwrap_or_else(|error| panic!("{}: {error:#}", profile.mission_filename));
+            }
+            checked += 1;
+        }
+        assert!(
+            checked != 0,
+            "no original mission pairs found under {}",
+            data.display()
+        );
+        eprintln!(
+            "validated actor dependencies in {checked} original mission profiles under {}",
+            data.display()
+        );
+    }
+
+    #[test]
     fn npc_dependencies_share_asset_collection_and_reject_missing_profiles() {
         let mut profiles = ProfileManager::default();
         profiles
