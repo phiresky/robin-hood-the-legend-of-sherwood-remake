@@ -773,12 +773,19 @@ impl OptionsTaskState {
         self.rebuild_frame(resources);
     }
 
+    fn setting_count(&self) -> usize {
+        match self.controller.page {
+            OptionsPage::Hub | OptionsPage::Shortcuts => 0,
+            OptionsPage::Graphics => available_graphics_settings().count(),
+            OptionsPage::Sounds => SoundSetting::ALL.len(),
+            OptionsPage::Gameplay => crate::ingame_menu::gameplay::GameplaySetting::ALL.len(),
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+            OptionsPage::MultiplayerPrivacy => 1,
+        }
+    }
+
     fn change_options_page(&mut self, delta: i32, resources: &IngameMenuResources) {
-        let total_settings = self
-            .all_rows(resources)
-            .into_iter()
-            .filter(|row| row.action.is_adjustment())
-            .count();
+        let total_settings = self.setting_count();
         if self.pager.move_by(delta, total_settings) {
             self.selected = 0;
             self.rebuild_frame(resources);
@@ -2032,6 +2039,31 @@ mod tests {
                 panic!("options must produce their final persistence outcome");
             };
             assert!(!result.key_config_changed);
+        }
+    }
+
+    #[test]
+    fn option_page_counts_include_disabled_settings_but_not_footer_actions() {
+        let mut state = options_fixture();
+        state.can_3d_sound = false;
+        state.host_gameplay_rules_editable = false;
+        for (page, expected) in [
+            (OptionsPage::Hub, 0),
+            (OptionsPage::Shortcuts, 0),
+            (OptionsPage::Sounds, 7),
+            (
+                OptionsPage::Gameplay,
+                crate::ingame_menu::gameplay::GameplaySetting::ALL.len(),
+            ),
+            (OptionsPage::Graphics, available_graphics_settings().count()),
+        ] {
+            state.controller.page = page;
+            assert_eq!(state.setting_count(), expected);
+        }
+        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+        {
+            state.controller.page = OptionsPage::MultiplayerPrivacy;
+            assert_eq!(state.setting_count(), 1);
         }
     }
 
