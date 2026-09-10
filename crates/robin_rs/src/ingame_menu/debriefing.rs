@@ -338,7 +338,7 @@ impl DebriefingModalState {
     }
 }
 
-/// Replace printf placeholders in `template` with successive values from
+/// Append template text, replacing printf placeholders with successive values from
 /// `values`.  Handles `%u` / `%lu` / `%i` / `%d` (integer) and `%s` /
 /// `%ls` (string) — these are the specs that appear in the menu-text
 /// resource templates we consume.
@@ -346,8 +346,7 @@ impl DebriefingModalState {
 /// If `template` has fewer placeholders than `values.len()`, extra
 /// values are dropped silently; if it has more, the extras are left
 /// as-is in the output.
-fn substitute_printf(template: &str, values: &[&str]) -> String {
-    let mut out = String::with_capacity(template.len() + 16);
+fn append_printf(out: &mut String, template: &str, values: &[&str]) {
     let mut values = values.iter();
     let mut chars = template.chars().peekable();
     while let Some(c) = chars.next() {
@@ -377,7 +376,6 @@ fn substitute_printf(template: &str, values: &[&str]) -> String {
             }
         }
     }
-    out
 }
 
 /// Format "HH:MM" (no seconds).
@@ -411,16 +409,17 @@ pub fn format_mission_stat_text(
     // The legacy unsigned field accumulates signed changes, including spending.
     // Interpret its net value as signed instead of displaying a wrapped loss.
     if stat.collected_money != 0 {
-        let s = substitute_printf(
+        append_printf(
+            &mut out,
             &menu_text.get(MT_STR_DB_S06),
             &[&(stat.collected_money as i32).to_string()],
         );
-        out.push_str(&s);
         out.push('\n');
     }
     if stat.bonus_money != 0 || stat.soldier_money != 0 {
         let total = stat.bonus_money + stat.soldier_money;
-        let s = substitute_printf(
+        append_printf(
+            &mut out,
             &menu_text.get(MT_STR_DB_S18),
             &[
                 &total.to_string(),
@@ -428,28 +427,27 @@ pub fn format_mission_stat_text(
                 &stat.soldier_money.to_string(),
             ],
         );
-        out.push_str(&s);
         out.push('\n');
     }
     out.push('\n');
 
     // Soldier count (always).
-    let s = substitute_printf(
+    append_printf(
+        &mut out,
         &menu_text.get(MT_STR_DB_S07),
         &[
             &stat.living_soldier_count.to_string(),
             &stat.total_soldier_count.to_string(),
         ],
     );
-    out.push_str(&s);
     out.push('\n');
 
     // New members (peasants + PCs).
-    let s = substitute_printf(
+    append_printf(
+        &mut out,
         &menu_text.get(MT_STR_DB_S08),
         &[&stat.total_new_members().to_string()],
     );
-    out.push_str(&s);
     out.push('\n');
 
     // PCs who joined the gang — "<name> S09" per joined PC.
@@ -477,32 +475,31 @@ pub fn format_mission_stat_text(
     }
 
     // Killed (peasants always; allied only if non-zero).
-    let s = substitute_printf(
+    append_printf(
+        &mut out,
         &menu_text.get(MT_STR_DB_S10),
         &[&stat.killed_peasant_count.to_string()],
     );
-    out.push_str(&s);
     out.push('\n');
     if stat.killed_allied_count != 0 {
-        let s = substitute_printf(
+        append_printf(
+            &mut out,
             &menu_text.get(MT_STR_DB_S17),
             &[&stat.killed_allied_count.to_string()],
         );
-        out.push_str(&s);
         out.push('\n');
     }
     out.push('\n');
 
     // Score + length.
-    let s = substitute_printf(
+    append_printf(
+        &mut out,
         &menu_text.get(MT_STR_DB_S11),
         &[&stat.added_score.to_string()],
     );
-    out.push_str(&s);
     out.push('\n');
     let length_str = seconds_to_hms(mission_length_seconds);
-    let s = substitute_printf(&menu_text.get(MT_STR_DB_S13), &[&length_str]);
-    out.push_str(&s);
+    append_printf(&mut out, &menu_text.get(MT_STR_DB_S13), &[&length_str]);
     out.push('\n');
 
     out
@@ -853,6 +850,20 @@ fn scroll_line_at_pointer(y: i32, grab_offset: i32, total: usize, visible: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn substitute_printf(template: &str, values: &[&str]) -> String {
+        let mut out = String::new();
+        append_printf(&mut out, template, values);
+        out
+    }
+
+    #[test]
+    fn printf_append_preserves_existing_output_and_value_boundaries() {
+        let mut out = String::from("prefix: ");
+        append_printf(&mut out, "%s %u", &["first", "42"]);
+        append_printf(&mut out, " / %lu", &["7"]);
+        assert_eq!(out, "prefix: first 42 / 7");
+    }
 
     fn flow(body: &str) -> DebriefingModalState {
         DebriefingModalState {
