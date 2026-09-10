@@ -8,10 +8,10 @@ use std::{
 };
 
 #[derive(Debug, Serialize, Deserialize)]
-struct QueryParameters(BTreeMap<String, String>);
+struct QueryParameters<'a>(#[serde(borrow)] BTreeMap<Cow<'a, str>, Cow<'a, str>>);
 
-impl QueryParameters {
-    fn parse(query: &str) -> Result<Self, RpcError> {
+impl<'a> QueryParameters<'a> {
+    fn parse(query: &'a str) -> Result<Self, RpcError> {
         let mut values = BTreeMap::new();
         for pair in query.split('&').filter(|pair| !pair.is_empty()) {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -69,7 +69,7 @@ impl QueryParameters {
     }
 }
 
-fn decode_component(raw: &str) -> Result<String, RpcError> {
+fn decode_component(raw: &str) -> Result<Cow<'_, str>, RpcError> {
     // percent_decode deliberately tolerates malformed escapes; reject those
     // before handing decoding and UTF-8 validation to the library.
     let bytes = raw.as_bytes();
@@ -91,8 +91,8 @@ fn decode_component(raw: &str) -> Result<String, RpcError> {
         .decode_utf8()
         .map_err(|_| RpcError::invalid_request("query parameter is not valid UTF-8"))?;
     Ok(match decoded {
-        Cow::Borrowed(_) => form.into_owned(),
-        Cow::Owned(value) => value,
+        Cow::Borrowed(_) => form,
+        Cow::Owned(value) => Cow::Owned(value),
     })
 }
 
@@ -143,12 +143,32 @@ pub(crate) fn decompile_class(query: &str) -> Result<Option<String>, RpcError> {
     let mut query = QueryParameters::parse(query)?;
     let class = query.0.remove("class");
     query.finish()?;
-    Ok(class)
+    Ok(class.map(Cow::into_owned))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parameters_borrow_plain_components_and_own_only_decoded_text() {
+        let input = String::from("frame=12&%77=640&class=Guard+A");
+        let parameters = QueryParameters::parse(&input).unwrap();
+        let (key, value) = parameters.0.get_key_value("frame").unwrap();
+        assert!(matches!(key, Cow::Borrowed(_)));
+        assert!(matches!(value, Cow::Borrowed(_)));
+        assert_eq!(key.as_ptr(), input.as_ptr());
+        assert_eq!(value.as_ptr(), input[6..].as_ptr());
+        let (key, value) = parameters.0.get_key_value("w").unwrap();
+        assert!(matches!(key, Cow::Owned(_)));
+        assert!(matches!(value, Cow::Borrowed(_)));
+        assert!(matches!(parameters.0.get("class").unwrap(), Cow::Owned(_)));
+        let json = serde_json::to_string(&parameters).unwrap();
+        let decoded: QueryParameters<'_> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parameters.0, decoded.0);
+        let request = decompile_class("class=Guard+A").unwrap().unwrap();
+        assert_eq!(request, "Guard A");
+    }
 
     #[test]
     fn component_decoding_preserves_form_rules_and_decodes_only_once() {
