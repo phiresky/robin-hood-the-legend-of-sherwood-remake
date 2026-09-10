@@ -38,7 +38,6 @@ pub mod res_descr;
 #[cfg(feature = "engine-adapters")]
 pub mod resource_manager;
 pub mod rle_jxl;
-pub mod sb3d;
 #[cfg(feature = "engine-adapters")]
 pub mod scb;
 #[cfg(feature = "engine-adapters")]

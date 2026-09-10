@@ -564,7 +564,7 @@ pub struct SightObstacle {
     pub polygon_projection: ProjectionPolygon,
 
     /// Top plane defined by three points `[origin, p1, p2]` (each `[x,y,z]`).
-    /// Stored as raw triples so we don't depend on sb3d serde.
+    /// Raw coordinate triples are part of the serialized obstacle representation.
     pub top_plane_points: [[f32; 3]; 3],
 
     /// Bottom plane defined by three points.
