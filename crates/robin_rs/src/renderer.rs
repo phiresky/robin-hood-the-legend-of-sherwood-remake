@@ -980,7 +980,7 @@ impl Renderer {
         pixels: &[u16],
     ) -> ManagedSurfaceTextures {
         let opaque_rgba = rgb565_to_rgba_opaque(pixels, width as usize, height as usize);
-        let (color_rgba, shadow_rgba, has_shadow) =
+        let (color_rgba, shadow_rgba) =
             rgb565_to_color_shadow_rgba(pixels, TRANSPARENT_COLOR_KEY_16);
         let (opaque_texture, opaque_view) = upload_rgba_texture(
             &self.gpu,
@@ -1010,7 +1010,7 @@ impl Renderer {
             &self.resources.sampler,
             "managed surface color bg",
         );
-        let (shadow_texture, shadow_view, shadow_bg) = if has_shadow {
+        let (shadow_texture, shadow_view, shadow_bg) = if let Some(shadow_rgba) = shadow_rgba {
             let (texture, view) = upload_rgba_texture(
                 &self.gpu,
                 &shadow_rgba,
@@ -3028,25 +3028,28 @@ fn rgb565_to_rgba_opaque(src: &[u16], w: usize, h: usize) -> Vec<u8> {
     out
 }
 
-fn rgb565_to_color_shadow_rgba(src: &[u16], color_key: u16) -> (Vec<u8>, Vec<u8>, bool) {
-    let mut color = Vec::with_capacity(src.len() * 4);
-    let mut shadow = Vec::with_capacity(src.len() * 4);
-    let mut has_shadow = false;
-    for &px in src {
+fn rgb565_to_color_shadow_rgba(src: &[u16], color_key: u16) -> (Vec<u8>, Option<Vec<u8>>) {
+    let byte_len = src
+        .len()
+        .checked_mul(4)
+        .expect("managed surface RGBA size overflow");
+    let mut color = Vec::with_capacity(byte_len);
+    let mut shadow: Option<Vec<u8>> = None;
+    for (index, &px) in src.iter().enumerate() {
         if px == color_key {
             color.extend_from_slice(&[0, 0, 0, 0]);
-            shadow.extend_from_slice(&[0, 0, 0, 0]);
         } else if px == SHADOW_KEY {
             color.extend_from_slice(&[0, 0, 0, 0]);
-            shadow.extend_from_slice(&[0, 0, 0, 255]);
-            has_shadow = true;
+            // Allocate only on the first shadow pixel. All other mask bytes
+            // remain transparent, including the prefix already visited.
+            let mask = shadow.get_or_insert_with(|| vec![0; byte_len]);
+            mask[index * 4 + 3] = 255;
         } else {
             let (r, g, b) = rgb565_to_rgb8(px);
             color.extend_from_slice(&[r, g, b, 255]);
-            shadow.extend_from_slice(&[0, 0, 0, 0]);
         }
     }
-    (color, shadow, has_shadow)
+    (color, shadow)
 }
 
 /// Allocate a `Rgba8UnormSrgb` 2D texture and upload `rgba` into it.
@@ -3997,6 +4000,40 @@ mod tests {
             blend: BlendMode::Blend,
         };
         mark_draws_stencil_tested(std::slice::from_mut(&mut draw));
+    }
+
+    #[test]
+    fn managed_surface_shadow_masks_are_optional_and_preserve_pixel_positions() {
+        let transparent = TRANSPARENT_COLOR_KEY_16;
+        for pixels in [vec![], vec![transparent, 0xF800, 0x07E0]] {
+            let (_, shadow) = rgb565_to_color_shadow_rgba(&pixels, transparent);
+            assert!(shadow.is_none());
+        }
+        for shadow_index in 0..4 {
+            let mut pixels = [0xF800, transparent, 0x07E0, 0xFFFF];
+            pixels[shadow_index] = SHADOW_KEY;
+            let (color, shadow) = rgb565_to_color_shadow_rgba(&pixels, transparent);
+            let shadow = shadow.expect("one shadow pixel must produce a mask");
+            for (index, &pixel) in pixels.iter().enumerate() {
+                let offset = index * 4;
+                if index == shadow_index {
+                    assert_eq!(&color[offset..offset + 4], &[0, 0, 0, 0]);
+                    assert_eq!(&shadow[offset..offset + 4], &[0, 0, 0, 255]);
+                } else {
+                    assert_eq!(&shadow[offset..offset + 4], &[0, 0, 0, 0]);
+                    if pixel == transparent {
+                        assert_eq!(&color[offset..offset + 4], &[0, 0, 0, 0]);
+                    } else {
+                        let (r, g, b) = rgb565_to_rgb8(pixel);
+                        assert_eq!(&color[offset..offset + 4], &[r, g, b, 255]);
+                    }
+                }
+            }
+        }
+        // Transparency takes precedence even if the caller chooses the shadow key.
+        let (color, shadow) = rgb565_to_color_shadow_rgba(&[SHADOW_KEY], SHADOW_KEY);
+        assert_eq!(color, [0, 0, 0, 0]);
+        assert!(shadow.is_none());
     }
 
     #[test]
