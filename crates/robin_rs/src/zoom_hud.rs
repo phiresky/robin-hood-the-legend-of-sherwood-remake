@@ -170,7 +170,7 @@ impl ZoomHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-use crate::hud_sprite::SpriteFrame;
+use crate::hud_sprite::{SpriteBank, SpriteFrame};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -248,9 +248,9 @@ fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ZoomButtonSprites {
     #[serde(skip)]
-    zoom_up: [Option<SpriteFrame>; 4],
+    zoom_up: SpriteBank,
     #[serde(skip)]
-    zoom_down: [Option<SpriteFrame>; 4],
+    zoom_down: SpriteBank,
 }
 
 impl ZoomButtonSprites {
@@ -275,17 +275,8 @@ impl ZoomButtonSprites {
             let surface = crate::ui_panel::pic_to_surface(renderer, pic);
             Some((surface, w, h))
         }
-        fn fetch_all(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-        ) -> [Option<SpriteFrame>; 4] {
-            [
-                fetch_frame(res, renderer, id, 0),
-                fetch_frame(res, renderer, id, 1),
-                fetch_frame(res, renderer, id, 2),
-                fetch_frame(res, renderer, id, 3),
-            ]
+        fn fetch_all(res: &mut ResourceManager, renderer: &mut Renderer, id: i32) -> SpriteBank {
+            std::array::from_fn(|sub| fetch_frame(res, renderer, id, sub))
         }
 
         Self {
@@ -294,7 +285,7 @@ impl ZoomButtonSprites {
         }
     }
 
-    fn frames(&self, btn: ZoomButton) -> &[Option<SpriteFrame>; 4] {
+    fn frames(&self, btn: ZoomButton) -> &SpriteBank {
         match btn {
             ZoomButton::ZoomUp => &self.zoom_up,
             ZoomButton::ZoomDown => &self.zoom_down,
@@ -316,16 +307,12 @@ impl ZoomButtonSprites {
     /// Native size of the zoom-up button's normal frame, used to size
     /// the hit rect.
     pub fn zoom_up_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.zoom_up)
+        crate::hud_sprite::size(&self.zoom_up)
     }
 
     /// Companion to [`Self::zoom_up_size`].
     pub fn zoom_down_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.zoom_down)
-    }
-
-    fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(frames)
+        crate::hud_sprite::size(&self.zoom_down)
     }
 }
 

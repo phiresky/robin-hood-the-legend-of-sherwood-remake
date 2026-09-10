@@ -308,7 +308,7 @@ impl SherwoodHudLayout {
     }
 }
 
-use crate::hud_sprite::SpriteFrame;
+use crate::hud_sprite::{SpriteBank, SpriteFrame};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -390,15 +390,15 @@ fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct SherwoodButtonSprites {
     #[serde(skip)]
-    display_campaign_map: [Option<SpriteFrame>; 4],
+    display_campaign_map: SpriteBank,
     #[serde(skip)]
-    go_to_exit: [Option<SpriteFrame>; 4],
+    go_to_exit: SpriteBank,
     #[serde(skip)]
-    start_mission: [Option<SpriteFrame>; 4],
+    start_mission: SpriteBank,
     #[serde(skip)]
-    quit_mission: [Option<SpriteFrame>; 4],
+    quit_mission: SpriteBank,
     #[serde(skip)]
-    sherwood_trading: [Option<SpriteFrame>; 4],
+    sherwood_trading: SpriteBank,
 }
 
 impl SherwoodButtonSprites {
@@ -445,13 +445,8 @@ impl SherwoodButtonSprites {
             renderer: &mut Renderer,
             id: i32,
             label: &str,
-        ) -> [Option<SpriteFrame>; 4] {
-            [
-                fetch_frame(res, renderer, id, 0, label),
-                fetch_frame(res, renderer, id, 1, label),
-                fetch_frame(res, renderer, id, 2, label),
-                fetch_frame(res, renderer, id, 3, label),
-            ]
+        ) -> SpriteBank {
+            std::array::from_fn(|sub| fetch_frame(res, renderer, id, sub, label))
         }
 
         Self {
@@ -475,7 +470,7 @@ impl SherwoodButtonSprites {
         }
     }
 
-    fn frames(&self, btn: SherwoodButton) -> &[Option<SpriteFrame>; 4] {
+    fn frames(&self, btn: SherwoodButton) -> &SpriteBank {
         match btn {
             SherwoodButton::DisplayCampaignMap => &self.display_campaign_map,
             SherwoodButton::GoToExit => &self.go_to_exit,

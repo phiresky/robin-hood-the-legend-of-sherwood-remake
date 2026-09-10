@@ -213,7 +213,7 @@ impl CornerHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-use crate::hud_sprite::SpriteFrame;
+use crate::hud_sprite::{SpriteBank, SpriteFrame};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -292,11 +292,11 @@ fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct CornerButtonSprites {
     #[serde(skip)]
-    clock: [Option<SpriteFrame>; 4],
+    clock: SpriteBank,
     #[serde(skip)]
-    sight: [Option<SpriteFrame>; 4],
+    sight: SpriteBank,
     #[serde(skip)]
-    quickstart: [Option<SpriteFrame>; 4],
+    quickstart: SpriteBank,
 }
 
 impl CornerButtonSprites {
@@ -336,13 +336,8 @@ impl CornerButtonSprites {
             renderer: &mut Renderer,
             id: i32,
             label: &str,
-        ) -> [Option<SpriteFrame>; 4] {
-            [
-                fetch_frame(res, renderer, id, 0, label),
-                fetch_frame(res, renderer, id, 1, label),
-                fetch_frame(res, renderer, id, 2, label),
-                fetch_frame(res, renderer, id, 3, label),
-            ]
+        ) -> SpriteBank {
+            std::array::from_fn(|sub| fetch_frame(res, renderer, id, sub, label))
         }
 
         Self {
@@ -352,7 +347,7 @@ impl CornerButtonSprites {
         }
     }
 
-    fn frames(&self, btn: CornerButton) -> &[Option<SpriteFrame>; 4] {
+    fn frames(&self, btn: CornerButton) -> &SpriteBank {
         match btn {
             CornerButton::Clock => &self.clock,
             CornerButton::Sight => &self.sight,
@@ -373,19 +368,15 @@ impl CornerButtonSprites {
     }
 
     pub fn clock_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.clock)
+        crate::hud_sprite::size(&self.clock)
     }
 
     pub fn sight_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.sight)
+        crate::hud_sprite::size(&self.sight)
     }
 
     pub fn quickstart_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.quickstart)
-    }
-
-    fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(frames)
+        crate::hud_sprite::size(&self.quickstart)
     }
 }
 

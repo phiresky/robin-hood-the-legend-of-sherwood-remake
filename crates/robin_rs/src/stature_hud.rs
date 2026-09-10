@@ -256,7 +256,7 @@ impl StatureHudLayout {
     }
 }
 
-use crate::hud_sprite::SpriteFrame;
+use crate::hud_sprite::{SpriteBank, SpriteFrame};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -316,9 +316,9 @@ fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct StatureSprites {
     #[serde(skip)]
-    up: [Option<SpriteFrame>; 4],
+    up: SpriteBank,
     #[serde(skip)]
-    down: [Option<SpriteFrame>; 4],
+    down: SpriteBank,
 }
 
 impl StatureSprites {
@@ -342,17 +342,8 @@ impl StatureSprites {
             let surface = crate::ui_panel::pic_to_surface(renderer, pic);
             Some((surface, w, h))
         }
-        fn all(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-        ) -> [Option<SpriteFrame>; 4] {
-            [
-                fetch(res, renderer, id, 0),
-                fetch(res, renderer, id, 1),
-                fetch(res, renderer, id, 2),
-                fetch(res, renderer, id, 3),
-            ]
+        fn all(res: &mut ResourceManager, renderer: &mut Renderer, id: i32) -> SpriteBank {
+            std::array::from_fn(|sub| fetch(res, renderer, id, sub))
         }
         Self {
             up: all(res, renderer, RHID_UP_ARROW),
@@ -360,7 +351,7 @@ impl StatureSprites {
         }
     }
 
-    fn frames(&self, btn: StatureButton) -> &[Option<SpriteFrame>; 4] {
+    fn frames(&self, btn: StatureButton) -> &SpriteBank {
         match btn {
             StatureButton::Up => &self.up,
             StatureButton::Down => &self.down,
@@ -377,15 +368,11 @@ impl StatureSprites {
     }
 
     pub fn up_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.up)
+        crate::hud_sprite::size(&self.up)
     }
 
     pub fn down_size(&self) -> Option<(u16, u16)> {
-        Self::size_of(&self.down)
-    }
-
-    fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(frames)
+        crate::hud_sprite::size(&self.down)
     }
 }
 
