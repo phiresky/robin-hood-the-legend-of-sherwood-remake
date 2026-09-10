@@ -847,9 +847,10 @@ impl BuiltinRunner {
     }
 
     fn ensure_pipeline(&mut self, pass: BuiltinPass, target: PipelineTarget) {
-        if self.pipelines.contains_key(&(pass, target)) {
+        let std::collections::hash_map::Entry::Vacant(entry) = self.pipelines.entry((pass, target))
+        else {
             return;
-        }
+        };
         let format = match target {
             PipelineTarget::Intermediate => wgpu::TextureFormat::Rgba8UnormSrgb,
             PipelineTarget::Surface => self.output_format,
@@ -882,7 +883,7 @@ impl BuiltinRunner {
                 multiview_mask: None,
                 cache: None,
             });
-        self.pipelines.insert((pass, target), pipeline);
+        entry.insert(pipeline);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -932,21 +933,24 @@ impl BuiltinRunner {
         }
         let mut input_slot = InputSlot::Source;
         let mut output_ping = 0usize;
+        let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
         for (index, pass_kind) in passes.iter().copied().enumerate() {
             let final_pass = index + 1 == passes.len();
             let input_view = match input_slot {
-                InputSlot::Source => source.create_view(&wgpu::TextureViewDescriptor::default()),
-                InputSlot::SourceIntermediate => self
-                    .source_intermediate
-                    .as_ref()
-                    .expect("source intermediate allocated")
-                    .view
-                    .clone(),
-                InputSlot::Output(slot) => self.output_intermediates[slot]
-                    .as_ref()
-                    .expect("output intermediate allocated")
-                    .view
-                    .clone(),
+                InputSlot::Source => &source_view,
+                InputSlot::SourceIntermediate => {
+                    &self
+                        .source_intermediate
+                        .as_ref()
+                        .expect("source intermediate allocated")
+                        .view
+                }
+                InputSlot::Output(slot) => {
+                    &self.output_intermediates[slot]
+                        .as_ref()
+                        .expect("output intermediate allocated")
+                        .view
+                }
             };
             let input_size = match input_slot {
                 InputSlot::Source | InputSlot::SourceIntermediate => source_size,
@@ -958,14 +962,14 @@ impl BuiltinRunner {
                 output_size
             };
             let (output_view, next_input) = if final_pass {
-                (target_view.clone(), input_slot)
+                (target_view, input_slot)
             } else if pass_kind.source_sized() {
                 (
-                    self.source_intermediate
+                    &self
+                        .source_intermediate
                         .as_ref()
                         .expect("source intermediate allocated")
-                        .view
-                        .clone(),
+                        .view,
                     InputSlot::SourceIntermediate,
                 )
             } else {
@@ -975,11 +979,10 @@ impl BuiltinRunner {
                 let slot = output_ping;
                 output_ping ^= 1;
                 (
-                    self.output_intermediates[slot]
+                    &self.output_intermediates[slot]
                         .as_ref()
                         .expect("output intermediate allocated")
-                        .view
-                        .clone(),
+                        .view,
                     InputSlot::Output(slot),
                 )
             };
@@ -992,7 +995,7 @@ impl BuiltinRunner {
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&input_view),
+                            resource: wgpu::BindingResource::TextureView(input_view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
@@ -1050,7 +1053,7 @@ impl BuiltinRunner {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("built-in upscaler pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &output_view,
+                    view: output_view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
