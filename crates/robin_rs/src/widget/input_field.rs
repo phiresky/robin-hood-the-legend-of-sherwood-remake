@@ -250,16 +250,12 @@ impl WidgetInputField {
             if ch == '\0' {
                 continue;
             }
-            if self.max_length > 0 && self.edit_text.chars().count() >= self.max_length - 1 {
+            if !self.insert_character(ch) {
                 break;
             }
-            let byte_pos = byte_offset_for_char_index(&self.edit_text, self.caret_offset);
-            self.edit_text.insert(byte_pos, ch);
-            self.caret_offset += 1;
             text_inserted = true;
         }
         if text_inserted {
-            self.caret_visible = true;
             return vec![self.base.make_event(UiMsg::WidgetTextChanging)];
         }
 
@@ -377,7 +373,7 @@ impl WidgetInputField {
             return;
         }
         self.base.state = UiState::SelectedEditable;
-        self.saved_text = self.edit_text.clone();
+        self.saved_text.clone_from(&self.edit_text);
         self.caret_offset = self.edit_text.chars().count();
         self.caret_visible = true;
     }
@@ -385,7 +381,7 @@ impl WidgetInputField {
     /// Validate the edit and exit edit mode.
     fn validate_and_exit(&mut self) -> Vec<UiEvent> {
         self.base.state = UiState::Selected;
-        self.base.text = self.edit_text.clone();
+        self.base.text.clone_from(&self.edit_text);
         // Hiding the caret snaps it to end of buffer.
         self.caret_offset = self.edit_text.chars().count();
         self.caret_visible = false;
@@ -397,8 +393,8 @@ impl WidgetInputField {
 
     /// Cancel the edit and restore the saved text.
     fn cancel_and_exit(&mut self) -> Vec<UiEvent> {
-        self.edit_text = self.saved_text.clone();
-        self.base.text = self.saved_text.clone();
+        self.edit_text.clone_from(&self.saved_text);
+        self.base.text.clone_from(&self.saved_text);
         self.base.state = UiState::Default;
         // Snap caret to end of the *restored* buffer so `caret_offset`
         // doesn't dangle past the new end.
@@ -411,7 +407,7 @@ impl WidgetInputField {
     /// caret to position 0.
     pub fn set_text(&mut self, text: &str) {
         self.base.set_text(text);
-        self.edit_text = text.to_string();
+        text.clone_into(&mut self.edit_text);
         self.caret_offset = 0;
     }
 
@@ -425,9 +421,9 @@ impl WidgetInputField {
             let max_actual = max_length.saturating_sub(1);
             let cur_chars = self.edit_text.chars().count();
             if cur_chars > max_actual {
-                let truncated: String = self.edit_text.chars().take(max_actual).collect();
-                self.edit_text = truncated.clone();
-                self.base.text = truncated;
+                let end = byte_offset_for_char_index(&self.edit_text, max_actual);
+                self.edit_text.truncate(end);
+                self.base.text.clone_from(&self.edit_text);
                 self.caret_offset = self.caret_offset.min(max_actual);
             }
         }
@@ -641,6 +637,51 @@ mod tests {
                 .iter()
                 .any(|e| e.msg_type == UiMsg::WidgetTextChanging)
         );
+    }
+
+    #[test]
+    fn ime_insertion_preserves_nul_filter_limits_and_single_change_event() {
+        let kb = UiKeyboard::default();
+        for (initial, caret, limit, input, expected, expected_caret, changed) in [
+            ("aé", 1, 5, "\0界\0🙂Z", "a界🙂é", 3, true),
+            ("", 0, 1, "\0x", "", 0, false),
+            ("aé", 1, 0, "\0", "aé", 1, false),
+            ("aé", 1, 0, "\0界\0🙂", "a界🙂é", 3, true),
+        ] {
+            let mut field = make_editable_field();
+            field.edit_text = initial.into();
+            field.caret_offset = caret;
+            field.max_length = limit;
+            field.caret_visible = true;
+            let events = field.process_input(&make_input(&kb, input));
+            assert_eq!(field.edit_text, expected);
+            assert_eq!(field.caret_offset, expected_caret);
+            assert_eq!(field.caret_visible, changed);
+            assert_eq!(events.len(), usize::from(changed));
+            if changed {
+                assert_eq!(events[0].msg_type, UiMsg::WidgetTextChanging);
+            }
+        }
+    }
+
+    #[test]
+    fn max_length_truncates_multibyte_text_without_replacing_edit_storage() {
+        let mut field = make_editable_field();
+        field.edit_text = String::with_capacity(128);
+        field.edit_text.push_str("aé界🙂z");
+        field.caret_offset = 5;
+        let pointer = field.edit_text.as_ptr();
+        let capacity = field.edit_text.capacity();
+        field.set_max_length(4);
+        assert_eq!(field.edit_text, "aé界");
+        assert_eq!(field.base.text, "aé界");
+        assert_eq!(field.caret_offset, 3);
+        assert_eq!(field.edit_text.as_ptr(), pointer);
+        assert_eq!(field.edit_text.capacity(), capacity);
+        field.set_max_length(1);
+        assert!(field.edit_text.is_empty());
+        assert!(field.base.text.is_empty());
+        assert_eq!(field.caret_offset, 0);
     }
 
     #[test]
