@@ -424,15 +424,15 @@ fn find_in(
     completed_at: Option<i64>,
 ) -> Option<PathBuf> {
     let file = recording_link_path(dir, key);
-    let bytes = match std::fs::read(file) {
-        Ok(bytes) => bytes,
+    let input = match std::fs::File::open(file) {
+        Ok(input) => std::io::BufReader::new(input),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(error) => {
             tracing::warn!("Cannot read recording link: {error}");
             return None;
         }
     };
-    match serde_json::from_slice::<RecordingLink>(&bytes) {
+    match serde_json::from_reader::<_, RecordingLink>(input) {
         Ok(link)
             if link.key == key
                 && link.completed_at == completed_at
@@ -517,6 +517,35 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn recording_link_lookup_preserves_identity_and_rejects_trailing_json() {
+        let directory = tempfile::tempdir().unwrap();
+        let attempts = directory.path().join("attempts");
+        let key = MissionAttemptKey {
+            campaign_run_id: 41,
+            sequence: 7,
+        };
+        let path = directory.path().join("recording 雪.rhrec.jsonl");
+        std::fs::write(&path, b"recording").unwrap();
+        let link = RecordingLink {
+            key,
+            completed_at: Some(200),
+            path: path.clone(),
+        };
+        stage_recording_link(&attempts, link.clone())
+            .unwrap()
+            .persist(recording_link_path(&attempts, key))
+            .unwrap();
+        assert_eq!(find_in(&attempts, key, Some(200)), Some(path));
+        assert_eq!(find_in(&attempts, key, Some(201)), None);
+        let mut bytes = serde_json::to_vec(&link).unwrap();
+        bytes.extend_from_slice(b" {}");
+        std::fs::write(recording_link_path(&attempts, key), bytes).unwrap();
+        assert_eq!(find_in(&attempts, key, Some(200)), None);
+        std::fs::write(recording_link_path(&attempts, key), b"{").unwrap();
+        assert_eq!(find_in(&attempts, key, Some(200)), None);
     }
 
     #[test]
