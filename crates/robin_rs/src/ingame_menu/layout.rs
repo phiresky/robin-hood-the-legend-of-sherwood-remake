@@ -14,6 +14,41 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::resources::IngameMenuResources;
 
+/// Elide at grapheme boundaries, optionally marking text whose hidden
+/// continuation is outside this string. The complete candidate is measured so
+/// font spacing remains part of the width calculation.
+pub(crate) fn elide_text_to_width_by(
+    text: &str,
+    max_width: i32,
+    force_marker: bool,
+    measure: impl Fn(&str) -> i32,
+) -> String {
+    const ELLIPSIS: &str = "…";
+    if max_width <= 0 || measure(ELLIPSIS) > max_width {
+        return String::new();
+    }
+    if !force_marker && measure(text) <= max_width {
+        return text.to_owned();
+    }
+    if force_marker && measure(&format!("{text}{ELLIPSIS}")) <= max_width {
+        return format!("{text}{ELLIPSIS}");
+    }
+
+    let mut fit_end = 0usize;
+    for boundary in text
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .chain(std::iter::once(text.len()))
+    {
+        let candidate = format!("{}{ELLIPSIS}", text[..boundary].trim_end());
+        if measure(&candidate) > max_width {
+            break;
+        }
+        fit_end = boundary;
+    }
+    format!("{}{ELLIPSIS}", text[..fit_end].trim_end())
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Virtual coordinate system
 // ═══════════════════════════════════════════════════════════════════

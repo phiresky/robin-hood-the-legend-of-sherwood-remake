@@ -15,7 +15,6 @@ use crate::localization::PortTextKey;
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::ModalScreenOutcome;
 use super::layout::{
@@ -126,27 +125,7 @@ pub(crate) fn elide_to_width_by(
     max_width: i32,
     measure: impl Fn(&str) -> i32,
 ) -> String {
-    const ELLIPSIS: &str = "…";
-    if max_width <= 0 || measure(ELLIPSIS) > max_width {
-        return String::new();
-    }
-    if measure(text) <= max_width {
-        return text.to_owned();
-    }
-
-    let mut fit_end = 0usize;
-    for boundary in text
-        .grapheme_indices(true)
-        .map(|(index, _)| index)
-        .chain(std::iter::once(text.len()))
-    {
-        let candidate = format!("{}{ELLIPSIS}", text[..boundary].trim_end());
-        if measure(&candidate) > max_width {
-            break;
-        }
-        fit_end = boundary;
-    }
-    format!("{}{ELLIPSIS}", text[..fit_end].trim_end())
+    super::layout::elide_text_to_width_by(text, max_width, false, measure)
 }
 
 pub(crate) fn fit_button_label(

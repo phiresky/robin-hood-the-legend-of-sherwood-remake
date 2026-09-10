@@ -13,10 +13,10 @@ use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::spellforge_trust::{SpellforgeTrustGrant, SpellforgeTrustKey, SpellforgeTrustMetadata};
 use crate::widget::FrameWnd;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::layout::{
-    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
+    MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
+    elide_text_to_width_by as elide_to_width_by, enter_modal_gpu_phase,
     render_text_virt_font as render_text_virt, wrap_text_for_box_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_BACK};
@@ -62,38 +62,6 @@ fn localized_format(
     application_context
         .format_port_text(key, arguments)
         .unwrap_or_else(|error| panic!("Spellforge content screen lost localized text: {error}"))
-}
-
-fn elide_to_width_by(
-    text: &str,
-    max_width: i32,
-    force_marker: bool,
-    measure: impl Fn(&str) -> i32,
-) -> String {
-    const ELLIPSIS: &str = "…";
-    if max_width <= 0 || measure(ELLIPSIS) > max_width {
-        return String::new();
-    }
-    if !force_marker && measure(text) <= max_width {
-        return text.to_owned();
-    }
-    if force_marker && measure(&format!("{text}{ELLIPSIS}")) <= max_width {
-        return format!("{text}{ELLIPSIS}");
-    }
-
-    let mut fit_end = 0usize;
-    for boundary in text
-        .grapheme_indices(true)
-        .map(|(index, _)| index)
-        .chain(std::iter::once(text.len()))
-    {
-        let candidate = format!("{}{ELLIPSIS}", text[..boundary].trim_end());
-        if measure(&candidate) > max_width {
-            break;
-        }
-        fit_end = boundary;
-    }
-    format!("{}{ELLIPSIS}", text[..fit_end].trim_end())
 }
 
 fn bounded_display_lines(font: &Font, text: &str, max_width: i32, max_lines: usize) -> Vec<String> {
