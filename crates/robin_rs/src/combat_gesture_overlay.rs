@@ -48,7 +48,7 @@ pub(crate) fn prepare_feedback(frontend: &mut HostFrontend, now: u32) {
         .combat_gesture_coach
         || frontend
             .gesture_coach_feedback()
-            .is_some_and(|feedback| now.wrapping_sub(feedback.created_at_ms) > 1_800)
+            .is_some_and(|feedback| feedback_expired(feedback.created_at_ms, now))
     {
         frontend.set_gesture_coach_feedback(None);
     }
@@ -66,6 +66,10 @@ fn first_selected_swordfighter_direction(
             direction[1] * crate::shadow_polygon::ASPECT_RATIO,
         )
     })
+}
+
+fn feedback_expired(created_at_ms: u32, now_ms: u32) -> bool {
+    now_ms.wrapping_sub(created_at_ms) > 1_800
 }
 
 fn render_guide(
@@ -131,7 +135,7 @@ fn render_coach(frontend: &HostFrontend, renderer: &mut Renderer, fonts: Option<
         return;
     };
     let now = crate::window::process_uptime_ms();
-    if now.wrapping_sub(feedback.created_at_ms) > 1_800 {
+    if feedback_expired(feedback.created_at_ms, now) {
         return;
     }
 
@@ -241,6 +245,18 @@ fn draw_label(renderer: &mut Renderer, fonts: Option<&HudFonts>, label: &str, x:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coach_expiration_keeps_boundary_visible_across_clock_wrap() {
+        for created_at in [0u32, 10_000, u32::MAX - 900, u32::MAX] {
+            for age in [0, 1, 1_799, 1_800, 1_801, 20_000, u32::MAX] {
+                assert_eq!(
+                    feedback_expired(created_at, created_at.wrapping_add(age)),
+                    age > 1_800
+                );
+            }
+        }
+    }
 
     #[test]
     fn guide_includes_complete_catalogues_in_teaching_order() {
