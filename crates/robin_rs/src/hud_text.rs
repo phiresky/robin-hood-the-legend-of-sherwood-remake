@@ -355,8 +355,10 @@ fn visit_wrapped_hud_lines(
     mut emit: impl FnMut(&str),
 ) {
     let mut line = String::new();
+    let mut words = Vec::new();
     for segment in text.split('\n') {
-        let words: Vec<&str> = segment.split_whitespace().collect();
+        words.clear();
+        words.extend(segment.split_whitespace());
         if words.is_empty() {
             emit("");
             continue;
@@ -968,6 +970,10 @@ mod tests {
         assert_eq!(wrap("one two longer", 7), ["one two", "longer"]);
         assert_eq!(wrap("a éé fin", 4), ["a", "éé", "fin"]);
         assert_eq!(wrap("oversized", 2), ["oversized"]);
+        assert_eq!(
+            wrap("one two end\n\nsolo\n  one   two  \n\n", 7),
+            ["one", "two end", "", "solo", "one two", "", ""]
+        );
         let mut lines = Vec::new();
         visit_wrapped_hud_lines("a b", 2, |_| 1, |line| lines.push(line.to_owned()));
         assert_eq!(lines, ["a b"]);
