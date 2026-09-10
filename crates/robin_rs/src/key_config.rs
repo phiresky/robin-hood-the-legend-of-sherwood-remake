@@ -74,6 +74,8 @@ const KEY_NAMES: &[&str] = &[
 
 /// Number of real key bindings (excludes the Dummy sentinel).
 pub const REAL_KEY_COUNT: u16 = (KEY_NAMES.len() - 1) as u16;
+/// Stable row/index of the building/door movement modifier.
+pub const GO_BEHIND_BUILDINGS_INDEX: u16 = 16;
 /// Stable row/index of the rebindable planned-action modifier.
 pub const PLAN_QUICK_ACTIONS_INDEX: u16 = 28;
 /// Stable row/index of the reusable-cloak action.
@@ -271,6 +273,18 @@ impl KeyConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn named_action_indices_match_persisted_action_names() {
+        for (index, name) in [
+            (super::GO_BEHIND_BUILDINGS_INDEX, "GoBehindBuildings"),
+            (super::PLAN_QUICK_ACTIONS_INDEX, "PlanQuickActions"),
+            (super::TOGGLE_CLOAK_INDEX, "ToggleCloak"),
+        ] {
+            assert!(index < super::REAL_KEY_COUNT);
+            assert_eq!(super::KEY_NAMES[index as usize], name);
+        }
+    }
+
     use super::*;
     use winit::keyboard::KeyCode;
 

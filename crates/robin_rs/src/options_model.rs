@@ -358,7 +358,7 @@ pub(crate) fn assign_shortcut(
     target: u16,
     key: winit::keyboard::KeyCode,
 ) {
-    use crate::key_config::{PLAN_QUICK_ACTIONS_INDEX, REAL_KEY_COUNT};
+    use crate::key_config::{GO_BEHIND_BUILDINGS_INDEX, PLAN_QUICK_ACTIONS_INDEX, REAL_KEY_COUNT};
     use winit::keyboard::KeyCode;
     assert!(target < REAL_KEY_COUNT, "shortcut action index must exist");
     for conflict in 0..REAL_KEY_COUNT {
@@ -368,7 +368,8 @@ pub(crate) fn assign_shortcut(
         let shared_shift = matches!(key, KeyCode::ShiftLeft | KeyCode::ShiftRight)
             && matches!(
                 (conflict, target),
-                (16, PLAN_QUICK_ACTIONS_INDEX) | (PLAN_QUICK_ACTIONS_INDEX, 16)
+                (GO_BEHIND_BUILDINGS_INDEX, PLAN_QUICK_ACTIONS_INDEX)
+                    | (PLAN_QUICK_ACTIONS_INDEX, GO_BEHIND_BUILDINGS_INDEX)
             );
         if !shared_shift {
             config.set_key_by_index(conflict, None);
