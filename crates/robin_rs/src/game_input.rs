@@ -1473,9 +1473,11 @@ fn resolve_double_click_repeat(
         Some(_) | None => return vec![],
     };
 
-    let selected_pcs = engine.hero_selection(local_seat).to_vec();
-    let selected_combatants = selected_units(&engine.presentation_view(), local_seat);
-    if selected_combatants.is_empty() {
+    let selected_pcs = engine.hero_selection(local_seat);
+    let selected_combatants = selected_units(engine, local_seat);
+    // Tactical allies participate in combat, but civilian and pickup interactions
+    // require a selected hero. An allied-only selection is valid, not a hero.
+    if kind != Kind::Soldier && selected_pcs.is_empty() {
         return vec![];
     }
 
@@ -1487,7 +1489,6 @@ fn resolve_double_click_repeat(
             // running gait.
             if engine.is_recording_macro() {
                 selected_combatants
-                    .into_iter()
                     .map(|pc_id| PlayerCommand::EnterSwordfight {
                         actor: pc_id,
                         target: cached_target,
@@ -1496,7 +1497,6 @@ fn resolve_double_click_repeat(
                     .collect()
             } else {
                 selected_combatants
-                    .into_iter()
                     .map(|pc_id| PlayerCommand::MakePcFast { pc_id })
                     .collect()
             }
@@ -1508,7 +1508,8 @@ fn resolve_double_click_repeat(
                 return vec![];
             };
             selected
-                .into_iter()
+                .iter()
+                .copied()
                 .map(|pc_id| PlayerCommand::LaunchInteraction {
                     actor: pc_id,
                     target: cached_target,
@@ -1533,7 +1534,8 @@ fn resolve_double_click_repeat(
                     _ => cached_target,
                 };
                 selected
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .map(|pc_id| PlayerCommand::LaunchInteraction {
                         actor: pc_id,
                         target: launch_target,
@@ -1543,7 +1545,8 @@ fn resolve_double_click_repeat(
                     .collect()
             } else {
                 selected
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .map(|pc_id| PlayerCommand::MakePcFast { pc_id })
                     .collect()
             }
@@ -1555,7 +1558,7 @@ fn resolve_double_click_repeat(
 
 /// Resolve a right-click into player commands.
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
-    let selected_combatants = selected_units(&engine.presentation_view(), local_seat);
+    let selected_combatants = selected_units(engine, local_seat);
     let clear_tactical = !engine.tactical_selection(local_seat).is_empty();
     let finish = |mut commands: Vec<PlayerCommand>| {
         if clear_tactical {
@@ -1567,7 +1570,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
     // Swordfighting → parry
     if is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         let mut cmds = Vec::new();
-        for &pc_id in &selected_combatants {
+        for pc_id in selected_combatants {
             let is_fighting = engine
                 .get_entity(pc_id)
                 .and_then(|e| e.human_data())
@@ -1770,7 +1773,7 @@ pub fn resolve_swordfight(
     let mut feedback_recorded = false;
     let combat_rules = engine.sim_config();
 
-    for pc_id in selected_units(&engine.presentation_view(), local_seat) {
+    for pc_id in selected_units(engine, local_seat) {
         let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
             let h = entity.human_data()?;
             let is_sword = !h.opponents.is_empty();
@@ -1951,16 +1954,12 @@ pub fn resolve_swordfight(
     cmds
 }
 
-fn selected_units(
-    engine: &engine_api::PresentationView<'_>,
-    local_seat: PlayerId,
-) -> Vec<EntityId> {
+fn selected_units(engine: &Engine, local_seat: PlayerId) -> impl Iterator<Item = EntityId> + '_ {
     engine
         .hero_selection(local_seat)
         .iter()
         .chain(engine.tactical_selection(local_seat).iter())
         .copied()
-        .collect()
 }
 
 /// True when any selected hero or controllable allied soldier is currently
@@ -3750,6 +3749,52 @@ mod tests {
         let cmds =
             resolve_double_click_repeat(&engine, &assets, soldier, host.transport.local_seat());
         assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
+    }
+
+    #[test]
+    fn double_click_repeat_preserves_hero_then_ally_order() {
+        let (mut engine, assets, host) = fixture();
+        let hero = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let ally = add_allied_soldier(&mut engine, 20.0, 20.0);
+        let enemy = add_soldier(&mut engine, 60.0, 60.0, 100);
+        select(&mut engine, &assets, hero);
+        select_allied(&mut engine, &assets, ally);
+
+        assert_cmds!(
+            resolve_double_click_repeat(&engine, &assets, enemy, host.transport.local_seat()),
+            vec![
+                PlayerCommand::MakePcFast { pc_id: hero },
+                PlayerCommand::MakePcFast { pc_id: ally },
+            ]
+        );
+    }
+
+    #[test]
+    fn allied_only_repeat_click_requires_a_hero_for_noncombat_interactions() {
+        let (mut engine, assets, host) = fixture();
+        let ally = add_allied_soldier(&mut engine, 20.0, 20.0);
+        let enemy = add_soldier(&mut engine, 60.0, 60.0, 100);
+        let bonus = add_bonus(&mut engine, 40.0, 40.0);
+        let civilian =
+            engine.test_add_entity(Entity::Civilian(robin_engine::element::ActorCivilian {
+                element: ElementData::from_initial_posture(Posture::Upright),
+                actor: ActorData::default(),
+                human: HumanData::default(),
+                npc: NpcData::default(),
+                civilian: robin_engine::element::CivilianData::default(),
+            }));
+        select_allied(&mut engine, &assets, ally);
+        let seat = host.transport.local_seat();
+        assert!(engine.hero_selection(seat).is_empty());
+        assert_eq!(engine.tactical_selection(seat), &[ally]);
+
+        for target in [civilian, bonus] {
+            assert!(resolve_double_click_repeat(&engine, &assets, target, seat).is_empty());
+        }
+        assert_cmds!(
+            resolve_double_click_repeat(&engine, &assets, enemy, seat),
+            vec![PlayerCommand::MakePcFast { pc_id: ally }]
+        );
     }
 
     #[test]
