@@ -298,11 +298,11 @@ pub(crate) async fn show_multiplayer_menu(
                     }
                 }
                 matchmaking::MatchmakingEvent::GameUpdated(updated) => {
-                    upsert_game(&mut games, updated.clone());
+                    let updated = upsert_game(&mut games, updated);
                     match &mut mode {
                         MenuMode::Hosted { game, .. } if game.id == updated.id => {
                             let previous_players = game.players;
-                            *game = updated;
+                            *game = updated.clone();
                             if game.players != previous_players {
                                 status = format!(
                                     "{} player{} in game",
@@ -317,7 +317,7 @@ pub(crate) async fn show_multiplayer_menu(
                                 updated.players,
                                 if updated.players == 1 { "" } else { "s" }
                             );
-                            *listing = Some(updated);
+                            *listing = Some(updated.clone());
                         }
                         _ => {}
                     }
@@ -1470,12 +1470,16 @@ fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
         .unwrap_or_else(|_| "player".to_string())
 }
 
-fn upsert_game(games: &mut Vec<GameListing>, game: GameListing) {
-    if let Some(existing) = games.iter_mut().find(|g| g.id == game.id) {
-        *existing = game;
+fn upsert_game(games: &mut Vec<GameListing>, game: GameListing) -> &GameListing {
+    let index = if let Some(index) = games.iter().position(|existing| existing.id == game.id) {
+        games[index] = game;
+        index
     } else {
+        let index = games.len();
         games.push(game);
-    }
+        index
+    };
+    &games[index]
 }
 
 fn format_game_row(game: &GameListing, application_context: &ApplicationContext) -> String {
@@ -1569,6 +1573,46 @@ fn fill_virtual_rect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn game_upserts_move_records_and_preserve_listing_order() {
+        use super::*;
+        let listing = |id: &str, players| GameListing {
+            id: id.into(),
+            mission_id: 1,
+            mission_name: "Mission".into(),
+            host_content: None,
+            host: "Host".into(),
+            players,
+            max_players: 2,
+            state: "waiting".into(),
+            start_at_epoch_ms: None,
+        };
+        let mut games = Vec::new();
+        for id in ["first", "second", "third"] {
+            let incoming = listing(id, 1);
+            let name_storage = incoming.mission_name.as_ptr();
+            let stored = upsert_game(&mut games, incoming);
+            assert_eq!(stored.id, id);
+            assert_eq!(stored.mission_name.as_ptr(), name_storage);
+        }
+        let incoming = listing("second", 2);
+        let name_storage = incoming.mission_name.as_ptr();
+        let stored = upsert_game(&mut games, incoming);
+        assert_eq!(stored.players, 2);
+        assert_eq!(stored.mission_name.as_ptr(), name_storage);
+        assert_eq!(
+            games
+                .iter()
+                .map(|game| game.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second", "third"]
+        );
+        assert_eq!(
+            games.iter().map(|game| game.players).collect::<Vec<_>>(),
+            [1, 2, 1]
+        );
+    }
+
     #[test]
     fn disconnected_discovery_removes_stale_host_and_join_controls() {
         use super::*;
