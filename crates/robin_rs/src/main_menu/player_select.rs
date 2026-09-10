@@ -1444,7 +1444,9 @@ async fn show_difficulty_prompt(
     loop {
         let mut confirmed = false;
         let mut cancelled = false;
-        for event in event_pump.poll_events() {
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit

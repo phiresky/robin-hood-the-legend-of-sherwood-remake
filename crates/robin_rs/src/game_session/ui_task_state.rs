@@ -250,9 +250,10 @@ impl ActiveUiTask {
                 sample_loader,
             ),
             Self::Quit(state) => {
-                let events = window.poll_events();
+                let (events, transform) =
+                    crate::ingame_menu::layout::poll_events_with_transform(window, renderer);
                 let exit_requested = events.iter().any(|event| matches!(event, GameEvent::Quit));
-                let result = state.handle_events(&events);
+                let result = state.handle_events(&events, transform);
                 state.render_overlay(renderer, resources, cursor);
                 renderer.present();
                 if exit_requested {
@@ -381,13 +382,14 @@ impl QuickLoadTaskState {
         resources: &IngameMenuResources,
         cursor: Option<&ModalCursor<'_>>,
     ) -> Option<UiTaskOutcome> {
-        let events = window.poll_events();
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(window, renderer);
+        let result = self.dialog.handle_events(&events, transform);
         if events.iter().any(|event| matches!(event, GameEvent::Quit)) {
             self.dialog.render_overlay(renderer, resources, cursor);
             renderer.present();
             return Some(UiTaskOutcome::ExitRequested);
         }
-        let result = self.dialog.handle_events(&events);
         self.dialog.render_overlay(renderer, resources, cursor);
         renderer.present();
         result.map(|accepted| {
@@ -1500,18 +1502,17 @@ impl SaveLoadTaskState {
             }
             return None;
         }
-        let events = window.poll_events();
+        let (events, transform) =
+            crate::ingame_menu::layout::poll_events_with_transform(window, renderer);
+        self.transform = transform;
         let exit_requested = events.iter().any(|event| matches!(event, GameEvent::Quit));
         if self.confirmation.is_some() {
-            let result = if exit_requested {
-                None
-            } else {
-                self.confirmation
-                    .as_mut()
-                    .expect("confirmation exists")
-                    .1
-                    .handle_events(&events)
-            };
+            let result = self
+                .confirmation
+                .as_mut()
+                .expect("confirmation exists")
+                .1
+                .handle_events(&events, transform);
             self.render(renderer, resources, None, save_manager);
             self.confirmation
                 .as_mut()

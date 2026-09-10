@@ -20,6 +20,14 @@ impl<'ast> Visit<'ast> for DirectPolls {
 #[test]
 fn modal_screens_use_resize_aware_event_polling() {
     for (name, source) in [
+        (
+            "player_select",
+            include_str!("../src/main_menu/player_select.rs"),
+        ),
+        (
+            "ui_task_state",
+            include_str!("../src/game_session/ui_task_state.rs"),
+        ),
         ("language", include_str!("../src/ingame_menu/language.rs")),
         (
             "buy_blazons",

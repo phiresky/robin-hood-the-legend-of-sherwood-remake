@@ -193,8 +193,7 @@ impl YesNoModalState {
         }
 
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        self.handle_events(&events);
+        self.handle_events(&events, transform);
         self.render_overlay(renderer, resources, cursor);
         renderer.present();
         self.result()
@@ -203,8 +202,14 @@ impl YesNoModalState {
     /// Advance the dialog from an event batch without drawing or presenting.
     ///
     /// Nested side screens use this split API so they can draw their picker
-    /// first and then place the confirmation over it in the same frame.
-    pub fn handle_events(&mut self, events: &[GameEvent]) -> Option<bool> {
+    /// first and then place the confirmation over it in the same frame. Pass the
+    /// transform returned when polling this batch, not the dialog creation transform.
+    pub fn handle_events(
+        &mut self,
+        events: &[GameEvent],
+        transform: MenuTransform,
+    ) -> Option<bool> {
+        self.transform = transform;
         if self.choice.is_some() {
             return self.result();
         }
@@ -424,6 +429,36 @@ mod tests {
         let event = key_event(keycode, physical, down);
         state.input_state.update_from_event(&event, state.transform);
         state.process_widget_input();
+    }
+
+    #[test]
+    fn split_event_batches_refresh_pointer_and_render_transforms() {
+        let mut state = modal_state();
+        for (width, height) in [(640, 480), (1280, 720), (800, 600), (480, 360)] {
+            let transform = MenuTransform::centered(width, height);
+            let (x, y) = transform.to_screen(400, 300);
+            assert_eq!(
+                state.handle_events(
+                    &[GameEvent::MouseMove {
+                        x,
+                        y,
+                        xrel: 0,
+                        yrel: 0
+                    }],
+                    transform
+                ),
+                None
+            );
+            assert_eq!(
+                (state.input_state.virt_x, state.input_state.virt_y),
+                (400.0, 300.0)
+            );
+            assert_eq!(state.transform.to_screen(400, 300), (x, y));
+        }
+        state.resolve(YesNoChoice::No);
+        let transform = MenuTransform::centered(1920, 1080);
+        assert_eq!(state.handle_events(&[], transform), Some(false));
+        assert_eq!(state.transform.to_screen(0, 0), transform.to_screen(0, 0));
     }
 
     #[test]
