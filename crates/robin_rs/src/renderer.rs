@@ -3277,6 +3277,7 @@ fn present_time_record(us: u64) {
 /// fresh GPU texture allocations.
 mod upload_counter {
     use std::collections::HashMap;
+    use std::fmt::Write as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
 
@@ -3287,7 +3288,11 @@ mod upload_counter {
         N.fetch_add(1, Ordering::Relaxed);
         let labels = LABELS.get_or_init(|| Mutex::new(HashMap::new()));
         let mut labels = labels.lock().unwrap();
-        *labels.entry(label.to_string()).or_default() += 1;
+        if let Some(count) = labels.get_mut(label) {
+            *count += 1;
+        } else {
+            labels.insert(label.to_owned(), 1);
+        }
     }
 
     pub fn take_count() -> usize {
@@ -3298,18 +3303,48 @@ mod upload_counter {
         let Some(labels) = LABELS.get() else {
             return "-".to_string();
         };
-        let mut labels = labels.lock().unwrap();
-        if labels.is_empty() {
+        let entries = {
+            let mut labels = labels.lock().unwrap();
+            labels.drain().collect()
+        };
+        format_labels(entries)
+    }
+
+    fn format_labels(mut entries: Vec<(String, usize)>) -> String {
+        if entries.is_empty() {
             return "-".to_string();
         }
-        let mut entries: Vec<_> = labels.drain().collect();
         entries.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        entries
-            .into_iter()
-            .take(6)
-            .map(|(label, count)| format!("{label}:{count}"))
-            .collect::<Vec<_>>()
-            .join(",")
+        let mut summary = String::new();
+        for (index, (label, count)) in entries.into_iter().take(6).enumerate() {
+            if index > 0 {
+                summary.push(',');
+            }
+            write!(summary, "{label}:{count}").expect("writing to a String cannot fail");
+        }
+        summary
+    }
+
+    #[test]
+    fn label_summary_preserves_count_order_ties_limit_and_empty_marker() {
+        assert_eq!(format_labels(Vec::new()), "-");
+        let entries = [
+            ("z", 2),
+            ("f", 1),
+            ("a", 2),
+            ("e", 1),
+            ("b", 3),
+            ("d", 1),
+            ("c", 1),
+        ]
+        .into_iter()
+        .map(|(label, count)| (label.to_owned(), count))
+        .collect();
+        assert_eq!(format_labels(entries), "b:3,a:2,z:2,c:1,d:1,e:1");
+        assert_eq!(
+            format_labels(vec![("font atlas".to_owned(), 1)]),
+            "font atlas:1"
+        );
     }
 }
 
