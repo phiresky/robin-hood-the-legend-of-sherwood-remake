@@ -328,7 +328,7 @@ pub(super) fn bundle_grouped_audio(
     data_out: &Path,
 ) -> Result<()> {
     use sha2::{Digest as _, Sha256};
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeMap;
     let groups_by_file = std::mem::take(
         &mut *AUDIO_ASSET_GROUPS
             .lock()
@@ -351,19 +351,18 @@ pub(super) fn bundle_grouped_audio(
         }
         entry.0.push(logical.clone());
     }
-    let mut members_by_group = BTreeMap::<String, Vec<String>>::new();
+    let mut members_by_group = BTreeMap::<&str, Vec<String>>::new();
     for (file, (_, size)) in &file_refs {
         if *size >= AUDIO_BUNDLE_MAX_MEMBER {
             continue;
         }
         let groups = groups_by_file
             .get(file)
-            .cloned()
-            .unwrap_or_else(BTreeSet::new);
+            .with_context(|| format!("catalog file {file} was never recorded in a bundle group"))?;
         let group = match groups.len() {
             0 => bail!("catalog file {file} was never recorded in a bundle group"),
-            1 => groups.into_iter().next().expect("len checked"),
-            _ => "shared".to_owned(),
+            1 => groups.first().expect("len checked").as_str(),
+            _ => "shared",
         };
         members_by_group
             .entry(group)
@@ -392,7 +391,7 @@ pub(super) fn bundle_grouped_audio(
         }
         let digest = Sha256::digest(&bytes);
         let hash = hex::encode(&digest[..6]);
-        let bundle_rel = format!("audio/bundles/{}-{hash}.bin", shipping_file_stem(&group));
+        let bundle_rel = format!("audio/bundles/{}-{hash}.bin", shipping_file_stem(group));
         publication::publish_bytes(&data_out.join(&bundle_rel), &bytes)
             .with_context(|| format!("write {bundle_rel}"))?;
         bundle_count += 1;
