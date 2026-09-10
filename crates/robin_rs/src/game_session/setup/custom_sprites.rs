@@ -1,7 +1,9 @@
 //! Custom sprite decoding and disposable cache policy.
+mod family;
 mod shipping;
 use super::error::ResourcePreparationError;
 use super::localization::read_optional_json;
+pub use family::encode_custom_sprite_family;
 use robin_assets::frame_holder as assets_frame_holder;
 use robin_engine::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize};
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
@@ -536,6 +538,14 @@ pub(super) fn prepare_custom_character_dirs(
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
+            if name.ends_with(".sprites.vq.zst") {
+                let empty = std::collections::HashSet::new();
+                let selected = mission_scoped.then(|| mission_filenames.as_ref().unwrap_or(&empty));
+                let family = family::read_selected(&path, selected)
+                    .map_err(|error| ResourcePreparationError::malformed(path.display(), error))?;
+                batches.extend(family);
+                continue;
+            }
             let Some(filename) = name.strip_suffix(".rhs.d") else {
                 continue;
             };

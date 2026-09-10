@@ -14,6 +14,13 @@ A list of which additional features we have added, which ones we might still wan
   update; the source PNG mod remains separately editable.
   Build with `cargo build -p robin_rs --example encode_mod_sprites`, then run
   `target/debug/examples/encode_mod_sprites SOURCE_MOD DESTINATION_MOD`.
+  Whole-mod conversion now groups identical animation layouts into
+  `Data/Characters/*.sprites.vq.zst` families: one frequency-ranked dictionary
+  per character, entropy-selected two-hub colour prediction, temporal/direction
+  references for standalone hubs, and the production 1,048,576-tile groups.
+  Family files use the shipping bank, grouped encoder, and dependency-aware
+  materializer directly. The converter also replaces `.map.png` terrain with
+  JXL quality 80 `.map` files through `cjxl` and verifies runtime decoding.
 
 - **Custom mission pane scrolling:** The mission list and wrapped mission details
   scroll independently under the pointer. Both show draggable scrollbars when

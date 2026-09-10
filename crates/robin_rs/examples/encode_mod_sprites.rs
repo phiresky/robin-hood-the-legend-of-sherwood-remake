@@ -1,7 +1,34 @@
 //! Encode all custom sprite directories in an existing mod, retaining its
-//! other authored assets. Usage: encode_mod_sprites SOURCE DESTINATION
+//! other authored assets and converting terrain PNGs to JXL quality 80.
+//! Usage: encode_mod_sprites SOURCE DESTINATION
 use anyhow::{Context, Result, ensure};
 use std::path::Path;
+
+fn encode_map(source: &Path, destination: &Path) -> Result<()> {
+    ensure!(!destination.exists(), "map destination exists");
+    let input =
+        png::Decoder::new(std::io::BufReader::new(std::fs::File::open(source)?)).read_info()?;
+    let dimensions = (input.info().width, input.info().height);
+    let status = std::process::Command::new("cjxl")
+        .arg(source)
+        .arg(destination)
+        .args(["-q", "80", "-e", "7", "--num_threads=4"])
+        .status()
+        .context("run cjxl")?;
+    ensure!(status.success(), "cjxl failed for {}", source.display());
+    let picture =
+        robin_assets::picture::Picture::load_terrain_from_bytes(&std::fs::read(destination)?)?;
+    ensure!(
+        (u32::from(picture.width), u32::from(picture.height)) == dimensions,
+        "map dimensions changed"
+    );
+    println!(
+        "Verified JXL map: {} ({} bytes)",
+        destination.display(),
+        std::fs::metadata(destination)?.len()
+    );
+    Ok(())
+}
 
 fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
     std::fs::create_dir(destination)?;
@@ -20,6 +47,7 @@ fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
     let mut entries = std::fs::read_dir(source)?.collect::<std::io::Result<Vec<_>>>()?;
     entries.sort_by_key(|entry| entry.file_name());
     let mut frames = 0;
+    let mut families = std::collections::BTreeMap::<String, Vec<std::path::PathBuf>>::new();
     for entry in entries {
         let name = entry.file_name();
         if name.to_string_lossy().starts_with('.') || name == "__pycache__" {
@@ -27,6 +55,22 @@ fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
         }
         let path = entry.path();
         let target = destination.join(name);
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.ends_with(".rhs.d"))
+        {
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path.join("manifest.json"))?)?;
+            let profiles = manifest
+                .get("profiles")
+                .context("missing sprite profiles")?;
+            families
+                .entry(serde_json::to_string(profiles)?)
+                .or_default()
+                .push(path);
+            continue;
+        }
         if entry.file_type()?.is_dir() {
             frames += copy_mod(&path, &target)?;
         } else {
@@ -35,14 +79,47 @@ fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
                 "unsupported source entry: {}",
                 path.display()
             );
-            std::fs::copy(&path, &target)?;
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .context("non-UTF8 asset name")?;
+            if let Some(map_name) = name.strip_suffix(".map.png") {
+                encode_map(&path, &destination.join(format!("{map_name}.map")))?;
+            } else if !(name.ends_with(".map") && path.with_extension("map.png").exists()) {
+                std::fs::copy(&path, &target)?;
+            }
         }
+    }
+    for (index, sources) in families.values().enumerate() {
+        frames += robin_rs::game_session::encode_custom_sprite_family(
+            sources,
+            &destination.join(format!("family-{index:02}.sprites.vq.zst")),
+        )?;
     }
     Ok(frames)
 }
 
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--family") {
+        ensure!(
+            args.len() >= 3,
+            "usage: encode_mod_sprites --family OUTPUT INPUT_RHS_DIR..."
+        );
+        let sources = args[2..]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>();
+        robin_rs::game_session::encode_custom_sprite_family(&sources, Path::new(&args[1]))?;
+        return Ok(());
+    }
+    if args.first().is_some_and(|arg| arg == "--map") {
+        ensure!(
+            args.len() == 3,
+            "usage: encode_mod_sprites --map INPUT_PNG OUTPUT_MAP"
+        );
+        return encode_map(Path::new(&args[1]), Path::new(&args[2]));
+    }
     ensure!(
         args.len() == 2,
         "usage: encode_mod_sprites SOURCE DESTINATION"
@@ -88,15 +165,21 @@ mod tests {
                 .unwrap();
         }
         std::fs::write(character.join("frame.png"), png).unwrap();
+        for name in ["TestBlue.rhs.d", "TestRed.rhs.d"] {
+            let sibling = character.parent().unwrap().join(name);
+            std::fs::create_dir(&sibling).unwrap();
+            for file in ["frame.png", "manifest.json"] {
+                std::fs::copy(character.join(file), sibling.join(file)).unwrap();
+            }
+        }
         std::fs::write(source.join("details.json"), "{\"author\":\"Test\"}").unwrap();
         let destination = temp.path().join("encoded");
         // The export API verifies all pixels, widths, offsets, timing, sounds
         // and animation mappings using the same decoder as mission loading.
-        assert_eq!(copy_mod(&source, &destination).unwrap(), 1);
-        let encoded = destination.join("Data/Characters/Test.rhs.d");
-        assert!(encoded.join("sprites.vq.zst").is_file());
-        assert!(!encoded.join("frame.png").exists());
-        assert!(!encoded.join("manifest.json").exists());
+        assert_eq!(copy_mod(&source, &destination).unwrap(), 3);
+        let encoded = destination.join("Data/Characters");
+        assert!(encoded.join("family-00.sprites.vq.zst").is_file());
+        assert!(!encoded.join("Test.rhs.d").exists());
         assert_eq!(
             std::fs::read(source.join("details.json")).unwrap(),
             std::fs::read(destination.join("details.json")).unwrap()

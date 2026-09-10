@@ -24,7 +24,7 @@ struct Group {
     blob: Vec<u8>,
 }
 
-fn frame_tiles(frame: &RuntimeSprite) -> Result<Vec<[u16; 4]>> {
+pub(super) fn frame_tiles(frame: &RuntimeSprite) -> Result<Vec<[u16; 4]>> {
     ensure!(
         frame.rgba_data.is_none(),
         "VQ export requires legacy_color_keys sprites"

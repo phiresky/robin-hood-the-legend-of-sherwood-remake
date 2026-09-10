@@ -5,6 +5,7 @@
 
 mod custom_sprites;
 pub use custom_sprites::encode_custom_sprite_dir;
+pub use custom_sprites::encode_custom_sprite_family;
 mod error;
 mod localization;
 mod resources;
