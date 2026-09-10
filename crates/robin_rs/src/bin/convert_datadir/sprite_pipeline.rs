@@ -160,9 +160,11 @@ pub(super) fn transform_rhs(
     // load with pure compression-optimal hubs. Among candidates within
     // 5% of the best compression proxy, prefer the
     // member the most missions reference.
+    let mission_use_counts = dependency_plan.mission_use_counts();
     let mission_use_count = |name: &str| -> usize {
-        let rel = format!("Characters/{name}.rhs");
-        dependency_plan.mission_use_count(&rel)
+        let rel = format!("Characters/{name}.rhs").to_ascii_lowercase();
+        // Dependency-only family hubs legitimately have no mission consumers.
+        mission_use_counts.get(&rel).copied().unwrap_or(0)
     };
     let mut family_bases = std::collections::BTreeMap::<String, String>::new();
     for (key, members) in &families {
