@@ -1175,36 +1175,18 @@ fn owned_picture_surface(
     owners: &mut Vec<OwnedSurface>,
     pic: &Picture,
 ) -> anyhow::Result<SurfaceHandle> {
-    let pixels: Vec<u16> = pic
-        .data
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes(*c))
-        .collect();
-    anyhow::ensure!(
-        pic.data.len().is_multiple_of(2),
-        "portrait RGB565 payload has an incomplete pixel"
-    );
     let owned = renderer
-        .upload_rgb565(pic.width, pic.height, &pixels)
-        .ok_or_else(|| anyhow::anyhow!("portrait dimensions must match RGB565 payload"))?;
+        .upload_rgb565_bytes(pic.width, pic.height, &pic.data)
+        .ok_or_else(|| anyhow::anyhow!("portrait dimensions must match complete RGB565 payload"))?;
     let handle = owned.handle();
     owners.push(owned);
     Ok(handle)
 }
 
 pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> OwnedSurface {
-    let pixels: Vec<u16> = pic
-        .data
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
     renderer
-        .upload_rgb565(pic.width, pic.height, &pixels)
-        .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
+        .upload_rgb565_bytes(pic.width, pic.height, &pic.data)
+        .expect("pic_to_surface: decoded picture dimensions must match complete RGB565 payload")
 }
 
 /// Read an engine-shipped UI asset through the virtual filesystem.

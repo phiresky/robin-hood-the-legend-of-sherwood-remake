@@ -886,16 +886,9 @@ pub(crate) fn picture_to_surface(
     renderer: &mut Renderer,
     pic: &Picture,
 ) -> crate::renderer::OwnedSurface {
-    let pixels: Vec<u16> = pic
-        .data
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
     renderer
-        .upload_rgb565(pic.width, pic.height, &pixels)
-        .expect("picture_to_surface: decoded picture dimensions must match RGB565 payload")
+        .upload_rgb565_bytes(pic.width, pic.height, &pic.data)
+        .expect("picture_to_surface: decoded picture dimensions must match complete RGB565 payload")
 }
 
 // ─── Top-level entry ────────────────────────────────────────────────

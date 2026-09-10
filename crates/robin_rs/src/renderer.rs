@@ -859,6 +859,24 @@ impl Renderer {
         Some(self.adopt_surface(id))
     }
 
+    /// Upload tightly packed little-endian RGB565 bytes without discarding a
+    /// partial pixel. Invalid layouts are rejected before allocating pixels.
+    pub(crate) fn upload_rgb565_bytes(
+        &mut self,
+        width: u16,
+        height: u16,
+        bytes: &[u8],
+    ) -> Option<OwnedSurface> {
+        let Some(pixels) = decode_rgb565_pixels(width, height, bytes) else {
+            tracing::warn!(
+                "invalid RGB565 byte layout: {width}x{height}, {} bytes",
+                bytes.len()
+            );
+            return None;
+        };
+        self.upload_rgb565(width, height, &pixels)
+    }
+
     pub(crate) fn upload_deferred_rgb565(
         &mut self,
         width: u16,
@@ -3132,6 +3150,23 @@ fn src_dst_uv(
     (dst, uv)
 }
 
+fn decode_rgb565_pixels(width: u16, height: u16, bytes: &[u8]) -> Option<Vec<u16>> {
+    let expected = usize::from(width)
+        .checked_mul(usize::from(height))?
+        .checked_mul(2)?;
+    if expected == 0 || bytes.len() != expected {
+        return None;
+    }
+    Some(
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pixel| u16::from_le_bytes(*pixel))
+            .collect(),
+    )
+}
+
 /// Clip `dst` against `clip` and compute the matching uv sub-rect
 /// (assuming the original uv is `[0,0,1,1]` over the full `dst`).
 /// Returns `None` if fully clipped away.
@@ -3937,6 +3972,24 @@ mod tests {
             h: -1,
         };
         assert!(clip_dst_to_uv(invalid, invalid).is_none());
+    }
+
+    #[test]
+    fn rgb565_byte_decoding_requires_an_exact_nonempty_layout() {
+        assert_eq!(
+            decode_rgb565_pixels(2, 1, &[0, 0, 0x34, 0x12]),
+            Some(vec![0, 0x1234])
+        );
+        assert_eq!(
+            decode_rgb565_pixels(1, 2, &[0, 0, 0xff, 0xff]),
+            Some(vec![0, 0xffff])
+        );
+        for len in [0, 1, 2, 3, 5, 6] {
+            assert_eq!(decode_rgb565_pixels(2, 1, &vec![0; len]), None);
+        }
+        for (width, height) in [(0, 0), (0, 1), (1, 0), (u16::MAX, u16::MAX)] {
+            assert_eq!(decode_rgb565_pixels(width, height, &[]), None);
+        }
     }
 
     #[test]
