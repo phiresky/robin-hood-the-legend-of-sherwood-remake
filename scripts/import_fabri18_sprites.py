@@ -392,8 +392,8 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, default=Path("mods/fabri18-sprite-gallery"))
     parser.add_argument("--preview-only", action="store_true")
-    parser.add_argument("--profile-catalog", type=Path, default=Path("target/profiles.patch-view.json"),
-                        help="base catalog exported by cpf_to_json --patch-view")
+    parser.add_argument("--profile-catalog", type=Path, default=Path("target/profile.cpf.json"),
+                        help="canonical profile.cpf.json catalog exported by cpf_to_json")
     parser.add_argument(
         "--profiles-only",
         action="store_true",

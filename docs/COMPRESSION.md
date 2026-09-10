@@ -4112,3 +4112,24 @@ loading was separately exercised using the native headless game.
 The isolated ZIP-only full-game headless smoke run loaded all 51 custom
 profiles, the JSON mission and JXL terrain, and advanced beyond 500 simulation
 ticks before being stopped intentionally. No archive extraction was used.
+
+### RFC 6902 package update (2026-09-10)
+
+Following the JSON Patch merge (`12552c5f2`), the current package is
+`.tmp/fabri18-sprite-gallery-vq-jxl-json-patch.zip` (**18,437,728 bytes**,
+17.58 MiB). SHA-256:
+`b2365174f8c9db2bc41526c364b7686a959ee2004d055717bacd69142868ac7b`.
+It replaces the removed `soldier-profiles.patch.json` with 579 standard
+operations in `Data/Configuration/profiles.patch.json`, using the migrated
+source-mod patch plus explicit authored animation-profile names for all 51
+additions. Sprites, JXL map, mission descriptor and other payloads are unchanged;
+only the profile patch and README differ from the previous flat archive.
+The archive remains flat and is installed directly into `mods/`.
+
+The current Rust `cpf_to_json --patch` loader accepted the patch
+against both GOG full-game and Leicester demo CPF catalogs. All 51 final
+profile objects exactly match the prior package, including progression stats
+and explicit animation names; existing soldier profiles remain unchanged.
+The rebuilt native game also applied this patch directly from the ZIP and
+advanced the gallery through 100 simulation ticks with full-game data; the
+smoke process was then stopped intentionally.

@@ -1,4 +1,4 @@
-"""Author standard profile JSON Patches against a cpf_to_json --patch-view dump."""
+"""Author standard profile JSON Patches against a canonical profile.cpf.json document."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def pointer(key: str) -> str:
 def load_catalog(path: Path) -> dict:
     catalog = json.loads(path.read_text())
     if not isinstance(catalog.get("soldiers"), dict):
-        raise ValueError(f"{path}: expected a cpf_to_json --patch-view catalog")
+        raise ValueError(f"{path}: expected a canonical profile.cpf.json catalog; regenerate the hackable datadir or re-export the original CPF with cpf_to_json")
     return catalog
 
 

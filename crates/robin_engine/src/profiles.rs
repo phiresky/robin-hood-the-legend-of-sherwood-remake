@@ -1703,6 +1703,9 @@ impl ProfileManager {
 /// Preserve the loading stage and underlying decoding error for every host.
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileJsonLoadError {
+    #[error("Invalid profile document {path}: {message}")]
+    Schema { path: String, message: String },
+
     #[error("Failed to open {path}: error {status}")]
     Open { path: String, status: i32 },
     #[error("Failed to read {path}: error {status}")]
@@ -1731,6 +1734,20 @@ impl ProfileManager {
         path: &str,
         files: &crate::sbfile::SbFileSystem,
     ) -> Result<Self, ProfileJsonLoadError> {
+        let document = Self::load_json_document_with_files(path, files)?;
+        crate::content_patch::profiles_from_document(document).map_err(|message| {
+            ProfileJsonLoadError::Schema {
+                path: path.into(),
+                message,
+            }
+        })
+    }
+
+    /// Read and validate canonical content without losing authored keys or order.
+    pub fn load_json_document_with_files(
+        path: &str,
+        files: &crate::sbfile::SbFileSystem,
+    ) -> Result<serde_json::Value, ProfileJsonLoadError> {
         let mut file = files
             .open(path, crate::sbfile::SB_FILE_READ)
             .map_err(|status| ProfileJsonLoadError::Open {
@@ -1747,10 +1764,18 @@ impl ProfileManager {
             path: path.into(),
             source,
         })?;
-        serde_json::from_str(&data).map_err(|source| ProfileJsonLoadError::Json {
-            path: path.into(),
-            source,
-        })
+        let document: serde_json::Value =
+            serde_json::from_str(&data).map_err(|source| ProfileJsonLoadError::Json {
+                path: path.into(),
+                source,
+            })?;
+        crate::content_patch::profiles_from_document(document.clone()).map_err(|message| {
+            ProfileJsonLoadError::Schema {
+                path: path.into(),
+                message,
+            }
+        })?;
+        Ok(document)
     }
 }
 

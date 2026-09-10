@@ -877,14 +877,16 @@ fn load_profiles_with_files(
         })?
     {
         tracing::info!("Profiles: loading JSON dump {json_path}");
-        let mut mgr = ProfileManager::load_json_with_files(json_path, files).map_err(|source| {
-            InitError::ContentProfilesJson {
-                path: json_path,
-                source,
-            }
-        })?;
+        let document =
+            ProfileManager::load_json_document_with_files(json_path, files).map_err(|source| {
+                InitError::ContentProfilesJson {
+                    path: json_path,
+                    source,
+                }
+            })?;
+        let mut mgr = apply_profile_document_with_files(document, files)?;
         mgr.import_beam_mes_with_files(level_dir, files);
-        return apply_profile_patches_with_files(mgr, files);
+        return Ok(mgr);
     }
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
@@ -900,12 +902,26 @@ fn load_profiles_with_files(
             path: cpf_path,
             source,
         })?;
+    let mut mgr = apply_profile_patches_with_files(mgr, files)?;
     mgr.import_beam_mes_with_files(level_dir, files);
-    apply_profile_patches_with_files(mgr, files)
+    Ok(mgr)
 }
 
 fn apply_profile_patches_with_files(
-    mut profiles: ProfileManager,
+    profiles: ProfileManager,
+    files: &SbFileSystem,
+) -> Result<ProfileManager, InitError> {
+    let document = robin_engine::content_patch::profile_document(&profiles).map_err(|message| {
+        InitError::ContentProfilePatch {
+            path: robin_engine::content_patch::PROFILE_PATCH_PATH.into(),
+            message,
+        }
+    })?;
+    apply_profile_document_with_files(document, files)
+}
+
+fn apply_profile_document_with_files(
+    mut document: serde_json::Value,
     files: &SbFileSystem,
 ) -> Result<ProfileManager, InitError> {
     robin_engine::content_patch::reject_legacy(
@@ -925,16 +941,20 @@ fn apply_profile_patches_with_files(
         }
     })?;
     for (index, bytes) in layers.iter().enumerate() {
-        profiles =
-            robin_engine::content_patch::apply_profiles(&profiles, bytes).map_err(|message| {
-                InitError::ContentProfilePatch {
-                    path: path.into(),
-                    message: format!("layer {index}: {message}"),
-                }
-            })?;
+        document = robin_engine::content_patch::apply_profile_document(&document, bytes).map_err(
+            |message| InitError::ContentProfilePatch {
+                path: path.into(),
+                message: format!("layer {index}: {message}"),
+            },
+        )?;
         tracing::info!("Applied JSON profile patch {path}, layer {index}");
     }
-    Ok(profiles)
+    robin_engine::content_patch::profiles_from_document(document).map_err(|message| {
+        InitError::ContentProfilePatch {
+            path: path.into(),
+            message,
+        }
+    })
 }
 
 /// Load the player-profile service owned by [`ApplicationContext`].
@@ -1083,7 +1103,13 @@ mod tests {
         let invalid_vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
         let path = "Data/Configuration/profile.cpf.json";
         valid_vfs
-            .install_preloaded_asset(path, serde_json::to_vec(&ProfileManager::new()).unwrap())
+            .install_preloaded_asset(
+                path,
+                serde_json::to_vec(
+                    &robin_engine::content_patch::profile_document(&ProfileManager::new()).unwrap(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         invalid_vfs
             .install_preloaded_asset(path, b"not profile JSON".to_vec())
@@ -1165,6 +1191,54 @@ mod tests {
         assert_eq!(
             profile.to_string(),
             "Failed to open Data/Configuration/profile.cpf: error -7"
+        );
+    }
+
+    #[test]
+    fn canonical_profile_loader_keeps_authored_keys_and_appends_unlisted_entries() {
+        let base = ProfileManager {
+            soldiers: vec![engine_profiles::SoldierProfile {
+                filename: "Guard".into(),
+                life_point: 40,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut document = robin_engine::content_patch::profile_document(&base).unwrap();
+        let guard = document["soldiers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("Guard")
+            .unwrap();
+        document["soldiers"]["template"] = guard;
+        document["soldier_order"][0] = serde_json::json!("template");
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset(
+            "Data/Configuration/profile.cpf.json",
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        vfs.install_preloaded_asset(
+            robin_engine::content_patch::PROFILE_PATCH_PATH,
+            br#"[
+                {"op":"copy","from":"/soldiers/template","path":"/soldiers/Zulu"},
+                {"op":"replace","path":"/soldiers/Zulu/life_point","value":70},
+                {"op":"copy","from":"/soldiers/template","path":"/soldiers/Alpha"},
+                {"op":"replace","path":"/soldiers/Alpha/life_point","value":60}
+            ]"#
+            .to_vec(),
+        )
+        .unwrap();
+        let files = SbFileSystem::new(vfs);
+        let profiles =
+            load_profiles_with_files(None, &engine_api::GlobalOptions::default(), &files).unwrap();
+        assert_eq!(
+            profiles
+                .soldiers
+                .iter()
+                .map(|p| p.life_point)
+                .collect::<Vec<_>>(),
+            vec![40, 60, 70]
         );
     }
 

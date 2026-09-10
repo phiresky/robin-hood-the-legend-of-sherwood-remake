@@ -14,7 +14,10 @@ A list of which additional features we have added, which ones we might still wan
   existing numeric slots are preserved. Patches compose across directory and
   ZIP overlays, with atomic installation and typed error reporting. Legacy
   mod patch formats have been removed. See [JSON Patch mods](JSON_PATCH_MODS.md)
-  for filenames, examples, the profile-view exporter and current limits.
+  for filenames, examples, the profile exporter and current limits.
+  Profile patches now target the on-disk canonical profile.cpf.json directly;
+  named maps and explicit order lists preserve numeric IDs without a separate
+  patch view. Regenerate older hackable profile JSON with the CPF exporter.
 
 - **ZIP mod overlays:** Put a mod ZIP directly in `mods/` or the configured
   `ROBINHOOD_MODS_DIR`; `details.json` and `Data/` should be at the archive

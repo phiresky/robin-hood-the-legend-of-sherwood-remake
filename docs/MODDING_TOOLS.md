@@ -8,7 +8,7 @@ executables. Each tool supports `--help`.
 
 | Tool | Purpose |
 | --- | --- |
-| `cpf_to_json` | Export a binary CPF profile cache as JSON; preview profile JSON Patches. |
+| `cpf_to_json` | Export binary CPF profiles to canonical JSON; validate JSON and preview patches. |
 | `encode_mod_sprites` | Encode authored sprite directories and terrain PNGs. |
 | `disasm_scb` | Disassemble or decompile compiled mission scripts. |
 | `dump_res` | Dump resource archive metadata as JSON. |
@@ -17,8 +17,8 @@ Build all four from source:
 
 ```sh
 cargo build -p robin_modding_tools --bins
-target/debug/cpf_to_json --patch-view /path/to/Data/Configuration/profile.cpf profiles.json
-target/debug/cpf_to_json --patch-view --patch profiles.patch.json /path/to/Data/Configuration/profile.cpf patched.json
+target/debug/cpf_to_json /path/to/Data/Configuration/profile.cpf profiles.json
+target/debug/cpf_to_json --patch profiles.patch.json /path/to/Data/Configuration/profile.cpf patched.json
 target/debug/encode_mod_sprites SOURCE_MOD NEW_DESTINATION_MOD
 target/debug/disasm_scb --decompile /path/to/mission.scb
 target/debug/dump_res /path/to/archive.res > resources.json

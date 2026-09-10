@@ -27,7 +27,7 @@ pub fn load_profiles(
     options: &GlobalOptions,
     files: &SbFileSystem,
 ) -> Result<ProfileManager, ProfileLoadError> {
-    let profiles = {
+    let document = {
         let json_path = "Data/Configuration/profile.cpf.json";
         if files
             .try_exists(json_path)
@@ -37,15 +37,12 @@ pub fn load_profiles(
             })?
         {
             tracing::info!(path = json_path, "verifier loading JSON profile catalog");
-            let mut profiles =
-                ProfileManager::load_json_with_files(json_path, files).map_err(|source| {
-                    ProfileLoadError::Json {
-                        path: json_path,
-                        source,
-                    }
-                })?;
-            profiles.import_beam_mes_with_files(&options.level_directory, files);
-            profiles
+            ProfileManager::load_json_document_with_files(json_path, files).map_err(|source| {
+                ProfileLoadError::Json {
+                    path: json_path,
+                    source,
+                }
+            })?
         } else {
             let cpf_path = "Data/Configuration/profile.cpf";
             tracing::info!(path = cpf_path, "verifier loading legacy profile catalog");
@@ -63,12 +60,16 @@ pub fn load_profiles(
                     path: cpf_path,
                     message: error.to_string(),
                 })?;
-            profiles.import_beam_mes_with_files(&options.level_directory, files);
-            profiles
+            robin_engine::content_patch::profile_document(&profiles).map_err(|message| {
+                ProfileLoadError::Decode {
+                    path: cpf_path,
+                    message,
+                }
+            })?
         }
     };
 
-    let mut profiles = profiles;
+    let mut document = document;
     let path = robin_engine::content_patch::PROFILE_PATCH_PATH;
     robin_engine::content_patch::reject_legacy(
         files,
@@ -79,14 +80,16 @@ pub fn load_profiles(
     let layers = robin_engine::content_patch::read_layers(files, path)
         .map_err(|message| ProfileLoadError::Decode { path, message })?;
     for (index, bytes) in layers.iter().enumerate() {
-        profiles =
-            robin_engine::content_patch::apply_profiles(&profiles, bytes).map_err(|message| {
-                ProfileLoadError::Decode {
-                    path,
-                    message: format!("layer {index}: {message}"),
-                }
-            })?;
+        document = robin_engine::content_patch::apply_profile_document(&document, bytes).map_err(
+            |message| ProfileLoadError::Decode {
+                path,
+                message: format!("layer {index}: {message}"),
+            },
+        )?;
     }
+    let mut profiles = robin_engine::content_patch::profiles_from_document(document)
+        .map_err(|message| ProfileLoadError::Decode { path, message })?;
+    profiles.import_beam_mes_with_files(&options.level_directory, files);
     Ok(profiles)
 }
 
@@ -105,15 +108,23 @@ mod tests {
             }],
             ..Default::default()
         };
+        let mut document = robin_engine::content_patch::profile_document(&base).unwrap();
+        let guard = document["soldiers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("Guard")
+            .unwrap();
+        document["soldiers"]["guard-template"] = guard;
+        document["soldier_order"][0] = serde_json::json!("guard-template");
         vfs.install_preloaded_asset(
             "Data/Configuration/profile.cpf.json",
-            serde_json::to_vec(&base).unwrap(),
+            serde_json::to_vec(&document).unwrap(),
         )
         .unwrap();
         vfs.install_preloaded_asset(
             robin_engine::content_patch::PROFILE_PATCH_PATH,
             br#"[
-            {"op":"replace","path":"/soldiers/Guard/life_point","value":150}
+            {"op":"replace","path":"/soldiers/guard-template/life_point","value":150}
         ]"#
             .to_vec(),
         )
