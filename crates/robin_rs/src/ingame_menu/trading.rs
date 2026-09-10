@@ -513,18 +513,22 @@ impl TradingModalState {
     }
 }
 
-fn substitute(template: &str, values: &[&str]) -> String {
-    let mut output = template.to_string();
+/// Substitute trading tokens without interpreting replacement values as templates.
+fn substitute(mut template: &str, values: &[&str]) -> String {
+    let mut output = String::with_capacity(template.len());
     for value in values {
         let Some(position) = ["%u", "%d", "%s"]
             .iter()
-            .filter_map(|placeholder| output.find(placeholder))
+            .filter_map(|placeholder| template.find(placeholder))
             .min()
         else {
             break;
         };
-        output.replace_range(position..position + 2, value);
+        output.push_str(&template[..position]);
+        output.push_str(value);
+        template = &template[position + 2..];
     }
+    output.push_str(template);
     output
 }
 
@@ -569,6 +573,21 @@ mod tests {
         events.push(GameEvent::MouseDown(x, y, 1, 1));
         events.push(GameEvent::MouseUp(x, y, 1));
         events
+    }
+
+    #[test]
+    fn trade_replacement_values_are_literal_and_unfilled_tokens_survive() {
+        assert_eq!(
+            substitute("Sold %u %s for £%u", &["5", "nets %u / %s", "35"]),
+            "Sold 5 nets %u / %s for £35"
+        );
+        assert_eq!(substitute("%s %u", &["%d"]), "%d %u");
+        assert_eq!(substitute("é %d / %s", &["-5", "网", "extra"]), "é -5 / 网");
+        assert_eq!(substitute("%i %lu %q", &["unused"]), "%i %lu %q");
+        assert_eq!(substitute("%%u / %s", &["5"]), "%5 / %s");
+        assert_eq!(substitute("%s", &[]), "%s");
+        assert_eq!(substitute("no tokens", &["unused"]), "no tokens");
+        assert_eq!(substitute("%s%u", &["", "7"]), "7");
     }
 
     #[test]
