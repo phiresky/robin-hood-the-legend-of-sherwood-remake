@@ -132,6 +132,40 @@ fn keyboard_reset() {
     assert!(kb.has_changed()); // reset sets changed = true
 }
 
+#[test]
+fn keyboard_updates_tracked_and_raw_only_keys_once_per_frame() {
+    let mut kb = UiKeyboard::default();
+    // An initially held key exists only in the raw snapshot, not key_state.
+    kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_000);
+    kb.refresh(&make_keys(&[KeyCode::KeyA, KeyCode::KeyB]), 10_100);
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyA), TypeWriter::Touch);
+    assert_eq!(kb.get_state_of_key(KeyCode::KeyB), KeyState::KeyDown);
+
+    kb.refresh(&make_keys(&[KeyCode::KeyA, KeyCode::KeyB]), 10_200);
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyA), TypeWriter::Repeat);
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Touch);
+
+    // A is raw-only; B is in both maps and both raw sets; C is newly observed.
+    kb.refresh(
+        &make_keys(&[KeyCode::KeyA, KeyCode::KeyB, KeyCode::KeyC]),
+        10_600,
+    );
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyA), TypeWriter::Waiting);
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Repeat);
+    assert_eq!(kb.get_state_of_key(KeyCode::KeyC), KeyState::KeyDown);
+
+    kb.refresh(&make_keys(&[KeyCode::KeyC]), 10_700);
+    assert_eq!(kb.get_state_of_key(KeyCode::KeyB), KeyState::KeyPressed);
+    assert!(kb.has_key_changed(KeyCode::KeyB));
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyC), TypeWriter::Touch);
+
+    // Released tracked keys must still be visited after leaving both raw sets.
+    kb.refresh(&make_keys(&[KeyCode::KeyC]), 10_800);
+    assert_eq!(kb.get_state_of_key(KeyCode::KeyB), KeyState::KeyUp);
+    assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::None);
+    assert!(kb.has_key_changed(KeyCode::KeyB));
+}
+
 // ── Layout tests ──
 
 #[test]

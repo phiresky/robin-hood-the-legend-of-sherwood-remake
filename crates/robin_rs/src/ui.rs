@@ -6,7 +6,7 @@
 //! module is a serializable state + layout/event skeleton.
 
 use robin_engine::sprite::BBox;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
@@ -204,11 +204,16 @@ impl UiKeyboard {
 
         self.changed = false;
 
-        let mut keys_to_update: BTreeSet<KeyCode> = self.key_state.keys().copied().collect();
-        keys_to_update.extend(keyboard_state.keys.iter().copied());
-        keys_to_update.extend(self.old_keyboard_state.keys.iter().copied());
+        // The snapshot contains every tracked key. Visit raw-only keys separately,
+        // excluding overlaps so held keys advance their typewriter only once.
+        let keys_to_update = self.old_key_state.keys().chain(
+            keyboard_state
+                .keys
+                .union(&self.old_keyboard_state.keys)
+                .filter(|key| !self.old_key_state.contains_key(key)),
+        );
 
-        for key in keys_to_update {
+        for &key in keys_to_update {
             let cur = keyboard_state.keys.contains(&key);
             let old = self.old_keyboard_state.keys.contains(&key);
 
