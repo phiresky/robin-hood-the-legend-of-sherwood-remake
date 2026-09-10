@@ -222,6 +222,29 @@ impl SaveGame {
             || is_generated_autosave_filename(&self.filename)
     }
 
+    /// Refresh snapshot fields without changing slot identity or its label.
+    pub(crate) fn update_snapshot_metadata(
+        &mut self,
+        header: &SaveHeader,
+        campaign: &engine_campaign::Campaign,
+        profiles: &ProfileManager,
+    ) {
+        self.mission_id = header.mission_id;
+        self.version = header.version;
+        self.timestamp = header.timestamp_unix.to_string();
+        self.multiplayer_diagnostic = header.multiplayer_diagnostic;
+        self.mission_name = header.provenance.mission_name.clone();
+        self.player_profile_id = Some(header.provenance.player_profile_id);
+        self.player_name = header.provenance.player_name.clone();
+        self.missions_done = Some(campaign.get_number_of_missions_done());
+        self.missions_total = Some(campaign.missions.len());
+        self.gang_size = Some(campaign.gang_indices.len());
+        self.ransom = Some(campaign.values[CampaignValue::Ransom]);
+        self.blazons = Some(campaign.values[CampaignValue::Blazon]);
+        self.amulets = Some(campaign.values[CampaignValue::Amulets]);
+        self.campaign_progress = Some(campaign.get_progression(profiles));
+    }
+
     pub(crate) fn validate_published_metadata(&self) -> Result<()> {
         SlotName::validate(&self.filename).map_err(anyhow::Error::msg)?;
         anyhow::ensure!(
@@ -685,9 +708,8 @@ impl SaveGameManager {
         )?;
         let payload = save_file::SerializedSave::new(&save)?;
         let bytes = payload.encode(&current.text)?;
-        Self::sync_slot_metadata_from_header(&mut current, &save.header)?;
-        Self::sync_slot_campaign_metadata(
-            &mut current,
+        current.update_snapshot_metadata(
+            &save.header,
             save.engine.campaign(),
             profiles.context("quick save requires profiles")?,
         );
@@ -846,9 +868,8 @@ impl SaveGameManager {
             let thumb_data = thumbnail.cloned();
             let thumb_path = self.thumb_path(idx);
             let mut metadata = self.catalog[idx].clone();
-            Self::sync_slot_metadata_from_header(&mut metadata, &save.header)?;
-            Self::sync_slot_campaign_metadata(
-                &mut metadata,
+            metadata.update_snapshot_metadata(
+                &save.header,
                 save.engine.campaign(),
                 profiles.context("save metadata requires profiles")?,
             );
@@ -901,9 +922,8 @@ impl SaveGameManager {
             "Restart Point".into(),
             mission_id,
         );
-        Self::sync_slot_metadata_from_header(&mut slot, &save.header)?;
-        Self::sync_slot_campaign_metadata(
-            &mut slot,
+        slot.update_snapshot_metadata(
+            &save.header,
             save.engine.campaign(),
             profiles.context("restart requires mission profiles")?,
         );
@@ -1457,9 +1477,8 @@ impl SaveGameManager {
         )?;
         save.header.multiplayer_diagnostic = multiplayer_diagnostic;
         let mut metadata = self.catalog[index].clone();
-        Self::sync_slot_metadata_from_header(&mut metadata, &save.header)?;
-        Self::sync_slot_campaign_metadata(
-            &mut metadata,
+        metadata.update_snapshot_metadata(
+            &save.header,
             save.engine.campaign(),
             profiles.context("save metadata requires mission profiles")?,
         );
@@ -1661,37 +1680,9 @@ impl SaveGameManager {
             .get(index)
             .with_context(|| format!("cannot synchronize missing save slot {index}"))?
             .clone();
-        Self::sync_slot_metadata_from_header(&mut slot, &save.header)?;
         let profiles = profiles.context("save metadata requires mission profiles")?;
-        Self::sync_slot_campaign_metadata(&mut slot, save.engine.campaign(), profiles);
+        slot.update_snapshot_metadata(&save.header, save.engine.campaign(), profiles);
         self.catalog.replace(index, slot, SlotState::Published)
-    }
-
-    fn sync_slot_metadata_from_header(slot: &mut SaveGame, header: &SaveHeader) -> Result<()> {
-        let provenance = &header.provenance;
-        slot.mission_id = header.mission_id;
-        slot.version = header.version;
-        slot.timestamp = header.timestamp_unix.to_string();
-        slot.multiplayer_diagnostic = header.multiplayer_diagnostic;
-        slot.mission_name = provenance.mission_name.clone();
-        slot.player_profile_id = Some(provenance.player_profile_id);
-        slot.player_name = provenance.player_name.clone();
-        Ok(())
-    }
-
-    fn sync_slot_campaign_metadata(
-        slot: &mut SaveGame,
-        campaign: &engine_campaign::Campaign,
-        profiles: &ProfileManager,
-    ) {
-        slot.missions_done = Some(campaign.get_number_of_missions_done());
-        slot.missions_total = Some(campaign.missions.len());
-        slot.gang_size = Some(campaign.gang_indices.len());
-        slot.ransom = Some(campaign.values[CampaignValue::Ransom]);
-        slot.blazons = Some(campaign.values[CampaignValue::Blazon]);
-        slot.amulets = Some(campaign.values[CampaignValue::Amulets]);
-
-        slot.campaign_progress = Some(campaign.get_progression(profiles));
     }
 
     /// Load the thumbnail for a slot if one exists on disk.

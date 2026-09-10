@@ -11,7 +11,6 @@ use crate::host::Host;
 use crate::save_file::{GameSaveFile, SaveProvenance, Thumbnail};
 use crate::savegame::{SaveGame, SaveGameManager};
 use anyhow::{Context, Result, bail};
-use robin_engine::campaign::CampaignValue;
 use robin_engine::engine::Engine;
 use robin_engine::profiles::ProfileManager;
 use serde::{Deserialize, Serialize};
@@ -701,28 +700,12 @@ fn metadata_from_payload(
     payload: &GameSaveFile,
     profiles: &ProfileManager,
 ) -> Result<SaveGame> {
-    let campaign = payload.engine.campaign();
-    let provenance = &payload.header.provenance;
-    let mission_name = provenance.mission_name.clone();
     let mut metadata = SaveGame::new(
         filename.to_owned(),
-        mission_name.clone(),
+        payload.header.provenance.mission_name.clone(),
         payload.header.mission_id,
     );
-    metadata.mission_id = payload.header.mission_id;
-    metadata.version = payload.header.version;
-    metadata.multiplayer_diagnostic = payload.header.multiplayer_diagnostic;
-    metadata.timestamp = payload.header.timestamp_unix.to_string();
-    metadata.mission_name = mission_name;
-    metadata.player_profile_id = Some(provenance.player_profile_id);
-    metadata.player_name = provenance.player_name.clone();
-    metadata.missions_done = Some(campaign.get_number_of_missions_done());
-    metadata.missions_total = Some(campaign.missions.len());
-    metadata.gang_size = Some(campaign.gang_indices.len());
-    metadata.ransom = Some(campaign.values[CampaignValue::Ransom]);
-    metadata.blazons = Some(campaign.values[CampaignValue::Blazon]);
-    metadata.amulets = Some(campaign.values[CampaignValue::Amulets]);
-    metadata.campaign_progress = Some(campaign.get_progression(profiles));
+    metadata.update_snapshot_metadata(&payload.header, payload.engine.campaign(), profiles);
     if !metadata.is_autosave() {
         bail!("generated autosave filename was not classified as an autosave");
     }
