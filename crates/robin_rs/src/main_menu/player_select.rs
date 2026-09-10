@@ -6,6 +6,7 @@
 //! text-input pipeline (IME composition, dead keys, non-ASCII
 //! keyboards).
 
+use super::difficulty_to_string;
 use crate::gfx_types::Keycode;
 use robin_engine::sprite::BBox;
 
@@ -622,26 +623,9 @@ fn format_profile_row(profile: &PlayerProfileRow, resources: &IngameMenuResource
     format!(
         "{marker}{name} — {difficulty} / {progression}%",
         name = profile.name,
-        difficulty = difficulty_label(resources, profile.difficulty),
+        difficulty = difficulty_to_string(&resources.menu_text, profile.difficulty),
         progression = profile.progression,
     )
-}
-
-/// Returns the localised difficulty label via the menu-text table.
-fn difficulty_label(resources: &IngameMenuResources, d: DifficultyLevel) -> String {
-    match d {
-        DifficultyLevel::Easy => resources.menu_text.get(MT_STR_DIFFICULTY_EASY),
-        DifficultyLevel::Medium => resources.menu_text.get(MT_STR_DIFFICULTY_MEDIUM),
-        DifficultyLevel::Hard => resources.menu_text.get(MT_STR_DIFFICULTY_HARD),
-        DifficultyLevel::Legendary => resources
-            .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY)
-            .to_owned(),
-        DifficultyLevel::Custom(_) => resources
-            .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_CUSTOM)
-            .to_owned(),
-    }
 }
 
 fn point_in_rect(px: i32, py: i32, x: i32, y: i32, w: i32, h: i32) -> bool {
@@ -1365,8 +1349,8 @@ fn advanced_rule_value(
         })
     };
     match row {
-        0 => difficulty_label(
-            resources,
+        0 => difficulty_to_string(
+            &resources.menu_text,
             match rules.legacy_level {
                 LegacyDifficultyLevel::Easy => DifficultyLevel::Easy,
                 LegacyDifficultyLevel::Medium => DifficultyLevel::Medium,
@@ -1425,19 +1409,9 @@ async fn show_difficulty_prompt(
         renderer.screen_width() as i32,
         renderer.screen_height() as i32,
     );
-    let preset_labels = [
-        resources.menu_text.get(MT_STR_DIFFICULTY_EASY),
-        resources.menu_text.get(MT_STR_DIFFICULTY_MEDIUM),
-        resources.menu_text.get(MT_STR_DIFFICULTY_HARD),
-        resources
-            .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY)
-            .to_owned(),
-        resources
-            .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_CUSTOM)
-            .to_owned(),
-    ];
+    let preset_labels: [String; 5] = std::array::from_fn(|index| {
+        difficulty_to_string(&resources.menu_text, preset_at(index, initial.rules()))
+    });
     let mut custom_rules = initial.rules();
     let mut difficulty = initial;
     let mut focused_rule = 0usize;

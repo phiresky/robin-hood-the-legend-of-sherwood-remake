@@ -1041,7 +1041,7 @@ fn build_profile_info_lines(
     profile: &PlayerProfile,
 ) -> Vec<String> {
     let difficulty_label = resources.menu_text.get(MT_STR_DIFFICULTY_LEVEL);
-    let difficulty_value = difficulty_to_string(resources, profile.difficulty);
+    let difficulty_value = difficulty_to_string(&resources.menu_text, profile.difficulty);
     let money = substitute_i(
         &resources.menu_text.get(MT_STR_MONEY),
         profile.ransom as i64,
@@ -1063,19 +1063,18 @@ fn build_profile_info_lines(
 }
 
 /// Returns the localised difficulty label via the menu text table.
-fn difficulty_to_string(resources: &IngameMenuResources, level: DifficultyLevel) -> String {
+fn difficulty_to_string(
+    menu_text: &crate::ingame_menu::resources::MenuText,
+    level: DifficultyLevel,
+) -> String {
     match level {
-        DifficultyLevel::Easy => resources.menu_text.get(MT_STR_DIFFICULTY_EASY),
-        DifficultyLevel::Medium => resources.menu_text.get(MT_STR_DIFFICULTY_MEDIUM),
-        DifficultyLevel::Hard => resources.menu_text.get(MT_STR_DIFFICULTY_HARD),
-        DifficultyLevel::Legendary => resources
-            .menu_text
+        DifficultyLevel::Easy => menu_text.get(MT_STR_DIFFICULTY_EASY),
+        DifficultyLevel::Medium => menu_text.get(MT_STR_DIFFICULTY_MEDIUM),
+        DifficultyLevel::Hard => menu_text.get(MT_STR_DIFFICULTY_HARD),
+        DifficultyLevel::Legendary => menu_text
             .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY)
             .to_owned(),
-        DifficultyLevel::Custom(_) => resources
-            .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_CUSTOM)
-            .to_owned(),
+        DifficultyLevel::Custom(_) => menu_text.get_port(MT_PORT_STR_DIFFICULTY_CUSTOM).to_owned(),
     }
 }
 
@@ -1107,6 +1106,38 @@ fn substitute_i(template: &str, value: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn difficulty_labels_preserve_localized_legacy_and_application_namespaces() {
+        let mut menu_text = crate::ingame_menu::resources::MenuText::english_fallbacks_only();
+        let mut strings = vec![
+            String::new();
+            MT_STR_DIFFICULTY_HARD
+                .max(MT_STR_DIFFICULTY_MEDIUM)
+                .max(MT_STR_DIFFICULTY_EASY)
+                + 1
+        ];
+        strings[MT_STR_DIFFICULTY_EASY] = "Facile".into();
+        strings[MT_STR_DIFFICULTY_MEDIUM] = "Moyen".into();
+        strings[MT_STR_DIFFICULTY_HARD] = "Difficile".into();
+        menu_text.replace_strings_for_test(strings);
+        for (difficulty, expected) in [
+            (DifficultyLevel::Easy, "Facile"),
+            (DifficultyLevel::Medium, "Moyen"),
+            (DifficultyLevel::Hard, "Difficile"),
+            (DifficultyLevel::Legendary, "Legendary"),
+            (
+                DifficultyLevel::Custom(robin_engine::player_profile::DifficultyRules::EASY),
+                "Custom",
+            ),
+            (
+                DifficultyLevel::Custom(robin_engine::player_profile::DifficultyRules::HARD),
+                "Custom",
+            ),
+        ] {
+            assert_eq!(difficulty_to_string(&menu_text, difficulty), expected);
+        }
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn menu_audio_context(
