@@ -24,12 +24,10 @@ pub(super) fn write_web_content_manifest(
             let entry =
                 entry.with_context(|| format!("enumerate web content {}", directory.display()))?;
             let path = entry.path();
-            if directory == data_out
-                && entry.file_name().to_str().is_some_and(|name| {
-                    name.starts_with(MANIFEST_STAGING_PREFIX)
-                        || name.starts_with(publication::ARTIFACT_STAGING_PREFIX)
-                })
-            {
+            if entry.file_name().to_str().is_some_and(|name| {
+                (directory == data_out && name.starts_with(MANIFEST_STAGING_PREFIX))
+                    || name.starts_with(publication::ARTIFACT_STAGING_PREFIX)
+            }) {
                 // TODO: recover abandoned stages once converter runs have an
                 // exclusive ownership protocol; do not delete another run's file.
                 bail!(
@@ -186,7 +184,7 @@ pub(super) fn write_prepared_shipping_payload(
     let path = output_dir.join(filename);
     if let Some(compressed) = compressed {
         let len = compressed.len();
-        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        publication::publish_bytes(&path, &compressed)?;
         Ok(len)
     } else {
         Ok(fs::metadata(&path)
@@ -273,13 +271,16 @@ mod tests {
         use robin_rs::multiplayer::content_identity::{
             WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
         };
-        for prefix in [
-            MANIFEST_STAGING_PREFIX,
-            publication::ARTIFACT_STAGING_PREFIX,
+        for (prefix, subdirectory) in [
+            (MANIFEST_STAGING_PREFIX, ""),
+            (publication::ARTIFACT_STAGING_PREFIX, ""),
+            (publication::ARTIFACT_STAGING_PREFIX, "audio/assets"),
         ] {
             let temp = tempfile::tempdir().unwrap();
             let manifest = temp.path().join(WEB_CONTENT_MANIFEST_NAME);
-            let stage = temp.path().join(format!("{prefix}abandoned"));
+            let staging_directory = temp.path().join(subdirectory);
+            fs::create_dir_all(&staging_directory).unwrap();
+            let stage = staging_directory.join(format!("{prefix}abandoned"));
             fs::write(&manifest, b"previous publication").unwrap();
             fs::write(&stage, b"incomplete replacement").unwrap();
             let error =

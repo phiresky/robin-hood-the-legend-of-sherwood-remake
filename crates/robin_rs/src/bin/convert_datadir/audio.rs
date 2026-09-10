@@ -251,7 +251,7 @@ pub(super) fn insert_standalone_audio(
             bail!("content-addressed audio collision at {}", output.display());
         }
     } else {
-        fs::write(&output, bytes)
+        publication::publish_bytes(&output, bytes)
             .with_context(|| format!("write audio asset {}", output.display()))?;
     }
     let file = format!("audio/assets/{filename}");
@@ -393,7 +393,7 @@ pub(super) fn bundle_grouped_audio(
         let digest = Sha256::digest(&bytes);
         let hash = hex::encode(&digest[..6]);
         let bundle_rel = format!("audio/bundles/{}-{hash}.bin", shipping_file_stem(&group));
-        fs::write(data_out.join(&bundle_rel), &bytes)
+        publication::publish_bytes(&data_out.join(&bundle_rel), &bytes)
             .with_context(|| format!("write {bundle_rel}"))?;
         bundle_count += 1;
         bundled_bytes += bytes.len() as u64;
@@ -543,16 +543,7 @@ pub(super) fn write_shipping_dependency(
     }
     let (filename, compressed) =
         prepare_shipping_payload(output_dir, label, payload, window_log, resume)?;
-    let path = output_dir.join(&filename);
-    let compressed_len = if let Some(compressed) = compressed {
-        let compressed_len = compressed.len();
-        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
-        compressed_len
-    } else {
-        fs::metadata(&path)
-            .with_context(|| format!("stat reused payload {}", path.display()))?
-            .len() as usize
-    };
+    let compressed_len = write_prepared_shipping_payload(output_dir, &filename, compressed)?;
     tracing::info!(
         label,
         files = payload.raw.len(),
