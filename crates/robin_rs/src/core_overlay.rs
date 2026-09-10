@@ -84,14 +84,7 @@ pub fn validate_official_projection_source(
             "official projection requires the core datadir V1 overlay"
         ));
     }
-    let root_metadata = std::fs::symlink_metadata(root)
-        .with_context(|| format!("inspect core overlay root {}", root.display()))?;
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(anyhow!(
-            "core overlay root must be a non-symlink directory: {}",
-            root.display()
-        ));
-    }
+    require_directory(root, "core overlay root")?;
     let declared = manifest
         .files
         .iter()
@@ -107,38 +100,7 @@ pub fn validate_official_projection_source(
         ));
     }
 
-    fn visit(root: &Path, directory: &Path, output: &mut BTreeSet<String>) -> Result<()> {
-        for entry in std::fs::read_dir(directory)
-            .with_context(|| format!("enumerate core overlay {}", directory.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            let metadata = std::fs::symlink_metadata(&path)?;
-            if metadata.file_type().is_symlink() {
-                return Err(anyhow!("core overlay contains symlink {}", path.display()));
-            }
-            if metadata.is_dir() {
-                visit(root, &path, output)?;
-            } else if metadata.is_file() {
-                output.insert(
-                    path.strip_prefix(root)
-                        .expect("core traversal remains below root")
-                        .to_str()
-                        .ok_or_else(|| anyhow!("core overlay path is not UTF-8"))?
-                        .replace('\\', "/"),
-                );
-            } else {
-                return Err(anyhow!(
-                    "core overlay contains non-regular node {}",
-                    path.display()
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    let mut physical = BTreeSet::new();
-    visit(root, root, &mut physical)?;
+    let physical = collect_native_files(root, root)?;
     if physical != declared.iter().map(|path| (*path).to_owned()).collect() {
         return Err(anyhow!(
             "core overlay physical root differs from its canonical manifest"
@@ -435,6 +397,13 @@ fn require_regular_file(path: &Path, label: &str) -> Result<()> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn collect_native_data_files(root: &Path) -> Result<BTreeSet<String>> {
+    let data = root.join("Data");
+    require_directory(&data, "core overlay Data root")?;
+    collect_native_files(root, &data)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_native_files(root: &Path, directory: &Path) -> Result<BTreeSet<String>> {
     fn visit(root: &Path, directory: &Path, output: &mut BTreeSet<String>) -> Result<()> {
         for entry in std::fs::read_dir(directory)
             .with_context(|| format!("enumerate core overlay {}", directory.display()))?
@@ -468,10 +437,8 @@ fn collect_native_data_files(root: &Path) -> Result<BTreeSet<String>> {
         Ok(())
     }
 
-    let data = root.join("Data");
-    require_directory(&data, "core overlay Data root")?;
     let mut files = BTreeSet::new();
-    visit(root, &data, &mut files)?;
+    visit(root, directory, &mut files)?;
     Ok(files)
 }
 
@@ -689,6 +656,33 @@ mod tests {
                 .contains("runtime lookup did not select the validated core overlay asset")
         );
         assert!(format!("{error:#}").contains(replaced));
+    }
+
+    #[test]
+    fn native_inventory_scopes_keep_root_files_separate_from_packaged_data() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("Data/Nested")).unwrap();
+        std::fs::write(root.path().join("Data/Nested/asset"), b"asset").unwrap();
+        std::fs::write(root.path().join("root-metadata"), b"metadata").unwrap();
+        assert_eq!(
+            collect_native_data_files(root.path()).unwrap(),
+            BTreeSet::from(["Data/Nested/asset".to_owned()])
+        );
+        assert_eq!(
+            collect_native_files(root.path(), root.path()).unwrap(),
+            BTreeSet::from(["Data/Nested/asset".to_owned(), "root-metadata".to_owned()])
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("Data", root.path().join("outside-data-link")).unwrap();
+            assert!(collect_native_data_files(root.path()).is_ok());
+            assert!(
+                collect_native_files(root.path(), root.path())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("symlink")
+            );
+        }
     }
 
     #[test]
