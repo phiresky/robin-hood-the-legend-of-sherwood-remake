@@ -58,6 +58,7 @@ pub(super) fn quick_candidates(root: &str, receipt_path: &Path) -> Result<Option
     let recovery: QuickSaveRecovery =
         serde_json::from_slice(&bytes).context("decoding quick-save recovery receipt")?;
     let mut candidates = Vec::new();
+    let mut names = std::collections::HashSet::new();
     // Validate the whole receipt before any referenced payload is read.
     for (slot, _) in &recovery.slots {
         slot.validate_published_metadata()?;
@@ -67,6 +68,11 @@ pub(super) fn quick_candidates(root: &str, receipt_path: &Path) -> Result<Option
                 save_file::special_slots::QUICK | save_file::special_slots::EX_QUICK
             ),
             "recovery receipt names a non-quick-save slot"
+        );
+        anyhow::ensure!(
+            names.insert(slot.filename.as_str()),
+            "quick-save recovery receipt repeats slot {}",
+            slot.filename
         );
     }
     for (slot, digest) in recovery.slots {
@@ -86,6 +92,40 @@ pub(super) fn quick_candidates(root: &str, receipt_path: &Path) -> Result<Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duplicate_quick_receipt_slots_fail_before_payload_reads() {
+        let directory = tempfile::tempdir().unwrap();
+        let receipt_path = directory.path().join("receipt.json");
+        let mut slot = SaveGame::new(save_file::special_slots::QUICK.into(), "Quick".into(), 1);
+        slot.timestamp = "123".into();
+        slot.mission_name = "Mission".into();
+        slot.player_profile_id = Some(0);
+        slot.player_name = "Player".into();
+        slot.campaign_progress = Some(0);
+        slot.missions_done = Some(0);
+        slot.missions_total = Some(1);
+        slot.gang_size = Some(1);
+        slot.ransom = Some(0);
+        slot.blazons = Some(0);
+        slot.amulets = Some(0);
+        slot.validate_published_metadata().unwrap();
+        let mut conflicting = slot.clone();
+        conflicting.text = "Conflicting metadata".into();
+        for second in [slot.clone(), conflicting] {
+            let receipt = QuickSaveRecovery {
+                slots: vec![(slot.clone(), [0; 32]), (second, [1; 32])],
+            };
+            let bytes = serde_json::to_vec(&receipt).unwrap();
+            std::fs::write(&receipt_path, &bytes).unwrap();
+            // This root is a file: reaching payload I/O would produce a
+            // different error. Ambiguity must be rejected first.
+            let error =
+                quick_candidates(receipt_path.to_str().unwrap(), &receipt_path).unwrap_err();
+            assert!(error.to_string().contains("repeats slot"));
+            assert_eq!(std::fs::read(&receipt_path).unwrap(), bytes);
+        }
+    }
 
     #[test]
     fn streamed_payload_digest_matches_whole_file_and_distinguishes_absence() {
