@@ -230,13 +230,12 @@ impl SessionIngress {
     }
 
     #[cfg(test)]
-    fn defer(&mut self, request: HttpRequest, graphical: bool) -> Option<HttpRequest> {
+    fn defer(&mut self, request: HttpRequest, graphical: bool) {
         // Test adapter exercises the same exhaustive classification as production.
         let RoutedRequest::Deferred(deferred) = request.payload.classify() else {
             panic!("deferral test supplied a non-deferred operation");
         };
         self.defer_request(deferred, request.response_tx, graphical);
-        None
     }
 
     pub fn take_pending_steps(&mut self) -> Vec<PendingStep> {
@@ -688,8 +687,8 @@ mod tests {
             frame: Some(900),
             ..ScreenshotRequest::default()
         }));
-        assert!(ingress.defer(step, true).is_none());
-        assert!(ingress.defer(shot, true).is_none());
+        ingress.defer(step, true);
+        ingress.defer(shot, true);
         router.lock().unwrap().retire();
         assert!(ingress.take_pending_steps().is_empty());
         assert!(ingress.take_pending_screenshots(900).is_empty());
@@ -713,8 +712,8 @@ mod tests {
             frame: Some(900),
             ..Default::default()
         }));
-        assert!(old.defer(step, true).is_none());
-        assert!(old.defer(shot, true).is_none());
+        old.defer(step, true);
+        old.defer(shot, true);
         let (raw, raw_reply) = request(HttpPayload::SetPaused { paused: true });
         router.lock().unwrap().push_back(raw);
         old.observe_ranked_input_taint(&HttpPayload::SetPaused { paused: true });
@@ -851,7 +850,7 @@ mod tests {
             }
             for request in session.take_requests() {
                 session.observe_ranked_input_taint(&request.payload);
-                assert!(session.defer(request, graphical).is_none());
+                session.defer(request, graphical);
             }
             assert_eq!(
                 session.take_pending_replay_taints(),
