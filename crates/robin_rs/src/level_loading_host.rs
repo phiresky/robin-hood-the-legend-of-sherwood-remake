@@ -352,6 +352,16 @@ fn pre_decode_background_map_impl(
     finish_background_picture(picture, map_name, ambiance_dir, level_directory, files).map(Some)
 }
 
+/// Picture bytes are little-endian RGB565, regardless of host alignment or endianness.
+fn decode_rgb565_words(bytes: &[u8]) -> Vec<u16> {
+    let (words, remainder) = bytes.as_chunks::<2>();
+    assert!(
+        remainder.is_empty(),
+        "RGB565 picture contains an incomplete pixel word"
+    );
+    words.iter().copied().map(u16::from_le_bytes).collect()
+}
+
 fn finish_background_picture(
     picture: Picture,
     map_name: &str,
@@ -359,7 +369,7 @@ fn finish_background_picture(
     level_directory: &str,
     files: &sbfile::SbFileSystem,
 ) -> Result<PreDecodedBackground, String> {
-    let bg_pixels: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&picture.data).to_vec();
+    let bg_pixels = decode_rgb565_words(&picture.data);
 
     let depth_candidates = [
         format!(
@@ -860,7 +870,7 @@ pub fn pre_decode_minimap_with_files(
                 match Picture::load_terrain_from_bytes(bytes) {
                     Ok(p) => {
                         progress(1.0);
-                        let pixels: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&p.data).to_vec();
+                        let pixels = decode_rgb565_words(&p.data);
                         return Some(PreDecodedMinimap {
                             width: p.width,
                             height: p.height,
@@ -917,7 +927,7 @@ pub fn pre_decode_minimap_with_files(
 
     progress(1.0);
 
-    let pixels: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&picture.data).to_vec();
+    let pixels = decode_rgb565_words(&picture.data);
 
     Some(PreDecodedMinimap {
         width: picture.width,
@@ -1017,6 +1027,29 @@ pub fn draw_background(viewport: &crate::host::ViewportState, renderer: &mut Ren
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rgb565_decoding_accepts_unaligned_bytes_and_uses_little_endian_order() {
+        let aligned = [0x1234u16, 0x5678, 0x9ABC];
+        let bytes: &[u8] = bytemuck::cast_slice(&aligned);
+        let unaligned = &bytes[1..5];
+        assert_ne!(
+            unaligned.as_ptr().align_offset(std::mem::align_of::<u16>()),
+            0
+        );
+        assert_eq!(
+            super::decode_rgb565_words(unaligned),
+            vec![
+                u16::from_le_bytes([unaligned[0], unaligned[1]]),
+                u16::from_le_bytes([unaligned[2], unaligned[3]]),
+            ]
+        );
+        assert_eq!(
+            super::decode_rgb565_words(&[0x34, 0x12, 0xCD, 0xAB]),
+            [0x1234, 0xABCD]
+        );
+        assert!(super::decode_rgb565_words(&[]).is_empty());
+    }
+
     use super::*;
 
     #[test]
