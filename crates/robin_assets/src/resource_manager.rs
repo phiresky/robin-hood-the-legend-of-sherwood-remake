@@ -322,7 +322,7 @@ fn read_cursor(
 }
 
 /// Read a string-table resource (`TEXT`).
-/// Strings are UCS-2 (u16 per char) on disk; we convert to UTF-8.
+/// Strings are little-endian UTF-16 on disk; we convert to UTF-8.
 fn read_string_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>> {
     let _flags = reader.u32(format!("{context} flags"))?;
     let count = reader.u16(format!("{context} string count"))? as usize;
@@ -344,14 +344,16 @@ fn read_string_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Strin
             format!("{context} string {string_index} UTF-16 data"),
             reader.position() - 2,
         )?;
-        let mut chars = Vec::with_capacity(char_count);
-        for char_index in 0..char_count {
-            chars.push(reader.u16(format!(
-                "{context} string {string_index} code unit {char_index}"
-            ))?);
-        }
+        let encoded = reader.take(
+            char_count * 2,
+            format!("{context} string {string_index} UTF-16 data"),
+        )?;
+        let code_units = encoded
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]));
         strings.push(
-            String::from_utf16(&chars)
+            char::decode_utf16(code_units)
+                .collect::<std::result::Result<String, _>>()
                 .with_context(|| format!("{context} string {string_index}: invalid UTF-16"))?,
         );
     }
@@ -1993,6 +1995,43 @@ mod tests {
         bytes.extend_from_slice(&id.to_le_bytes());
         bytes.extend_from_slice(payload);
         bytes
+    }
+
+    #[test]
+    fn text_table_decoding_matches_strict_utf16_and_preserves_trailing_bytes() {
+        let cases: &[&[u16]] = &[
+            &[],
+            &[0x41, 0, 0xE9, 0x96EA],
+            &[0xD83D, 0xDE00],
+            &[0xD800],
+            &[0xDC00],
+            &[0xD800, 0x41],
+            &[0xD800, 0xD800, 0xDC00],
+        ];
+        for units in cases {
+            let mut payload = Vec::new();
+            payload.extend_from_slice(&0u32.to_le_bytes());
+            payload.extend_from_slice(&1u16.to_le_bytes());
+            payload.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for unit in *units {
+                payload.extend_from_slice(&unit.to_le_bytes());
+            }
+            let end = payload.len();
+            payload.extend_from_slice(&[0xAA, 0xBB]);
+            let mut reader = Reader::new(&payload);
+            let decoded = read_string_table(&mut reader, "fixture");
+            match String::from_utf16(units) {
+                Ok(expected) => assert_eq!(decoded.unwrap(), vec![expected]),
+                Err(_) => assert!(
+                    decoded
+                        .unwrap_err()
+                        .to_string()
+                        .contains("string 0: invalid UTF-16")
+                ),
+            }
+            assert_eq!(reader.position(), end);
+            assert_eq!(reader.take(2, "trailer").unwrap(), &[0xAA, 0xBB]);
+        }
     }
 
     #[test]
