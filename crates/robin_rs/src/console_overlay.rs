@@ -658,11 +658,10 @@ impl ConsoleOverlay {
                 Some(cycle) => (cycle.prefix, Some(cycle.index)),
                 None => (trimmed[..first_token_end].to_ascii_uppercase(), None),
             };
-            let trail = trimmed[first_token_end..].trim_start().to_string();
+            let trail = trimmed[first_token_end..].trim_start();
             (prefix, previous_index, trail)
         };
         if prefix_upper.is_empty() {
-            self.completion = None;
             return;
         }
         // Pick the keyword set that matches the current cheat table.
@@ -678,33 +677,13 @@ impl ConsoleOverlay {
             .copied()
             .filter(|kw| kw.starts_with(&prefix_upper))
             .collect();
-        match matches.as_slice() {
-            [] => {
-                self.completion = None;
-            }
-            [single] => {
-                // Unique match: replace the typed prefix with the
-                // keyword + a space so the user can keep typing args.
-                let mut completed = String::with_capacity(single.len() + trailing.len() + 1);
-                completed.push_str(single);
-                completed.push(' ');
-                completed.push_str(&trailing);
-                self.input = completed;
-                self.cursor = self.input.chars().count();
-                self.completion = None;
-                self.caret_timer = 0;
-            }
+        let (pick, add_space, candidate_listing) = match matches.as_slice() {
+            [] => return,
+            // Unique matches always append a space for further arguments.
+            [single] => (*single, true, None),
             many => {
-                // Multiple matches: cycle through them on repeated Tab
-                // presses.  On the first Tab after a fresh edit, list
-                // the candidates so the user sees what's on offer;
-                // subsequent Tabs substitute the actual keyword into
-                // the input line one at a time.
-                let first_press = previous_index.is_none();
-                if first_press {
-                    let joined = many.join("  ");
-                    self.push_output(OutputLine::Response(joined));
-                }
+                // List candidates once, then cycle using the original prefix.
+                let candidate_listing = previous_index.is_none().then(|| many.join("  "));
                 let idx = match previous_index {
                     None => 0,
                     Some(i) => (i + 1) % many.len(),
@@ -714,17 +693,21 @@ impl ConsoleOverlay {
                     index: idx,
                     use_final: dev.console.use_final,
                 });
-                let pick = many[idx];
-                let mut completed = String::with_capacity(pick.len() + trailing.len() + 1);
-                completed.push_str(pick);
-                if !trailing.is_empty() {
-                    completed.push(' ');
-                    completed.push_str(&trailing);
-                }
-                self.input = completed;
-                self.cursor = self.input.chars().count();
-                self.caret_timer = 0;
+                (many[idx], !trailing.is_empty(), candidate_listing)
             }
+        };
+        let mut completed =
+            String::with_capacity(pick.len() + trailing.len() + usize::from(add_space));
+        completed.push_str(pick);
+        if add_space {
+            completed.push(' ');
+        }
+        completed.push_str(trailing);
+        self.input = completed;
+        self.cursor = self.input.chars().count();
+        self.caret_timer = 0;
+        if let Some(listing) = candidate_listing {
+            self.push_output(OutputLine::Response(listing));
         }
     }
 
@@ -973,6 +956,29 @@ mod tests {
         c.tab_complete(&dev);
         // FREEZE is the only `FRE…` keyword.
         assert_eq!(c.input, "FREEZE ");
+    }
+
+    #[test]
+    fn completion_preserves_argument_spacing_and_unmatched_input() {
+        let dev = DevState::default();
+        for (input, expected, changed) in [
+            ("fre", "FREEZE ", true),
+            ("  fre\t  café 界  ", "FREEZE café 界  ", true),
+            ("  h\t  café 界  ", "HADES café 界  ", true),
+            ("h\t  ", "HADES", true),
+            ("", "", false),
+            ("  \t", "  \t", false),
+            ("  unknown\t café ", "  unknown\t café ", false),
+        ] {
+            let mut c = ConsoleOverlay::new();
+            c.input = input.into();
+            c.cursor = input.chars().count();
+            c.caret_timer = 17;
+            c.tab_complete(&dev);
+            assert_eq!(c.input, expected);
+            assert_eq!(c.cursor, expected.chars().count());
+            assert_eq!(c.caret_timer, if changed { 0 } else { 17 });
+        }
     }
 
     #[test]
