@@ -929,7 +929,6 @@ impl OptionsTaskState {
                     .map(|preset| preset.label.as_str())
                     .unwrap_or("Default");
                 let mut rows = available_graphics_settings()
-                    .into_iter()
                     .map(|setting| {
                         row(
                             OptionRowAction::AdjustGraphics(setting),
@@ -2098,7 +2097,7 @@ mod tests {
     #[test]
     fn cooperative_graphics_cursor_pulse_row_is_reachable_and_persistable() {
         let original = GraphicConfig::default();
-        let settings = available_graphics_settings();
+        let settings: Vec<_> = available_graphics_settings().collect();
         let labels = settings
             .iter()
             .map(|setting| graphics_setting_label(&original, "Default", *setting))
@@ -2138,7 +2137,7 @@ mod tests {
     #[test]
     fn cooperative_graphics_exposes_every_current_visual_control() {
         let original = GraphicConfig::default();
-        let settings = graphics_settings_for_retroarch_availability(true);
+        let settings: Vec<_> = graphics_settings_for_retroarch_availability(true).collect();
         let labels = settings
             .iter()
             .map(|setting| graphics_setting_label(&original, "Default", *setting))
@@ -2171,9 +2170,9 @@ mod tests {
 
     #[test]
     fn portable_graphics_rows_hide_only_native_shader_presets() {
-        let portable = graphics_settings_for_retroarch_availability(false);
-        let native = graphics_settings_for_retroarch_availability(true);
-        let current = available_graphics_settings();
+        let portable: Vec<_> = graphics_settings_for_retroarch_availability(false).collect();
+        let native: Vec<_> = graphics_settings_for_retroarch_availability(true).collect();
+        let current: Vec<_> = available_graphics_settings().collect();
 
         assert!(!portable.contains(&GraphicsSetting::ShaderPreset));
         assert!(native.contains(&GraphicsSetting::ShaderPreset));

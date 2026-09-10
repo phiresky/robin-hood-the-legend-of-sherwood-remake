@@ -455,17 +455,16 @@ impl GraphicsSetting {
     ];
 }
 
-pub(crate) fn available_graphics_settings() -> Vec<GraphicsSetting> {
+pub(crate) fn available_graphics_settings() -> impl Iterator<Item = GraphicsSetting> {
     graphics_settings_for_retroarch_availability(crate::shader_preset::retroarch_runtime_available())
 }
 
 pub(crate) fn graphics_settings_for_retroarch_availability(
     retroarch_available: bool,
-) -> Vec<GraphicsSetting> {
+) -> impl Iterator<Item = GraphicsSetting> {
     GraphicsSetting::ALL
         .into_iter()
-        .filter(|setting| *setting != GraphicsSetting::ShaderPreset || retroarch_available)
-        .collect()
+        .filter(move |setting| *setting != GraphicsSetting::ShaderPreset || retroarch_available)
 }
 
 fn cycle_index(current: usize, len: usize, delta: i32) -> usize {
