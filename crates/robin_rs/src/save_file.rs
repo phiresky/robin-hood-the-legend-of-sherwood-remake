@@ -266,14 +266,32 @@ pub struct Thumbnail {
 impl Thumbnail {
     /// Build a thumbnail from a raw RGB565 pixel buffer.
     pub fn from_pixels(width: u16, height: u16, pixels: Vec<u16>) -> Option<Self> {
-        if pixels.len() != width as usize * height as usize {
-            return None;
-        }
-        Some(Self {
+        let thumbnail = Self {
             width,
             height,
             pixels,
-        })
+        };
+        thumbnail.validate_layout().ok()?;
+        Some(thumbnail)
+    }
+
+    fn validate_layout(&self) -> Result<()> {
+        if self.width == 0 || self.height == 0 {
+            bail!(
+                "thumbnail dimensions must be non-zero: {}x{}",
+                self.width,
+                self.height
+            );
+        }
+        let expected = usize::from(self.width) * usize::from(self.height);
+        if self.pixels.len() != expected {
+            bail!(
+                "thumbnail RGB565 length mismatch: expected {}, got {}",
+                expected,
+                self.pixels.len()
+            );
+        }
+        Ok(())
     }
 
     /// Build a thumbnail by nearest-neighbour downsampling an RGBA8 frame.
@@ -333,6 +351,8 @@ impl Thumbnail {
 
     /// Write the thumbnail to `path` as a normal 8-bit RGB PNG file.
     pub fn write_to(&self, path: &Path) -> Result<()> {
+        self.validate_layout()
+            .with_context(|| format!("validating thumbnail {}", path.display()))?;
         let mut encoded = Vec::new();
         let mut encoder = png::Encoder::new(&mut encoded, self.width as u32, self.height as u32);
         encoder.set_color(png::ColorType::Rgb);
@@ -2166,9 +2186,39 @@ mod tests {
 
     #[test]
     fn thumbnail_from_pixels_length_check() {
+        assert!(Thumbnail::from_pixels(0, 4, vec![]).is_none());
+        assert!(Thumbnail::from_pixels(4, 0, vec![]).is_none());
+        assert!(Thumbnail::from_pixels(0, 0, vec![]).is_none());
         assert!(Thumbnail::from_pixels(4, 4, vec![0; 15]).is_none());
         assert!(Thumbnail::from_pixels(4, 4, vec![0; 16]).is_some());
         assert!(Thumbnail::from_pixels(4, 4, vec![0; 17]).is_none());
+    }
+
+    #[test]
+    fn invalid_thumbnail_layouts_do_not_replace_persisted_previews() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("preview.png");
+        Thumbnail::from_pixels(1, 1, vec![0xffff])
+            .unwrap()
+            .write_to(&path)
+            .unwrap();
+        let original = fs::read(&path).unwrap();
+        for (width, height, pixels) in [
+            (0, 1, vec![]),
+            (1, 0, vec![]),
+            (2, 2, vec![0; 3]),
+            (2, 2, vec![0; 5]),
+        ] {
+            // Serde and public fields can bypass the checked constructor.
+            let thumbnail: Thumbnail = serde_json::from_value(serde_json::json!({
+                "width": width, "height": height, "pixels": pixels
+            }))
+            .unwrap();
+            let error = thumbnail.write_to(&path).unwrap_err();
+            assert!(format!("{error:#}").contains("validating thumbnail"));
+            assert_eq!(fs::read(&path).unwrap(), original);
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
     }
 
     #[test]
