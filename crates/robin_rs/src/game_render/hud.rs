@@ -3,7 +3,9 @@
 use super::{FramePresentationInputs, render_text_with_shadow};
 use crate::host::HostDraw;
 use crate::hud_text::HudFonts;
-use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
+use crate::ingame_menu::resources::{
+    IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM, substitute_integer,
+};
 use crate::renderer::Renderer;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
@@ -426,8 +428,8 @@ pub(crate) fn render_ransom_amulet_overlay(
     } else {
         ("Ransom: %d".into(), "Amulets: %d".into())
     };
-    let ransom_text = substitute_int(&ransom_tpl, ransom);
-    let amulet_text = substitute_int(&amulet_tpl, amulets);
+    let ransom_text = substitute_integer(&ransom_tpl, i64::from(ransom));
+    let amulet_text = substitute_integer(&amulet_tpl, i64::from(amulets));
 
     // Positions: (0, 0) for ransom, (0, 15) for amulets.  The text
     // renderer's left-anchored point overload insets the glyph anchor
@@ -435,22 +437,6 @@ pub(crate) fn render_ransom_amulet_overlay(
     const KERNING_MARGIN: i32 = 2;
     render_text_with_shadow(renderer, fonts, &ransom_text, KERNING_MARGIN, 0);
     render_text_with_shadow(renderer, fonts, &amulet_text, KERNING_MARGIN, 15);
-}
-
-/// Substitute the first `%d` or `%i` token in a printf-style format string.
-/// C's `swprintf` accepts either for an integer; the stock English demo
-/// data uses `%i` ("Money: £%i") while other locales use `%d`.
-fn substitute_int(template: &str, value: i32) -> String {
-    let d = template.find("%d");
-    let i = template.find("%i");
-    let pos = match (d, i) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    };
-    match pos {
-        Some(p) => format!("{}{}{}", &template[..p], value, &template[p + 2..]),
-        None => template.to_string(),
-    }
 }
 
 // ─── Multi-selection rubber-band rectangle ────────────────────────

@@ -28,7 +28,7 @@ use crate::ingame_menu::resources::{
     MT_BTN_SHOW_MOVIES, MT_BTN_START_GAME, MT_MSG_RETURN_TO_WINDOWS, MT_PORT_STR_DIFFICULTY_CUSTOM,
     MT_PORT_STR_DIFFICULTY_LEGENDARY, MT_STR_CARNAGE_FACTOR, MT_STR_DIFFICULTY_EASY,
     MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_MONEY,
-    MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE,
+    MT_STR_PLAYING_TIME, MT_STR_PROGRESSION, MT_STR_SCORE, substitute_integer,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::yesno::show_yesno;
@@ -1042,7 +1042,7 @@ fn build_profile_info_lines(
 ) -> Vec<String> {
     let difficulty_label = resources.menu_text.get(MT_STR_DIFFICULTY_LEVEL);
     let difficulty_value = difficulty_to_string(&resources.menu_text, profile.difficulty);
-    let money = substitute_i(
+    let money = substitute_integer(
         &resources.menu_text.get(MT_STR_MONEY),
         profile.ransom as i64,
     );
@@ -1083,27 +1083,6 @@ fn seconds_to_time(seconds: u32) -> String {
     let hours = seconds / 3600;
     let minutes = (seconds - hours * 3600) / 60;
     format!("{hours:02}:{minutes:02}")
-}
-
-/// Substitute the first `%i` / `%d` placeholder in `template` with
-/// `value`.  Used for printf-style format strings that ship in the
-/// menu text table (e.g. `MT_STR_MONEY` → "Money: £%i").  If no
-/// placeholder is present the template is returned verbatim — the
-/// localised table is assumed trustworthy.
-fn substitute_i(template: &str, value: i64) -> String {
-    let first = ["%i", "%d"]
-        .into_iter()
-        .filter_map(|marker| template.find(marker))
-        .min();
-    let Some(pos) = first else {
-        return template.to_owned();
-    };
-    use std::fmt::Write;
-    let mut out = String::with_capacity(template.len() + 8);
-    out.push_str(&template[..pos]);
-    write!(&mut out, "{value}").expect("writing to a String cannot fail");
-    out.push_str(&template[pos + 2..]);
-    out
 }
 
 #[cfg(test)]
@@ -1302,21 +1281,24 @@ mod tests {
 
     #[test]
     fn substitute_i_basic() {
-        assert_eq!(substitute_i("Money: £%i", 100), "Money: £100");
-        assert_eq!(substitute_i("Ransom: %d", 42), "Ransom: 42");
+        assert_eq!(substitute_integer("Money: £%i", 100), "Money: £100");
+        assert_eq!(substitute_integer("Ransom: %d", 42), "Ransom: 42");
     }
 
     #[test]
     fn substitute_i_uses_first_position_not_specifier_priority() {
-        assert_eq!(substitute_i("£%d / %i", -42), "£-42 / %i");
-        assert_eq!(substitute_i("%i / %d", 42), "42 / %d");
-        assert_eq!(substitute_i("%d %d", i64::MIN), format!("{} %d", i64::MIN));
-        assert_eq!(substitute_i("%u / %s", 42), "%u / %s");
+        assert_eq!(substitute_integer("£%d / %i", -42), "£-42 / %i");
+        assert_eq!(substitute_integer("%i / %d", 42), "42 / %d");
+        assert_eq!(
+            substitute_integer("%d %d", i64::MIN),
+            format!("{} %d", i64::MIN)
+        );
+        assert_eq!(substitute_integer("%u / %s", 42), "%u / %s");
     }
 
     #[test]
     fn substitute_i_no_placeholder() {
-        assert_eq!(substitute_i("no format", 5), "no format");
+        assert_eq!(substitute_integer("no format", 5), "no format");
     }
 
     #[test]

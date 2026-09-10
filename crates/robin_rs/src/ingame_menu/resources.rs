@@ -392,6 +392,27 @@ pub struct MenuText {
     fallbacks: Option<&'static HashMap<usize, &'static str>>,
 }
 
+/// Substitute the first `%i` / `%d` placeholder in `template` with
+/// `value`.  Used for printf-style format strings that ship in the
+/// menu text table (e.g. `MT_STR_MONEY` → "Money: £%i").  If no
+/// placeholder is present the template is returned verbatim — the
+/// localised table is assumed trustworthy.
+pub(crate) fn substitute_integer(template: &str, value: i64) -> String {
+    let first = ["%i", "%d"]
+        .into_iter()
+        .filter_map(|marker| template.find(marker))
+        .min();
+    let Some(pos) = first else {
+        return template.to_owned();
+    };
+    use std::fmt::Write;
+    let mut out = String::with_capacity(template.len() + 8);
+    out.push_str(&template[..pos]);
+    write!(&mut out, "{value}").expect("writing to a String cannot fail");
+    out.push_str(&template[pos + 2..]);
+    out
+}
+
 impl MenuText {
     /// Build a new table, trying the three known table ids in turn.
     ///
