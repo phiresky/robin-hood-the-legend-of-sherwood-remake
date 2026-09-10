@@ -617,6 +617,7 @@ impl ResourceManager {
     }
 
     /// Open a `.res` file and load all resources into memory.
+    /// Parsing failure leaves the currently attached resources unchanged.
     pub fn attach_resource_file(&mut self, path: &str) -> Result<()> {
         let bytes = self
             .files()?
@@ -626,8 +627,6 @@ impl ResourceManager {
     }
 
     fn attach_resource_bytes(&mut self, bytes: &[u8], path: &str) -> Result<()> {
-        // Parsing may fail after partially replacing resources.
-        self.invalidate_picture_cache();
         let mut reader = Reader::new(bytes);
 
         // Validate magic
@@ -641,10 +640,13 @@ impl ResourceManager {
 
         let version = reader.u32("resource file version")?;
 
+        let mut parsed = Self::new();
         match version {
-            RES_VERSION_100 => self.load_file_resource_v100(&mut reader, path),
+            RES_VERSION_100 => parsed.load_file_resource_v100(&mut reader, path)?,
             _ => bail!("unsupported resource file version: 0x{version:04X}"),
         }
+        self.merge_resources(parsed.data, parsed.lifetime);
+        Ok(())
     }
 
     fn load_file_resource_v100(&mut self, reader: &mut Reader<'_>, file_path: &str) -> Result<()> {
@@ -1469,48 +1471,27 @@ impl ResourceManager {
     /// Merge a borrowed shipping resource manager, replacing matching collections.
     /// Decoded, encoded, and geometry caches must follow the same source generation.
     pub(crate) fn extend_from(&mut self, src: &ResourceManager) {
+        self.merge_resources(src.data.clone(), src.lifetime.clone());
+    }
+
+    fn merge_resources(&mut self, data: ResourceData, lifetime: ResourceLifetime) {
         self.invalidate_picture_cache();
         // A new collection replaces every old representation, even when the
         // source only carries encoded bytes or only carries decoded pixels.
-        for id in src.picture_resource_ids() {
-            self.data.pictures.remove(&id);
-            self.data.encoded_pictures.remove(&id);
-            self.data.picture_opacity.remove(&id);
+        for id in data.pictures.keys().chain(data.encoded_pictures.keys()) {
+            self.data.pictures.remove(id);
+            self.data.encoded_pictures.remove(id);
+            self.data.picture_opacity.remove(id);
         }
-        self.data
-            .pictures
-            .extend(src.data.pictures.iter().map(|(k, v)| (*k, v.clone())));
-        self.data.picture_opacity.extend(
-            src.data
-                .picture_opacity
-                .iter()
-                .map(|(id, metadata)| (*id, metadata.clone())),
-        );
-        self.data.encoded_pictures.extend(
-            src.data
-                .encoded_pictures
-                .iter()
-                .map(|(k, v)| (*k, v.clone())),
-        );
-        self.data
-            .mouse_entries
-            .extend(src.data.mouse_entries.iter().map(|(k, v)| (*k, v.clone())));
-        self.data
-            .strings
-            .extend(src.data.strings.iter().map(|(k, v)| (*k, v.clone())));
-        self.data
-            .waves
-            .extend(src.data.waves.iter().map(|(k, v)| (*k, v.clone())));
-        self.lifetime
-            .references
-            .extend(src.lifetime.references.iter().map(|(k, v)| (*k, *v)));
-        self.lifetime.file_entries.extend(
-            src.lifetime
-                .file_entries
-                .iter()
-                .map(|(k, v)| (*k, v.clone())),
-        );
-        self.lifetime.recovery_disabled |= src.lifetime.recovery_disabled;
+        self.data.pictures.extend(data.pictures);
+        self.data.picture_opacity.extend(data.picture_opacity);
+        self.data.encoded_pictures.extend(data.encoded_pictures);
+        self.data.mouse_entries.extend(data.mouse_entries);
+        self.data.strings.extend(data.strings);
+        self.data.waves.extend(data.waves);
+        self.lifetime.references.extend(lifetime.references);
+        self.lifetime.file_entries.extend(lifetime.file_entries);
+        self.lifetime.recovery_disabled |= lifetime.recovery_disabled;
     }
 
     /// Finalize an eagerly parsed resource manager for shipping without its
@@ -2058,6 +2039,45 @@ mod tests {
     }
 
     #[test]
+    fn failed_archive_attachment_preserves_resources_and_cache_identity() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&(b'B' as u16).to_le_bytes());
+        let valid = resource_file(b"TEXT", 42, &payload);
+        let mut malformed = valid.clone();
+        malformed[8..12].copy_from_slice(&2u32.to_le_bytes());
+        malformed.extend_from_slice(b"NOPE");
+        malformed.extend_from_slice(&99u32.to_le_bytes());
+
+        let mut manager = ResourceManager::new();
+        manager.data.strings.insert(42, vec!["original".into()]);
+        manager.data.strings.insert(99, vec!["unrelated".into()]);
+        manager.lifetime.references.insert(42, 4);
+        let before = serde_json::to_value(&manager).unwrap();
+        let identity = manager.cache_identity;
+        let error = manager
+            .attach_resource_bytes(&malformed, "replacement.res")
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("resource 99 (NOPE)"));
+        assert_eq!(serde_json::to_value(&manager).unwrap(), before);
+        assert_eq!(manager.cache_identity, identity);
+
+        manager
+            .attach_resource_bytes(&valid, "replacement.res")
+            .unwrap();
+        assert_eq!(manager.strings_raw(42).unwrap(), &["B"]);
+        assert_eq!(manager.strings_raw(99).unwrap(), &["unrelated"]);
+        assert_eq!(manager.lifetime.references[&42], 0);
+        assert_eq!(
+            manager.lifetime.file_entries[&42].file_path,
+            "replacement.res"
+        );
+        assert_ne!(manager.cache_identity, identity);
+    }
+
+    #[test]
     fn text_table_decoding_matches_strict_utf16_and_preserves_trailing_bytes() {
         let cases: &[&[u16]] = &[
             &[],
@@ -2233,7 +2253,7 @@ mod cache_lookup_tests {
     }
 
     #[test]
-    fn reload_and_partial_failure_invalidate_cache_identity() {
+    fn reload_invalidates_cache_but_rejected_attachment_preserves_identity() {
         let mut manager = ResourceManager::new();
         let initial = manager.cache_identity();
         manager.extend_from(&ResourceManager::new());
@@ -2244,7 +2264,7 @@ mod cache_lookup_tests {
                 .attach_resource_bytes(b"invalid", "fixture.res")
                 .is_err()
         );
-        assert_ne!(merged, manager.cache_identity());
+        assert_eq!(merged, manager.cache_identity());
     }
 
     #[test]
