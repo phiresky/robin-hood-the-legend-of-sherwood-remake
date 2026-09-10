@@ -6,6 +6,7 @@
 use robin_engine::graphic_config::{
     TextureEffect, TextureEffectParameters, TextureScaleMode, UpscaleParameters,
 };
+use smallvec::{SmallVec, smallvec};
 use std::collections::HashMap;
 
 use crate::shader_preset::ShaderPresetRenderer;
@@ -458,41 +459,44 @@ impl BuiltinPass {
     }
 }
 
-fn builtin_passes(mode: TextureScaleMode, effect: TextureEffect) -> Vec<BuiltinPass> {
+fn builtin_passes(
+    mode: TextureScaleMode,
+    effect: TextureEffect,
+) -> SmallVec<[BuiltinPass; MAX_BUILTIN_PASSES]> {
     let mut passes = match mode {
-        TextureScaleMode::Nearest => vec![BuiltinPass::Nearest],
-        TextureScaleMode::Linear => vec![BuiltinPass::Linear],
+        TextureScaleMode::Nearest => smallvec![BuiltinPass::Nearest],
+        TextureScaleMode::Linear => smallvec![BuiltinPass::Linear],
         TextureScaleMode::PixelArt | TextureScaleMode::SharpBilinear => {
-            vec![BuiltinPass::SharpBilinear]
+            smallvec![BuiltinPass::SharpBilinear]
         }
-        TextureScaleMode::Bicubic => vec![BuiltinPass::Bicubic],
-        TextureScaleMode::Lanczos => vec![BuiltinPass::Lanczos],
-        TextureScaleMode::Cut3 => vec![BuiltinPass::Cut3],
+        TextureScaleMode::Bicubic => smallvec![BuiltinPass::Bicubic],
+        TextureScaleMode::Lanczos => smallvec![BuiltinPass::Lanczos],
+        TextureScaleMode::Cut3 => smallvec![BuiltinPass::Cut3],
         TextureScaleMode::Scale2x | TextureScaleMode::Scale3x => {
-            vec![BuiltinPass::ScaleNx]
+            smallvec![BuiltinPass::ScaleNx]
         }
-        TextureScaleMode::XbrLv1 => vec![BuiltinPass::Xbrz],
-        TextureScaleMode::Hqx => vec![BuiltinPass::Hqx],
+        TextureScaleMode::XbrLv1 => smallvec![BuiltinPass::Xbrz],
+        TextureScaleMode::Hqx => smallvec![BuiltinPass::Hqx],
         TextureScaleMode::ScaleNx => {
-            vec![BuiltinPass::ScaleNx, BuiltinPass::ArtifactRemove]
+            smallvec![BuiltinPass::ScaleNx, BuiltinPass::ArtifactRemove]
         }
-        TextureScaleMode::Xbrz => vec![BuiltinPass::Xbrz, BuiltinPass::ArtifactRemove],
-        TextureScaleMode::SuperXbr => vec![
+        TextureScaleMode::Xbrz => smallvec![BuiltinPass::Xbrz, BuiltinPass::ArtifactRemove],
+        TextureScaleMode::SuperXbr => smallvec![
             BuiltinPass::Xbrz,
             BuiltinPass::ArtifactRemove,
             BuiltinPass::SuperFinish,
         ],
-        TextureScaleMode::Anime4kA => vec![
+        TextureScaleMode::Anime4kA => smallvec![
             BuiltinPass::AnimeRestore,
             BuiltinPass::AnimeUpscale,
             BuiltinPass::ArtifactRemove,
         ],
-        TextureScaleMode::Anime4kB => vec![
+        TextureScaleMode::Anime4kB => smallvec![
             BuiltinPass::AnimeRestoreSoft,
             BuiltinPass::AnimeUpscale,
             BuiltinPass::ArtifactRemove,
         ],
-        TextureScaleMode::Anime4kC => vec![
+        TextureScaleMode::Anime4kC => smallvec![
             BuiltinPass::AnimeDenoise,
             BuiltinPass::AnimeUpscale,
             BuiltinPass::ArtifactRemove,
@@ -1461,9 +1465,34 @@ mod tests {
     }
 
     #[test]
+    fn every_builtin_pass_plan_fits_inline_with_post_effects_last() {
+        for &mode in TextureScaleMode::ALL {
+            if mode == TextureScaleMode::RetroArch {
+                continue;
+            }
+            let base = builtin_passes(mode, TextureEffect::None);
+            for (effect, last) in [
+                (TextureEffect::None, None),
+                (TextureEffect::CrtGuest, Some(BuiltinPass::CrtGuest)),
+                (TextureEffect::CrtRoyale, Some(BuiltinPass::CrtRoyale)),
+            ] {
+                let passes = builtin_passes(mode, effect);
+                assert!(!passes.spilled(), "{mode:?} {effect:?}");
+                assert!(!passes.is_empty());
+                assert!(passes.len() <= MAX_BUILTIN_PASSES);
+                assert_eq!(&passes[..base.len()], base.as_slice());
+                assert_eq!(passes.len(), base.len() + usize::from(last.is_some()));
+                if let Some(last) = last {
+                    assert_eq!(passes.last(), Some(&last));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn anime_v4_layouts_and_post_effect_order_are_fixed() {
         assert_eq!(
-            builtin_passes(TextureScaleMode::Anime4kA, TextureEffect::None),
+            builtin_passes(TextureScaleMode::Anime4kA, TextureEffect::None).as_slice(),
             [
                 BuiltinPass::AnimeRestore,
                 BuiltinPass::AnimeUpscale,
@@ -1471,7 +1500,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            builtin_passes(TextureScaleMode::Anime4kB, TextureEffect::None),
+            builtin_passes(TextureScaleMode::Anime4kB, TextureEffect::None).as_slice(),
             [
                 BuiltinPass::AnimeRestoreSoft,
                 BuiltinPass::AnimeUpscale,
@@ -1479,7 +1508,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            builtin_passes(TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale),
+            builtin_passes(TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale).as_slice(),
             [
                 BuiltinPass::AnimeDenoise,
                 BuiltinPass::AnimeUpscale,

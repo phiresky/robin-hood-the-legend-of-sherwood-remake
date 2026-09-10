@@ -25,6 +25,7 @@ earcutr = "0.5"
 bitflags = { workspace = true, features = ["serde"] }
 enum-map = { workspace = true, features = ["serde"] }
 indexmap.workspace = true
+smallvec = "1.16"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_urlencoded = "0.7"
