@@ -392,15 +392,11 @@ mod tests {
     }
 
     /// Smoke test: the demo script dumps without panicking and produces
-    /// meaningful output. Skipped if assets aren't present.
+    /// meaningful output.
     #[test]
+    #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn dumps_shipped_demo_script() {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let path = std::path::PathBuf::from(manifest_dir)
-            .join("../../datadirs/demo/Data/Levels/Dem_Lei_MP.scb");
-        let Ok(path) = path.canonicalize() else {
-            return;
-        };
+        let path = crate::original_data::demo_scb_path();
         let scb = scb::parse_file(&path).unwrap();
         let text = dump(&scb);
         assert!(text.contains("StartUp"));

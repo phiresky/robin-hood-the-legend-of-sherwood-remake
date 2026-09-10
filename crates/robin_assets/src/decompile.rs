@@ -2105,20 +2105,9 @@ mod tests {
     use crate::scb;
 
     #[test]
+    #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn decompile_demo_script() {
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let base = std::path::PathBuf::from(manifest_dir).join("../../datadirs");
-        let scb_name = "Data/Levels/Dem_Lei_MP.scb";
-        let path = base.join("demo_ecoste").join(scb_name);
-        let path = if path.exists() {
-            path
-        } else {
-            let alt = base.join("demo").join(scb_name);
-            if !alt.exists() {
-                return; // skip if no datadirs
-            }
-            alt
-        };
+        let path = crate::original_data::demo_scb_path();
         let scb = scb::parse_file(&path).unwrap();
         let text = decompile(&scb);
 
@@ -2127,9 +2116,9 @@ mod tests {
         assert!(text.contains("PutActorInBuilding()"));
         assert!(text.contains("Initialize("));
 
-        // Expression folding: constants inlined into calls
-        assert!(text.contains("GetActorScript(136)"));
-        assert!(text.contains("GetBuildingScript(1)"));
+        // Expression folding: constants inlined into annotated native calls.
+        assert!(text.contains("GetActorScript(/*iPosition*/ 136)"));
+        assert!(text.contains("GetBuildingScript(/*iPosition*/ 1)"));
 
         // Member variable naming
         assert!(text.contains("this.locWill"));

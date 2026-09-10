@@ -2062,13 +2062,7 @@ mod tests {
         );
     }
 
-    #[allow(dead_code)]
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
+    use crate::original_data;
 
     #[test]
     fn checked_stream_matches_raster_and_opacity_with_padding() {

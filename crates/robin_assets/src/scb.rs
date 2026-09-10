@@ -247,19 +247,7 @@ fn take_len_prefixed_string(r: &mut Reader<'_>, context: String) -> Result<Strin
 mod tests {
     use super::*;
 
-    #[allow(dead_code)] // Shared fixture helpers also support file-only consumers.
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
-
-    fn demo_scb_path() -> std::path::PathBuf {
-        // parse_file resolves the original game's case-insensitive asset paths;
-        // extracted demo data can use DATA rather than Data.
-        original_data::data_directory(".").join("Data/Levels/Dem_Lei_MP.scb")
-    }
+    use crate::original_data::{self, demo_scb_path};
 
     #[test]
     fn rejects_non_scb_magic() {
