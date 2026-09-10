@@ -793,19 +793,28 @@ pub fn wav_duration_ms(data: &[u8]) -> Option<u32> {
     let mut byte_rate: u32 = 0;
     let mut data_size: u32 = 0;
 
-    while offset + 8 <= data.len() {
+    while data.len().saturating_sub(offset) >= 8 {
         let chunk_id = &data[offset..offset + 4];
         let chunk_size = u32::from_le_bytes(data[offset + 4..offset + 8].try_into().ok()?);
 
-        if chunk_id == b"fmt " && offset + 20 <= data.len() {
+        let chunk_end = offset.checked_add(8)?.checked_add(chunk_size as usize)?;
+        // Duration may be read from a header-only data chunk, but metadata
+        // and unknown chunks must be present before traversing past them.
+        if chunk_id != b"data" && chunk_end > data.len() {
+            return None;
+        }
+        if chunk_id == b"fmt " {
+            if chunk_size < 12 {
+                return None;
+            }
             byte_rate = u32::from_le_bytes(data[offset + 16..offset + 20].try_into().ok()?);
         } else if chunk_id == b"data" {
             data_size = chunk_size;
         }
 
-        offset += 8 + chunk_size as usize;
+        offset = chunk_end;
         if !offset.is_multiple_of(2) {
-            offset += 1;
+            offset = offset.checked_add(1)?;
         }
     }
 
@@ -852,7 +861,9 @@ pub fn ogg_duration_ms(data: &[u8]) -> Option<u32> {
         }
     }
 
-    let duration_ms = (last_granule * 1000).checked_div(sample_rate as u64)?;
+    let duration_ms = last_granule
+        .checked_mul(1000)?
+        .checked_div(sample_rate as u64)?;
     u32::try_from(duration_ms).ok()
 }
 
@@ -1267,6 +1278,41 @@ mod tests {
     fn wav_duration_invalid() {
         assert_eq!(wav_duration_ms(b"not a wav"), None);
         assert_eq!(wav_duration_ms(&[]), None);
+    }
+
+    #[test]
+    fn ogg_duration_rejects_overflowing_granule_timestamps() {
+        let mut ogg = vec![0u8; 44];
+        ogg[..4].copy_from_slice(b"OggS");
+        ogg[26] = 1;
+        ogg[27] = 16;
+        ogg[28] = 1;
+        ogg[29..35].copy_from_slice(b"vorbis");
+        ogg[40..44].copy_from_slice(&48_000u32.to_le_bytes());
+        for (granule, expected) in [
+            (48_000u64, Some(1000)),
+            (u64::MAX - 1, None),
+            (u64::MAX, Some(0)), // unset granules do not advance the timestamp
+        ] {
+            ogg[6..14].copy_from_slice(&granule.to_le_bytes());
+            assert_eq!(ogg_duration_ms(&ogg), expected);
+            assert_eq!(wav_duration_ms(&ogg), expected);
+        }
+    }
+
+    #[test]
+    fn wav_duration_rejects_unrepresentable_chunk_cursor_without_panicking() {
+        let mut wav = one_second_wav();
+        wav[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(wav_duration_ms(&wav), None);
+        for size in [0u32, 4, 11] {
+            wav[16..20].copy_from_slice(&size.to_le_bytes());
+            assert_eq!(wav_duration_ms(&wav), None);
+        }
+        wav[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+        // Unknown oversized chunks cannot fabricate an audio byte rate.
+        wav[12..16].copy_from_slice(b"JUNK");
+        assert_eq!(wav_duration_ms(&wav), None);
     }
 
     #[test]
