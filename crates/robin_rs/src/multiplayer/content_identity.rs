@@ -14,8 +14,6 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 #[cfg(not(target_arch = "wasm32"))]
-use std::io::Read as _;
-#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -189,16 +187,8 @@ fn hash_roots(roots: &[(String, PathBuf)]) -> Result<String, String> {
                 .map_err(|error| format!("stat content file {}: {error}", path.display()))?
                 .len();
             hasher.update(length.to_le_bytes());
-            let mut buffer = [0_u8; 128 * 1024];
-            loop {
-                let read = file
-                    .read(&mut buffer)
-                    .map_err(|error| format!("read content file {}: {error}", path.display()))?;
-                if read == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..read]);
-            }
+            hash_reader(&mut file, &mut hasher)
+                .map_err(|error| format!("read content file {}: {error}", path.display()))?;
         }
     }
     Ok(hex_digest(hasher.finalize().into()))
@@ -327,20 +317,39 @@ fn verify_manifest_file(
     validate_relative_path(relative)?;
     validate_sha256(digest, "web content file digest")?;
     let path = root.join(relative);
-    let metadata = fs::metadata(&path)
+    let mut file = fs::File::open(&path)
+        .map_err(|error| format!("open web content file {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
         .map_err(|error| format!("stat web content file {}: {error}", path.display()))?;
     if !metadata.is_file() || metadata.len() != length {
         return Err(format!(
             "web content file has wrong type or length: {relative}"
         ));
     }
-    let bytes = fs::read(&path)
+    let mut hasher = Sha256::new();
+    hash_reader(&mut file, &mut hasher)
         .map_err(|error| format!("read web content file {}: {error}", path.display()))?;
-    let actual = hex_digest(Sha256::digest(bytes).into());
+    let actual = hex_digest(hasher.finalize().into());
     if actual != digest {
         return Err(format!("web content file has wrong digest: {relative}"));
     }
     Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn hash_reader(reader: &mut impl std::io::Read, hasher: &mut Sha256) -> std::io::Result<()> {
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if read == 0 {
+            return Ok(());
+        }
+        hasher.update(&buffer[..read]);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -378,6 +387,64 @@ pub fn hex_digest(bytes: [u8; 32]) -> String {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn streaming_digest_retries_interruptions_but_propagates_io_failures() {
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct FirstReadError<R> {
+            reader: R,
+            fail_once: bool,
+            retryable: bool,
+        }
+        impl<R: std::io::Read> std::io::Read for FirstReadError<R> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if std::mem::take(&mut self.fail_once) {
+                    return Err(std::io::Error::from(if self.retryable {
+                        std::io::ErrorKind::Interrupted
+                    } else {
+                        std::io::ErrorKind::Other
+                    }));
+                }
+                self.reader.read(buffer)
+            }
+        }
+        for retryable in [true, false] {
+            let mut reader = FirstReadError {
+                reader: std::io::Cursor::new(b"content"),
+                fail_once: true,
+                retryable,
+            };
+            let mut hasher = Sha256::new();
+            let result = super::hash_reader(&mut reader, &mut hasher);
+            if retryable {
+                result.unwrap();
+                assert_eq!(hasher.finalize(), Sha256::digest(b"content"));
+            } else {
+                assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Other);
+            }
+        }
+    }
+
+    #[test]
+    fn streaming_digest_matches_whole_buffer_hash_across_short_reads() {
+        use sha2::{Digest as _, Sha256};
+        use std::io::Read as _;
+        let bytes: Vec<u8> = (0..400_000).map(|index| (index % 251) as u8).collect();
+        for length in [0, 1, 131_071, 131_072, 131_073, bytes.len()] {
+            for split in [0, 1.min(length), length / 2, length] {
+                let mut reader = std::io::Cursor::new(&bytes[..split])
+                    .chain(std::io::Cursor::new(&bytes[split..length]));
+                let mut hasher = Sha256::new();
+                // Callers can already have written a domain/length prefix.
+                hasher.update(b"prefix");
+                super::hash_reader(&mut reader, &mut hasher).unwrap();
+                let mut expected = Sha256::new();
+                expected.update(b"prefix");
+                expected.update(&bytes[..length]);
+                assert_eq!(hasher.finalize(), expected.finalize());
+            }
+        }
+    }
+
     #[test]
     fn active_identity_rejects_the_explicit_readers_overlay() {
         let overlay = tempfile::tempdir().unwrap();
