@@ -1240,7 +1240,7 @@ async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
 
 /// Drain process requests while no mission is active.
 fn drain_pre_engine(server: &HttpServer) {
-    let pending: Vec<HttpRequest> = {
+    let pending = {
         let mut q = server.queue.lock().expect("queue mutex poisoned");
         q.take_idle()
     };

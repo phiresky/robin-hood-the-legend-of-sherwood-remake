@@ -61,8 +61,8 @@ impl RequestRouter {
         }
     }
 
-    pub(super) fn take_idle(&mut self) -> Vec<HttpRequest> {
-        self.idle.drain(..).collect()
+    pub(super) fn take_idle(&mut self) -> VecDeque<HttpRequest> {
+        std::mem::take(&mut self.idle)
     }
     pub(super) fn push_back(&mut self, request: HttpRequest) {
         if self.retired {
@@ -703,6 +703,41 @@ mod tests {
             .response_tx
             .send(Ok(serde_json::json!({"ok":true}).into()));
         assert!(replay_reply.try_recv().unwrap().is_ok());
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn idle_batch_transfer_preserves_fifo_and_leaves_new_requests_queued() {
+        let mut router = RequestRouter::default();
+        let mut replies = Vec::new();
+        for _ in 0..3 {
+            let (request, reply) = request(HttpPayload::GetReplay);
+            router.push_back(request);
+            replies.push(reply);
+        }
+        let pending = router.take_idle();
+        assert!(router.take_idle().is_empty());
+        let (later, later_reply) = request(HttpPayload::GetReplay);
+        router.push_back(later);
+        for (index, request) in pending.into_iter().enumerate() {
+            request
+                .response_tx
+                .send(Ok(serde_json::json!(index).into()));
+        }
+        for (index, reply) in replies.into_iter().enumerate() {
+            let response = reply.try_recv().unwrap().unwrap();
+            assert!(
+                matches!(response, ReplyBody::Json(value) if value == serde_json::json!(index))
+            );
+        }
+        assert!(later_reply.try_recv().is_err());
+        let mut next = router.take_idle();
+        assert_eq!(next.len(), 1);
+        next.pop_front()
+            .unwrap()
+            .response_tx
+            .send(Ok(serde_json::json!("later").into()));
+        assert!(later_reply.try_recv().unwrap().is_ok());
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
