@@ -395,8 +395,8 @@ fn next_store_owner() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SaveIndex {
-    saves: Vec<SaveGame>,
+struct SaveIndex<Slot = SaveGame> {
+    saves: Vec<Slot>,
     next_id: u32,
     /// Compatibility metadata only; the caller always supplies runtime authority.
     #[serde(default)]

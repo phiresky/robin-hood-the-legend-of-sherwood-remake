@@ -187,7 +187,7 @@ impl SlotCatalog {
         });
     }
 
-    pub(super) fn published(&self) -> Result<Vec<SaveGame>> {
+    pub(super) fn published(&self) -> Result<Vec<&SaveGame>> {
         let mut names = std::collections::HashSet::new();
         let mut published = Vec::new();
         for (index, entry) in self.entries.iter().enumerate() {
@@ -198,7 +198,7 @@ impl SlotCatalog {
             );
             if entry.state == SlotState::Published {
                 entry.metadata.validate_published_metadata()?;
-                published.push(entry.metadata.clone());
+                published.push(&entry.metadata);
             }
         }
         Ok(published)
@@ -283,6 +283,34 @@ mod tests {
         slot.blazons = Some(0);
         slot.amulets = Some(0);
         slot
+    }
+
+    #[test]
+    fn publication_borrows_metadata_and_preserves_owned_index_encoding() {
+        let mut catalog = SlotCatalog::default();
+        catalog
+            .insert(published("Manual"), SlotState::Published)
+            .unwrap();
+        catalog
+            .insert(published("Restart"), SlotState::Session)
+            .unwrap();
+        let slots = catalog.published().unwrap();
+        assert_eq!(slots.len(), 1);
+        assert!(std::ptr::eq(slots[0], catalog.get(0).unwrap()));
+        let owned = super::super::SaveIndex {
+            saves: slots.iter().map(|slot| (*slot).clone()).collect::<Vec<_>>(),
+            next_id: 7,
+            save_directory: "test-root".into(),
+        };
+        let borrowed = super::super::SaveIndex {
+            saves: slots,
+            next_id: owned.next_id,
+            save_directory: owned.save_directory.clone(),
+        };
+        assert_eq!(
+            serde_json::to_vec_pretty(&borrowed).unwrap(),
+            serde_json::to_vec_pretty(&owned).unwrap()
+        );
     }
 
     #[test]

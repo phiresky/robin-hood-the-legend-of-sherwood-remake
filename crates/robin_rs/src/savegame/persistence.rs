@@ -1,6 +1,6 @@
 //! Durable index publication boundary. Accepts only a data snapshot and the
 //! caller-bound root; it cannot change runtime slot identity or lifecycle.
-use super::{SaveIndex, SpecialSaveRecovery};
+use super::{SaveGame, SaveIndex, SpecialSaveRecovery};
 use crate::save_file;
 use std::path::Path;
 
@@ -33,7 +33,7 @@ pub(super) fn publish_payload(
 
 pub(super) fn publish_index(
     root: &str,
-    index: &SaveIndex,
+    index: &SaveIndex<&SaveGame>,
     quick_receipt: &Path,
 ) -> Result<(), String> {
     #[cfg(test)]
