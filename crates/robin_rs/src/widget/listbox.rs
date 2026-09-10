@@ -63,9 +63,31 @@ pub enum ColumnAlign {
 /// Empty cells are elided: if cell *i* is empty, the preceding
 /// non-empty cell's span is extended to cover it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(try_from = "ColumnLayoutDocument")]
 pub struct ColumnLayout {
-    pub ratios: Vec<f32>,
-    pub aligns: Vec<ColumnAlign>,
+    ratios: Vec<f32>,
+    aligns: Vec<ColumnAlign>,
+}
+
+// Keep the existing serialized field names while validating their shared length.
+#[derive(Serialize, Deserialize)]
+struct ColumnLayoutDocument {
+    ratios: Vec<f32>,
+    aligns: Vec<ColumnAlign>,
+}
+
+impl TryFrom<ColumnLayoutDocument> for ColumnLayout {
+    type Error = &'static str;
+
+    fn try_from(document: ColumnLayoutDocument) -> Result<Self, Self::Error> {
+        if document.ratios.len() != document.aligns.len() {
+            return Err("column layout ratio and alignment counts differ");
+        }
+        Ok(Self {
+            ratios: document.ratios,
+            aligns: document.aligns,
+        })
+    }
 }
 
 /// One cell after laying out a row against a [`ColumnLayout`].
@@ -80,8 +102,7 @@ pub struct LayoutCell<'a> {
 impl ColumnLayout {
     /// Build a layout from `(ratio, align)` pairs.
     pub fn new(columns: &[(f32, ColumnAlign)]) -> Self {
-        let ratios = columns.iter().map(|(r, _)| *r).collect();
-        let aligns = columns.iter().map(|(_, a)| *a).collect();
+        let (ratios, aligns) = columns.iter().copied().unzip();
         Self { ratios, aligns }
     }
 
@@ -844,4 +865,32 @@ fn listbox_operations_do_not_require_cloneable_item_data() {
     for (index, item) in list.items.iter().enumerate() {
         assert_eq!(*item.data.lock().unwrap(), index);
     }
+}
+
+#[test]
+fn column_layout_deserialization_preserves_format_and_rejects_misaligned_columns() {
+    let json = serde_json::json!({
+        "ratios": [0.25, 0.75],
+        "aligns": ["Left", "Right"]
+    });
+    let layout: ColumnLayout = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&layout).unwrap(), json);
+    let cells: Vec<_> = layout.layout_row("a|b", 0.0, 100.0).collect();
+    assert_eq!((cells[0].span_w, cells[1].span_w), (25.0, 75.0));
+    assert_eq!(
+        (cells[0].align, cells[1].align),
+        (ColumnAlign::Left, ColumnAlign::Right)
+    );
+    for malformed in [
+        serde_json::json!({"ratios": [1.0], "aligns": []}),
+        serde_json::json!({"ratios": [], "aligns": ["Left"]}),
+    ] {
+        let error = serde_json::from_value::<ColumnLayout>(malformed).unwrap_err();
+        assert!(error.to_string().contains("counts differ"));
+    }
+    let empty: ColumnLayout = serde_json::from_value(serde_json::json!({
+        "ratios": [], "aligns": []
+    }))
+    .unwrap();
+    assert!(empty.is_empty());
 }
