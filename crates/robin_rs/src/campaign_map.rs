@@ -54,6 +54,19 @@ const LOCATION_RESOURCE_IDS: [i32; 10] = [
     resource_ids::RHID_YORK,
 ];
 
+const ATTACK_RESOURCE_IDS: [i32; 10] = [
+    resource_ids::RHID_ATTACK_0,
+    resource_ids::RHID_ATTACK_1,
+    resource_ids::RHID_ATTACK_2,
+    resource_ids::RHID_ATTACK_3,
+    resource_ids::RHID_ATTACK_4,
+    resource_ids::RHID_ATTACK_5,
+    resource_ids::RHID_ATTACK_6,
+    resource_ids::RHID_ATTACK_7,
+    resource_ids::RHID_ATTACK_8,
+    resource_ids::RHID_ATTACK_9,
+];
+
 const BLAZON_POSITIONS: [(i32, i32); 10] = [
     (0, 0),
     (220, 178),
@@ -127,7 +140,7 @@ struct CampaignMapAssets {
     mini_blazon: Option<MenuSurface>,
     maxi_blazon: Option<MenuSurface>,
     flag: Option<MenuSurface>,
-    attacks: [Option<MenuSurface>; 10],
+    attacks: [Option<MenuSurface>; ATTACK_RESOURCE_IDS.len()],
     close: Option<MenuSurface>,
     tooltip_bg: Option<MenuSurface>,
     lifetime: [Option<MenuSurface>; 5],
@@ -168,22 +181,7 @@ impl CampaignMapAssets {
                 lifetime: std::array::from_fn(|i| {
                     resources.default_picture_sub(renderer, resource_ids::RHID_MISSION_LIFETIME, i)
                 }),
-                attacks: std::array::from_fn(|i| {
-                    let id = match i {
-                        0 => resource_ids::RHID_ATTACK_0,
-                        1 => resource_ids::RHID_ATTACK_1,
-                        2 => resource_ids::RHID_ATTACK_2,
-                        3 => resource_ids::RHID_ATTACK_3,
-                        4 => resource_ids::RHID_ATTACK_4,
-                        5 => resource_ids::RHID_ATTACK_5,
-                        6 => resource_ids::RHID_ATTACK_6,
-                        7 => resource_ids::RHID_ATTACK_7,
-                        8 => resource_ids::RHID_ATTACK_8,
-                        9 => resource_ids::RHID_ATTACK_9,
-                        _ => 0,
-                    };
-                    resources.default_picture(renderer, id)
-                }),
+                attacks: ATTACK_RESOURCE_IDS.map(|id| resources.default_picture(renderer, id)),
                 ..Self::default()
             }
         } else {
@@ -2379,7 +2377,7 @@ fn build_campaign_frame(
             };
             frame.add_widget_absolute(widget_bridge::make_picture_with_resource(
                 ATTACK_WIDGET_ID_BASE + i as u32,
-                attack_resource_id(i),
+                ATTACK_RESOURCE_IDS[i],
                 x,
                 y,
                 surface.width,
@@ -2793,22 +2791,6 @@ fn draw_close_button(
     }
 }
 
-fn attack_resource_id(index: usize) -> i32 {
-    match index {
-        0 => resource_ids::RHID_ATTACK_0,
-        1 => resource_ids::RHID_ATTACK_1,
-        2 => resource_ids::RHID_ATTACK_2,
-        3 => resource_ids::RHID_ATTACK_3,
-        4 => resource_ids::RHID_ATTACK_4,
-        5 => resource_ids::RHID_ATTACK_5,
-        6 => resource_ids::RHID_ATTACK_6,
-        7 => resource_ids::RHID_ATTACK_7,
-        8 => resource_ids::RHID_ATTACK_8,
-        9 => resource_ids::RHID_ATTACK_9,
-        _ => 0,
-    }
-}
-
 fn campaign_surface_for_resource(
     assets: &CampaignMapAssets,
     resource_id: i32,
@@ -2826,8 +2808,9 @@ fn campaign_surface_for_resource(
             .position(|&loc_id| loc_id == id)
             .and_then(|idx| assets.locations[idx])
             .or_else(|| {
-                (0..assets.attacks.len())
-                    .find(|&idx| attack_resource_id(idx) == id)
+                ATTACK_RESOURCE_IDS
+                    .iter()
+                    .position(|&attack_id| attack_id == id)
                     .and_then(|idx| assets.attacks[idx])
             }),
     }
@@ -2928,6 +2911,33 @@ fn fixture_plays(count: u64) -> Vec<crate::campaign_progress::MissionPlay> {
 mod browser_tests {
     use super::*;
     use robin_engine::{mission::Mission, profiles::MissionProfile};
+
+    #[test]
+    fn attack_artwork_lookup_preserves_catalogue_slots_and_missing_surfaces() {
+        let mut assets = CampaignMapAssets::default();
+        assets.attacks = std::array::from_fn(|index| {
+            Some(MenuSurface {
+                // Diagnostic handles are sufficient for lookup; this test never draws.
+                id: serde_json::from_value(serde_json::json!({"id": index + 1})).unwrap(),
+                width: 20 + index as i32,
+                height: 30 + index as i32,
+            })
+        });
+        assert_eq!(ATTACK_RESOURCE_IDS.len(), ATTACK_POSITIONS.len());
+        for (index, &resource_id) in ATTACK_RESOURCE_IDS.iter().enumerate() {
+            let expected = assets.attacks[index].unwrap();
+            let surface = campaign_surface_for_resource(&assets, resource_id, 0).unwrap();
+            assert_eq!(surface.id, expected.id);
+            assert_eq!(
+                (surface.width, surface.height),
+                (expected.width, expected.height)
+            );
+            assets.attacks[index] = None;
+            assert!(campaign_surface_for_resource(&assets, resource_id, 0).is_none());
+            assets.attacks[index] = Some(expected);
+        }
+        assert!(campaign_surface_for_resource(&assets, i32::MIN, 0).is_none());
+    }
 
     #[test]
     fn marker_blink_has_a_350_millisecond_half_period() {
