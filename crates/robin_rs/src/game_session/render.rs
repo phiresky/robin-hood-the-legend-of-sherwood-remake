@@ -683,7 +683,7 @@ fn write_print_screen_png(w: u32, h: u32, rgba: Vec<u8>) {
 }
 
 fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
-    if rgba.len() != w as usize * h as usize * 4 {
+    if rgba_byte_len(w, h) != Some(rgba.len()) {
         return Err(format!(
             "invalid RGBA buffer for {}x{} PNG: got {} bytes",
             w,
@@ -817,15 +817,37 @@ fn begin_wide_map_rgba(
     );
     let captured = target.begin_capture_frame_rgba();
     Ok(Box::pin(async move {
-        let (w, h, rgba) = captured.await?;
-        if w != level_w || h < level_h {
-            return Err(crate::renderer::CaptureError::InvalidLayout);
-        }
-
-        let row_bytes = w as usize * 4;
-        let crop_bytes = level_h as usize * row_bytes;
-        Ok((level_w, level_h, rgba[..crop_bytes].to_vec()))
+        crop_wide_capture(captured.await?, level_w, level_h)
     }))
+}
+
+/// Size of a nonempty packed RGBA frame, checked before indexing or allocation.
+fn rgba_byte_len(width: u32, height: u32) -> Option<usize> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    usize::try_from(width)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?
+        .checked_mul(4)
+}
+
+/// Drop bottom HUD rows without copying the captured map pixels.
+fn crop_wide_capture(
+    (width, height, mut rgba): crate::renderer::CapturedFrame,
+    level_width: u32,
+    level_height: u32,
+) -> Result<crate::renderer::CapturedFrame, crate::renderer::CaptureError> {
+    use crate::renderer::CaptureError;
+    if width != level_width
+        || height < level_height
+        || rgba_byte_len(width, height) != Some(rgba.len())
+    {
+        return Err(CaptureError::InvalidLayout);
+    }
+    let crop_bytes = rgba_byte_len(level_width, level_height).ok_or(CaptureError::InvalidLayout)?;
+    rgba.truncate(crop_bytes);
+    Ok((level_width, level_height, rgba))
 }
 
 fn wide_map_viewport(
@@ -852,7 +874,7 @@ fn wide_map_viewport(
 fn median_filter_rgba_3x3(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
     let width = w as usize;
     let height = h as usize;
-    if width == 0 || height == 0 || rgba.len() != width * height * 4 {
+    if rgba_byte_len(w, h) != Some(rgba.len()) {
         tracing::warn!(
             "PrintScreen median filter: invalid frame {}x{} with {} bytes",
             w,
@@ -2132,6 +2154,43 @@ mod tests {
         )
         .unwrap();
         Host::new(context.try_into().unwrap(), 800.0, 600.0).unwrap()
+    }
+
+    #[test]
+    fn wide_capture_crop_reuses_the_readback_allocation() {
+        for level_height in [1, 2, 3] {
+            let pixels: Vec<u8> = (0..24).collect();
+            let pointer = pixels.as_ptr();
+            let capacity = pixels.capacity();
+            let (width, height, cropped) =
+                crop_wide_capture((2, 3, pixels), 2, level_height).unwrap();
+            assert_eq!((width, height), (2, level_height));
+            assert_eq!(cropped, (0..(level_height * 8) as u8).collect::<Vec<_>>());
+            assert_eq!(cropped.as_ptr(), pointer);
+            assert_eq!(cropped.capacity(), capacity);
+        }
+    }
+
+    #[test]
+    fn capture_layout_checks_reject_overflow_and_inconsistent_buffers() {
+        assert_eq!(rgba_byte_len(2, 3), Some(24));
+        for (width, height) in [(0, 3), (2, 0), (u32::MAX, u32::MAX)] {
+            assert_eq!(rgba_byte_len(width, height), None);
+        }
+        for (width, height, len, level_width, level_height) in [
+            (2, 3, 24, 1, 3),
+            (2, 3, 24, 2, 4),
+            (2, 3, 23, 2, 2),
+            (2, 3, 25, 2, 2),
+            (2, 3, 24, 2, 0),
+            (0, 3, 0, 0, 2),
+            (u32::MAX, u32::MAX, 0, u32::MAX, 1),
+        ] {
+            assert!(matches!(
+                crop_wide_capture((width, height, vec![0; len]), level_width, level_height),
+                Err(crate::renderer::CaptureError::InvalidLayout)
+            ));
+        }
     }
 
     #[test]
