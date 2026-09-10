@@ -33,29 +33,24 @@ pub(super) fn write_web_content_manifest(
             if metadata.is_dir() {
                 pending.push(path);
             } else if metadata.is_file() {
-                paths.push(path);
+                let relative = path
+                    .strip_prefix(data_out)
+                    .expect("enumerated path stays in package")
+                    .to_str()
+                    .ok_or_else(|| anyhow!("web content path is not UTF-8: {}", path.display()))?
+                    .replace('\\', "/");
+                paths.push((relative, path));
             } else {
                 bail!("web content package refuses non-file {}", path.display());
             }
         }
     }
-    paths.sort_by_key(|path| {
-        path.strip_prefix(data_out)
-            .expect("enumerated path stays in package")
-            .to_string_lossy()
-            .replace('\\', "/")
-    });
+    paths.sort_by(|(left, _), (right, _)| left.cmp(right));
 
     let mut datadir = None;
     let mut files = Vec::new();
     let mut seen = BTreeSet::new();
-    for path in paths {
-        let relative = path
-            .strip_prefix(data_out)
-            .expect("enumerated path stays in package")
-            .to_str()
-            .ok_or_else(|| anyhow!("web content path is not UTF-8: {}", path.display()))?
-            .replace('\\', "/");
+    for (relative, path) in paths {
         if relative == "conversion-plan.json" {
             // Inspectable converter diagnostics are not runtime content.
             continue;
@@ -233,6 +228,35 @@ pub(super) fn prepare_shipping_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manifest_files_keep_case_sensitive_lexical_order() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition, WebContentManifest,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        for name in [
+            "z.rhmission.zst",
+            "datadir.bin",
+            "m.rhmission.zst",
+            "A.rhmission.zst",
+        ] {
+            fs::write(temp.path().join(name), name.as_bytes()).unwrap();
+        }
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        let manifest: WebContentManifest =
+            serde_json::from_slice(&fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap())
+                .unwrap();
+        assert_eq!(
+            manifest
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            ["A.rhmission.zst", "m.rhmission.zst", "z.rhmission.zst"],
+        );
+        assert_eq!(manifest.datadir.path, "datadir.bin");
+    }
+
     #[test]
     fn payload_filename_retains_its_truncated_lowercase_digest() {
         assert_eq!(
