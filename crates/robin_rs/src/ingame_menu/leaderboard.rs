@@ -429,22 +429,21 @@ fn metric_text(value: &BoardMetricValueV1) -> String {
 }
 
 fn truncate_chars(value: &str, maximum: usize) -> String {
-    let mut chars = value.chars();
-    let truncated = chars.by_ref().take(maximum).collect::<String>();
-    if chars.next().is_some() {
-        if maximum <= 3 {
-            return ".".repeat(maximum);
-        }
-        format!(
-            "{}...",
-            truncated
-                .chars()
-                .take(maximum.saturating_sub(3))
-                .collect::<String>()
-        )
-    } else {
-        truncated
+    let Some((end, _)) = value.char_indices().nth(maximum) else {
+        return value.to_owned();
+    };
+    if maximum <= 3 {
+        return ".".repeat(maximum);
     }
+    let prefix_end = value[..end]
+        .char_indices()
+        .nth(maximum - 3)
+        .expect("truncated prefix contains the requested scalar count")
+        .0;
+    let mut output = String::with_capacity(prefix_end + 3);
+    output.push_str(&value[..prefix_end]);
+    output.push_str("...");
+    output
 }
 
 fn renderable_text(font: &crate::native_font::Font, value: &str) -> String {
@@ -464,15 +463,25 @@ fn participant_text<'a>(
     names: impl Iterator<Item = &'a str>,
     anonymous_participant_instance_count: u32,
 ) -> String {
-    let mut participants = names.map(str::to_owned).collect::<Vec<_>>();
+    use std::fmt::Write;
+    let mut output = String::new();
+    let mut separator = "";
+    for name in names {
+        output.push_str(separator);
+        output.push_str(name);
+        separator = ", ";
+    }
     if anonymous_participant_instance_count > 0 {
+        output.push_str(separator);
         let count = anonymous_participant_instance_count;
-        participants.push(format!(
+        write!(
+            &mut output,
             "{count} anonymous{}",
             if count == 1 { "" } else { " participants" }
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
-    participants.join(", ")
+    output
 }
 
 #[cfg(test)]
@@ -517,5 +526,36 @@ mod tests {
             participant_text(std::iter::empty::<&str>(), 1),
             "1 anonymous"
         );
+    }
+}
+
+#[test]
+fn leaderboard_text_preserves_empty_names_and_short_scalar_limits() {
+    assert_eq!(participant_text([].into_iter(), 0), "");
+    assert_eq!(
+        participant_text(["", "Robin", ""].into_iter(), 1),
+        ", Robin, , 1 anonymous"
+    );
+    assert_eq!(
+        participant_text([].into_iter(), 2),
+        "2 anonymous participants"
+    );
+    assert_eq!(
+        participant_text(["罗宾", "Marian"].into_iter(), 0),
+        "罗宾, Marian"
+    );
+    for maximum in 0..=8 {
+        let source = "é🏹罗宾AB";
+        let expected = match maximum {
+            0 => "",
+            1 => ".",
+            2 => "..",
+            3 => "...",
+            4 => "é...",
+            5 => "é🏹...",
+            _ => source,
+        };
+        assert_eq!(truncate_chars(source, maximum), expected);
+        assert_eq!(truncate_chars("", maximum), "");
     }
 }
