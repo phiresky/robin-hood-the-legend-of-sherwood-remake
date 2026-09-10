@@ -1371,9 +1371,7 @@ impl SaveGameManager {
         // Thumbnail (used by both formats)
         let src_thumb = self.thumb_path(src);
         let dst_thumb = self.thumb_path(dst);
-        if src_thumb.exists()
-            && let Err(error) = save_file::atomic_copy(&src_thumb, &dst_thumb)
-        {
+        if let Err(error) = save_file::atomic_copy_if_exists(&src_thumb, &dst_thumb) {
             tracing::warn!("Could not rotate save thumbnail: {error:#}");
         }
 

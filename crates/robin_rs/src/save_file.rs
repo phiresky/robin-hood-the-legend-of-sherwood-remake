@@ -184,6 +184,21 @@ pub(crate) fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
     atomic_write_with_policy(destination, input, true)
 }
 
+/// Copy an optional file, returning false only when opening the source reports
+/// that it is absent. Read and publication failures remain errors.
+pub(crate) fn atomic_copy_if_exists(source: &Path, destination: &Path) -> Result<bool> {
+    let input = match fs::File::open(source) {
+        Ok(input) => input,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("opening atomic-copy source {}", source.display()));
+        }
+    };
+    atomic_write_with_policy(destination, input, true)?;
+    Ok(true)
+}
+
 fn atomic_write_with_policy(
     path: &Path,
     mut input: impl std::io::Read,
@@ -1161,6 +1176,28 @@ pub fn save_directory_for_profile(profile_id: u32) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn optional_atomic_copy_only_skips_missing_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.png");
+        let destination = directory.path().join("destination.png");
+        std::fs::write(&destination, b"old thumbnail").unwrap();
+        assert!(!super::atomic_copy_if_exists(&source, &destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old thumbnail");
+
+        std::fs::write(&source, b"new thumbnail").unwrap();
+        assert!(super::atomic_copy_if_exists(&source, &destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new thumbnail");
+
+        // A non-directory source component is an error, not optional absence.
+        assert!(super::atomic_copy_if_exists(&source.join("child"), &destination).is_err());
+        assert!(super::atomic_copy_if_exists(directory.path(), &destination).is_err());
+        // Publication failures must not be swallowed by the source policy.
+        assert!(super::atomic_copy_if_exists(&source, &destination.join("child")).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new thumbnail");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
     #[test]
     fn atomic_publication_collision_keeps_targets_and_removes_staging() {
         let directory = tempfile::tempdir().unwrap();
