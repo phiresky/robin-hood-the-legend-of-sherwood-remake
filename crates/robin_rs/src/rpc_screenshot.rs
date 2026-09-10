@@ -2,7 +2,6 @@
 use crate::http_server::{Reply, ReplyBody, RpcError, ScreenshotFlags, ScreenshotRequest};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
-use std::borrow::Cow;
 pub(crate) fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
     !request.hide_ui && !request.full_map && request.flags == ScreenshotFlags::default()
 }
@@ -47,15 +46,24 @@ pub fn apply_screenshot_flags(debug: &mut engine_api::DebugFlags, flags: &Screen
 /// scaling — good enough for a dev-inspection endpoint and avoids
 /// pulling in an image crate.
 pub(crate) fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRequest) -> Reply {
-    // Optional bottom-panel crop: strip the HUD strip before any resize.
+    let source_len = u64::from(src_w)
+        .checked_mul(u64::from(src_h))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|bytes| usize::try_from(bytes).ok());
+    if src_w == 0 || src_h == 0 || source_len != Some(rgba.len()) {
+        return Err(RpcError::internal(format!(
+            "invalid captured RGBA frame {src_w}x{src_h}: {} bytes",
+            rgba.len()
+        )));
+    }
+    // Optional bottom-panel crop: borrow the prefix before any resize.
     let (src, mut used_w, mut used_h) =
         if req.hide_ui && !req.full_map && src_h > PANNEL_HEIGHT as u32 {
             let new_h = src_h - PANNEL_HEIGHT as u32;
             let stride = (src_w as usize) * 4;
-            let cropped: Vec<u8> = rgba[..stride * new_h as usize].to_vec();
-            (Cow::Owned(cropped), src_w, new_h)
+            (&rgba[..stride * new_h as usize], src_w, new_h)
         } else {
-            (Cow::Borrowed(rgba), src_w, src_h)
+            (rgba, src_w, src_h)
         };
 
     let (target_w, target_h) =
@@ -63,12 +71,22 @@ pub(crate) fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRe
 
     let resized;
     let pixels: &[u8] = if (target_w, target_h) != (used_w, used_h) {
-        let mut out = vec![0u8; (target_w * target_h * 4) as usize];
+        // Preserve the 32-bit packed output layout, but reject overflow before
+        // allocating. TODO: give RPC image processing an explicit memory budget.
+        let output_len = target_w
+            .checked_mul(target_h)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| RpcError::invalid_request("screenshot dimensions exceed RGBA layout"))?
+            as usize;
+        let mut out = Vec::new();
+        out.try_reserve_exact(output_len)
+            .map_err(|error| RpcError::internal(format!("allocating screenshot: {error}")))?;
+        out.resize(output_len, 0);
         for dy in 0..target_h {
-            let sy = (dy * used_h / target_h).min(used_h - 1);
+            let sy = (u64::from(dy) * u64::from(used_h) / u64::from(target_h)) as usize;
             for dx in 0..target_w {
-                let sx = (dx * used_w / target_w).min(used_w - 1);
-                let si = ((sy * used_w + sx) * 4) as usize;
+                let sx = (u64::from(dx) * u64::from(used_w) / u64::from(target_w)) as usize;
+                let si = (sy * used_w as usize + sx) * 4;
                 let di = ((dy * target_w + dx) * 4) as usize;
                 out[di..di + 4].copy_from_slice(&src[si..si + 4]);
             }
@@ -78,7 +96,7 @@ pub(crate) fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRe
         used_h = target_h;
         &resized
     } else {
-        &src
+        src
     };
 
     let mut png_bytes: Vec<u8> = Vec::new();
@@ -107,6 +125,9 @@ fn screenshot_target_dimensions(
     src_h: u32,
     req: &ScreenshotRequest,
 ) -> Result<(u32, u32), String> {
+    if src_w == 0 || src_h == 0 {
+        return Err("screenshot source width/height must be > 0".into());
+    }
     let (Some(max_w), Some(max_h)) = (req.width, req.height) else {
         return Ok((src_w, src_h));
     };
@@ -116,12 +137,12 @@ fn screenshot_target_dimensions(
 
     let max_w = max_w as u32;
     let max_h = max_h as u32;
-    let height_for_max_w = ((src_h as u64 * max_w as u64) / src_w as u64) as u32;
-    if height_for_max_w <= max_h {
-        Ok((max_w, height_for_max_w.max(1)))
+    let height_for_max_w = (u64::from(src_h) * u64::from(max_w)) / u64::from(src_w);
+    if height_for_max_w <= u64::from(max_h) {
+        Ok((max_w, height_for_max_w.max(1) as u32))
     } else {
-        let width_for_max_h = ((src_w as u64 * max_h as u64) / src_h as u64) as u32;
-        Ok((width_for_max_h.max(1), max_h))
+        let width_for_max_h = (u64::from(src_w) * u64::from(max_h)) / u64::from(src_h);
+        Ok((width_for_max_h.max(1) as u32, max_h))
     }
 }
 
@@ -154,6 +175,73 @@ mod tests {
             assert_eq!(&decoded[..frame.buffer_size()], expected_pixels);
         }
     }
+    #[test]
+    fn png_encoding_rejects_invalid_sources_and_overflowing_output() {
+        let request = ScreenshotRequest::default();
+        for (width, height, bytes) in [
+            (0, 1, vec![]),
+            (1, 0, vec![]),
+            (2, 2, vec![0; 15]),
+            (2, 2, vec![0; 17]),
+            (u32::MAX, u32::MAX, vec![]),
+        ] {
+            assert!(encode_png(width, height, &bytes, &request).is_err());
+        }
+        let huge = screenshot_request(Some(u16::MAX), Some(u16::MAX));
+        assert!(encode_png(1, 1, &[0; 4], &huge).is_err());
+    }
+
+    #[test]
+    fn png_encoding_crops_hud_before_resizing_and_keeps_full_maps() {
+        let height = PANNEL_HEIGHT as u32 + 2;
+        let mut pixels = vec![90; height as usize * 4];
+        pixels[..8].copy_from_slice(&[10, 20, 30, 255, 40, 50, 60, 128]);
+        for (full_map, bounds, expected_height) in [
+            (false, (None, None), 2),
+            (false, (Some(1), Some(1)), 1),
+            (true, (None, None), height),
+        ] {
+            let request = ScreenshotRequest {
+                hide_ui: true,
+                full_map,
+                ..screenshot_request(bounds.0, bounds.1)
+            };
+            let ReplyBody::Binary { data, .. } = encode_png(1, height, &pixels, &request).unwrap()
+            else {
+                panic!("screenshot must return binary PNG");
+            };
+            let mut reader = png::Decoder::new(std::io::Cursor::new(data))
+                .read_info()
+                .unwrap();
+            let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+            let frame = reader.next_frame(&mut decoded).unwrap();
+            assert_eq!((frame.width, frame.height), (1, expected_height));
+            assert_eq!(
+                &decoded[..frame.buffer_size()],
+                &pixels[..expected_height as usize * 4]
+            );
+        }
+    }
+
+    #[test]
+    fn screenshot_dimensions_reject_empty_sources_and_preserve_extreme_aspect_ratios() {
+        let request = screenshot_request(Some(u16::MAX), Some(u16::MAX));
+        for (width, height) in [(0, 1), (1, 0), (0, 0)] {
+            assert!(screenshot_target_dimensions(width, height, &request).is_err());
+            assert!(
+                screenshot_target_dimensions(width, height, &ScreenshotRequest::default()).is_err()
+            );
+        }
+        assert_eq!(
+            screenshot_target_dimensions(1, 65_538, &request).unwrap(),
+            (1, 65_535)
+        );
+        assert_eq!(
+            screenshot_target_dimensions(65_538, 1, &request).unwrap(),
+            (65_535, 1)
+        );
+    }
+
     fn screenshot_request(width: Option<u16>, height: Option<u16>) -> ScreenshotRequest {
         ScreenshotRequest {
             width,
