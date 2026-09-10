@@ -1321,6 +1321,28 @@ fn card_visible(rect: (i32, i32, i32, i32)) -> bool {
     x >= 32 && x + w <= 992 && y >= 176 && y + h <= 464
 }
 
+fn visible_progress_cards(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    selected: usize,
+    offset: usize,
+) -> impl Iterator<
+    Item = (
+        usize,
+        &crate::campaign_progress::CampaignProgressNode,
+        (i32, i32, i32, i32),
+    ),
+> {
+    graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(move |(index, node)| {
+            let rect = progress_node_rect_scrolled(graph, presentation, selected, index, offset);
+            card_visible(rect).then_some((index, node, rect))
+        })
+}
+
 fn progress_hit_test_scrolled(
     graph: &CampaignProgressGraph,
     presentation: CampaignPresentationMode,
@@ -1329,12 +1351,11 @@ fn progress_hit_test_scrolled(
     y: i32,
     offset: usize,
 ) -> Option<usize> {
-    graph.nodes.iter().enumerate().find_map(|(index, _)| {
-        let rect = progress_node_rect_scrolled(graph, presentation, selected, index, offset);
-        let (rx, ry, w, h) = rect;
-        (card_visible(rect) && (rx..rx + w).contains(&x) && (ry..ry + h).contains(&y))
-            .then_some(index)
-    })
+    visible_progress_cards(graph, presentation, selected, offset).find_map(
+        |(index, _, (rx, ry, w, h))| {
+            ((rx..rx + w).contains(&x) && (ry..ry + h).contains(&y)).then_some(index)
+        },
+    )
 }
 
 fn progress_rect(
@@ -1792,12 +1813,7 @@ fn render_campaign_progress(
         return;
     }
     if presentation == CampaignPresentationMode::ProgressTree {
-        for (index, child) in graph.nodes.iter().enumerate() {
-            let rect =
-                progress_node_rect_scrolled(graph, presentation, selected, index, card_offset);
-            if !card_visible(rect) {
-                continue;
-            }
+        for (_, child, rect) in visible_progress_cards(graph, presentation, selected, card_offset) {
             let (x, y, _, h) = rect;
             for &parent in &child.prerequisite_nodes {
                 let (px, py, pw, ph) =
@@ -1815,11 +1831,7 @@ fn render_campaign_progress(
             }
         }
     }
-    for (index, entry) in graph.nodes.iter().enumerate() {
-        let rect = progress_node_rect_scrolled(graph, presentation, selected, index, card_offset);
-        if !card_visible(rect) {
-            continue;
-        }
+    for (index, entry, rect) in visible_progress_cards(graph, presentation, selected, card_offset) {
         let (x, y, w, h) = rect;
         let (status, mut color) = match entry.state {
             MissionProgressState::Completed => ("Completed", (102, 157, 101)),
@@ -3441,6 +3453,81 @@ mod browser_tests {
             state.handle_events(vec![key(Keycode::Escape)], transform, true),
             Some(CampaignMapChoice::Quit)
         );
+    }
+
+    #[test]
+    fn scrolled_card_iteration_preserves_order_and_hit_boundaries() {
+        let mut state = browser();
+        let template = state.graph.nodes[0].clone();
+        state.graph.nodes = (0..40)
+            .map(|index| {
+                let mut node = template.clone();
+                node.depth = index % 8;
+                node.lane = index / 8;
+                node
+            })
+            .collect();
+        for presentation in [
+            CampaignPresentationMode::ProgressTree,
+            CampaignPresentationMode::SherwoodMuseum,
+        ] {
+            for selected in [0, 9, 24, 39] {
+                for offset in [0, 1, 3, 8, 12] {
+                    let expected: Vec<_> = state
+                        .graph
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, _)| {
+                            let rect = progress_node_rect_scrolled(
+                                &state.graph,
+                                presentation,
+                                selected,
+                                index,
+                                offset,
+                            );
+                            card_visible(rect).then_some((index, rect))
+                        })
+                        .collect();
+                    let actual: Vec<_> =
+                        visible_progress_cards(&state.graph, presentation, selected, offset)
+                            .map(|(index, node, rect)| {
+                                assert!(std::ptr::eq(node, &state.graph.nodes[index]));
+                                (index, rect)
+                            })
+                            .collect();
+                    assert_eq!(actual, expected);
+                    for &(index, (x, y, w, h)) in &actual {
+                        for (px, py) in [(x, y), (x + w - 1, y + h - 1)] {
+                            assert_eq!(
+                                progress_hit_test_scrolled(
+                                    &state.graph,
+                                    presentation,
+                                    selected,
+                                    px,
+                                    py,
+                                    offset
+                                ),
+                                Some(index)
+                            );
+                        }
+                        for (px, py) in [(x + w, y), (x, y + h)] {
+                            assert_eq!(
+                                progress_hit_test_scrolled(
+                                    &state.graph,
+                                    presentation,
+                                    selected,
+                                    px,
+                                    py,
+                                    offset
+                                ),
+                                None
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
