@@ -5,6 +5,8 @@
 //! the `PCPortrait` font for portrait text and the `Tooltips` font for
 //! hover labels.
 
+use std::sync::Arc;
+
 use crate::host::ViewportState;
 use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
@@ -67,16 +69,17 @@ const ACTIONB_WIDTH: u16 = 56;
 /// - `portrait_font`: "PCPortrait" — portrait name/HP text
 /// - `shadow_font`: "Background" — dark shadow behind text for readability
 pub struct HudFonts {
-    pub tooltip_font: Font,
-    pub portrait_font: Font,
+    pub tooltip_font: Arc<Font>,
+    pub portrait_font: Arc<Font>,
     pub shadow_font: Option<Font>,
 }
 
 impl HudFonts {
     /// Load HUD fonts from the font config file.
     ///
-    /// Falls back gracefully: if portrait or shadow fonts are missing, uses
-    /// the tooltip font. Returns `None` if no fonts can be loaded at all.
+    /// Tooltip and portrait text share the available font if either is missing.
+    /// A missing shadow disables the shadow pass. Returns `None` if neither
+    /// tooltip nor portrait fonts can be loaded.
     pub fn load(files: &robin_engine::sbfile::SbFileSystem) -> Option<Self> {
         let config = native_font::load_font_config(files)
             .map_err(|e| tracing::warn!("HUD font config not available: {e}"))
@@ -96,12 +99,24 @@ impl HudFonts {
             }
         };
 
-        let tooltip_font = load("Tooltips").or_else(|| load("PCPortrait"))?;
+        Self::load_with(load)
+    }
 
-        let portrait_font = load("PCPortrait").unwrap_or_else(|| {
-            tracing::info!("PCPortrait font not found, reusing tooltip font");
-            load("Tooltips").expect("tooltip font was already loaded successfully")
-        });
+    fn load_with(mut load: impl FnMut(&str) -> Option<Font>) -> Option<Self> {
+        let tooltip = load("Tooltips").map(Arc::new);
+        let portrait = load("PCPortrait").map(Arc::new);
+        let (tooltip_font, portrait_font) = match (tooltip, portrait) {
+            (Some(tooltip), Some(portrait)) => (tooltip, portrait),
+            (Some(font), None) => {
+                tracing::info!("PCPortrait font not found, reusing tooltip font");
+                (Arc::clone(&font), font)
+            }
+            (None, Some(font)) => {
+                tracing::info!("Tooltips font not found, reusing portrait font");
+                (Arc::clone(&font), font)
+            }
+            (None, None) => return None,
+        };
 
         let shadow_font = load("Background");
 
@@ -857,6 +872,47 @@ fn render_ammo_counts_gpu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_font_fallbacks_reuse_loaded_fonts_without_retrying_assets() {
+        fn font(height: u32) -> Font {
+            Font::TrueType(crate::font::TrueTypeFont::from_parts(
+                &[0; 32],
+                height,
+                0,
+                0,
+                &[0; 32],
+                0,
+                &[],
+            ))
+        }
+        for (tooltip, portrait) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut calls = Vec::new();
+            let fonts = HudFonts::load_with(|name| {
+                calls.push(name.to_owned());
+                match name {
+                    "Tooltips" if tooltip => Some(font(11)),
+                    "PCPortrait" if portrait => Some(font(12)),
+                    "Tooltips" | "PCPortrait" | "Background" => None,
+                    _ => panic!("unexpected HUD font {name}"),
+                }
+            });
+            if !tooltip && !portrait {
+                assert!(fonts.is_none());
+                assert_eq!(calls, ["Tooltips", "PCPortrait"]);
+                continue;
+            }
+            assert_eq!(calls, ["Tooltips", "PCPortrait", "Background"]);
+            let fonts = fonts.unwrap();
+            assert_eq!(fonts.tooltip_font.height(), if tooltip { 11 } else { 12 });
+            assert_eq!(fonts.portrait_font.height(), if portrait { 12 } else { 11 });
+            assert_eq!(
+                Arc::ptr_eq(&fonts.tooltip_font, &fonts.portrait_font),
+                tooltip != portrait
+            );
+            assert!(fonts.shadow_font.is_none());
+        }
+    }
     use crate::ui_panel::portrait_capacity;
 
     #[test]
