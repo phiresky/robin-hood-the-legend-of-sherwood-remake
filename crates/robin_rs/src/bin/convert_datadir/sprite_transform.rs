@@ -199,7 +199,10 @@ impl RleJxlCandidate {
         Ok(rgba)
     }
 
-    pub(super) fn raw_le_bytes(&self, sprites: &[(u32, ShippingSprite)]) -> Vec<u8> {
+    pub(super) fn raw_le_bytes<'a>(
+        &self,
+        sprites: &'a [(u32, ShippingSprite)],
+    ) -> impl Iterator<Item = u8> + 'a {
         let position = sprites
             .binary_search_by_key(&self.id, |(id, _)| *id)
             .expect("candidate came from these rows");
@@ -208,7 +211,6 @@ impl RleJxlCandidate {
             .packed_data
             .iter()
             .flat_map(|w| w.to_le_bytes())
-            .collect()
     }
 }
 
@@ -330,9 +332,9 @@ pub(super) fn build_rle_jxl_chunk(
 
     let mut blobs: Vec<Vec<u8>> = Vec::new();
     let mut accepted: Vec<RleJxlAccepted> = Vec::new();
-    for group in &groups {
-        if group.len() < RLE_JXL_MIN_ATLAS_FRAMES {
-            ungrouped.extend_from_slice(group);
+    for mut members in groups {
+        if members.len() < RLE_JXL_MIN_ATLAS_FRAMES {
+            ungrouped.extend(members);
             continue;
         }
         // Quality-gated atlas encode: members scoring below the PSNR floor
@@ -340,7 +342,6 @@ pub(super) fn build_rle_jxl_chunk(
         // frame cannot drag a whole chunk under the verification floor.
         // Ejected members retry individually below (a dedicated encode may
         // still clear the floor); each round removes at least one member.
-        let mut members: Vec<u32> = group.clone();
         let accepted_group = loop {
             if members.len() < RLE_JXL_MIN_ATLAS_FRAMES {
                 break None;
@@ -476,7 +477,8 @@ pub(super) fn build_rle_jxl_chunk(
             stats.kept_low_psnr += 1;
             continue;
         }
-        if jxl.len() >= zstd19_len(&candidate.raw_le_bytes(sprites))? {
+        let raw_le: Vec<_> = candidate.raw_le_bytes(sprites).collect();
+        if jxl.len() >= zstd19_len(&raw_le)? {
             stats.kept_smaller += 1;
             continue;
         }
@@ -756,6 +758,34 @@ pub(super) fn build_rhs_chunk_payload(
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+
+    #[test]
+    fn raw_word_iteration_preserves_all_little_endian_values() {
+        let sprites = [(
+            7,
+            ShippingSprite {
+                width: 0,
+                height: 0,
+                dictionary_index: UNMAPPED_DICT,
+                packed_data: Arc::new((0..=u16::MAX).collect()),
+                raster: None,
+            },
+        )];
+        let candidate = RleJxlCandidate {
+            id: 7,
+            width: 0,
+            height: 0,
+            pixels: Vec::new(),
+            raw_words: sprites[0].1.packed_data.len(),
+        };
+        let mut bytes = vec![0xab, 0xcd];
+        bytes.extend(candidate.raw_le_bytes(&sprites));
+        assert_eq!(&bytes[..2], &[0xab, 0xcd]);
+        assert_eq!(bytes.len(), 2 + 2 * candidate.raw_words);
+        for (word, encoded) in (0..=u16::MAX).zip(bytes[2..].chunks_exact(2)) {
+            assert_eq!(encoded, &[word as u8, (word >> 8) as u8]);
+        }
+    }
 
     #[test]
     fn payload_takes_ownership_of_prepared_profile_storage() {
