@@ -14,6 +14,7 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
+use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::layout::{
@@ -305,11 +306,8 @@ impl LoadPickerModalState {
             else {
                 continue;
             };
-            let label = truncate_to_pixel_width(
-                font,
-                &row_label(row, save_manager, &visible, &metadata_text),
-                row_area_w,
-            );
+            let raw_label = row_label(row, save_manager, &visible, &metadata_text);
+            let label = truncate_to_pixel_width(font, &raw_label, row_area_w);
             if !label.is_empty() {
                 render_text_virt_font(renderer, font, transform, &label, row_area_x, row_y);
             }
@@ -1039,22 +1037,30 @@ fn relative_time_quantity(seconds: u64) -> (u64, RelativeTimeUnit) {
 /// when rendered with `font`. Oversize text gets an ASCII ellipsis so
 /// clipped metadata is visibly abbreviated instead of looking like a
 /// broken string.
-fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
+fn truncate_to_pixel_width<'a>(
+    font: &crate::native_font::Font,
+    text: &'a str,
+    max_w: i32,
+) -> Cow<'a, str> {
     truncate_to_pixel_width_by(text, max_w, |candidate| font.text_width(candidate))
 }
 
-fn truncate_to_pixel_width_by(text: &str, max_w: i32, measure: impl Fn(&str) -> i32) -> String {
+fn truncate_to_pixel_width_by(
+    text: &str,
+    max_w: i32,
+    measure: impl Fn(&str) -> i32,
+) -> Cow<'_, str> {
     if max_w <= 0 {
-        return String::new();
+        return Cow::Borrowed("");
     }
     if measure(text) <= max_w {
-        return text.to_string();
+        return Cow::Borrowed(text);
     }
 
     let ellipsis = "...";
     let ellipsis_w = measure(ellipsis);
     if ellipsis_w > max_w {
-        return String::new();
+        return Cow::Borrowed("");
     }
 
     let budget = max_w - ellipsis_w;
@@ -1067,7 +1073,7 @@ fn truncate_to_pixel_width_by(text: &str, max_w: i32, measure: impl Fn(&str) -> 
         }
         fit_end = end;
     }
-    format!("{}{}", &text[..fit_end], ellipsis)
+    Cow::Owned(format!("{}{}", &text[..fit_end], ellipsis))
 }
 
 /// Resync the input-field widget to the current selection. In Save
@@ -1208,6 +1214,22 @@ pub(crate) fn finish_picker_delete(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn save_text_truncation_borrows_unchanged_text() {
+        let text = String::from("café");
+        let measure = |text: &str| text.chars().count() as i32;
+        let fitted = super::truncate_to_pixel_width_by(&text, 4, measure);
+        assert!(matches!(fitted, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(fitted.as_ptr(), text.as_ptr());
+        for width in [0, 1, 2] {
+            let empty = super::truncate_to_pixel_width_by(&text, width, measure);
+            assert!(matches!(empty, std::borrow::Cow::Borrowed("")));
+        }
+        let shortened = super::truncate_to_pixel_width_by(&text, 3, measure);
+        assert!(matches!(shortened, std::borrow::Cow::Owned(_)));
+        assert_eq!(shortened, "...");
+    }
+
     #[test]
     fn save_text_truncation_keeps_graphemes_and_ascii_ellipsis_policy() {
         let measure = |text: &str| text.chars().count() as i32;
