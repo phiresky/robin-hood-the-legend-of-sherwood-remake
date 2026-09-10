@@ -28,6 +28,35 @@ mod lifecycle_tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     #[test]
+    fn speech_definition_reads_are_unique_and_sorted_by_actor_id() {
+        let mut profiles = ProfileManager::new();
+        for id in [0x0042_0041, 0, 0x0042_0041, 0x41, 0x41, 0xff] {
+            profiles
+                .civilians
+                .push(robin_engine::profiles::CivilianProfile {
+                    exclamation_id: id,
+                    ..Default::default()
+                });
+        }
+        let mut resources = ResourceManager::new();
+        let mut reads = Vec::new();
+        let result = build_exclamations_from::<&[u8]>(
+            &profiles,
+            None,
+            &mut resources,
+            |name| {
+                reads.push(name.to_owned());
+                Err("fixture has no definition files".into())
+            },
+            "fixture",
+            false,
+        )
+        .unwrap();
+        assert!(result.is_empty());
+        assert_eq!(reads, ["actorA.dat", "actorÿ.dat", "actorAB.dat"]);
+    }
+
+    #[test]
     fn speech_definitions_accept_borrowed_and_shared_bytes_with_the_same_errors() {
         let id = u32::from_le_bytes(*b"ROBN");
         let mut profiles = ProfileManager::new();
@@ -1087,16 +1116,10 @@ fn build_exclamations_from<B: AsRef<[u8]>>(
 ) -> Result<Vec<Vec<(u32, Vec<String>)>>, String> {
     // Collect unique exclamation IDs from all profile types. The id's
     // non-zero LE bytes spell the actor file's name suffix.
-    let mut files_needed = std::collections::BTreeMap::<u32, String>::new();
+    let mut files_needed = std::collections::BTreeSet::<u32>::new();
     let mut add = |excl_id: u32| {
         if excl_id != 0 {
-            let name: String = excl_id
-                .to_le_bytes()
-                .iter()
-                .filter(|&&b| b != 0)
-                .map(|&b| b as char)
-                .collect();
-            files_needed.insert(excl_id, format!("actor{name}.dat"));
+            files_needed.insert(excl_id);
         }
     };
     if let Some(datadir) = shipping {
@@ -1117,8 +1140,17 @@ fn build_exclamations_from<B: AsRef<[u8]>>(
 
     let mut result = Vec::new();
     let mut total_exclamations = 0usize;
-    for (&excl_id, dat_filename) in &files_needed {
-        let data = match read_definition(dat_filename) {
+    for &excl_id in &files_needed {
+        let mut dat_filename = String::from("actor");
+        dat_filename.extend(
+            excl_id
+                .to_le_bytes()
+                .into_iter()
+                .filter(|&b| b != 0)
+                .map(char::from),
+        );
+        dat_filename.push_str(".dat");
+        let data = match read_definition(&dat_filename) {
             Ok(d) => d,
             Err(e) => {
                 if strict {
