@@ -287,7 +287,7 @@ impl SherwoodHudLayout {
     }
 }
 
-use crate::hud_sprite::{SpriteBank, SpriteFrame};
+use crate::hud_sprite::{SpriteBank, load_bank};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -396,51 +396,19 @@ impl SherwoodButtonSprites {
     /// resources fall back to `None`; `draw_with_sprites` then skips
     /// the button entirely (no fallback rect — see `draw_with_sprites`).
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        fn fetch_frame(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-            sub: usize,
-            label: &str,
-        ) -> Option<SpriteFrame> {
-            match res.get_picture(id, sub) {
-                Ok(pic) => {
-                    let w = pic.width;
-                    let h = pic.height;
-                    let surface = crate::ui_panel::pic_to_surface(renderer, pic);
-                    tracing::info!(
-                        "sherwood_hud: {label} sub{sub} -> resource {id}, surface {surface:?} ({w}x{h})"
-                    );
-                    Some((surface, w, h))
-                }
-                Err(e) => {
-                    tracing::debug!("sherwood_hud: {label} sub{sub} missing (resource {id}): {e}");
-                    None
-                }
-            }
-        }
-        fn fetch_all(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-            label: &str,
-        ) -> SpriteBank {
-            std::array::from_fn(|sub| fetch_frame(res, renderer, id, sub, label))
-        }
-
         Self {
-            display_campaign_map: fetch_all(
+            display_campaign_map: load_bank(
                 res,
                 renderer,
                 RHID_DISPLAY_CAMPAIGN_MAP,
                 "DisplayCampaignMap",
             ),
-            go_to_exit: fetch_all(res, renderer, RHID_GO_TO_EXIT, "GoToExit"),
-            start_mission: fetch_all(res, renderer, RHID_FLOATING_OK, "StartMission"),
-            quit_mission: fetch_all(res, renderer, RHID_FLOATING_CANCEL, "QuitMission"),
+            go_to_exit: load_bank(res, renderer, RHID_GO_TO_EXIT, "GoToExit"),
+            start_mission: load_bank(res, renderer, RHID_FLOATING_OK, "StartMission"),
+            quit_mission: load_bank(res, renderer, RHID_FLOATING_CANCEL, "QuitMission"),
             // Reuse the shipped money-conversion button: its coin/ransom
             // imagery is the closest authored visual for item sales.
-            sherwood_trading: fetch_all(
+            sherwood_trading: load_bank(
                 res,
                 renderer,
                 RHID_CONVERT_MONEY_TO_BLAZONS,

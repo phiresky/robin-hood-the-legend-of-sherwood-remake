@@ -240,7 +240,7 @@ impl StatureHudLayout {
     }
 }
 
-use crate::hud_sprite::{SpriteBank, SpriteFrame};
+use crate::hud_sprite::{SpriteBank, load_bank};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -314,24 +314,9 @@ impl StatureSprites {
     /// Walk the four button-state sub-ids for each arrow resource.
     /// Same loader pattern as `CornerButtonSprites::load`.
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        fn fetch(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-            sub: usize,
-        ) -> Option<SpriteFrame> {
-            let pic = res.get_picture(id, sub).ok()?;
-            let w = pic.width;
-            let h = pic.height;
-            let surface = crate::ui_panel::pic_to_surface(renderer, pic);
-            Some((surface, w, h))
-        }
-        fn all(res: &mut ResourceManager, renderer: &mut Renderer, id: i32) -> SpriteBank {
-            std::array::from_fn(|sub| fetch(res, renderer, id, sub))
-        }
         Self {
-            up: all(res, renderer, RHID_UP_ARROW),
-            down: all(res, renderer, RHID_DOWN_ARROW),
+            up: load_bank(res, renderer, RHID_UP_ARROW, "StatureUp"),
+            down: load_bank(res, renderer, RHID_DOWN_ARROW, "StatureDown"),
         }
     }
 

@@ -20,6 +20,39 @@ pub(crate) fn screen_rect_to_sprite_bbox(
 pub(crate) type SpriteFrame = (OwnedSurface, u16, u16);
 pub(crate) type SpriteBank = [Option<SpriteFrame>; 4];
 
+/// Load the four optional interaction frames in resource sub-id order.
+pub(crate) fn load_bank(
+    resources: &mut robin_assets::resource_manager::ResourceManager,
+    renderer: &mut Renderer,
+    resource_id: i32,
+    label: &str,
+) -> SpriteBank {
+    std::array::from_fn(|sub| match resources.get_picture(resource_id, sub) {
+        Ok(picture) => {
+            let width = picture.width;
+            let height = picture.height;
+            let surface = crate::ui_panel::pic_to_surface(renderer, picture);
+            tracing::info!(
+                label,
+                resource_id,
+                sub,
+                width,
+                height,
+                ?surface,
+                "Loaded HUD sprite frame"
+            );
+            Some((surface, width, height))
+        }
+        Err(error) => {
+            tracing::debug!(
+                label, resource_id, sub, %error,
+                "Optional HUD sprite frame unavailable"
+            );
+            None
+        }
+    })
+}
+
 pub(crate) fn frame(bank: &SpriteBank, state: usize) -> Option<(SurfaceHandle, u16, u16)> {
     bank[state]
         .as_ref()

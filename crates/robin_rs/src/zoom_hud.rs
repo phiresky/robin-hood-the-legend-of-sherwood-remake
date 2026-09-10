@@ -151,7 +151,7 @@ impl ZoomHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-use crate::hud_sprite::{SpriteBank, SpriteFrame};
+use crate::hud_sprite::{SpriteBank, load_bank};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -244,25 +244,9 @@ impl ZoomButtonSprites {
     /// sub-ids 0..=3 per resource; a missing sub-id is stored as
     /// `None` and recovered via [`ZoomButtonSprites::frame`].
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        fn fetch_frame(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-            sub: usize,
-        ) -> Option<SpriteFrame> {
-            let pic = res.get_picture(id, sub).ok()?;
-            let w = pic.width;
-            let h = pic.height;
-            let surface = crate::ui_panel::pic_to_surface(renderer, pic);
-            Some((surface, w, h))
-        }
-        fn fetch_all(res: &mut ResourceManager, renderer: &mut Renderer, id: i32) -> SpriteBank {
-            std::array::from_fn(|sub| fetch_frame(res, renderer, id, sub))
-        }
-
         Self {
-            zoom_up: fetch_all(res, renderer, RHID_ZOOM_UP),
-            zoom_down: fetch_all(res, renderer, RHID_ZOOM_DOWN),
+            zoom_up: load_bank(res, renderer, RHID_ZOOM_UP, "ZoomUp"),
+            zoom_down: load_bank(res, renderer, RHID_ZOOM_DOWN, "ZoomDown"),
         }
     }
 

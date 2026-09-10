@@ -193,7 +193,7 @@ impl CornerHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-use crate::hud_sprite::{SpriteBank, SpriteFrame, screen_rect_to_sprite_bbox};
+use crate::hud_sprite::{SpriteBank, load_bank, screen_rect_to_sprite_bbox};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -288,42 +288,10 @@ impl CornerButtonSprites {
     /// Load button sprites from the attached DEFAULT.RES.  Walks
     /// sub-ids 0..=3 per resource; missing sub-ids stay `None`.
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        fn fetch_frame(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-            sub: usize,
-            label: &str,
-        ) -> Option<SpriteFrame> {
-            match res.get_picture(id, sub) {
-                Ok(pic) => {
-                    let w = pic.width;
-                    let h = pic.height;
-                    let surface = crate::ui_panel::pic_to_surface(renderer, pic);
-                    tracing::info!(
-                        "corner_hud: {label} sub{sub} → resource {id}, surface {surface:?} ({w}x{h})"
-                    );
-                    Some((surface, w, h))
-                }
-                Err(e) => {
-                    tracing::debug!("corner_hud: {label} sub{sub} missing (resource {id}): {e}");
-                    None
-                }
-            }
-        }
-        fn fetch_all(
-            res: &mut ResourceManager,
-            renderer: &mut Renderer,
-            id: i32,
-            label: &str,
-        ) -> SpriteBank {
-            std::array::from_fn(|sub| fetch_frame(res, renderer, id, sub, label))
-        }
-
         Self {
-            clock: fetch_all(res, renderer, RHID_CLOCK, "Clock"),
-            sight: fetch_all(res, renderer, RHID_SIGHT, "Sight"),
-            quickstart: fetch_all(res, renderer, RHID_QUICKSTART, "QuickStart"),
+            clock: load_bank(res, renderer, RHID_CLOCK, "Clock"),
+            sight: load_bank(res, renderer, RHID_SIGHT, "Sight"),
+            quickstart: load_bank(res, renderer, RHID_QUICKSTART, "QuickStart"),
         }
     }
 
