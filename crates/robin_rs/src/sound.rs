@@ -12,7 +12,7 @@ use robin_engine::sound_kinds as engine_sound_kinds;
 use serde::{Deserialize, Serialize};
 
 use robin_engine::profiles::{ArmorMaterial, WeaponMaterial};
-use robin_engine::sound_cache::{Material, SampleLoader, SoundCache};
+use robin_engine::sound_cache::{Material, SampleLoader, SoundCache, SoundCacheEntry};
 use robin_engine::sound_config::SoundConfig;
 use robin_engine::sound_geometry::*;
 use robin_engine::sound_source::*;
@@ -163,8 +163,6 @@ struct PendingSoundInfo {
     source_index: Option<usize>,
     /// Speech variant for exclamation cache lookups.
     speech_variant: Option<u32>,
-    /// Host-only resolved sample metadata for random exclamations.
-    resolved_entry: Option<CacheEntryInfo>,
 }
 
 /// A short FX queued to be played in the current frame's [`SoundManager::hourglass`].
@@ -1057,7 +1055,6 @@ impl SoundManager {
                 speech_variant: None,
                 source_index: None,
                 actor_id: None,
-                resolved_entry: None,
             });
         }
     }
@@ -1106,7 +1103,6 @@ impl SoundManager {
                 speech_variant: None,
                 source_index: None,
                 actor_id: None,
-                resolved_entry: None,
             });
         }
     }
@@ -1146,7 +1142,6 @@ impl SoundManager {
                 speech_variant: None,
                 source_index: None,
                 actor_id: None,
-                resolved_entry: None,
             });
         }
     }
@@ -1209,7 +1204,6 @@ impl SoundManager {
             actor_id,
             source_index: None,
             speech_variant,
-            resolved_entry: None,
         });
     }
 
@@ -1640,7 +1634,6 @@ impl SoundManager {
                             length_ms: length,
                         });
                     }
-                    pending.resolved_entry = entry;
                 }
             }
 
@@ -1879,7 +1872,6 @@ impl SoundManager {
             actor_id: None,
             source_index: Some(source_index),
             speech_variant: None,
-            resolved_entry: None,
         });
     }
 
@@ -2065,7 +2057,7 @@ impl SoundManager {
         rng: &mut dyn FnMut(u32) -> u32,
         sources: &SoundSourceManager,
     ) -> Option<CacheEntryInfo> {
-        match settings.sound_type {
+        let (entry, cache_key): (&SoundCacheEntry, CacheKey) = match settings.sound_type {
             SoundType::Source => {
                 let looping = sources
                     .find_by_sample_id(settings.identifier)
@@ -2078,15 +2070,7 @@ impl SoundManager {
                     looping,
                     loader,
                 )?;
-                if sample_present && !entry.is_loaded() {
-                    return None;
-                }
-                Some(CacheEntryInfo {
-                    file_name: entry.file_name.clone(),
-                    sample_length_ms: entry.sample_length_ms,
-                    loop_sample: entry.loop_sample,
-                    cache_key: Some(CacheKey::Source(settings.identifier)),
-                })
+                (entry, CacheKey::Source(settings.identifier))
             }
             SoundType::Fx | SoundType::MenuFx => {
                 let material = match &settings.source {
@@ -2101,28 +2085,12 @@ impl SoundManager {
                     rng,
                 )?;
                 let entry = &cache.fx_cache.entries[idx];
-                if sample_present && !entry.is_loaded() {
-                    return None;
-                }
-                Some(CacheEntryInfo {
-                    file_name: entry.file_name.clone(),
-                    sample_length_ms: entry.sample_length_ms,
-                    loop_sample: entry.loop_sample,
-                    cache_key: Some(CacheKey::FxIndex(idx)),
-                })
+                (entry, CacheKey::FxIndex(idx))
             }
             SoundType::CombatFx => {
                 let entry =
                     cache.get_combat_fx_sample(sample_present, settings.identifier, loader)?;
-                if sample_present && !entry.is_loaded() {
-                    return None;
-                }
-                Some(CacheEntryInfo {
-                    file_name: entry.file_name.clone(),
-                    sample_length_ms: entry.sample_length_ms,
-                    loop_sample: entry.loop_sample,
-                    cache_key: Some(CacheKey::CombatFx(settings.identifier)),
-                })
+                (entry, CacheKey::CombatFx(settings.identifier))
             }
             SoundType::Exclamation => {
                 let idx = cache.get_exclamation_sample(
@@ -2133,18 +2101,19 @@ impl SoundManager {
                     rng,
                 )?;
                 let entry = &cache.speech_cache.entries[idx];
-                if sample_present && !entry.is_loaded() {
-                    return None;
-                }
-                Some(CacheEntryInfo {
-                    file_name: entry.file_name.clone(),
-                    sample_length_ms: entry.sample_length_ms,
-                    loop_sample: entry.loop_sample,
-                    cache_key: Some(CacheKey::SpeechIndex(idx)),
-                })
+                (entry, CacheKey::SpeechIndex(idx))
             }
-            _ => None,
+            _ => return None,
+        };
+        if sample_present && !entry.is_loaded() {
+            return None;
         }
+        Some(CacheEntryInfo {
+            file_name: entry.file_name.clone(),
+            sample_length_ms: entry.sample_length_ms,
+            loop_sample: entry.loop_sample,
+            cache_key: Some(cache_key),
+        })
     }
 }
 
@@ -2294,7 +2263,6 @@ mod tests {
                 actor_id: Some(3),
                 source_index: None,
                 speech_variant: Some(2),
-                resolved_entry: None,
             }],
             fx_to_play: vec![FxToPlay {
                 settings,
@@ -2443,7 +2411,6 @@ mod tests {
             actor_id: Some(1),
             source_index: None,
             speech_variant: None,
-            resolved_entry: None,
         });
         manager.update_channel_info(0, SoundType::Fx, None, None);
         assert_eq!(manager.runtime.jingle_channel, None);
@@ -2475,7 +2442,6 @@ mod tests {
                 actor_id: Some(actor),
                 source_index: None,
                 speech_variant: None,
-                resolved_entry: None,
             });
         }
         backend.ticks = 10;
@@ -2520,7 +2486,6 @@ mod tests {
             actor_id: Some(1),
             source_index: None,
             speech_variant: None,
-            resolved_entry: None,
         });
         backend.ticks = 1001;
         manager.process_pending_sounds(
