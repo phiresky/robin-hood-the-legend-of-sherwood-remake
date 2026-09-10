@@ -443,7 +443,11 @@ impl TrueTypeFont {
     /// applied as the foreground.
     ///
     /// Buffer layout: RGBA8888 byte order, each pixel is
-    /// 4 bytes `[R, G, B, A]`. `pitch` is in **bytes**.
+    /// 4 bytes `[R, G, B, A]`. `pitch` is in **bytes**. Row padding is
+    /// allowed; the final row need only contain its visible pixels.
+    ///
+    /// Panics for negative dimensions, an undersized pitch or buffer, or
+    /// overflowing layout arithmetic when a font face is loaded.
     ///
     /// Wired into the renderer via `Renderer::render_text_truetype`,
     /// which sizes a scratch RGBA buffer with [`Self::total_pixel_height`],
@@ -461,6 +465,8 @@ impl TrueTypeFont {
         y: i32,
     ) {
         let Some(ref ttf) = self.font else { return };
+        validate_rgba_layout(surface_w, surface_h, pitch, data.len())
+            .expect("invalid TrueType raster target");
         let scaled = ttf.as_scaled(self.px_scale());
         let baseline_y = scaled.ascent();
 
@@ -492,16 +498,14 @@ impl TrueTypeFont {
                         return;
                     }
                     let off = dy as usize * pitch + dx as usize * 4;
-                    if off + 3 < data.len() {
-                        // Store straight-alpha color. The GPU blend pass
-                        // multiplies RGB by alpha; premultiplying here would
-                        // apply coverage twice and make TrueType list text
-                        // thin and low contrast.
-                        data[off] = r;
-                        data[off + 1] = g;
-                        data[off + 2] = b;
-                        data[off + 3] = data[off + 3].max(alpha);
-                    }
+                    // Store straight-alpha color. The GPU blend pass
+                    // multiplies RGB by alpha; premultiplying here would
+                    // apply coverage twice and make TrueType list text
+                    // thin and low contrast.
+                    data[off] = r;
+                    data[off + 1] = g;
+                    data[off + 2] = b;
+                    data[off + 3] = data[off + 3].max(alpha);
                 });
             }
             cx += advance;
@@ -525,12 +529,66 @@ impl TrueTypeFont {
     }
 }
 
+/// Validate the last visible pixel, without requiring unused final-row padding.
+fn validate_rgba_layout(
+    width: i32,
+    height: i32,
+    pitch: usize,
+    bytes: usize,
+) -> Result<(), &'static str> {
+    let width = usize::try_from(width).map_err(|_| "negative raster width")?;
+    let height = usize::try_from(height).map_err(|_| "negative raster height")?;
+    if width == 0 || height == 0 {
+        return Ok(());
+    }
+    let row_bytes = width.checked_mul(4).ok_or("raster row size overflow")?;
+    if pitch < row_bytes {
+        return Err("raster pitch is shorter than one pixel row");
+    }
+    let required = (height - 1)
+        .checked_mul(pitch)
+        .and_then(|offset| offset.checked_add(row_bytes))
+        .ok_or("raster buffer size overflow")?;
+    if bytes < required {
+        return Err("raster buffer is shorter than its visible rows");
+    }
+    Ok(())
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn rgba_layout_validates_visible_rows_without_requiring_trailing_padding() {
+        assert_eq!(super::validate_rgba_layout(2, 3, 12, 32), Ok(()));
+        assert_eq!(super::validate_rgba_layout(2, 3, 12, 36), Ok(()));
+        assert_eq!(super::validate_rgba_layout(0, 3, 0, 0), Ok(()));
+        assert_eq!(super::validate_rgba_layout(3, 0, 0, 0), Ok(()));
+        assert_eq!(
+            super::validate_rgba_layout(-1, 3, 12, 36),
+            Err("negative raster width")
+        );
+        assert_eq!(
+            super::validate_rgba_layout(2, -1, 12, 36),
+            Err("negative raster height")
+        );
+        assert_eq!(
+            super::validate_rgba_layout(2, 3, 7, 36),
+            Err("raster pitch is shorter than one pixel row")
+        );
+        assert_eq!(
+            super::validate_rgba_layout(2, 3, 12, 31),
+            Err("raster buffer is shorter than its visible rows")
+        );
+        assert_eq!(
+            super::validate_rgba_layout(1, 2, usize::MAX, usize::MAX),
+            Err("raster buffer size overflow")
+        );
+    }
     use super::*;
 
     #[test]
@@ -689,6 +747,12 @@ mod tests {
                 row[width * 4..].fill(0x55);
             }
             font.render_to_rgba(&mut pixels, width as i32, height as i32, pitch, "AV", x, 1);
+            let mut compact = vec![0u8; pitch * (height - 1) + width * 4];
+            for row in compact.chunks_mut(pitch) {
+                row[width * 4..].fill(0x55);
+            }
+            font.render_to_rgba(&mut compact, width as i32, height as i32, pitch, "AV", x, 1);
+            assert_eq!(compact, pixels[..compact.len()]);
             let mut visible = 0;
             let mut partial_coverage = 0;
             for row in pixels.chunks_exact(pitch) {
