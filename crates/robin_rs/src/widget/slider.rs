@@ -319,15 +319,15 @@ impl WidgetSlider {
     /// Emit `WidgetSliderTrack` when `tracking` differs from the last
     /// value an emission was produced for.  Updates the cached value
     /// so a subsequent no-op call stays silent.
-    fn track_event_if_changed(&mut self) -> Vec<UiEvent> {
+    fn track_event_if_changed(&mut self) -> Option<UiEvent> {
         if self.last_tracked == Some(self.tracking) {
-            return Vec::new();
+            return None;
         }
         self.last_tracked = Some(self.tracking);
-        vec![self.base.make_event_with_data(
+        Some(self.base.make_event_with_data(
             UiMsg::WidgetSliderTrack,
             UiEventData::SliderPosition(self.value()),
-        )]
+        ))
     }
 }
 
@@ -457,6 +457,49 @@ mod tests {
         let events = slider.process_input(&input_at(50.0, MouseButtons::LEFT_CLICK, &kb));
         assert!(!slider.dragging);
         assert!(events.iter().any(|e| e.msg_type == UiMsg::WidgetActivated));
+    }
+
+    #[test]
+    fn tracking_event_suppresses_only_the_last_reported_tick() {
+        let mut slider = make_slider(10);
+        for tick in [0, 4, 9, 4] {
+            slider.set_value(tick as f32);
+            let event = slider.track_event_if_changed().expect("new tracking value");
+            assert_eq!(event.msg_type, UiMsg::WidgetSliderTrack);
+            assert_eq!(event.origin_widget_id, 7);
+            assert!(
+                matches!(event.data, Some(UiEventData::SliderPosition(value)) if value == tick as f32)
+            );
+            assert!(slider.track_event_if_changed().is_none());
+        }
+    }
+
+    #[test]
+    fn release_on_a_new_tick_preserves_activation_before_tracking() {
+        let kb = UiKeyboard::default();
+        let mut slider = make_slider(10);
+        slider.process_input(&input_at(5.0, MouseButtons::empty(), &kb));
+        slider.process_input(&input_at(5.0, MouseButtons::LEFT_DOWN, &kb));
+        let events = slider.process_input(&input_at(45.0, MouseButtons::LEFT_CLICK, &kb));
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.msg_type)
+                .collect::<Vec<_>>(),
+            vec![UiMsg::WidgetActivated, UiMsg::WidgetSliderTrack]
+        );
+        assert!(matches!(
+            events[1].data,
+            Some(UiEventData::SliderPosition(4.0))
+        ));
+        assert_eq!(slider.tracking, 4);
+        assert!(!slider.dragging);
+        assert_eq!(slider.base.state, UiState::Focused);
+        assert!(
+            slider
+                .process_input(&input_at(45.0, MouseButtons::empty(), &kb))
+                .is_empty()
+        );
     }
 
     #[test]
