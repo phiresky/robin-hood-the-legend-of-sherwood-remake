@@ -75,7 +75,7 @@ impl SelectionMarkRenderer {
     }
 
     pub fn draw(
-        &mut self,
+        &self,
         renderer: &mut Renderer,
         frame: u16,
         in_combat: bool,
