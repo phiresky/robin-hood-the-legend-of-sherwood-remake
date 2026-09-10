@@ -337,7 +337,6 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
                 encoder,
                 source,
                 target_view,
-                target_size,
                 dst_rect,
                 frame_count.unwrap_or(0),
             )?;
@@ -359,10 +358,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
                     )
                     .map_err(UpscaleError::RetroArch)?;
             } else {
-                let effect_size = [
-                    dst_rect[2].max(1.0).ceil() as u32,
-                    dst_rect[3].max(1.0).ceil() as u32,
-                ];
+                let effect_size = destination_texture_size(dst_rect);
                 let (preset_texture, preset_view) =
                     self.builtin_runner.external_intermediate(effect_size);
                 self.preset_renderer
@@ -386,7 +382,6 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
                     encoder,
                     &preset_texture,
                     target_view,
-                    target_size,
                     dst_rect,
                     frame_count.unwrap_or(0),
                 )?;
@@ -896,7 +891,6 @@ impl BuiltinRunner {
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::Texture,
         target_view: &wgpu::TextureView,
-        _target_size: [u32; 2],
         dst_rect: [f32; 4],
         presentation_frame: usize,
     ) -> Result<(), UpscaleError> {
@@ -909,10 +903,7 @@ impl BuiltinRunner {
         }
 
         let source_size = [source.width(), source.height()];
-        let output_size = [
-            dst_rect[2].max(1.0).ceil() as u32,
-            dst_rect[3].max(1.0).ceil() as u32,
-        ];
+        let output_size = destination_texture_size(dst_rect);
         self.ensure_intermediates(source_size, output_size);
         for (index, pass) in passes.iter().copied().enumerate() {
             self.ensure_pipeline(
@@ -1087,6 +1078,13 @@ impl BuiltinRunner {
     }
 }
 
+fn destination_texture_size(dst_rect: [f32; 4]) -> [u32; 2] {
+    [
+        dst_rect[2].max(1.0).ceil() as u32,
+        dst_rect[3].max(1.0).ceil() as u32,
+    ]
+}
+
 fn empty_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("empty bgl"),
@@ -1097,6 +1095,20 @@ fn empty_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destination_textures_round_up_extents_independently_of_position() {
+        for (width, height, expected) in [
+            (640.0, 480.0, [640, 480]),
+            (640.25, 480.75, [641, 481]),
+            (0.0, -1.0, [1, 1]),
+            (0.25, 1.25, [1, 2]),
+        ] {
+            for (x, y) in [(0.0, 0.0), (-50.0, 20.0), (10.5, -0.25)] {
+                assert_eq!(destination_texture_size([x, y, width, height]), expected);
+            }
+        }
+    }
 
     #[test]
     fn bundled_multipass_wgsl_parses_and_validates() {
