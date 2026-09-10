@@ -49,17 +49,17 @@ impl PlayerProfileStore {
         }
     }
 
-    pub(crate) fn directory(&self) -> std::io::Result<String> {
+    pub(crate) fn directory(&self) -> std::io::Result<&str> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Native { directory } => directory.to_str().map(str::to_owned).ok_or_else(|| {
+            Self::Native { directory } => directory.to_str().ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "player-profile directory cannot be represented as UTF-8 archive metadata",
                 )
             }),
             #[cfg(target_arch = "wasm32")]
-            Self::Browser { directory } => Ok(directory.clone()),
+            Self::Browser { directory } => Ok(directory),
             Self::Unavailable { reason } => Err(std::io::Error::other(reason.clone())),
         }
     }
@@ -72,7 +72,7 @@ impl PlayerProfileStore {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Native { directory: root } => {
                 match std::fs::read_to_string(root.join("profiles.json")) {
-                    Ok(serialized) => Some(decode_native_archive(&serialized, &directory)?),
+                    Ok(serialized) => Some(decode_native_archive(&serialized, directory)?),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error),
                 }
@@ -88,7 +88,7 @@ impl PlayerProfileStore {
         if let Some(manager) = existing {
             return Ok(manager);
         }
-        let mut manager = PlayerProfileManager::new(directory);
+        let mut manager = PlayerProfileManager::new(directory.to_owned());
         let index = manager.create_profile("Robin".into(), DifficultyLevel::Medium);
         manager.set_active(index);
         manager.default_profiles = true;
@@ -224,6 +224,23 @@ fn decode_native_archive(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn directory_lookup_borrows_the_selected_storage_path() {
+        let store = PlayerProfileStore::for_directory("selected-profile-root");
+        let PlayerProfileStore::Native { directory } = &store else {
+            panic!("expected native profile storage");
+        };
+        assert!(std::ptr::eq(
+            store.directory().unwrap(),
+            directory.to_str().unwrap()
+        ));
+        assert!(
+            PlayerProfileStore::unavailable("no authority")
+                .directory()
+                .is_err()
+        );
+    }
 
     #[cfg(unix)]
     #[test]

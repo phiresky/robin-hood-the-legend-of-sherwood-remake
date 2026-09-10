@@ -591,7 +591,8 @@ impl ApplicationContext {
         // Storage authority is selected by the caller, never decoded from archive metadata.
         player_profiles.save_directory = profile_store
             .directory()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .to_owned();
         // Recovery failures are initialization errors, not corrupt profiles:
         // never route them through the launcher's default-profile regeneration.
         profile_store
@@ -1137,8 +1138,7 @@ impl ApplicationContext {
                 "ApplicationContext has no active profile for save directory".to_string()
             })?;
             Ok(std::path::Path::new(
-                &self
-                    .required_services()?
+                self.required_services()?
                     .profile_store
                     .directory()
                     .map_err(|error| error.to_string())?,
