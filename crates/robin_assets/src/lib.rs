@@ -24,7 +24,6 @@ mod original_data {
 
 #[cfg(feature = "engine-adapters")]
 pub mod actor_names;
-pub mod adpcm_check;
 pub mod binary_reader;
 #[cfg(feature = "engine-adapters")]
 pub mod decompile;
