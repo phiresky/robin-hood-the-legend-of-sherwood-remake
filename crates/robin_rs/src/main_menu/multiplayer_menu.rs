@@ -1194,42 +1194,36 @@ fn render_menu(
     }
 
     draw_panel(renderer, transform, &LIST_RECT);
-    let rows: Vec<String> = match mode {
+    let rows_len = match mode {
+        MenuMode::Games => games.len().max(1),
+        MenuMode::Missions => missions.len(),
+        MenuMode::Hosted { .. } | MenuMode::Joined { .. } => 1,
+    };
+    let rows = visible_list_rows(rows_len, scroll_offset, |index| match mode {
         MenuMode::Games => {
             if games.is_empty() {
-                vec!["No games listed".to_string()]
+                "No games listed".to_string()
             } else {
-                games
-                    .iter()
-                    .map(|game| format_game_row(game, application_context))
-                    .collect()
+                format_game_row(&games[index], application_context)
             }
         }
-        MenuMode::Hosted { game, .. } => vec![format_game_row(game, application_context)],
-        MenuMode::Joined { game, listing } => vec![
-            listing
-                .as_ref()
-                .map(|listing| format_game_row(listing, application_context))
-                .unwrap_or_else(|| {
-                    format!(
-                        "{} | joined |  | waiting",
-                        application_context
-                            .localized_mission_name(game.mission_id, &game.mission_name)
-                    )
-                }),
-        ],
-        MenuMode::Missions => missions
-            .iter()
-            .map(|m| format!("{} | {}", m.label, m.mission_id))
-            .collect(),
-    };
-    for (visible_i, (row_idx, row)) in rows
-        .iter()
-        .enumerate()
-        .skip(scroll_offset)
-        .take(visible_row_count())
-        .enumerate()
-    {
+        MenuMode::Hosted { game, .. } => format_game_row(game, application_context),
+        MenuMode::Joined { game, listing } => listing
+            .as_ref()
+            .map(|listing| format_game_row(listing, application_context))
+            .unwrap_or_else(|| {
+                format!(
+                    "{} | joined |  | waiting",
+                    application_context.localized_mission_name(game.mission_id, &game.mission_name)
+                )
+            }),
+        MenuMode::Missions => {
+            let mission = &missions[index];
+            format!("{} | {}", mission.label, mission.mission_id)
+        }
+    });
+    let column_layout = menu_column_layout(mode);
+    for (visible_i, row_idx, row) in rows {
         let is_selected = row_idx == selected
             && match mode {
                 MenuMode::Games => !games.is_empty(),
@@ -1248,10 +1242,9 @@ fn render_menu(
             );
         }
         if let Some(font) = resources.list_font(is_selected, is_selected) {
-            let column_layout = menu_column_layout(mode);
             let row_area_x = (LIST_RECT.x + 10) as f32;
             let row_area_w = (LIST_RECT.w - 20) as f32;
-            for cell in column_layout.layout_row(row, row_area_x, row_area_w) {
+            for cell in column_layout.layout_row(&row, row_area_x, row_area_w) {
                 let fitted = truncate_to_pixel_width(font, cell.text.trim(), cell.span_w as i32);
                 if fitted.is_empty() {
                     continue;
@@ -1274,8 +1267,8 @@ fn render_menu(
         }
     }
 
-    if rows.len() > visible_row_count() {
-        draw_scrollbar(renderer, transform, rows.len(), scroll_offset);
+    if rows_len > visible_row_count() {
+        draw_scrollbar(renderer, transform, rows_len, scroll_offset);
     }
 
     if let Some(font) = resources.menu_text_font_any() {
@@ -1288,6 +1281,18 @@ fn render_menu(
             LIST_RECT.y + LIST_RECT.h + 16,
         );
     }
+}
+
+fn visible_list_rows(
+    rows_len: usize,
+    scroll_offset: usize,
+    mut format: impl FnMut(usize) -> String,
+) -> impl Iterator<Item = (usize, usize, String)> {
+    (0..rows_len)
+        .skip(scroll_offset)
+        .take(visible_row_count())
+        .enumerate()
+        .map(move |(visible_index, row_index)| (visible_index, row_index, format(row_index)))
 }
 
 fn visible_row_count() -> usize {
@@ -1573,6 +1578,37 @@ fn fill_virtual_rect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn list_rows_only_format_the_visible_window() {
+        use super::*;
+        for (rows_len, offset) in [
+            (0, 0),
+            (1, 0),
+            (100, 20),
+            (100, 99),
+            (100, 100),
+            (100, usize::MAX),
+        ] {
+            let mut formatted = Vec::new();
+            let rows: Vec<_> = visible_list_rows(rows_len, offset, |index| {
+                formatted.push(index);
+                index.to_string()
+            })
+            .collect();
+            let expected: Vec<_> = (0..rows_len)
+                .skip(offset)
+                .take(visible_row_count())
+                .collect();
+            assert_eq!(formatted, expected);
+            assert_eq!(rows.len(), expected.len());
+            for (position, (visible_index, row_index, text)) in rows.into_iter().enumerate() {
+                assert_eq!(visible_index, position);
+                assert_eq!(row_index, expected[position]);
+                assert_eq!(text, row_index.to_string());
+            }
+        }
+    }
+
     #[test]
     fn game_upserts_move_records_and_preserve_listing_order() {
         use super::*;
