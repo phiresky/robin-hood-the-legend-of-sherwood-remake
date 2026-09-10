@@ -232,6 +232,25 @@ pub(super) fn music_lossless_source(game_path: &Path) -> Option<PathBuf> {
     mapping.get(&name).cloned()
 }
 
+fn reader_matches_bytes(mut input: impl std::io::Read, expected: &[u8]) -> std::io::Result<bool> {
+    let mut buffer = [0_u8; 8192];
+    for chunk in expected.chunks(buffer.len()) {
+        match input.read_exact(&mut buffer[..chunk.len()]) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        if &buffer[..chunk.len()] != chunk {
+            return Ok(false);
+        }
+    }
+    match input.read_exact(&mut buffer[..1]) {
+        Ok(()) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
 pub(super) fn insert_standalone_audio(
     catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
     assets_dir: &Path,
@@ -261,15 +280,29 @@ pub(super) fn insert_standalone_audio(
         }
     }
     let output = assets_dir.join(&filename);
-    if output.exists() {
-        let existing = fs::read(&output)
-            .with_context(|| format!("read existing audio asset {}", output.display()))?;
-        if existing != bytes {
-            bail!("content-addressed audio collision at {}", output.display());
+    match fs::symlink_metadata(&output) {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "existing audio asset is not a regular file: {}",
+                output.display()
+            );
+            let existing = fs::File::open(&output)
+                .with_context(|| format!("open existing audio asset {}", output.display()))?;
+            if !reader_matches_bytes(existing, bytes)
+                .with_context(|| format!("read existing audio asset {}", output.display()))?
+            {
+                bail!("content-addressed audio collision at {}", output.display());
+            }
         }
-    } else {
-        publication::publish_bytes(&output, bytes)
-            .with_context(|| format!("write audio asset {}", output.display()))?;
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            publication::publish_bytes(&output, bytes)
+                .with_context(|| format!("write audio asset {}", output.display()))?;
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("stat existing audio asset {}", output.display()));
+        }
     }
     AUDIO_ASSET_GROUPS
         .lock()
@@ -589,6 +622,64 @@ pub(super) fn write_shipping_dependency(
 mod boot_trim_tests {
     use super::*;
 
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct FailedRead;
+    impl std::io::Read for FailedRead {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("injected read failure"))
+        }
+    }
+
+    #[test]
+    fn streamed_audio_comparison_propagates_read_errors() {
+        use std::io::Read as _;
+        assert!(reader_matches_bytes(FailedRead, &[]).is_err());
+        assert!(reader_matches_bytes((&b"a"[..]).chain(FailedRead), b"ab").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_audio_reuse_refuses_symlink_targets() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = tempfile::NamedTempFile::new().unwrap();
+        let bytes = b"symlink audio fixture";
+        fs::write(target.path(), bytes).unwrap();
+        let path = directory.path().join(standalone_audio_filename(bytes));
+        std::os::unix::fs::symlink(target.path(), &path).unwrap();
+        let mut catalog = std::collections::BTreeMap::new();
+        let error = insert_standalone_audio(
+            &mut catalog,
+            directory.path(),
+            "test",
+            "test.wav",
+            bytes,
+            100,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not a regular file"));
+        assert!(catalog.is_empty());
+        assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(target.path()).unwrap(), bytes);
+    }
+
+    #[test]
+    fn streamed_audio_comparison_checks_content_length_and_trailing_data() {
+        for length in [0, 1, 8191, 8192, 8193, 200_000] {
+            let bytes: Vec<_> = (0..length).map(|i| (i % 251) as u8).collect();
+            assert!(reader_matches_bytes(bytes.as_slice(), &bytes).unwrap());
+            let mut longer = bytes.clone();
+            longer.push(0);
+            assert!(!reader_matches_bytes(longer.as_slice(), &bytes).unwrap());
+            assert!(!reader_matches_bytes(bytes.as_slice(), &longer).unwrap());
+            if length != 0 {
+                let mut different = bytes.clone();
+                different[length / 2] ^= 1;
+                assert!(!reader_matches_bytes(different.as_slice(), &bytes).unwrap());
+            }
+        }
+        assert!(!reader_matches_bytes(std::io::repeat(0), &[0; 8193]).unwrap());
+    }
+
     #[test]
     fn conflicting_catalog_insert_has_no_file_or_group_side_effects() {
         let directory = tempfile::tempdir().unwrap();
@@ -826,13 +917,6 @@ mod boot_trim_tests {
     #[test]
     fn bundle_member_append_rolls_back_partial_io_failure() {
         use std::io::Read as _;
-        #[derive(serde::Serialize, serde::Deserialize)]
-        struct FailedRead;
-        impl std::io::Read for FailedRead {
-            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("injected read failure"))
-            }
-        }
         let mut bundle = b"prefix".to_vec();
         let error =
             append_bundle_member((&b"abc"[..]).chain(FailedRead), 4, &mut bundle).unwrap_err();
