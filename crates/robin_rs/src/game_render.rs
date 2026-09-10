@@ -944,70 +944,57 @@ fn render_all_view_cones(
         Ambiance::Night | Ambiance::Fog
     ));
 
-    let visible_params: Vec<_> = all_params
-        .into_iter()
-        .filter(|(viewer, params, _)| {
-            let r = params.radius;
-            let z = params.viewer_z.max(0.0);
-            let cone_bbox = engine_coordinates::MapBBox::from_coords(
-                viewer.x - r,
-                viewer.y - z - r,
-                viewer.x + r,
-                viewer.y + r,
-            );
-            view_rect.intersects_bbox(&cone_bbox)
-        })
-        .collect();
-    if visible_params.is_empty() {
-        return;
-    }
+    let visible_params = all_params.into_iter().filter(|(viewer, params, _)| {
+        let r = params.radius;
+        let z = params.viewer_z.max(0.0);
+        let cone_bbox = engine_coordinates::MapBBox::from_coords(
+            viewer.x - r,
+            viewer.y - z - r,
+            viewer.x + r,
+            viewer.y + r,
+        );
+        view_rect.intersects_bbox(&cone_bbox)
+    });
 
     let cones: Vec<crate::shadow_polygon::TintedCone> = visible_params
-        .into_iter()
         .flat_map(|(viewer, params, tint)| {
-            let Some(slices) = view_cone_polys_for_render(viewer, &params, &obstacles_view) else {
-                return Vec::new();
-            };
+            let slices = view_cone_polys_for_render(viewer, &params, &obstacles_view);
             let color = tint.unwrap_or((0, 0, 0));
             let alpha = params.alpha.min(weather_alpha);
             let view_rect_for_filter = view_rect;
-            slices
-                .into_iter()
-                .flat_map(move |slice| {
-                    let view_rect_for_filter = view_rect_for_filter;
-                    let radius = slice.radius;
-                    slice
-                        .polys
-                        .into_iter()
-                        .filter(|p| p.len() >= 3)
-                        .filter(move |p| {
-                            let mut x_min = p[0].x;
-                            let mut y_min = p[0].y;
-                            let mut x_max = p[0].x;
-                            let mut y_max = p[0].y;
-                            for &point in &p[1..] {
-                                x_min = x_min.min(point.x);
-                                y_min = y_min.min(point.y);
-                                x_max = x_max.max(point.x);
-                                y_max = y_max.max(point.y);
-                            }
-                            let bbox = engine_coordinates::MapBBox::from_coords(
-                                x_min, y_min, x_max, y_max,
-                            );
-                            view_rect_for_filter.intersects_bbox(&bbox)
-                        })
-                        .map(move |p| {
-                            (
-                                p,
-                                color,
-                                slice.viewer,
-                                radius,
-                                alpha,
-                                slice.projection_plane,
-                            )
-                        })
-                })
-                .collect::<Vec<_>>()
+            slices.into_iter().flatten().flat_map(move |slice| {
+                let view_rect_for_filter = view_rect_for_filter;
+                let radius = slice.radius;
+                slice
+                    .polys
+                    .into_iter()
+                    .filter(|p| p.len() >= 3)
+                    .filter(move |p| {
+                        let mut x_min = p[0].x;
+                        let mut y_min = p[0].y;
+                        let mut x_max = p[0].x;
+                        let mut y_max = p[0].y;
+                        for &point in &p[1..] {
+                            x_min = x_min.min(point.x);
+                            y_min = y_min.min(point.y);
+                            x_max = x_max.max(point.x);
+                            y_max = y_max.max(point.y);
+                        }
+                        let bbox =
+                            engine_coordinates::MapBBox::from_coords(x_min, y_min, x_max, y_max);
+                        view_rect_for_filter.intersects_bbox(&bbox)
+                    })
+                    .map(move |p| {
+                        (
+                            p,
+                            color,
+                            slice.viewer,
+                            radius,
+                            alpha,
+                            slice.projection_plane,
+                        )
+                    })
+            })
         })
         .collect();
 
