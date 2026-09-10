@@ -876,7 +876,7 @@ enum LocatedSample {
 
 /// Authored sound paths try the sound directory first, then Exclamations.
 /// Absolute paths never receive a speech-directory fallback.
-fn sample_base_paths(base_dir: &Path, file_name: &str) -> Vec<PathBuf> {
+fn sample_base_paths(base_dir: &Path, file_name: &str) -> (PathBuf, Option<PathBuf>) {
     let normalised = file_name.replace('\\', "/");
     let absolute = Path::new(&normalised).is_absolute();
     let path = if absolute {
@@ -884,16 +884,15 @@ fn sample_base_paths(base_dir: &Path, file_name: &str) -> Vec<PathBuf> {
     } else {
         base_dir.join(&normalised)
     };
-    if absolute {
-        vec![path]
-    } else {
-        vec![path, base_dir.join("Exclamations").join(&normalised)]
-    }
+    let speech_path = (!absolute).then(|| base_dir.join("Exclamations").join(&normalised));
+    (path, speech_path)
 }
 
 /// Try each authored path before its converted Opus sibling.
-fn with_opus_fallback(paths: Vec<PathBuf>) -> impl Iterator<Item = PathBuf> {
-    paths.into_iter().flat_map(|path| {
+fn with_opus_fallback(
+    (primary, speech): (PathBuf, Option<PathBuf>),
+) -> impl Iterator<Item = PathBuf> {
+    std::iter::once(primary).chain(speech).flat_map(|path| {
         let opus = path.with_extension("opus");
         [path, opus]
     })
@@ -911,8 +910,8 @@ fn locate_sample(
     let candidates = sample_base_paths(base_dir, file_name);
     #[cfg(target_arch = "wasm32")]
     if let Some((size, duration_ms)) = _shipping.and_then(|shipping| {
-        candidates
-            .iter()
+        std::iter::once(&candidates.0)
+            .chain(candidates.1.as_ref())
             .find_map(|path| shipping.active_audio_metadata(path))
     }) {
         // Web Audio already owns the decoded buffer. SoundCache needs only

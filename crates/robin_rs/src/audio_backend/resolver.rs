@@ -7,10 +7,7 @@ pub(super) fn resolve_sample(
     files: &robin_engine::sbfile::SbFileSystem,
 ) -> Result<PathBuf, String> {
     let candidates = super::sample_base_paths(sound_dir, file_name);
-    let path = candidates
-        .first()
-        .expect("sample lookup always includes a primary path")
-        .clone();
+    let path = candidates.0.clone();
     for candidate in super::with_opus_fallback(candidates) {
         if files
             .try_exists(&candidate.to_string_lossy())
