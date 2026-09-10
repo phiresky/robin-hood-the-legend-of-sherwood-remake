@@ -650,17 +650,18 @@ pub(super) fn load_mission_sprites(
     // frame while the player drags the left mouse button during a
     // swordfight.
     let mouse_trail_renderer = match cursor_res.get_picture(resource_ids::RHID_MOUSE_TRAIL, 0) {
-        Ok(pic) => {
-            let r = MouseTrailRenderer::from_picture(pic, renderer);
-            if r.is_none() {
-                tracing::warn!(
-                    "RHID_MOUSE_TRAIL picture was not in an RGB16 format or was empty — swordfight trail disabled"
-                );
-            } else {
+        Ok(pic) => match MouseTrailRenderer::from_picture(pic, renderer) {
+            Ok(trail) => {
                 tracing::info!("Loaded RHID_MOUSE_TRAIL: pattern height {}", pic.height);
+                Some(trail)
             }
-            r
-        }
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to prepare RHID_MOUSE_TRAIL: {error:#} — swordfight trail disabled"
+                );
+                None
+            }
+        },
         Err(e) => {
             tracing::warn!("Failed to load RHID_MOUSE_TRAIL resource: {e}");
             None

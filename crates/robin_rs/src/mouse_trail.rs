@@ -46,6 +46,7 @@
 use crate::gfx_types::BlendMode;
 use crate::mouse_way::MouseWay;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16};
+use anyhow::{Context, Result, ensure};
 use robin_assets::picture::{Picture, PixelFormat};
 use robin_engine::coordinates::ScreenPoint;
 use robin_engine::sprite as engine_sprite;
@@ -89,30 +90,11 @@ pub struct MouseTrailRenderer {
 impl MouseTrailRenderer {
     /// Build the trail renderer from a `RHID_MOUSE_TRAIL` picture.
     ///
-    /// Returns `None` if the picture isn't in an RGB16 format (the
-    /// only format the source resource ships in — the fallback is to
-    /// silently skip trail rendering rather than crash).
-    pub fn from_picture(pic: &Picture, renderer: &mut Renderer) -> Option<Self> {
-        if pic.pixel_format != PixelFormat::Rgb16 {
-            return None;
-        }
+    /// Reports malformed source data or a failed GPU upload so the caller can
+    /// explain why this optional visual is unavailable.
+    pub fn from_picture(pic: &Picture, renderer: &mut Renderer) -> Result<Self> {
+        let alpha_caps = trail_alpha_caps(pic)?;
         let pattern_height = pic.height;
-        if pattern_height == 0 || pic.width == 0 {
-            return None;
-        }
-
-        // ── Alpha caps from column 0. ──
-        let row_stride = pic.pitch as usize;
-        let mut alpha_caps = Vec::with_capacity(pattern_height as usize);
-        for row in 0..pattern_height as usize {
-            let offset = row * row_stride;
-            if offset + 1 >= pic.data.len() {
-                return None;
-            }
-            let pixel = u16::from_le_bytes([pic.data[offset], pic.data[offset + 1]]);
-            let blue = pixel & 0x1F;
-            alpha_caps.push(0x1F - blue);
-        }
 
         // ── Pre-multiplied pattern per alpha level 1..=32. ──
         //
@@ -143,17 +125,13 @@ impl MouseTrailRenderer {
                 let blue = ((trail_b_src * used_alpha) >> 5) & 0x001F;
                 red | green | blue
             }));
-            let image = renderer.create_rgb565_gpu_image(
-                1,
-                pattern_height,
-                &column,
-                true,
-                "mouse trail column",
-            )?;
+            let image = renderer
+                .create_rgb565_gpu_image(1, pattern_height, &column, true, "mouse trail column")
+                .with_context(|| format!("failed to upload mouse trail alpha level {j}"))?;
             images.push(image);
         }
 
-        Some(Self {
+        Ok(Self {
             pattern_height,
             images,
         })
@@ -350,11 +328,75 @@ impl MouseTrailRenderer {
     }
 }
 
+/// Decode the first RGB565 column, respecting source row padding.
+fn trail_alpha_caps(pic: &Picture) -> Result<Vec<u16>> {
+    ensure!(
+        pic.pixel_format == PixelFormat::Rgb16,
+        "mouse trail requires RGB16 pixels, got {:?}",
+        pic.pixel_format
+    );
+    ensure!(
+        pic.width != 0 && pic.height != 0,
+        "mouse trail picture is empty ({}x{})",
+        pic.width,
+        pic.height
+    );
+    let mut caps = Vec::with_capacity(usize::from(pic.height));
+    for row in 0..usize::from(pic.height) {
+        let offset = row * usize::from(pic.pitch);
+        let bytes = pic
+            .data
+            .get(offset..offset + 2)
+            .with_context(|| format!("mouse trail column is truncated at row {row}"))?;
+        caps.push(0x1F - (u16::from_le_bytes([bytes[0], bytes[1]]) & 0x1F));
+    }
+    Ok(caps)
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alpha_caps_decode_blue_channel_and_skip_row_padding() {
+        let mut pic = Picture {
+            width: 1,
+            height: 32,
+            pitch: 4,
+            pixel_format: PixelFormat::Rgb16,
+            data: Vec::new(),
+            palette: None,
+        };
+        for blue in 0u16..32 {
+            pic.data.extend_from_slice(&(0xFFE0 | blue).to_le_bytes());
+            pic.data.extend_from_slice(&[0xFF, 0xFF]);
+        }
+        assert_eq!(
+            trail_alpha_caps(&pic).unwrap(),
+            (0..32).rev().collect::<Vec<u16>>()
+        );
+        pic.data.truncate(125);
+        assert_eq!(
+            trail_alpha_caps(&pic).unwrap_err().to_string(),
+            "mouse trail column is truncated at row 31"
+        );
+        pic.height = 0;
+        assert!(
+            trail_alpha_caps(&pic)
+                .unwrap_err()
+                .to_string()
+                .contains("empty")
+        );
+        pic.pixel_format = PixelFormat::Rgb24;
+        assert!(
+            trail_alpha_caps(&pic)
+                .unwrap_err()
+                .to_string()
+                .contains("RGB16")
+        );
+    }
 
     #[test]
     fn alpha_index_zero_returns_none() {
