@@ -697,8 +697,9 @@ impl SaveGameManager {
         if let Some(index) = self.find_by_filename(save_file::special_slots::QUICK)
             && self.slot_file_exists(index)
         {
-            let previous_bytes =
-                std::fs::read(self.save_path(index)).context("preparing previous quick save")?;
+            let previous_digest = recovery::payload_digest(&self.save_path(index))
+                .context("preparing previous quick save")?
+                .context("previous quick save disappeared during preparation")?;
             let mut previous = self.catalog[index].clone();
             previous.filename = save_file::special_slots::EX_QUICK.to_owned();
             previous.special = Some(SpecialSlot::ExQuickSave);
@@ -707,9 +708,7 @@ impl SaveGameManager {
                 .map(|index| self.catalog[index].text.clone())
                 .unwrap_or_else(|| "Previous Quick Save".to_owned());
             previous.validate_published_metadata()?;
-            recovery
-                .slots
-                .push((previous, Sha256::digest(&previous_bytes).into()));
+            recovery.slots.push((previous, previous_digest));
         }
         save_file::atomic_write(&self.quick_recovery_path(), &serde_json::to_vec(&recovery)?)?;
         // Rotate: QuickSave → ExQuickSave

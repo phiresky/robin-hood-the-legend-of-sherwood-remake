@@ -8,7 +8,7 @@ use std::path::Path;
 
 /// Missing payloads are expected after an interrupted publication; other read
 /// failures must remain visible. Hash in bounded storage, not a save-sized Vec.
-fn payload_digest(path: &Path) -> std::io::Result<Option<[u8; 32]>> {
+pub(super) fn payload_digest(path: &Path) -> std::io::Result<Option<[u8; 32]>> {
     use std::io::Read;
     let mut input = match std::fs::File::open(path) {
         Ok(input) => input,
