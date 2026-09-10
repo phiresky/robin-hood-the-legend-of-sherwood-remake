@@ -479,25 +479,18 @@ impl<T: Clone> WidgetListbox<T> {
         {
             // Click above knob → scroll up, below → scroll down.
             if let Some(knob_rect) = self.knob_bbox.0 {
-                let scrolled = if mouse.y < knob_rect.min().y {
-                    // Page up.
-                    for _ in 0..self.visible_count {
-                        if !self.scroll_up() {
-                            break;
-                        }
-                    }
-                    true
+                let old_first = self.first_visible;
+                let msg = if mouse.y < knob_rect.min().y {
+                    self.first_visible = old_first.saturating_sub(self.visible_count);
+                    UiMsg::WidgetScrollUp
                 } else {
-                    // Page down.
-                    for _ in 0..self.visible_count {
-                        if !self.scroll_down() {
-                            break;
-                        }
-                    }
-                    true
+                    let max_first = self.items.len().saturating_sub(self.visible_count);
+                    let remaining = max_first.saturating_sub(old_first);
+                    self.first_visible += self.visible_count.min(remaining);
+                    UiMsg::WidgetScrollDown
                 };
-                if scrolled {
-                    events.push(self.base.make_event(UiMsg::WidgetScrollDown));
+                if self.first_visible != old_first {
+                    events.push(self.base.make_event(msg));
                 }
             }
             return events;
@@ -631,6 +624,56 @@ mod tests {
                     assert_eq!(list.state, state);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn track_click_pages_once_and_reports_actual_direction() {
+        for (first, visible, mouse_y, expected_first, expected_msg) in [
+            (0, 3, 10.0, 0, None),
+            (1, 3, 10.0, 0, Some(UiMsg::WidgetScrollUp)),
+            (6, 3, 10.0, 3, Some(UiMsg::WidgetScrollUp)),
+            (0, 3, 90.0, 3, Some(UiMsg::WidgetScrollDown)),
+            (6, 3, 90.0, 7, Some(UiMsg::WidgetScrollDown)),
+            (7, 3, 90.0, 7, None),
+            (0, 0, 90.0, 0, None),
+            (0, 20, 90.0, 0, None),
+            (0, usize::MAX, 90.0, 0, None),
+            (6, 3, 50.0, 6, None),  // Clicking the knob does not page.
+            (6, 3, 110.0, 6, None), // Clicking outside the track does not page.
+        ] {
+            let mut list = WidgetListbox {
+                items: (0..10)
+                    .map(|i| ListboxItem {
+                        text: i.to_string(),
+                        data: (),
+                        flags: 0,
+                    })
+                    .collect(),
+                first_visible: first,
+                visible_count: visible,
+                state: ListboxState::ScrollFocused,
+                scrollbar_bbox: ScreenBBox::from_coords(0.0, 0.0, 10.0, 100.0),
+                knob_bbox: ScreenBBox::from_coords(0.0, 40.0, 10.0, 60.0),
+                ..Default::default()
+            };
+            let events = list.process_scroll_focused(
+                ScreenPoint::new(5.0, mouse_y),
+                MouseButtons::LEFT_CLICK,
+                0,
+            );
+            assert_eq!(
+                list.first_visible, expected_first,
+                "{first}, {visible}, {mouse_y}"
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .map(|event| event.msg_type)
+                    .collect::<Vec<_>>(),
+                expected_msg.into_iter().collect::<Vec<_>>(),
+                "{first}, {visible}, {mouse_y}"
+            );
         }
     }
 
