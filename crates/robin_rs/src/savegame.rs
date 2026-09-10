@@ -222,6 +222,17 @@ impl SaveGame {
             || is_generated_autosave_filename(&self.filename)
     }
 
+    /// Clone this snapshot for another slot, preserving that slot's identity
+    /// and label. Lifecycle state remains the catalog owner's responsibility.
+    fn cloned_for_slot(&self, destination: &Self) -> Self {
+        Self {
+            filename: destination.filename.clone(),
+            text: destination.text.clone(),
+            special: destination.special,
+            ..self.clone()
+        }
+    }
+
     /// Refresh snapshot fields without changing slot identity or its label.
     pub(crate) fn update_snapshot_metadata(
         &mut self,
@@ -1396,14 +1407,7 @@ impl SaveGameManager {
             .catalog
             .get(dst)
             .with_context(|| format!("cannot copy metadata to missing save slot {dst}"))?;
-        // Copy the source snapshot while retaining the destination's slot
-        // identity and user-facing label, not its obsolete snapshot metadata.
-        let metadata = SaveGame {
-            filename: dst.filename.clone(),
-            text: dst.text.clone(),
-            special: dst.special,
-            ..src.clone()
-        };
+        let metadata = src.cloned_for_slot(dst);
         self.catalog.replace(destination, metadata, state)
     }
 
@@ -1565,11 +1569,7 @@ impl SaveGameManager {
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
-        let mut metadata = self.catalog[source].clone();
-        let target = &self.catalog[index];
-        metadata.filename = target.filename.clone();
-        metadata.special = target.special;
-        metadata.text = target.text.clone();
+        let metadata = self.catalog[source].cloned_for_slot(&self.catalog[index]);
         let bytes = payload.encode(&metadata.text)?;
         self.commit_synchronous(index, metadata, &bytes, thumbnail)
             .map(|_| ())
@@ -3337,6 +3337,25 @@ mod tests {
                 .contains("cannot copy metadata to missing save slot")
         );
         assert!(mgr.saves().eq(before.iter()));
+    }
+
+    #[test]
+    fn snapshot_copy_preserves_only_destination_identity() {
+        let mut source = published_slot("QuickSave");
+        source.multiplayer_diagnostic = true;
+        source.player_name = "Source player".into();
+        for name in ["Continue", "ExQuickSave", "Manual"] {
+            let destination = SaveGame::new(name.into(), "Keep my label".into(), 99);
+            let copied = source.cloned_for_slot(&destination);
+            let mut expected = serde_json::to_value(&source).unwrap();
+            let destination_json = serde_json::to_value(&destination).unwrap();
+            for field in ["filename", "text", "special"] {
+                expected[field] = destination_json[field].clone();
+            }
+            assert_eq!(serde_json::to_value(copied).unwrap(), expected);
+            assert_eq!(source.filename, "QuickSave");
+            assert_eq!(destination.mission_id, 99);
+        }
     }
 
     #[test]
