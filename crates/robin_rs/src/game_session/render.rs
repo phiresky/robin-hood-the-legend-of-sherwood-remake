@@ -699,13 +699,23 @@ fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result
     }
     let file = std::fs::File::create(path)
         .map_err(|err| format!("failed to create {}: {err:#}", path.display()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    let mut enc = png::Encoder::new(&mut writer, w, h);
-    enc.set_color(png::ColorType::Rgba);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.write_header()
-        .and_then(|mut png_writer| png_writer.write_image_data(rgba))
+    encode_rgba_png(std::io::BufWriter::new(file), w, h, rgba)
         .map_err(|err| format!("failed to encode {}: {err:#}", path.display()))
+}
+
+fn encode_rgba_png(
+    writer: impl std::io::Write,
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+) -> Result<(), png::EncodingError> {
+    let mut encoder = png::Encoder::new(writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut png_writer = encoder.write_header()?;
+    png_writer.write_image_data(rgba)?;
+    // Drop cannot report errors writing IEND or flushing the buffered file.
+    png_writer.finish()
 }
 
 pub(super) fn drain_wide_print_screen(
@@ -2154,6 +2164,73 @@ mod tests {
         )
         .unwrap();
         Host::new(context.try_into().unwrap(), 800.0, 600.0).unwrap()
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct FailingPngSink {
+        remaining: usize,
+        fail_flush: bool,
+    }
+
+    impl std::io::Write for FailingPngSink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(std::io::Error::other("injected PNG write failure"));
+            }
+            let written = self.remaining.min(bytes.len());
+            self.remaining -= written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_flush {
+                Err(std::io::Error::other("injected PNG flush failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn png_encoding_finishes_and_roundtrips_rgba() {
+        let pixels = [10, 20, 30, 40, 50, 60, 70, 80];
+        let mut encoded = Vec::new();
+        encode_rgba_png(&mut encoded, 2, 1, &pixels).unwrap();
+        assert_eq!(
+            &encoded[encoded.len() - 12..],
+            b"\x00\x00\x00\x00IEND\xae\x42\x60\x82"
+        );
+        let mut reader = png::Decoder::new(std::io::Cursor::new(encoded))
+            .read_info()
+            .unwrap();
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!((info.width, info.height), (2, 1));
+        assert_eq!(&decoded[..info.buffer_size()], &pixels);
+    }
+
+    #[test]
+    fn png_encoding_reports_final_chunk_and_buffered_write_failures() {
+        let pixels = [10, 20, 30, 255];
+        let mut encoded = Vec::new();
+        encode_rgba_png(&mut encoded, 1, 1, &pixels).unwrap();
+        // Let every chunk except IEND reach the sink.
+        let sink = FailingPngSink {
+            remaining: encoded.len() - 12,
+            fail_flush: false,
+        };
+        assert!(encode_rgba_png(sink, 1, 1, &pixels).is_err());
+        // All encoding fits in the buffer; only finish exposes the write error.
+        let buffered = std::io::BufWriter::new(FailingPngSink {
+            remaining: 0,
+            fail_flush: false,
+        });
+        assert!(encode_rgba_png(buffered, 1, 1, &pixels).is_err());
+        let sink = FailingPngSink {
+            remaining: usize::MAX,
+            fail_flush: true,
+        };
+        assert!(encode_rgba_png(sink, 1, 1, &pixels).is_err());
     }
 
     #[test]
