@@ -614,7 +614,7 @@ fn keep_visible(index: usize, scroll: usize, total: usize) -> usize {
     let max_scroll = total.saturating_sub(PRESET_LIST_ROWS);
     if index < scroll {
         index
-    } else if index >= scroll + PRESET_LIST_ROWS {
+    } else if index - scroll >= PRESET_LIST_ROWS {
         index.saturating_sub(PRESET_LIST_ROWS - 1).min(max_scroll)
     } else {
         scroll.min(max_scroll)
@@ -985,6 +985,33 @@ mod tests {
         assert_eq!(TextureEffect::ALL[0], TextureEffect::None);
         assert_ne!(TextureEffect::ALL[1], TextureEffect::ALL[2]);
     }
+}
+
+#[test]
+fn preset_scroll_preserves_visibility_without_offset_overflow() {
+    for total in 1usize..32 {
+        let max_scroll = total.saturating_sub(PRESET_LIST_ROWS);
+        for index in 0..total {
+            for scroll in 0..=max_scroll {
+                let expected = if index < scroll {
+                    index
+                } else if index >= scroll + PRESET_LIST_ROWS {
+                    index.saturating_sub(PRESET_LIST_ROWS - 1).min(max_scroll)
+                } else {
+                    scroll.min(max_scroll)
+                };
+                let actual = keep_visible(index, scroll, total);
+                assert_eq!(actual, expected);
+                assert!(actual <= index && index - actual < PRESET_LIST_ROWS);
+                assert!(actual <= max_scroll);
+            }
+        }
+    }
+    assert_eq!(keep_visible(0, 0, 0), 0);
+    assert_eq!(
+        keep_visible(usize::MAX - 1, usize::MAX - 2, usize::MAX),
+        usize::MAX - PRESET_LIST_ROWS
+    );
 }
 
 #[test]
