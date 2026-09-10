@@ -487,11 +487,21 @@ fn mission_detail_lines(
 
     let mut wrapped = Vec::new();
     for line in lines {
-        wrapped.extend(wrap_text_for_box_font(font, &line, width, usize::MAX).lines);
+        wrapped.extend(
+            wrap_text_for_box_font(font, &line, width, usize::MAX)
+                .lines
+                .into_iter()
+                .map(|line| line.text),
+        );
     }
     if !entry.description.trim().is_empty() {
         wrapped.push(String::new());
-        wrapped.extend(wrap_text_for_box_font(font, &entry.description, width, usize::MAX).lines);
+        wrapped.extend(
+            wrap_text_for_box_font(font, &entry.description, width, usize::MAX)
+                .lines
+                .into_iter()
+                .map(|line| line.text),
+        );
     }
     wrapped
 }

@@ -73,7 +73,7 @@ fn bounded_display_lines(font: &Font, text: &str, max_width: i32, max_lines: usi
         .enumerate()
         .map(|(index, line)| {
             elide_to_width_by(
-                &line,
+                &line.text,
                 max_width,
                 Some(index) == last_index && !wrapped.remaining.is_empty(),
                 |candidate| font.text_width(candidate),
@@ -131,10 +131,10 @@ fn render_complete_bounded_text(
     );
     for line in wrapped.lines {
         assert!(
-            font.text_width(&line) <= CONTENT_TEXT_WIDTH,
+            font.text_width(&line.text) <= CONTENT_TEXT_WIDTH,
             "authenticated identity contains a grapheme wider than its display budget"
         );
-        render_text_virt(renderer, font, transform, &line, CONTENT_TEXT_X, *y);
+        render_text_virt(renderer, font, transform, &line.text, CONTENT_TEXT_X, *y);
         *y += font.height() as i32 + 2;
     }
 }

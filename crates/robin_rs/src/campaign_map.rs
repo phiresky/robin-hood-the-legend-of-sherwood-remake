@@ -1665,7 +1665,7 @@ fn render_campaign_progress(
                     renderer,
                     font,
                     transform,
-                    text,
+                    &text.text,
                     x + 16,
                     y + 78 + line as i32 * 23,
                     card_width - 32,
@@ -1805,13 +1805,13 @@ fn render_campaign_progress(
         let wrap = layout::wrap_text_for_box_font(font, &entry.name, w - 20, 2);
         for (line, mut text) in wrap.lines.into_iter().enumerate() {
             if line == 1 && !wrap.remaining.is_empty() {
-                text.push_str("...");
+                text.text.push_str("...");
             }
             progress_text(
                 renderer,
                 font,
                 transform,
-                &text,
+                &text.text,
                 x + 10,
                 y + 10 + line as i32 * 23,
                 w - 20,
@@ -2108,7 +2108,11 @@ fn detail_lines(
             if text.is_empty() {
                 vec![String::new()]
             } else {
-                layout::wrap_text_for_box_font(font, text, width, usize::MAX).lines
+                layout::wrap_text_for_box_font(font, text, width, usize::MAX)
+                    .lines
+                    .into_iter()
+                    .map(|line| line.text)
+                    .collect()
             }
         })
         .collect()
@@ -2690,7 +2694,7 @@ fn render_tooltip(
             );
             let text = layout::wrap_text_for_box_font(font, &badge.label, 192, 1);
             if let Some(label) = text.lines.first() {
-                layout::render_text_virt_font(renderer, font, transform, label, x + 14, y);
+                layout::render_text_virt_font(renderer, font, transform, &label.text, x + 14, y);
             }
         }
     }

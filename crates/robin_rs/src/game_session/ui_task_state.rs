@@ -1223,8 +1223,8 @@ impl OptionsTaskState {
             if !wrapped.remaining.is_empty()
                 && let Some(last) = lines.last_mut()
             {
-                let marked = format!("{last}…");
-                *last =
+                let marked = format!("{}…", last.text);
+                last.text =
                     crate::ingame_menu::gameplay::elide_to_width_by(&marked, 592, |candidate| {
                         font.text_width(candidate)
                     });
@@ -1233,7 +1233,7 @@ impl OptionsTaskState {
                 .iter()
                 .zip((0..).map(|row| 62 + row * (font.height() as i32 + 2)))
             {
-                render_text_virt_font(renderer, font, self.transform, line, 24, y);
+                render_text_virt_font(renderer, font, self.transform, &line.text, 24, y);
             }
         }
         for (index, widget) in self.frame.widgets().iter().enumerate() {

@@ -213,7 +213,7 @@ fn draw_diagnostic(
             renderer,
             font,
             transform,
-            line,
+            &line.text,
             55,
             90 + index as i32 * line_height,
         );

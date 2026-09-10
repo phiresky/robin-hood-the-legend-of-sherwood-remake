@@ -547,12 +547,18 @@ pub struct WrapResult {
     /// The unrendered remainder (empty when everything fit).
     pub remaining: String,
     /// The lines actually produced by the wrap pass.
-    pub lines: Vec<String>,
-    /// For each line, `true` if it is the final line of its paragraph
+    pub lines: Vec<WrappedLine>,
+}
+
+/// A rendered line and its paragraph boundary, kept together through wrapping.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WrappedLine {
+    pub text: String,
+    /// `true` if this is the final line of its paragraph
     /// (i.e. the next boundary is a hard `\n` or end-of-text, not a
     /// greedy wrap break).  Justified alignment must leave these lines
     /// un-justified.
-    pub paragraph_end: Vec<bool>,
+    pub paragraph_end: bool,
 }
 
 /// Wrap text greedily, clipping to the supplied box height.
@@ -570,14 +576,12 @@ fn wrap_text_by(
     max_lines: usize,
     measure: impl Fn(&str) -> i32,
 ) -> WrapResult {
-    let mut lines: Vec<String> = Vec::new();
-    let mut paragraph_end: Vec<bool> = Vec::new();
+    let mut lines = Vec::new();
     let mut consumed_chars = 0usize; // byte count of text consumed so far
     if max_lines == 0 || box_w <= 0 {
         return WrapResult {
             remaining: text.to_string(),
             lines,
-            paragraph_end,
         };
     }
 
@@ -589,8 +593,10 @@ fn wrap_text_by(
         let words: Vec<&str> = paragraph.split_whitespace().collect();
         if words.is_empty() {
             if lines.len() < max_lines {
-                lines.push(String::new());
-                paragraph_end.push(true);
+                lines.push(WrappedLine {
+                    text: String::new(),
+                    paragraph_end: true,
+                });
                 cursor += paragraph.len();
                 consumed_chars = cursor;
                 continue;
@@ -635,8 +641,10 @@ fn wrap_text_by(
             }
 
             let is_para_end = j == words.len();
-            lines.push(line);
-            paragraph_end.push(is_para_end);
+            lines.push(WrappedLine {
+                text: line,
+                paragraph_end: is_para_end,
+            });
             // Byte offset within the paragraph of the end of the last word
             // we just packed — needed so that when we bail early due to
             // `max_lines`, `consumed_chars` reflects actual progress, not
@@ -670,11 +678,7 @@ fn wrap_text_by(
         text[consumed_chars..].trim_start().to_string()
     };
 
-    WrapResult {
-        remaining,
-        lines,
-        paragraph_end,
-    }
+    WrapResult { remaining, lines }
 }
 
 /// Returns `true` if any whitespace-separated word in `text` is wider
@@ -1060,9 +1064,10 @@ pub fn render_text_in_box_aligned(
     };
 
     let mut y = first_line_y;
-    for (idx, line) in wrap.lines.iter().enumerate() {
+    for wrapped_line in &wrap.lines {
+        let line = &wrapped_line.text;
         let tw = font.text_width(line);
-        let is_para_end = wrap.paragraph_end.get(idx).copied().unwrap_or(true);
+        let is_para_end = wrapped_line.paragraph_end;
         match align {
             TextAlign::Left => {
                 render_text_virt(renderer, font, transform, line, inner_x, y);
@@ -1151,9 +1156,10 @@ pub fn render_text_in_box_aligned_font(
     };
 
     let mut y = first_line_y;
-    for (idx, line) in wrap.lines.iter().enumerate() {
+    for wrapped_line in &wrap.lines {
+        let line = &wrapped_line.text;
         let tw = font.text_width(line);
-        let is_para_end = wrap.paragraph_end.get(idx).copied().unwrap_or(true);
+        let is_para_end = wrapped_line.paragraph_end;
         match align {
             TextAlign::Left => render_text_virt_font(renderer, font, transform, line, inner_x, y),
             TextAlign::Center => render_text_virt_font(
@@ -1230,37 +1236,30 @@ fn wrap_text_units<'a>(
     measure: impl Fn(&str) -> i32,
 ) -> WrapResult {
     let mut lines = Vec::new();
-    let mut paragraph_end = Vec::new();
     if max_lines == 0 || box_w <= 0 {
         return WrapResult {
             remaining: text.to_string(),
             lines,
-            paragraph_end,
         };
     }
 
     let mut current = String::new();
     let mut current_w = 0i32;
     let mut consumed_bytes = 0usize;
-    let push_line = |lines: &mut Vec<String>,
-                     paragraph_end: &mut Vec<bool>,
+    let push_line = |lines: &mut Vec<WrappedLine>,
                      line: &mut String,
                      width: &mut i32,
                      is_paragraph_end: bool| {
-        lines.push(std::mem::take(line));
-        paragraph_end.push(is_paragraph_end);
+        lines.push(WrappedLine {
+            text: std::mem::take(line),
+            paragraph_end: is_paragraph_end,
+        });
         *width = 0;
     };
 
     for (idx, unit) in units {
         if unit == "\n" {
-            push_line(
-                &mut lines,
-                &mut paragraph_end,
-                &mut current,
-                &mut current_w,
-                true,
-            );
+            push_line(&mut lines, &mut current, &mut current_w, true);
             consumed_bytes = idx + unit.len();
             if lines.len() >= max_lines {
                 break;
@@ -1270,13 +1269,7 @@ fn wrap_text_units<'a>(
 
         let unit_width = measure(unit);
         if current_w + unit_width > box_w && !current.is_empty() {
-            push_line(
-                &mut lines,
-                &mut paragraph_end,
-                &mut current,
-                &mut current_w,
-                false,
-            );
+            push_line(&mut lines, &mut current, &mut current_w, false);
             consumed_bytes = idx;
             if lines.len() >= max_lines {
                 break;
@@ -1287,8 +1280,10 @@ fn wrap_text_units<'a>(
     }
 
     if !current.is_empty() && lines.len() < max_lines {
-        lines.push(std::mem::take(&mut current));
-        paragraph_end.push(true);
+        lines.push(WrappedLine {
+            text: current,
+            paragraph_end: true,
+        });
         consumed_bytes = text.len();
     }
 
@@ -1297,11 +1292,7 @@ fn wrap_text_units<'a>(
     } else {
         text[consumed_bytes..].to_string()
     };
-    WrapResult {
-        remaining,
-        lines,
-        paragraph_end,
-    }
+    WrapResult { remaining, lines }
 }
 
 /// Render a single wrapped line with full justification: expand
@@ -1535,7 +1526,7 @@ pub fn draw_tooltip(
             wrap.lines.len() as i32,
             wrap.lines
                 .iter()
-                .map(|line| font.text_width(line))
+                .map(|line| font.text_width(&line.text))
                 .max()
                 .unwrap_or(0),
         ),
@@ -1584,7 +1575,7 @@ pub fn draw_tooltip(
     );
     let lines = wrapped
         .iter()
-        .flat_map(|wrap| wrap.lines.iter().map(String::as_str))
+        .flat_map(|wrap| wrap.lines.iter().map(|line| line.text.as_str()))
         .chain(wrapped.is_none().then_some(text));
     for (idx, line) in lines.enumerate() {
         let line_x = box_x + PAD_X;
@@ -1596,6 +1587,34 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    fn line_records(wrapped: &super::WrapResult) -> Vec<(&str, bool)> {
+        wrapped
+            .lines
+            .iter()
+            .map(|line| (line.text.as_str(), line.paragraph_end))
+            .collect()
+    }
+
+    #[test]
+    fn wrapped_line_boundaries_follow_owned_lines() {
+        let mut wrapped = super::wrap_text_by("one two six", 7, 10, |text| text.len() as i32);
+        wrapped.lines.swap(0, 1);
+        let expected = [
+            super::WrappedLine {
+                text: "two six".to_owned(),
+                paragraph_end: true,
+            },
+            super::WrappedLine {
+                text: "one".to_owned(),
+                paragraph_end: false,
+            },
+        ];
+        assert_eq!(wrapped.lines, expected);
+        let encoded = serde_json::to_string(&wrapped.lines).unwrap();
+        let decoded: Vec<super::WrappedLine> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, expected);
+    }
 
     #[test]
     fn justification_preserves_gap_distribution_and_unjustified_lines() {
@@ -1670,19 +1689,18 @@ mod tests {
             let graphemes =
                 super::wrap_text_units(text, 1, limit, text.grapheme_indices(true), measure);
             if limit == 1 {
-                assert_eq!(native.lines, ["e"]);
+                assert_eq!(line_records(&native), [("e", false)]);
                 assert_eq!(native.remaining, "\u{301}x");
-                assert_eq!(graphemes.lines, ["e\u{301}"]);
+                assert_eq!(line_records(&graphemes), [("e\u{301}", false)]);
                 assert_eq!(graphemes.remaining, "x");
-                assert_eq!(native.paragraph_end, [false]);
-                assert_eq!(graphemes.paragraph_end, [false]);
             } else {
-                assert_eq!(native.lines, ["e", "\u{301}", "x"]);
-                assert_eq!(graphemes.lines, ["e\u{301}", "x"]);
+                assert_eq!(
+                    line_records(&native),
+                    [("e", false), ("\u{301}", false), ("x", true)]
+                );
+                assert_eq!(line_records(&graphemes), [("e\u{301}", false), ("x", true)]);
                 assert!(native.remaining.is_empty());
                 assert!(graphemes.remaining.is_empty());
-                assert_eq!(native.paragraph_end, [false, false, true]);
-                assert_eq!(graphemes.paragraph_end, [false, true]);
             }
         }
         for (text, width, limit, lines, ends, remaining) in [
@@ -1694,8 +1712,11 @@ mod tests {
         ] {
             let result =
                 super::wrap_text_units(text, width, limit, text.grapheme_indices(true), measure);
-            assert_eq!(result.lines, lines);
-            assert_eq!(result.paragraph_end, ends);
+            assert_eq!(
+                line_records(&result),
+                lines.into_iter().zip(ends).collect::<Vec<_>>(),
+                "{text:?}"
+            );
             assert_eq!(result.remaining, remaining);
         }
     }
@@ -1746,8 +1767,11 @@ mod tests {
         ] {
             let result =
                 super::wrap_text_by(text, width, limit, |text| text.chars().count() as i32);
-            assert_eq!(result.lines, lines, "{text:?}");
-            assert_eq!(result.paragraph_end, ends, "{text:?}");
+            assert_eq!(
+                line_records(&result),
+                lines.into_iter().zip(ends).collect::<Vec<_>>(),
+                "{text:?}"
+            );
             assert_eq!(result.remaining, remaining, "{text:?}");
         }
     }

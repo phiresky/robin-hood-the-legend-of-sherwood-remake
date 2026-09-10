@@ -807,7 +807,7 @@ impl DebriefingPageState {
                     renderer,
                     font,
                     self.transform,
-                    line,
+                    &line.text,
                     self.virt_x + BODY_X,
                     self.virt_y + BODY_Y + row as i32 * font.height() as i32,
                 );

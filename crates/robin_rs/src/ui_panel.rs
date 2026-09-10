@@ -3339,9 +3339,9 @@ pub fn draw_screen_tooltip(
         for (i, line) in wrap.lines.iter().enumerate() {
             let ly = y_top + (i as i32) * th;
             if let Some(sh_font) = shadow {
-                layout::render_text_screen_font(renderer, sh_font, line, box_x + 1, ly + 1);
+                layout::render_text_screen_font(renderer, sh_font, &line.text, box_x + 1, ly + 1);
             }
-            layout::render_text_screen_font(renderer, font, line, box_x, ly);
+            layout::render_text_screen_font(renderer, font, &line.text, box_x, ly);
         }
         return;
     }
