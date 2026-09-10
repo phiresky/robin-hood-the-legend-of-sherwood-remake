@@ -62,17 +62,20 @@ def main() -> int:
                         f"{level_path}: unknown added or retail profile {soldier['profile']!r}"
                     )
 
-        if args.profiles_only:
-            profile_count += len(filenames)
-            continue
-
-        for filename in filenames:
+        for addition in additions:
+            filename = addition["filename"]
             rhs = root / "Data/Characters" / f"{filename}.rhs.d"
             manifest_path = rhs / "manifest.json"
             manifest = json.loads(manifest_path.read_text())
             if manifest["pixel_format"] != "legacy_color_keys":
                 raise RuntimeError(f"{manifest_path}: expected legacy_color_keys")
+            if addition["profile_name"] not in {profile["name"] for profile in manifest["profiles"]}:
+                raise RuntimeError(
+                    f"{manifest_path}: missing animation profile {addition['profile_name']!r}"
+                )
             profile_count += 1
+            if args.profiles_only:
+                continue
             for profile in manifest["profiles"]:
                 for row in profile["rows"]:
                     for frame in row["frames"]:

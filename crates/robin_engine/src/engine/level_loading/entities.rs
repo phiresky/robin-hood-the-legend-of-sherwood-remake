@@ -762,18 +762,14 @@ impl EngineInner {
             } else {
                 crate::sprite_script::FrameKind::CharacterBlipped
             };
-            let profile_number = if let Some(identifier) = raw.profile_id.as_deref() {
-                profiles
-                    .soldier_idx_by_identifier(identifier)
-                    .map_err(|reason| EngineError::ProfileSpriteLoadFailed {
-                        kind: "soldier",
-                        profile_id: raw.profile_number,
-                        reason,
-                    })?
-                    .0
-            } else {
-                raw.profile_number
-            };
+            let profile_number = raw
+                .profile_index(&profiles)
+                .map_err(|reason| EngineError::ProfileSpriteLoadFailed {
+                    kind: "soldier",
+                    profile_id: raw.profile_number,
+                    reason,
+                })?
+                .0;
             let soldier_profile = profiles.get_soldier(profile_number).ok_or_else(|| {
                 EngineError::ProfileSpriteLoadFailed {
                     kind: "soldier",

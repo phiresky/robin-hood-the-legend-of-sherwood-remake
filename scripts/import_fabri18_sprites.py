@@ -26,6 +26,7 @@ class Unit:
     label: str
     rhs: str
     template: str
+    profile_name: str
 
 
 @dataclass(frozen=True)
@@ -37,15 +38,15 @@ class Archive:
 
 
 UNITS = {
-    "Archer": Unit("Archer", "Archer03", "Archer03"),
-    "Cavalryman": Unit("Cavalryman", "Knight03", "Knight03"),
-    "Crossbowman": Unit("Crossbowman", "Crossbowman03", "Crossbowman03"),
-    "Halberdier": Unit("Halberdier", "Guard A03", "Guard A03"),
-    "Knight": Unit("Knight", "Soldier B03", "Soldier B03"),
-    "Lancer": Unit("Lancer", "Guard B03", "Guard B03"),
-    "Officer": Unit("Officer", "Officier B03", "Officier B03"),
-    "OfficerCape": Unit("Officer Cape", "Officer03", "Officer03"),
-    "Swordsman": Unit("Swordsman", "Soldier A03", "Soldier A03"),
+    "Archer": Unit("Archer", "Archer03", "Archer03", "Archer"),
+    "Cavalryman": Unit("Cavalryman", "Knight03", "Knight03", "Knight"),
+    "Crossbowman": Unit("Crossbowman", "Crossbowman03", "Crossbowman03", "Arbaletrier"),
+    "Halberdier": Unit("Halberdier", "Guard A03", "Guard A03", "Garde A"),
+    "Knight": Unit("Knight", "Soldier B03", "Soldier B03", "Soldat B"),
+    "Lancer": Unit("Lancer", "Guard B03", "Guard B03", "Garde B"),
+    "Officer": Unit("Officer", "Officier B03", "Officier B03", "OfficierB"),
+    "OfficerCape": Unit("Officer Cape", "Officer03", "Officer03", "Officier"),
+    "Swordsman": Unit("Swordsman", "Soldier A03", "Soldier A03", "Soldat A"),
 }
 
 ALL_UNITS = tuple(UNITS)
@@ -153,6 +154,8 @@ def profile_addition(archive: Archive, unit_key: str) -> dict:
         progression_from = None
     addition = {
         "template": template,
+        # Animation layout belongs to the authored RHS, not its stats template.
+        "profile_name": unit.profile_name,
         "filename": filename,
         "display_name": f"Fabri18 {archive.label} {unit.label}",
         "hostile": False,

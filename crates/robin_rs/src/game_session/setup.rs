@@ -273,15 +273,10 @@ fn required_mission_exclamation_ids(
         add_character(&mut ids, index)?;
     }
     for soldier in &loaded.mission.soldiers {
+        let index = soldier.profile_index(profiles)?;
         let profile = profiles
-            .soldiers
-            .get(soldier.profile_number as usize)
-            .ok_or_else(|| {
-                format!(
-                    "mission soldier references missing speech profile {}",
-                    soldier.profile_number
-                )
-            })?;
+            .get_soldier(index)
+            .expect("resolved soldier profile");
         if profile.exclamation_id != 0 {
             ids.insert(profile.exclamation_id);
         }
@@ -2215,6 +2210,67 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    #[test]
+    fn named_soldier_speech_preload_uses_the_spawn_profile() {
+        let mut profiles = engine_profiles::ProfileManager::new();
+        profiles.missions.push(Default::default());
+        profiles.soldiers = vec![
+            engine_profiles::SoldierProfile {
+                filename: "Placeholder".into(),
+                exclamation_id: 0x1111_0000,
+                ..Default::default()
+            },
+            engine_profiles::SoldierProfile {
+                filename: "Fabri18 OfficerGreen Officer".into(),
+                exclamation_id: 0x464f_0000,
+                ..Default::default()
+            },
+        ];
+        let mut campaign = Campaign::new();
+        let mut mission = robin_engine::mission::Mission::new();
+        mission.profile_idx = Some(0);
+        campaign.missions.push(mission);
+        campaign.current_mission_idx = Some(0);
+        let mut loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(
+            br#"{
+            "map_filename":"Test", "spawn":[50,50], "spawn_player":false,
+            "walkable_polygon":[[0,0],[100,0],[100,100]],
+            "soldiers":[{"position":[20,20],"profile":"fabri18_officergreen_officer","allegiance":2}]
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(loaded.mission.soldiers[0].profile_number, 0);
+        let mut audio = engine_api::LevelAudioAssets::default();
+        audio.required_exclamation_ids =
+            required_mission_exclamation_ids(&loaded, &campaign, &profiles).unwrap();
+        assert_eq!(audio.required_exclamation_ids, [0x464f_0000].into());
+        let timing = robin_engine::audio_durations::AudioDurations {
+            version: 1,
+            locale: "en-US".into(),
+            samples_ms: [("officer.wav".into(), 1415)].into(),
+            speech_groups: [(0x464f_003d, vec!["officer.wav".into()])].into(),
+        };
+        timing.populate(&mut audio, &profiles).unwrap();
+        assert_eq!(
+            robin_engine::audio_durations::speech_duration_frames(
+                audio.speech_timing_catalog(),
+                0x464f_003d,
+                -1
+            )
+            .unwrap(),
+            36
+        );
+        loaded.mission.soldiers[0].profile_id = Some("missing".into());
+        assert!(required_mission_exclamation_ids(&loaded, &campaign, &profiles).is_err());
+        loaded.mission.soldiers[0].profile_id = None;
+        assert_eq!(
+            required_mission_exclamation_ids(&loaded, &campaign, &profiles).unwrap(),
+            [0x1111_0000].into()
+        );
+        loaded.mission.soldiers[0].profile_number = 99;
+        assert!(required_mission_exclamation_ids(&loaded, &campaign, &profiles).is_err());
+    }
 
     fn prepared_stage_fixture() -> PreparedMission {
         let mut assets = LevelAssets::new();

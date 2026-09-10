@@ -856,6 +856,24 @@ pub struct RawSoldier {
     pub script_class: Option<String>,
 }
 
+impl RawSoldier {
+    /// Resolve the same profile for spawning and preloading dependencies.
+    /// Named mod references take precedence over the legacy numeric slot.
+    pub fn profile_index(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Result<crate::profiles::SoldierProfileIdx, String> {
+        let index = match self.profile_id.as_deref() {
+            Some(identifier) => profiles.soldier_idx_by_identifier(identifier)?,
+            None => crate::profiles::SoldierProfileIdx(self.profile_number),
+        };
+        profiles
+            .get_soldier(index)
+            .ok_or_else(|| format!("mission soldier references missing profile {index}"))?;
+        Ok(index)
+    }
+}
+
 /// Raw civilian data from the CIVI/OILE sub-chunk.
 #[derive(
     Debug,

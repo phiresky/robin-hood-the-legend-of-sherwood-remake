@@ -1,16 +1,30 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["jsonpatch>=1.33,<2"]
+# dependencies = ["jsonpatch>=1.33,<2", "Pillow>=10"]
 # ///
 import unittest
 
 import jsonpatch
 
 from profile_patch_tools import ARCHETYPE, CAPACITIES, resolve_soldier, soldier_copy_patch
+from import_fabri18_sprites import all_profile_additions
 
 
 class ProfilePatchTests(unittest.TestCase):
+    def test_fabri18_animation_name_is_independent_of_stats_template(self):
+        additions = all_profile_additions()
+        self.assertEqual(len(additions), 51)
+        self.assertTrue(all(addition["profile_name"] for addition in additions))
+        green = next(a for a in additions if a["filename"] == "Fabri18 OfficerGreen Officer")
+        catalog = {"soldiers": {"Officer05#23": {
+            "filename": "Officer05", "profile_name": "Officier",
+            "display_name": "Green officer", "hostile": True,
+        }}}
+        result = jsonpatch.apply_patch(catalog, soldier_copy_patch(catalog, **green))
+        self.assertEqual(result["soldiers"][green["filename"]]["profile_name"], "OfficierB")
+        self.assertEqual(catalog["soldiers"]["Officer05#23"]["profile_name"], "Officier")
+
     def setUp(self):
         previous = {field: 0 for field in ARCHETYPE}
         previous.update({field: 90 for field in CAPACITIES})
