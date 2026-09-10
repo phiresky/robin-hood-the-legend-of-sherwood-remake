@@ -160,25 +160,10 @@ impl DrawManager {
             return None;
         }
 
-        let mut result = screen_bbox(
-            ScreenPoint::new(
-                min_x - self.view_rect.x_min(),
-                min_y - self.view_rect.y_min(),
-            ),
-            ScreenPoint::new(
-                max_x - self.view_rect.x_min(),
-                max_y - self.view_rect.y_min(),
-            ),
-        );
-
-        if self.zoom_factor != 1.0 {
-            result.min.x *= self.zoom_factor;
-            result.min.y *= self.zoom_factor;
-            result.max.x *= self.zoom_factor;
-            result.max.y *= self.zoom_factor;
-        }
-
-        Some(result)
+        Some(screen_bbox(
+            self.map_to_screen(MapPoint::new(min_x, min_y)),
+            self.map_to_screen(MapPoint::new(max_x, max_y)),
+        ))
     }
 
     // -- Drawing methods --
@@ -720,6 +705,37 @@ mod tests {
         assert_eq!(c.min.y, 0.0);
         assert_eq!(c.max.x, 50.0);
         assert_eq!(c.max.y, 50.0);
+    }
+
+    #[test]
+    fn clipped_boxes_use_point_projection_for_translated_and_zoomed_views() {
+        let mut dm = DrawManager::new(16);
+        let view = MapBBox::from_coords(10.25, 20.5, 110.25, 120.5);
+        let input = MapBBox::from_coords(-5.0, 30.75, 60.5, 140.0);
+        for zoom in [0.0, 0.5, 1.0, 1.25, 2.0] {
+            dm.update_drawing_parameters(0, view.clone(), zoom);
+            let clipped = dm.clip_box(&input).unwrap();
+            assert_eq!(
+                (clipped.min.x, clipped.min.y, clipped.max.x, clipped.max.y),
+                (0.0, 10.25 * zoom, 50.25 * zoom, 100.0 * zoom)
+            );
+            for (point, actual) in [
+                (MapPoint::new(10.25, 30.75), clipped.min),
+                (MapPoint::new(60.5, 120.5), clipped.max),
+            ] {
+                let expected = dm.map_to_screen(point);
+                assert_eq!(actual.x.to_bits(), expected.x.to_bits());
+                assert_eq!(actual.y.to_bits(), expected.y.to_bits());
+            }
+            for touching in [
+                MapBBox::from_coords(0.0, 20.5, 10.25, 50.0),
+                MapBBox::from_coords(110.25, 20.5, 130.0, 50.0),
+                MapBBox::from_coords(10.25, 0.0, 50.0, 20.5),
+                MapBBox::from_coords(10.25, 120.5, 50.0, 140.0),
+            ] {
+                assert!(dm.clip_box(&touching).is_none());
+            }
+        }
     }
 
     #[test]
