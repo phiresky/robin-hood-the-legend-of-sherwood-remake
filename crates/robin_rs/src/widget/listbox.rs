@@ -89,44 +89,32 @@ impl ColumnLayout {
         self.ratios.is_empty()
     }
 
-    /// Split a pipe-delimited row into per-column cells. Cells beyond
-    /// the configured column count are absorbed into the final cell —
-    /// only the first `N-1` pipes are split. If no columns are
-    /// configured, the whole text is returned as a single cell so
-    /// single-column lists work transparently.
-    pub fn split_cells<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        if self.ratios.is_empty() {
-            vec![text]
-        } else {
-            text.splitn(self.ratios.len(), '|').collect()
-        }
-    }
-
     /// Lay out cells against a row spanning `[row_x, row_x + row_width]`.
     ///
     /// Empty cells are skipped; the preceding non-empty cell absorbs
-    /// their width.
+    /// their width. Only the first N-1 pipes are split; extra pipes stay in
+    /// the final cell. With no configured columns, the whole row is one cell.
     pub fn layout_row<'a>(&self, text: &'a str, row_x: f32, row_width: f32) -> Vec<LayoutCell<'a>> {
-        let cells = self.split_cells(text);
         if self.ratios.is_empty() {
             return vec![LayoutCell {
-                text: cells[0],
+                text,
                 span_x: row_x,
                 span_w: row_width,
                 align: ColumnAlign::Left,
             }];
         }
+        let mut cells = text.splitn(self.ratios.len(), '|').peekable();
         let mut out = Vec::with_capacity(self.ratios.len());
         let mut cursor = row_x;
         let mut i = 0;
         while i < self.ratios.len() {
             let mut span_w = self.ratios[i] * row_width;
-            let cell_text = cells.get(i).copied().unwrap_or("");
+            let cell_text = cells.next().unwrap_or("");
             // Absorb following empty columns into this span.
             let mut j = i + 1;
             while j < self.ratios.len() {
-                let next_text = cells.get(j).copied().unwrap_or("");
-                if next_text.is_empty() {
+                if cells.peek().is_none_or(|text| text.is_empty()) {
+                    cells.next();
                     span_w += self.ratios[j] * row_width;
                     j += 1;
                 } else {
@@ -633,6 +621,39 @@ mod tests {
         assert_eq!(cells[0].text, "only-text");
         assert_eq!(cells[0].span_x, 0.0);
         assert_eq!(cells[0].span_w, 100.0);
+    }
+
+    #[test]
+    fn column_layout_preserves_leading_and_missing_empty_spans() {
+        let layout = ColumnLayout::new(&[
+            (0.25, ColumnAlign::Left),
+            (0.25, ColumnAlign::Center),
+            (0.25, ColumnAlign::Right),
+            (0.25, ColumnAlign::Left),
+        ]);
+        for (text, expected) in [
+            ("", vec![]),
+            ("|||", vec![]),
+            ("|b", vec![("b", 35.0, 75.0, ColumnAlign::Center)]),
+            ("|b||", vec![("b", 35.0, 75.0, ColumnAlign::Center)]),
+            ("||c|", vec![("c", 60.0, 50.0, ColumnAlign::Right)]),
+            ("|||d", vec![("d", 85.0, 25.0, ColumnAlign::Left)]),
+            ("a|||", vec![("a", 10.0, 100.0, ColumnAlign::Left)]),
+            (
+                "|b|c|",
+                vec![
+                    ("b", 35.0, 25.0, ColumnAlign::Center),
+                    ("c", 60.0, 50.0, ColumnAlign::Right),
+                ],
+            ),
+        ] {
+            let actual: Vec<_> = layout
+                .layout_row(text, 10.0, 100.0)
+                .into_iter()
+                .map(|cell| (cell.text, cell.span_x, cell.span_w, cell.align))
+                .collect();
+            assert_eq!(actual, expected, "{text}");
+        }
     }
 
     #[test]
