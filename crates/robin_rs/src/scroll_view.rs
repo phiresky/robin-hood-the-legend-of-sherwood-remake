@@ -79,10 +79,15 @@ impl ScrollView {
         self.offset = offset.min(self.max_offset());
     }
     pub fn scroll_by(&mut self, step: isize) {
-        self.offset = self
-            .offset
-            .saturating_add_signed(step)
-            .min(self.max_offset());
+        self.scroll_distance(step.unsigned_abs(), step < 0);
+    }
+    fn scroll_distance(&mut self, distance: usize, backwards: bool) {
+        self.offset = if backwards {
+            self.offset.saturating_sub(distance)
+        } else {
+            self.offset.saturating_add(distance)
+        }
+        .min(self.max_offset());
     }
     pub fn set_wheel_step(&mut self, step: isize) {
         assert!(step > 0);
@@ -186,10 +191,9 @@ impl ScrollView {
     ) -> bool {
         match *event {
             GameEvent::MouseWheel(delta) if self.contains(pointer.0, pointer.1) => {
-                self.offset = self
-                    .offset
-                    .saturating_add_signed(-(delta as isize) * self.wheel_step)
-                    .min(self.max_offset());
+                let distance =
+                    (delta.unsigned_abs() as usize).saturating_mul(self.wheel_step as usize);
+                self.scroll_distance(distance, delta > 0);
                 true
             }
             GameEvent::MouseDown(x, y, 1, _) => {
@@ -323,6 +327,45 @@ mod tests {
         left.reveal(0);
         assert_eq!(left.visible_range(), 0..5);
     }
+    #[test]
+    fn wheel_and_programmatic_scrolling_share_direction_and_clamping() {
+        let transform = MenuTransform::centered(640, 480);
+        for start in [0, 2, 50, 94, 95] {
+            for delta in [-40, -2, -1, 0, 1, 2, 40] {
+                let mut wheel = view();
+                wheel.set_offset(start);
+                let mut direct = wheel.clone();
+                assert!(wheel.handle_event(&GameEvent::MouseWheel(delta), transform, (30, 30)));
+                direct.scroll_by(-(delta as isize) * 3);
+                assert_eq!(wheel.offset(), direct.offset());
+            }
+        }
+    }
+
+    #[test]
+    fn extreme_scroll_distances_clamp_without_signed_overflow() {
+        let transform = MenuTransform::centered(640, 480);
+        let mut v = view();
+        v.set_wheel_step(isize::MAX);
+        for delta in [i32::MIN, -2, -1, 1, 2, i32::MAX] {
+            v.set_offset(50);
+            assert!(v.handle_event(&GameEvent::MouseWheel(delta), transform, (30, 30)));
+            assert_eq!(v.offset(), if delta < 0 { 95 } else { 0 });
+        }
+        v.set_offset(50);
+        v.scroll_by(isize::MIN);
+        assert_eq!(v.offset(), 0);
+        v.scroll_by(isize::MAX);
+        assert_eq!(v.offset(), 95);
+
+        // A saturated wheel distance can cover even a usize-sized logical list.
+        v.set_total(usize::MAX);
+        v.handle_event(&GameEvent::MouseWheel(i32::MIN), transform, (30, 30));
+        assert_eq!(v.offset(), v.max_offset());
+        v.handle_event(&GameEvent::MouseWheel(i32::MAX), transform, (30, 30));
+        assert_eq!(v.offset(), 0);
+    }
+
     #[test]
     fn content_hit_test_excludes_scrollbar_and_partial_rows() {
         let v = view();
