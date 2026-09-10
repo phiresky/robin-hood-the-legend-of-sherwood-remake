@@ -2491,6 +2491,7 @@ fn render_campaign_map(
         campaign_surface_for_resource(assets, resource_id, sub_id)
     });
 
+    let blink_visible = marker_blink_on(crate::window::process_uptime_us());
     for (loc_idx, loc) in campaign_map.locations.iter().enumerate() {
         if loc.enabled {
             let (x, y) = LOCATION_POSITIONS[loc_idx];
@@ -2507,7 +2508,7 @@ fn render_campaign_map(
                         Renderer::create_color_16(255, 230, 90),
                     );
                 }
-                if loc.blinking && blink_on() {
+                if loc.blinking && blink_visible {
                     renderer.draw_rect_outline_screen(
                         transform.origin_x + x as i32 - 3,
                         transform.origin_y + y as i32 - 3,
@@ -2517,7 +2518,14 @@ fn render_campaign_map(
                     );
                 }
             } else {
-                draw_marker(renderer, transform, x as i32, y as i32, loc.blinking);
+                draw_marker(
+                    renderer,
+                    transform,
+                    x as i32,
+                    y as i32,
+                    loc.blinking,
+                    blink_visible,
+                );
             }
         }
     }
@@ -2827,7 +2835,14 @@ fn load_campaign_font(files: &robin_engine::sbfile::SbFileSystem) -> Option<Font
     native_font::load_font_by_name_for_locale(&config, "Default", files).ok()
 }
 
-fn draw_marker(renderer: &mut Renderer, transform: MenuTransform, x: i32, y: i32, blinking: bool) {
+fn draw_marker(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    x: i32,
+    y: i32,
+    blinking: bool,
+    blink_visible: bool,
+) {
     let sx = transform.origin_x + x;
     let sy = transform.origin_y + y;
     let color = if blinking {
@@ -2839,7 +2854,7 @@ fn draw_marker(renderer: &mut Renderer, transform: MenuTransform, x: i32, y: i32
     renderer.draw_line_screen(sx + 8, sy, sx, sy + 8, color);
     renderer.draw_line_screen(sx, sy + 8, sx - 8, sy, color);
     renderer.draw_line_screen(sx - 8, sy, sx, sy - 8, color);
-    if blinking && blink_on() {
+    if blinking && blink_visible {
         renderer.draw_rect_outline_screen(
             sx - 11,
             sy - 11,
@@ -2871,12 +2886,8 @@ fn draw_selection(
     );
 }
 
-fn blink_on() -> bool {
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    (ms / 350).is_multiple_of(2)
+fn marker_blink_on(now_us: u64) -> bool {
+    (now_us / 350_000).is_multiple_of(2)
 }
 
 #[cfg(test)]
@@ -2919,6 +2930,22 @@ fn fixture_plays(count: u64) -> Vec<crate::campaign_progress::MissionPlay> {
 mod browser_tests {
     use super::*;
     use robin_engine::{mission::Mission, profiles::MissionProfile};
+
+    #[test]
+    fn marker_blink_has_a_350_millisecond_half_period() {
+        for cycle in [0u64, 1, 100, u64::from(u32::MAX)] {
+            let start = cycle * 700_000;
+            for (offset, visible) in [
+                (0, true),
+                (349_999, true),
+                (350_000, false),
+                (699_999, false),
+                (700_000, true),
+            ] {
+                assert_eq!(marker_blink_on(start + offset), visible);
+            }
+        }
+    }
 
     #[test]
     fn pseudo_debrief_delay_uses_elapsed_time_across_clock_wrap() {
