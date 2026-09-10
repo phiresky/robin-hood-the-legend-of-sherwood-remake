@@ -1,6 +1,28 @@
 //! Plan family hubs and transform the selected RHS dependency closure.
 use super::*;
 
+fn pick_weighted_family_hub(
+    costs: &[(f64, &String)],
+    mission_use_count: &impl Fn(&str) -> usize,
+) -> Option<String> {
+    const FAMILY_HUB_PROXY_TOLERANCE: f64 = 1.05;
+    let best = costs
+        .iter()
+        .map(|(cost, _)| *cost)
+        .fold(f64::INFINITY, f64::min);
+    costs
+        .iter()
+        .filter(|(cost, _)| *cost <= best * FAMILY_HUB_PROXY_TOLERANCE)
+        .map(|(cost, name)| (cost, name, mission_use_count(name)))
+        .max_by(|(ca, na, uses_a), (cb, nb, uses_b)| {
+            uses_a
+                .cmp(uses_b)
+                .then(cb.total_cmp(ca))
+                .then_with(|| nb.cmp(na))
+        })
+        .map(|(_, name, _)| (*name).clone())
+}
+
 pub(super) fn transform_rhs(
     data_in: &Path,
     holder: &FrameHolder,
@@ -136,28 +158,11 @@ pub(super) fn transform_rhs(
     // nothing to their closures, while a dependency-only hub adds its whole
     // (large, standalone-coded) chunk — measured ~7 MB extra on H01's first
     // load with pure compression-optimal hubs. Among candidates within
-    // FAMILY_HUB_PROXY_TOLERANCE of the best compression proxy, prefer the
+    // 5% of the best compression proxy, prefer the
     // member the most missions reference.
-    const FAMILY_HUB_PROXY_TOLERANCE: f64 = 1.05;
     let mission_use_count = |name: &str| -> usize {
         let rel = format!("Characters/{name}.rhs");
         dependency_plan.mission_use_count(&rel)
-    };
-    let pick_weighted = |costs: &[(f64, &String)]| -> Option<String> {
-        let best = costs
-            .iter()
-            .map(|(cost, _)| *cost)
-            .fold(f64::INFINITY, f64::min);
-        costs
-            .iter()
-            .filter(|(cost, _)| *cost <= best * FAMILY_HUB_PROXY_TOLERANCE)
-            .max_by(|(ca, na), (cb, nb)| {
-                mission_use_count(na)
-                    .cmp(&mission_use_count(nb))
-                    .then(cb.total_cmp(ca))
-                    .then_with(|| nb.cmp(na))
-            })
-            .map(|(_, name)| (*name).clone())
     };
     let mut family_bases = std::collections::BTreeMap::<String, String>::new();
     for (key, members) in &families {
@@ -192,7 +197,10 @@ pub(super) fn transform_rhs(
             }
             costs.push((cost, candidate));
         }
-        let base = match (proxy_failed, pick_weighted(&costs)) {
+        let base = match (
+            proxy_failed,
+            pick_weighted_family_hub(&costs, &mission_use_count),
+        ) {
             (false, Some(name)) => name,
             _ => {
                 tracing::warn!(
@@ -253,7 +261,10 @@ pub(super) fn transform_rhs(
             }
             costs.push((cost, candidate));
         }
-        match (proxy_failed, pick_weighted(&costs)) {
+        match (
+            proxy_failed,
+            pick_weighted_family_hub(&costs, &mission_use_count),
+        ) {
             (false, Some(name)) => {
                 tracing::info!(
                     family = key.as_str(),
@@ -559,4 +570,57 @@ pub(super) fn transform_rhs(
     }
 
     Ok((rhs_payloads, rhs_base_dep))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hub_selection_weights_only_eligible_candidates_once() {
+        let names = ["small", "popular", "too_large"].map(str::to_owned);
+        let costs = [(100.0, &names[0]), (105.0, &names[1]), (105.01, &names[2])];
+        let visited = std::cell::RefCell::new(Vec::new());
+        let selected = pick_weighted_family_hub(&costs, &|name| {
+            visited.borrow_mut().push(name.to_owned());
+            match name {
+                "small" => 1,
+                "popular" => 2,
+                _ => panic!("ineligible candidate must not be weighted"),
+            }
+        });
+        assert_eq!(selected.as_deref(), Some("popular"));
+        assert_eq!(*visited.borrow(), ["small", "popular"]);
+    }
+
+    #[test]
+    fn hub_selection_breaks_ties_by_cost_then_name() {
+        let names = ["Z", "A", "B"].map(str::to_owned);
+        for costs in [
+            [(100.0, &names[0]), (101.0, &names[1]), (102.0, &names[2])],
+            [(102.0, &names[2]), (101.0, &names[1]), (100.0, &names[0])],
+        ] {
+            assert_eq!(
+                pick_weighted_family_hub(&costs, &|_| 1).as_deref(),
+                Some("Z")
+            );
+        }
+        for costs in [
+            [(100.0, &names[0]), (100.0, &names[1]), (100.0, &names[2])],
+            [(100.0, &names[2]), (100.0, &names[1]), (100.0, &names[0])],
+        ] {
+            assert_eq!(
+                pick_weighted_family_hub(&costs, &|_| 1).as_deref(),
+                Some("A")
+            );
+        }
+        assert_eq!(
+            pick_weighted_family_hub(&[], &|_| panic!("no candidate")),
+            None
+        );
+        assert_eq!(
+            pick_weighted_family_hub(&[(f64::NAN, &names[0])], &|_| panic!("invalid cost")),
+            None
+        );
+    }
 }
