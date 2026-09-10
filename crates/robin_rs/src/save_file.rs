@@ -260,7 +260,11 @@ impl Thumbnail {
         width: u16,
         height: u16,
     ) -> Result<Self> {
-        let expected = src_width as usize * src_height as usize * 4;
+        let expected = u64::from(src_width)
+            .checked_mul(u64::from(src_height))
+            .and_then(|pixels| pixels.checked_mul(4))
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .context("thumbnail source dimensions exceed RGBA layout")?;
         if rgba.len() != expected {
             bail!(
                 "thumbnail source RGBA length mismatch: expected {}, got {}",
@@ -284,9 +288,9 @@ impl Thumbnail {
         let src_h = src_height as usize;
         let mut pixels = Vec::with_capacity(target_w * target_h);
         for ty in 0..target_h {
-            let sy = ty * src_h / target_h;
+            let sy = (ty as u64 * src_h as u64 / target_h as u64) as usize;
             for tx in 0..target_w {
-                let sx = tx * src_w / target_w;
+                let sx = (tx as u64 * src_w as u64 / target_w as u64) as usize;
                 let off = (sy * src_w + sx) * 4;
                 pixels.push(rgb888_to_rgb565(rgba[off], rgba[off + 1], rgba[off + 2]));
             }
@@ -343,6 +347,34 @@ impl Thumbnail {
         let mut reader = decoder
             .read_info()
             .with_context(|| format!("decoding thumbnail PNG header {}", path.display()))?;
+        // Reject unsupported dimensions and formats before allocating or decoding
+        // the image; thumbnails store u16 dimensions and eight-bit RGB channels.
+        let header = reader.info();
+        let width: u16 = header
+            .width
+            .try_into()
+            .with_context(|| format!("thumbnail PNG width exceeds u16 for {}", path.display()))?;
+        let height: u16 = header
+            .height
+            .try_into()
+            .with_context(|| format!("thumbnail PNG height exceeds u16 for {}", path.display()))?;
+        if header.bit_depth != png::BitDepth::Eight {
+            bail!(
+                "unsupported thumbnail PNG bit depth {:?} for {}",
+                header.bit_depth,
+                path.display()
+            );
+        }
+        if !matches!(
+            header.color_type,
+            png::ColorType::Rgb | png::ColorType::Rgba
+        ) {
+            bail!(
+                "unsupported thumbnail PNG color type {:?} for {}",
+                header.color_type,
+                path.display()
+            );
+        }
         let mut buf = vec![
             0;
             reader.output_buffer_size().ok_or_else(|| anyhow::anyhow!(
@@ -353,15 +385,8 @@ impl Thumbnail {
         let info = reader
             .next_frame(&mut buf)
             .with_context(|| format!("decoding thumbnail PNG frame {}", path.display()))?;
-        if info.bit_depth != png::BitDepth::Eight {
-            bail!(
-                "unsupported thumbnail PNG bit depth {:?} for {}",
-                info.bit_depth,
-                path.display()
-            );
-        }
         let data = &buf[..info.buffer_size()];
-        let expected_pixels = info.width as usize * info.height as usize;
+        let expected_pixels = usize::from(width) * usize::from(height);
         let mut pixels = Vec::with_capacity(expected_pixels);
         match info.color_type {
             png::ColorType::Rgb => {
@@ -391,12 +416,8 @@ impl Thumbnail {
             );
         }
         Ok(Self {
-            width: info.width.try_into().with_context(|| {
-                format!("thumbnail PNG width exceeds u16 for {}", path.display())
-            })?,
-            height: info.height.try_into().with_context(|| {
-                format!("thumbnail PNG height exceeds u16 for {}", path.display())
-            })?,
+            width,
+            height,
             pixels,
         })
     }
@@ -1938,6 +1959,70 @@ mod tests {
         let path = dir.path().join("bad_thumb.png");
         fs::write(&path, b"not a png").unwrap();
         assert!(Thumbnail::read_from(&path).is_err());
+    }
+
+    #[test]
+    fn thumbnail_rejects_unsupported_headers_before_decoding_pixels() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("unsupported.png");
+        for (width, height, color, depth, expected) in [
+            (
+                65_536,
+                1,
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                "width exceeds u16",
+            ),
+            (
+                1,
+                65_536,
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                "height exceeds u16",
+            ),
+            (
+                1,
+                1,
+                png::ColorType::Rgb,
+                png::BitDepth::Sixteen,
+                "unsupported thumbnail PNG bit depth",
+            ),
+            (
+                1,
+                1,
+                png::ColorType::Grayscale,
+                png::BitDepth::Eight,
+                "unsupported thumbnail PNG color type",
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(color);
+            encoder.set_depth(depth);
+            let mut writer = encoder.write_header().unwrap();
+            // An empty IDAT gets the decoder to its pixel boundary without a
+            // valid image body. Header validation must win over decode failure.
+            writer.write_chunk(png::chunk::IDAT, &[]).unwrap();
+            drop(writer);
+            fs::write(&path, bytes).unwrap();
+            let error = Thumbnail::read_from(&path).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn thumbnail_downsampling_rejects_invalid_rgba_layouts() {
+        for (width, height, pixels) in [
+            (u32::MAX, u32::MAX, vec![]),
+            (0, 1, vec![]),
+            (1, 0, vec![]),
+            (2, 2, vec![0; 15]),
+            (2, 2, vec![0; 17]),
+        ] {
+            assert!(Thumbnail::from_rgba_downscaled(width, height, &pixels, 1, 1).is_err());
+        }
+        assert!(Thumbnail::from_rgba_downscaled(1, 1, &[0; 4], 0, 1).is_err());
+        assert!(Thumbnail::from_rgba_downscaled(1, 1, &[0; 4], 1, 0).is_err());
     }
 
     #[test]
