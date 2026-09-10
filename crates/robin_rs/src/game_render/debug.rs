@@ -274,12 +274,18 @@ fn draw_polygon_outline_map(
     if verts.len() < 2 {
         return;
     }
-    for i in 0..verts.len() {
-        let a = verts[i];
-        let bp = verts[(i + 1) % verts.len()];
-        let (x1, y1) = map_to_screen(a);
-        let (x2, y2) = map_to_screen(bp);
+    let first = map_to_screen(verts[0]);
+    let mut previous = first;
+    for next in verts[1..]
+        .iter()
+        .copied()
+        .map(map_to_screen)
+        .chain(std::iter::once(first))
+    {
+        let (x1, y1) = previous;
+        let (x2, y2) = next;
         renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
+        previous = next;
     }
 }
 
