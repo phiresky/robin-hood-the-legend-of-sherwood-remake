@@ -133,7 +133,7 @@ pub(crate) async fn show_select_player(
     // between-mission profile screen. It cannot mutate a running simulation.
     frame.add_widget_absolute(widget_bridge::make_button_enabled(
         ID_DIFFICULTY,
-        &difficulty_button_label,
+        difficulty_button_label,
         true,
         LIST_RECT.x,
         418,
@@ -635,8 +635,12 @@ fn difficulty_label(resources: &IngameMenuResources, d: DifficultyLevel) -> Stri
         DifficultyLevel::Hard => resources.menu_text.get(MT_STR_DIFFICULTY_HARD),
         DifficultyLevel::Legendary => resources
             .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY),
-        DifficultyLevel::Custom(_) => resources.menu_text.get_port(MT_PORT_STR_DIFFICULTY_CUSTOM),
+            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY)
+            .to_owned(),
+        DifficultyLevel::Custom(_) => resources
+            .menu_text
+            .get_port(MT_PORT_STR_DIFFICULTY_CUSTOM)
+            .to_owned(),
     }
 }
 
@@ -788,12 +792,12 @@ async fn run_name_prompt(
         (PROMPT_ID_DIFF_HARD, &diff_hard_label, DifficultyLevel::Hard),
         (
             PROMPT_ID_DIFF_LEGENDARY,
-            &diff_legendary_label,
+            diff_legendary_label,
             DifficultyLevel::Legendary,
         ),
         (
             PROMPT_ID_DIFF_CUSTOM,
-            &diff_custom_label,
+            diff_custom_label,
             DifficultyLevel::Custom(DifficultyRules::MEDIUM),
         ),
     ];
@@ -1427,8 +1431,12 @@ async fn show_difficulty_prompt(
         resources.menu_text.get(MT_STR_DIFFICULTY_HARD),
         resources
             .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY),
-        resources.menu_text.get_port(MT_PORT_STR_DIFFICULTY_CUSTOM),
+            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY)
+            .to_owned(),
+        resources
+            .menu_text
+            .get_port(MT_PORT_STR_DIFFICULTY_CUSTOM)
+            .to_owned(),
     ];
     let mut custom_rules = initial.rules();
     let mut difficulty = initial;
@@ -1539,8 +1547,8 @@ async fn show_difficulty_prompt(
                 renderer,
                 font,
                 transform,
-                &title,
-                PANEL.x + (PANEL.w - font.text_width(&title)) / 2,
+                title,
+                PANEL.x + (PANEL.w - font.text_width(title)) / 2,
                 PANEL.y + 13,
             );
         }
@@ -1579,7 +1587,7 @@ async fn show_difficulty_prompt(
             }
             if matches!(difficulty, DifficultyLevel::Custom(_)) {
                 let help = resources.menu_text.get_port(MT_PORT_STR_DIFFICULTY_HELP);
-                render_text_virt_font(renderer, font, transform, &help, RULE_X, 390);
+                render_text_virt_font(renderer, font, transform, help, RULE_X, 390);
             }
         }
 

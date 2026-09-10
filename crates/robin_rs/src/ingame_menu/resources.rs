@@ -466,10 +466,9 @@ impl MenuText {
 
     /// Look up an application-owned string by its namespaced key. These keys
     /// never share the numeric namespace used by original or engine text.
-    pub fn get_port(&self, key: &str) -> String {
-        port_fallback(key)
-            .unwrap_or_else(|| panic!("unknown port menu-text key {key:?}"))
-            .to_string()
+    /// Borrows the label; callers storing owned text should copy at that boundary.
+    pub fn get_port(&self, key: &str) -> &str {
+        port_fallback(key).unwrap_or_else(|| panic!("unknown port menu-text key {key:?}"))
     }
 
     pub fn is_loaded(&self) -> bool {
@@ -2290,6 +2289,21 @@ mod tests {
         );
         assert_eq!(text.get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY), "Legendary");
         assert_eq!(text.get_port(MT_PORT_STR_DIFFICULTY_CUSTOM), "Custom");
+    }
+
+    #[test]
+    fn application_labels_borrow_the_catalogue_text() {
+        let text = MenuText::english_fallbacks_only();
+        for key in [
+            MT_PORT_STR_DIFFICULTY_LEGENDARY,
+            MT_PORT_STR_DIFFICULTY_CUSTOM,
+            MT_PORT_TTL_ADVANCED_DIFFICULTY,
+            MT_PORT_STR_DIFFICULTY_HELP,
+        ] {
+            let label = text.get_port(key);
+            assert!(std::ptr::eq(label, port_fallback(key).unwrap()));
+            assert!(std::ptr::eq(label, text.get_port(key)));
+        }
     }
 
     #[test]

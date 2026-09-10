@@ -1070,8 +1070,12 @@ fn difficulty_to_string(resources: &IngameMenuResources, level: DifficultyLevel)
         DifficultyLevel::Hard => resources.menu_text.get(MT_STR_DIFFICULTY_HARD),
         DifficultyLevel::Legendary => resources
             .menu_text
-            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY),
-        DifficultyLevel::Custom(_) => resources.menu_text.get_port(MT_PORT_STR_DIFFICULTY_CUSTOM),
+            .get_port(MT_PORT_STR_DIFFICULTY_LEGENDARY)
+            .to_owned(),
+        DifficultyLevel::Custom(_) => resources
+            .menu_text
+            .get_port(MT_PORT_STR_DIFFICULTY_CUSTOM)
+            .to_owned(),
     }
 }
 
