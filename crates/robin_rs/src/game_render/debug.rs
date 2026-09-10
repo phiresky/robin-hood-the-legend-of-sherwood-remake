@@ -511,10 +511,6 @@ pub(crate) fn render_debug_surfaces_outline(
     }
 }
 
-/// Render debug animation lines: polylines for all FX entities.
-///
-/// Active FX are drawn in white (0xFFFF), inactive in dark gray
-/// (0xFA00).
 /// Render the `noise_display` cheat overlay.
 ///
 /// 0. Outline every sound-sector polygon on the visible map in dark
@@ -551,15 +547,19 @@ pub(crate) fn render_noise_display(
     // ── (0) Sound-sector polygon outlines ────────────────────────
     // Iterate material sectors registered as sound sectors and draw
     // each polygon outline in dark teal.
+    let draw_manager = host.draw_manager();
     for sector in &assets.environment.material_sectors.sectors {
         if sector.points.len() < 2 {
             continue;
         }
-        // `draw_polyline` draws segments between consecutive points —
-        // append the first point so the polygon closes.
-        let mut closed = sector.points.clone();
-        closed.push(sector.points[0]);
-        host.draw_manager().draw_polyline(renderer, &closed, 0x00AF);
+        draw_manager.draw_polyline(renderer, &sector.points, 0x00AF);
+        // Close the polygon without copying its vertices into a temporary buffer.
+        draw_manager.draw_segment(
+            renderer,
+            sector.points[sector.points.len() - 1],
+            sector.points[0],
+            0x00AF,
+        );
     }
 
     // ── (1) Per-PC footstep rings + material label ────────────────
