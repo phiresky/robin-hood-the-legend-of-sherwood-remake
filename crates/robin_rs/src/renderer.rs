@@ -2904,10 +2904,8 @@ fn rgb565_to_rgba_with_key(
         } else {
             // RGB565 → 8-bit per channel, packed into wgpu RGBA u32
             // little-endian byte order = [R, G, B, A].
-            let r = ((px >> 8) & 0xF8) as u32;
-            let g = ((px >> 3) & 0xFC) as u32;
-            let b = ((px << 3) & 0xF8) as u32;
-            r | (g << 8) | (b << 16) | 0xFF00_0000
+            let (r, g, b) = rgb565_to_rgb8(px);
+            u32::from(r) | (u32::from(g) << 8) | (u32::from(b) << 16) | 0xFF00_0000
         };
     }
     out
@@ -3021,10 +3019,8 @@ fn rgb565_to_rgba_opaque(src: &[u16], w: usize, h: usize) -> Vec<u8> {
         *dst = if px == SHADOW_KEY {
             shadow_pixel
         } else {
-            let r = ((px >> 8) & 0xF8) as u32;
-            let g = ((px >> 3) & 0xFC) as u32;
-            let b = ((px << 3) & 0xF8) as u32;
-            r | (g << 8) | (b << 16) | 0xFF00_0000
+            let (r, g, b) = rgb565_to_rgb8(px);
+            u32::from(r) | (u32::from(g) << 8) | (u32::from(b) << 16) | 0xFF00_0000
         };
     }
     out

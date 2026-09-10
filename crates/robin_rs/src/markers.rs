@@ -195,19 +195,19 @@ fn selection_mark_rgba(pixels: &[u16], width: u16, height: u16, in_combat: bool)
             if src == TRANSPARENT_COLOR_KEY_16 {
                 continue;
             }
+            let (r, g, b) = robin_util::color::rgb565_to_rgb8(src);
             let alpha = if in_combat {
-                let a = ((src >> 8) & 0xF8) << 1;
-                a.min(255) as u8
+                (u16::from(r) * 2).min(255) as u8
             } else {
-                ((src >> 3) & 0xFC) as u8
+                g
             };
             if alpha == 0 {
                 continue;
             }
             let di = (sy * width as usize + sx) * 4;
-            rgba[di] = ((src >> 8) & 0xF8) as u8;
-            rgba[di + 1] = ((src >> 3) & 0xFC) as u8;
-            rgba[di + 2] = ((src << 3) & 0xF8) as u8;
+            rgba[di] = r;
+            rgba[di + 1] = g;
+            rgba[di + 2] = b;
             rgba[di + 3] = alpha;
         }
     }

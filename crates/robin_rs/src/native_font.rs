@@ -264,9 +264,7 @@ impl NativeFont {
                     0
                 };
                 let alpha = ((alpha_px & 0x1F) << 3) as u8;
-                let r = ((glyph_px >> 8) & 0xF8) as u8;
-                let g = ((glyph_px >> 3) & 0xFC) as u8;
-                let b = ((glyph_px << 3) & 0xF8) as u8;
+                let (r, g, b) = robin_util::color::rgb565_to_rgb8(glyph_px);
                 let dst = glyph_idx * 4;
                 out[dst] = r;
                 out[dst + 1] = g;

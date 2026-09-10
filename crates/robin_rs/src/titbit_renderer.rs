@@ -966,12 +966,8 @@ fn rgb565_to_rgba8888(
                     (percent.min(100) as u32 * 255 / 100) as u8
                 }
             };
-            (
-                ((px << 3) & 0xF8) as u8,
-                ((px >> 3) & 0xFC) as u8,
-                ((px >> 8) & 0xF8) as u8,
-                alpha,
-            )
+            let (r, g, b) = robin_util::color::rgb565_to_rgb8(px);
+            (b, g, r, alpha)
         };
         bytes.extend_from_slice(&[r, g, b, a]);
     }
