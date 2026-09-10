@@ -37,7 +37,7 @@ export async function inventory(root: string): Promise<Assets> {
     }
   }
   await walk(root);
-  for (const name of ['robin-windows-x86_64.zip', 'robin-linux-x86_64.tar.gz']) {
+  for (const name of ['io.github.phiresky.robinhood-windows-Setup.exe', 'io.github.phiresky.robinhood-windows-Portable.zip', 'io.github.phiresky.robinhood-linux.AppImage']) {
     if (!assets.has(name)) throw new Error(`missing platform artifact: ${name}`);
   }
   for (const runtime of ['win', 'linux']) {
@@ -125,7 +125,14 @@ export async function publish(
     // Keep the creation response; the list may not yet contain the new draft.
     ({ data: release } = await github.rest.repos.createRelease({
       ...repo, tag_name: tag, target_commitish: commit, name: tag,
-      body: `Automatic build of ${commit}.`, draft: true, prerelease,
+      body: `Automatic build of ${commit}.\n\n` +
+        'Downloads:\n' +
+        '- If you’re on Windows, you likely want to get `io.github.phiresky.robinhood-windows-Setup.exe`.\n' +
+        '- Linux: download `io.github.phiresky.robinhood-linux.AppImage`, make it executable, and run it.\n\n' +
+        'The two `.nupkg` files are automatic-update payloads (Windows and Linux); ' +
+        'you do not need to download them manually. The package without a platform suffix is Windows. ' +
+        'The `releases.*.json` files are required update indexes.',
+      draft: true, prerelease,
     }));
   }
   if (release.target_commitish !== commit) throw new Error('release target differs from the requested commit');

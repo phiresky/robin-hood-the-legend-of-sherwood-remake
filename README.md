@@ -60,8 +60,10 @@ and will be installed automatically by rustup.
 ### Native release packages
 
 GitHub Releases provides x86-64 Windows and Linux builds, with stable releases
-for version tags and rolling nightly prereleases. Windows downloads include ZIP
-and `Setup.exe`; Linux downloads include a tarball and AppImage.
+for version tags and rolling nightly prereleases. Windows downloads include
+`-windows-Setup.exe` and `-windows-Portable.zip`; Linux uses `-linux.AppImage`.
+The two `.nupkg` assets are automatic-update payloads: the unsuffixed package is
+Windows, and `-linux-full.nupkg` is Linux. Neither needs to be downloaded manually.
 Installed packages should update automatically within their release channel.
 
 Release automation stages a draft candidate, verifies uploaded artifact hashes,

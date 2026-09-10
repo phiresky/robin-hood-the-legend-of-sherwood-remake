@@ -13,7 +13,7 @@ const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
   const root = await mkdtemp(join(tmpdir(), 'native-release-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  for (const name of ['robin-windows-x86_64.zip', 'robin-linux-x86_64.tar.gz', 'game package.nupkg']) {
+  for (const name of ['io.github.phiresky.robinhood-windows-Setup.exe', 'io.github.phiresky.robinhood-windows-Portable.zip', 'io.github.phiresky.robinhood-linux.AppImage', 'game package.nupkg']) {
     await writeFile(join(root, name), 'package');
   }
   for (const runtime of ['win', 'linux']) {
@@ -126,7 +126,7 @@ test('timestamp uses original workflow creation time and normalizes timezone', a
 
 test('inventory requires complete, hash-verified update indexes', async t => {
   const root = await fixture(t);
-  assert.equal((await inventory(root)).size, 5);
+  assert.equal((await inventory(root)).size, 6);
   await writeFile(join(root, 'game package.nupkg'), 'tampered');
   await assert.rejects(inventory(root), /size\/hash differs/);
   await rm(join(root, 'game package.nupkg'));
@@ -159,7 +159,7 @@ test('new draft can remain absent from listing through upload and promotion', as
     assert.equal(a.calls.filter(call => call === 'list').length, 1);
     assert.equal(a.calls.includes('tag'), !prerelease);
     assert.equal(a.calls.at(-1), 'promote');
-    assert.equal(a.calls.filter(call => call === 'download').length, 5);
+    assert.equal(a.calls.filter(call => call === 'download').length, 6);
     assert.equal(a.state.listed, false);
   }
 });
@@ -172,11 +172,11 @@ test('existing draft resumes only missing uploads; published release stays immut
   a.draft.assets.push({ name: 'game package.nupkg', id: 1 });
   await publish(a.github, core, root, repo, 'v1', 'commit', true);
   assert.equal(a.calls.includes('create'), false);
-  assert.equal(a.calls.filter(call => call === 'upload').length, 4);
+  assert.equal(a.calls.filter(call => call === 'upload').length, 5);
   a.draft.draft = false;
   a.calls.length = 0;
   await publish(a.github, core, root, repo, 'v1', 'commit', false);
-  assert.deepEqual(a.calls, ['list', 'download', 'download', 'download', 'download', 'download']);
+  assert.deepEqual(a.calls, ['list', 'download', 'download', 'download', 'download', 'download', 'download']);
 });
 
 test('mismatched bytes or missing uploaded assets block promotion', async t => {
@@ -281,6 +281,17 @@ test('real Octokit uploads raw bytes to returned URL and decodes binary download
     },
   });
   await publish(github, core, root, repo, 'v1', 'commit', true);
-  assert.equal(uploaded.size, 5);
+  assert.equal(uploaded.size, 6);
   assert.equal(promoted, true);
+});
+
+test('inventory requires each user-facing download without raw archives', async t => {
+  for (const name of ['io.github.phiresky.robinhood-windows-Setup.exe', 'io.github.phiresky.robinhood-windows-Portable.zip', 'io.github.phiresky.robinhood-linux.AppImage']) {
+    const root = await fixture(t);
+    const assets = await inventory(root);
+    assert.equal(assets.has('robin-windows-x86_64.zip'), false);
+    assert.equal(assets.has('robin-linux-x86_64.tar.gz'), false);
+    await rm(join(root, name));
+    await assert.rejects(inventory(root), /missing platform artifact/);
+  }
 });

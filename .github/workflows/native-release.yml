@@ -98,7 +98,7 @@ jobs:
             artifact: robin-linux-x86_64
     # Deliberately the oldest supported LTS image, not ubuntu-latest: the
     # Linux binary links the runner's glibc, so building on the older image
-    # keeps the shipped tarball/AppImage running on older distros.
+    # keeps the shipped AppImage running on older distros.
     runs-on: ubuntu-22.04
 
     steps:
@@ -243,15 +243,6 @@ jobs:
             cp -R mods target/package-input/
           fi
 
-      - name: Create Windows standalone binary
-        if: matrix.runtime == 'win-x64'
-        run: |
-          (cd target/package-input && zip -r ../release-assets/robin-windows-x86_64.zip .)
-
-      - name: Create Linux standalone binary
-        if: matrix.runtime == 'linux-x64'
-        run: tar -C target/package-input -czf target/release-assets/robin-linux-x86_64.tar.gz .
-
       - name: Build Windows Velopack installers
         if: matrix.runtime == 'win-x64'
         run: |
@@ -270,7 +261,11 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
             --outputDir target/velopack
-          cp target/velopack/* target/release-assets/
+          # Preserve the win update channel for existing installations.
+          # Build manifests and legacy Squirrel indexes are not needed.
+          cp target/velopack/*.nupkg target/velopack/releases.win.json target/release-assets/
+          cp target/velopack/io.github.phiresky.robinhood-win-Setup.exe target/release-assets/io.github.phiresky.robinhood-windows-Setup.exe
+          cp target/velopack/io.github.phiresky.robinhood-win-Portable.zip target/release-assets/io.github.phiresky.robinhood-windows-Portable.zip
 
       - name: Build Linux Velopack AppImage
         if: matrix.runtime == 'linux-x64'
@@ -283,7 +278,8 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime linux-x64 \
             --outputDir target/velopack
-          cp target/velopack/* target/release-assets/
+          cp target/velopack/*.nupkg target/velopack/releases.linux.json target/release-assets/
+          cp target/velopack/io.github.phiresky.robinhood.AppImage target/release-assets/io.github.phiresky.robinhood-linux.AppImage
 
       - name: List release assets
         shell: bash
