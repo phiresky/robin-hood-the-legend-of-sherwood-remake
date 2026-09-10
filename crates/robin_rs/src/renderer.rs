@@ -3187,6 +3187,7 @@ fn log_fps(
     uploads_this_frame: usize,
     binds_this_frame: usize,
     draw_calls_this_frame: usize,
+    present_us: u64,
     resources: &GpuResources,
 ) {
     use std::sync::OnceLock;
@@ -3197,6 +3198,7 @@ fn log_fps(
         uploads_total: usize,
         binds_total: usize,
         draw_calls_total: usize,
+        present_total_us: u64,
         last: web_time::Instant,
     }
     let m = STATE.get_or_init(|| {
@@ -3206,6 +3208,7 @@ fn log_fps(
             uploads_total: 0,
             binds_total: 0,
             draw_calls_total: 0,
+            present_total_us: 0,
             last: web_time::Instant::now(),
         })
     });
@@ -3215,6 +3218,7 @@ fn log_fps(
     g.uploads_total += uploads_this_frame;
     g.binds_total += binds_this_frame;
     g.draw_calls_total += draw_calls_this_frame;
+    g.present_total_us = g.present_total_us.wrapping_add(present_us);
     if g.last.elapsed().as_secs() >= 1 {
         let atlas = resources.sprite_atlas.stats();
         let residency = resources.sprite_residency_stats();
@@ -3222,7 +3226,7 @@ fn log_fps(
         let avg_uploads = g.uploads_total / g.frames as usize;
         let avg_binds = g.binds_total / g.frames as usize;
         let avg_draw_calls = g.draw_calls_total / g.frames as usize;
-        let (present_avg_us, _) = present_time::take_avg();
+        let present_avg_us = g.present_total_us / u64::from(g.frames);
         let upload_labels = upload_counter::take_labels();
         tracing::debug!(
             target: "fps",
@@ -3245,31 +3249,9 @@ fn log_fps(
         g.uploads_total = 0;
         g.binds_total = 0;
         g.draw_calls_total = 0;
+        g.present_total_us = 0;
         g.last = web_time::Instant::now();
     }
-}
-
-/// Average per-frame `present()` wall time, summed over the FPS
-/// window. Surfaced on the same log line as the FPS count.
-mod present_time {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SUM_US: AtomicU64 = AtomicU64::new(0);
-    static N: AtomicU64 = AtomicU64::new(0);
-    pub fn record(us: u64) {
-        SUM_US.fetch_add(us, Ordering::Relaxed);
-        N.fetch_add(1, Ordering::Relaxed);
-    }
-    /// Returns `(avg_us, samples)` and resets.
-    pub fn take_avg() -> (u64, u64) {
-        let s = SUM_US.swap(0, Ordering::Relaxed);
-        let n = N.swap(0, Ordering::Relaxed);
-        let avg = s.checked_div(n).unwrap_or(0);
-        (avg, n)
-    }
-}
-
-fn present_time_record(us: u64) {
-    present_time::record(us);
 }
 
 /// Per-frame upload counter. `upload_rgba_texture` bumps it; `present`

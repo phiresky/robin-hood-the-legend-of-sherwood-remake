@@ -9,7 +9,7 @@ use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
 use super::{
     DrawOperation, QuadTexture, QuadVertex, QueuedDraw, ScreenUniform, TextureSource, bind_counter,
-    log_fps, make_alpha_source, make_tex_bg, present_time_record, upload_counter,
+    log_fps, make_alpha_source, make_tex_bg, upload_counter,
 };
 
 fn expand_queue_geometry(draws: &[QueuedDraw], verts: &mut Vec<QuadVertex>) {
@@ -546,13 +546,13 @@ impl FrameState {
             let draws_this_frame = self.queued.len();
             let uploads_this_frame = upload_counter::take_count();
             let present_us = present_start.elapsed().as_micros() as u64;
-            present_time_record(present_us);
             self.clear_recording();
             log_fps(
                 draws_this_frame,
                 uploads_this_frame,
                 bind_counter::take_count(),
                 bind_counter::take_draw_calls(),
+                present_us,
                 resources,
             );
         }
