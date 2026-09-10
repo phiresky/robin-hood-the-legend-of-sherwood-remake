@@ -440,8 +440,15 @@ fn bundle_recorded_audio(
         let mut bytes = Vec::new();
         let mut offsets = Vec::with_capacity(members.len());
         for &file in &members {
-            let input = fs::File::open(data_out.join(file))
-                .with_context(|| format!("open bundle member {file}"))?;
+            let path = data_out.join(file);
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("stat bundle member {file}"))?;
+            anyhow::ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "bundle member is not a regular file: {file}"
+            );
+            let input =
+                fs::File::open(&path).with_context(|| format!("open bundle member {file}"))?;
             offsets.push(u32::try_from(bytes.len()).context("audio bundle exceeds u32")?);
             append_bundle_member(input, file_refs[file].1, &mut bytes)
                 .with_context(|| format!("bundle member {file}"))?;
@@ -775,6 +782,54 @@ mod boot_trim_tests {
                 .unwrap_err()
                 .to_string()
                 .contains("already bundled")
+        );
+    }
+
+    #[test]
+    fn bundle_members_must_be_regular_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = "audio/assets/effect.opus";
+        let path = directory.path().join(file);
+        fs::create_dir_all(&path).unwrap();
+        let mut dd = robin_assets::shipping_datadir::ShippingDatadir::default();
+        dd.audio_assets.insert(
+            "effect".into(),
+            ShippingAudioAsset {
+                file: file.into(),
+                encoded_size: 1,
+                duration_ms: 123,
+                bundle_offset: None,
+            },
+        );
+        let original = dd.audio_assets.clone();
+        let groups = AudioAssetGroups::from([(file.into(), BTreeSet::from(["effects".into()]))]);
+        let error = bundle_recorded_audio(&mut dd, directory.path(), groups.clone()).unwrap_err();
+        assert!(error.to_string().contains("not a regular file"));
+        assert_eq!(dd.audio_assets, original);
+        assert!(path.is_dir());
+
+        #[cfg(unix)]
+        {
+            fs::remove_dir(&path).unwrap();
+            let target = directory.path().join("original.opus");
+            fs::write(&target, b"x").unwrap();
+            std::os::unix::fs::symlink(&target, &path).unwrap();
+            let error = bundle_recorded_audio(&mut dd, directory.path(), groups).unwrap_err();
+            assert!(error.to_string().contains("not a regular file"));
+            assert_eq!(dd.audio_assets, original);
+            assert!(
+                fs::symlink_metadata(&path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(fs::read(&target).unwrap(), b"x");
+        }
+        assert_eq!(
+            fs::read_dir(directory.path().join("audio/bundles"))
+                .unwrap()
+                .count(),
+            0
         );
     }
 
