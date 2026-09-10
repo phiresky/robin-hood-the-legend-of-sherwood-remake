@@ -1,7 +1,7 @@
 //! Runtime rollback consistency checker.
 //!
-//! On every frame, rewinds the engine by 5 frames and re-simulates
-//! them, comparing the result to the live engine state via
+//! Periodically rewinds the engine by 5 frames and re-simulates
+//! them in a background job, comparing the result to the live engine state via
 //! [`robin_engine::replay::state_hash`].  Any divergence reveals a source of
 //! non-determinism in the simulation.
 //!
@@ -9,9 +9,8 @@
 //! `--rollback-check=false`).  Heavy: does extra replayed ticks plus
 //! several engine clones.
 //!
-//! When a desync is detected, writes a JSON debug file containing
-//! the sequence of commands replayed, the live engine state, and
-//! the re-simulated engine state to `rollback_desync_<frame>.json`
+//! When a desync is detected, writes a focused JSON report of differing
+//! live and re-simulated state values to `rollback_desync_<frame>.json`
 //! in the current directory, including the replay file path when one
 //! is available.
 
@@ -45,7 +44,7 @@ const PERF_LOG_INTERVAL: u32 = 25;
 pub struct RollbackChecker {
     assets: Arc<LevelAssets>,
     /// Frames recorded since the last replay check.  Gates
-    /// `check_and_trim` to every `ROLLBACK_CHECK_INTERVAL` live frames.
+    /// verification scheduling to every `ROLLBACK_CHECK_INTERVAL` live frames.
     frames_since_check: u32,
     /// Whether we've already dumped a desync debug file this session.
     /// Repeated dumps are write-amplified noise.
@@ -97,11 +96,7 @@ impl RollbackChecker {
                 target: "robin_rs::rollback_checker::perf",
                 "rollback checker worker still busy; skipping this window"
             );
-            self.perf.check_total_us += check_start.elapsed().as_micros();
-            self.perf.checks += 1;
-            if self.perf.checks >= PERF_LOG_INTERVAL {
-                self.perf.flush();
-            }
+            self.perf.finish_check(check_start.elapsed().as_micros());
             return;
         }
 
@@ -146,11 +141,7 @@ impl RollbackChecker {
 
         self.worker = Some(std::thread::spawn(move || job.run()));
 
-        self.perf.check_total_us += check_start.elapsed().as_micros();
-        self.perf.checks += 1;
-        if self.perf.checks >= PERF_LOG_INTERVAL {
-            self.perf.flush();
-        }
+        self.perf.finish_check(check_start.elapsed().as_micros());
     }
 
     fn reap_worker(&mut self) {
@@ -198,9 +189,7 @@ impl RollbackCheckJob {
         // replay so every `info!` / `warn!` inside `perform_hourglass`
         // doesn't fire once per replayed frame.
         let silent = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
-        let clone_start = Instant::now();
         let start = self.start;
-        let clone_us = clone_start.elapsed().as_micros();
         let replay_start = Instant::now();
         let replayed = tracing::dispatcher::with_default(&silent, || {
             replay_frames_to_frame(start, &self.assets, end_frame.saturating_add(1), |frame| {
@@ -246,7 +235,6 @@ impl RollbackCheckJob {
 
         tracing::debug!(
             target: "robin_rs::rollback_checker::perf",
-            clone_us,
             replay_us,
             hash_us,
             total_us = check_start.elapsed().as_micros(),
@@ -294,12 +282,18 @@ struct PerfStats {
     checks: u32,
     end_bookkeeping_us: u128,
     check_clone_us: u128,
-    replay_us: u128,
-    hash_us: u128,
     check_total_us: u128,
 }
 
 impl PerfStats {
+    fn finish_check(&mut self, elapsed_us: u128) {
+        self.check_total_us += elapsed_us;
+        self.checks += 1;
+        if self.checks >= PERF_LOG_INTERVAL {
+            self.flush();
+        }
+    }
+
     fn flush(&mut self) {
         if self.checks == 0 {
             return;
@@ -310,8 +304,6 @@ impl PerfStats {
             checks = self.checks,
             end_bookkeeping_avg_us = self.end_bookkeeping_us / checks,
             check_clone_avg_us = self.check_clone_us / checks,
-            replay_avg_us = self.replay_us / checks,
-            hash_avg_us = self.hash_us / checks,
             check_total_avg_us = self.check_total_us / checks,
             "rollback checker timing"
         );
@@ -390,6 +382,28 @@ fn collect_optional_diffs(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn performance_windows_accumulate_attempts_and_reset_together() {
+        let mut stats = PerfStats::default();
+        for count in 1..PERF_LOG_INTERVAL {
+            stats.end_bookkeeping_us += 2;
+            stats.check_clone_us += 3;
+            stats.finish_check(7);
+            assert_eq!(stats.checks, count);
+            assert_eq!(stats.end_bookkeeping_us, u128::from(count) * 2);
+            assert_eq!(stats.check_clone_us, u128::from(count) * 3);
+            assert_eq!(stats.check_total_us, u128::from(count) * 7);
+        }
+        stats.finish_check(11);
+        assert_eq!(stats.checks, 0);
+        assert_eq!(stats.end_bookkeeping_us, 0);
+        assert_eq!(stats.check_clone_us, 0);
+        assert_eq!(stats.check_total_us, 0);
+        stats.finish_check(5);
+        assert_eq!(stats.checks, 1);
+        assert_eq!(stats.check_total_us, 5);
+    }
 
     #[test]
     fn nested_diagnostics_restore_and_reuse_the_callers_path_buffer() {
