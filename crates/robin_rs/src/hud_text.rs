@@ -11,7 +11,8 @@ use crate::host::ViewportState;
 use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
 use crate::ui_panel::{
-    PortraitCache, PortraitTarget, portrait_bar_items, portrait_slot_count, slot_left_x,
+    PortraitBarItem, PortraitCache, PortraitTarget, portrait_bar_items, portrait_slot_count,
+    slot_left_x,
 };
 use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
@@ -444,10 +445,25 @@ pub fn render_hud_text(
     );
 
     let shadow = fonts.shadow_font.as_ref();
+    let (items, _) = portrait_bar_items(engine, local_seat, renderer.screen_width());
+    let slot_count = portrait_slot_count(renderer.screen_width(), items.len());
     render_portrait_text_gpu(
-        engine, local_seat, assets, portraits, renderer, fonts, shadow,
+        engine,
+        local_seat,
+        assets,
+        portraits,
+        renderer,
+        fonts,
+        (&items, slot_count),
     );
-    render_ammo_counts_gpu(engine, local_seat, assets, renderer, fonts, shadow);
+    render_ammo_counts_gpu(
+        engine,
+        local_seat,
+        assets,
+        renderer,
+        fonts,
+        (&items, slot_count),
+    );
     render_counter_titbits_gpu(engine, camera, renderer, fonts, shadow);
     render_sprite_stream_indicator(renderer, fonts, sprite_streaming_status);
 }
@@ -658,14 +674,12 @@ fn render_portrait_text_gpu(
     portraits: &PortraitCache,
     renderer: &mut Renderer,
     fonts: &HudFonts,
-    shadow: Option<&Font>,
+    (items, slot_count): (&[PortraitBarItem<'_>], usize),
 ) {
     let font = &fonts.portrait_font;
+    let shadow = fonts.shadow_font.as_ref();
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
-
-    let (items, _) = portrait_bar_items(engine, local_seat, sw);
-    let slot_count = portrait_slot_count(sw, items.len());
 
     for (slot, item) in items.iter().enumerate() {
         let pc_id = item.members()[0];
@@ -826,14 +840,12 @@ fn render_ammo_counts_gpu(
     assets: &LevelAssets,
     renderer: &mut Renderer,
     fonts: &HudFonts,
-    shadow: Option<&Font>,
+    (items, slot_count): (&[PortraitBarItem<'_>], usize),
 ) {
     let font = &fonts.portrait_font;
+    let shadow = fonts.shadow_font.as_ref();
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
-
-    let (items, _) = portrait_bar_items(engine, local_seat, sw);
-    let slot_count = portrait_slot_count(sw, items.len());
 
     for (slot, item) in items.iter().enumerate() {
         let PortraitTarget::Pc(pc_id) = item.target() else {
