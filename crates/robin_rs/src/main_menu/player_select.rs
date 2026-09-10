@@ -39,6 +39,7 @@ use robin_engine::player_profile::{
     DifficultyLevel, DifficultyRules, LegacyDifficultyLevel, PlayerProfile,
 };
 use robin_engine::resource_ids;
+use serde::{Deserialize, Serialize};
 
 /// Maximum number of player profiles that can coexist on disk.
 const MAX_PROFILES: usize = 10;
@@ -448,15 +449,39 @@ pub(crate) async fn show_select_player(
     }
 }
 
-/// Take a cheap snapshot of the application-owned profile manager.
-///
-/// Returns `(profiles, active_index)` cloned out of the context lock so
-/// the event loop doesn't hold it while rendering.
+/// Only the profile fields needed by the roster and its edit dialogs.
+/// Campaign history and configuration stay with the application owner.
+#[derive(Debug, Serialize, Deserialize)]
+struct PlayerProfileRow {
+    name: String,
+    difficulty: DifficultyLevel,
+    progression: u32,
+    active: bool,
+}
+
+impl From<&PlayerProfile> for PlayerProfileRow {
+    fn from(profile: &PlayerProfile) -> Self {
+        Self {
+            name: profile.name.clone(),
+            difficulty: profile.difficulty,
+            progression: profile.progression,
+            active: profile.active,
+        }
+    }
+}
+
+/// Project the roster under the context lock; rendering and dialogs use only
+/// these owned rows after the lock is released.
 fn profiles_snapshot(
     application_context: &ApplicationContext,
-) -> (Vec<PlayerProfile>, Option<usize>) {
+) -> (Vec<PlayerProfileRow>, Option<usize>) {
     application_context
-        .with_player_profiles(|mgr| (mgr.profiles.clone(), mgr.active_index))
+        .with_player_profiles(|mgr| {
+            (
+                mgr.profiles.iter().map(PlayerProfileRow::from).collect(),
+                mgr.active_index,
+            )
+        })
         .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
 }
 
@@ -591,7 +616,7 @@ fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Resul
 }
 
 /// Format a profile row as `"<Name> / <Difficulty> / <Progression>%"`.
-fn format_profile_row(profile: &PlayerProfile, resources: &IngameMenuResources) -> String {
+fn format_profile_row(profile: &PlayerProfileRow, resources: &IngameMenuResources) -> String {
     let marker = if profile.active { "> " } else { "  " };
     format!(
         "{marker}{name} — {difficulty} / {progression}%",
@@ -1638,6 +1663,57 @@ mod tests {
             package_vm_abi: Some("spellforge-v1-sha256:00".into()),
             compressed_bytes: 123,
         }
+    }
+
+    #[test]
+    fn roster_snapshot_preserves_order_active_flags_and_dialog_fields() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path().to_string_lossy().into_owned();
+        let mut profiles = PlayerProfileManager::new(root_path.clone());
+        let first = profiles.create_profile("Robin".into(), DifficultyLevel::Medium);
+        let second = profiles.create_profile("Marian".into(), DifficultyLevel::Hard);
+        profiles.profiles[first].progression = 12;
+        profiles.profiles[second].progression = 34;
+        profiles.set_active(second);
+        let mut keys = KeyConfigStore::new(root_path.clone());
+        for profile in &profiles.profiles {
+            keys.entry_or_default(profile.id);
+        }
+        let context = ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&root_path),
+            GlobalOptions::default(),
+            profiles,
+            keys,
+            None,
+        )
+        .unwrap();
+        let (rows, active) = profiles_snapshot(&context);
+        assert_eq!(active, Some(second));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[first].name, "Robin");
+        assert_eq!(rows[first].difficulty, DifficultyLevel::Medium);
+        assert_eq!(rows[first].progression, 12);
+        assert!(!rows[first].active);
+        assert_eq!(rows[second].name, "Marian");
+        assert_eq!(rows[second].difficulty, DifficultyLevel::Hard);
+        assert_eq!(rows[second].progression, 34);
+        assert!(rows[second].active);
+    }
+
+    #[test]
+    fn profile_rows_are_independent_of_later_profile_changes() {
+        let mut profile = PlayerProfile::new(1, "Robin".into(), DifficultyLevel::Medium);
+        profile.progression = 42;
+        profile.active = true;
+        let row = PlayerProfileRow::from(&profile);
+        profile.name.clear();
+        profile.difficulty = DifficultyLevel::Hard;
+        profile.progression = 0;
+        profile.active = false;
+        assert_eq!(row.name, "Robin");
+        assert_eq!(row.difficulty, DifficultyLevel::Medium);
+        assert_eq!(row.progression, 42);
+        assert!(row.active);
     }
 
     #[test]
