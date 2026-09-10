@@ -31,7 +31,7 @@ impl Color {
         Self { r, g, b, a }
     }
 
-    /// Linear-space `[f32; 4]` for shader uniforms.
+    /// Normalized sRGB channels and alpha for shader uniforms; no linearization.
     #[inline]
     pub fn to_f32_srgb(self) -> [f32; 4] {
         [
@@ -105,7 +105,11 @@ impl Rect {
     #[inline]
     pub fn contains_point<P: Into<Point>>(&self, p: P) -> bool {
         let p = p.into();
-        p.x >= self.x && p.x < self.right() && p.y >= self.y && p.y < self.bottom()
+        // Relative coordinates avoid overflowing an edge beyond i32::MAX.
+        // Nonpositive dimensions naturally contain no points.
+        let dx = i64::from(p.x) - i64::from(self.x);
+        let dy = i64::from(p.y) - i64::from(self.y);
+        dx >= 0 && dx < i64::from(self.w) && dy >= 0 && dy < i64::from(self.h)
     }
 }
 
@@ -196,6 +200,30 @@ mod tests {
         // Clearly outside.
         assert!(!r.contains_point((9, 20)));
         assert!(!r.contains_point((10, 19)));
+    }
+
+    #[test]
+    fn rect_hit_testing_handles_integer_boundaries_and_empty_extents() {
+        let high = Rect::new(i32::MAX - 2, i32::MAX - 2, 10, 10);
+        assert!(high.contains_point((i32::MAX, i32::MAX)));
+        assert!(!high.contains_point((i32::MIN, i32::MIN)));
+
+        let low = Rect::new(i32::MIN, i32::MIN, 10, 10);
+        assert!(low.contains_point((i32::MIN, i32::MIN)));
+        assert!(low.contains_point((i32::MIN + 9, i32::MIN + 9)));
+        assert!(!low.contains_point((i32::MIN + 10, i32::MIN)));
+        assert!(!low.contains_point((i32::MIN, i32::MIN + 10)));
+        assert!(!low.contains_point((i32::MAX, i32::MAX)));
+
+        for (w, h) in [(0, 1), (1, 0), (-1, 1), (1, -1), (i32::MIN, i32::MIN)] {
+            let empty = Rect {
+                x: i32::MIN,
+                y: i32::MIN,
+                w,
+                h,
+            };
+            assert!(!empty.contains_point((i32::MIN, i32::MIN)));
+        }
     }
 
     #[test]
