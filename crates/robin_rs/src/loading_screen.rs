@@ -98,8 +98,14 @@ impl HeightField {
             expected
         );
 
+        Self::normalize_grayscale(data.to_vec(), width, height)
+    }
+
+    /// Color conversions already own their grayscale pixels; normalize that
+    /// allocation in place instead of constructing a second full-size buffer.
+    fn normalize_grayscale(mut data: Vec<u8>, width: u32, height: u32) -> Self {
         let (mut min_h, mut max_h) = (255u8, 0u8);
-        for &v in data {
+        for &v in &data {
             min_h = min_h.min(v);
             max_h = max_h.max(v);
         }
@@ -107,13 +113,12 @@ impl HeightField {
         let range = (max_h - min_h) as f32;
         let normalizer = if range > 0.0 { 255.0 / range } else { 0.0 };
 
-        let normalized: Vec<u8> = data
-            .iter()
-            .map(|&v| ((v - min_h) as f32 * normalizer) as u8)
-            .collect();
+        for value in &mut data {
+            *value = ((*value - min_h) as f32 * normalizer) as u8;
+        }
 
         Self {
-            data: normalized,
+            data,
             width,
             height,
         }
@@ -146,7 +151,7 @@ impl HeightField {
             })
             .collect();
 
-        Self::from_grayscale(&grayscale, width, height)
+        Self::normalize_grayscale(grayscale, width, height)
     }
 
     /// Generate a height field from RGB565 (16-bit) pixel data.
@@ -177,7 +182,7 @@ impl HeightField {
             })
             .collect();
 
-        Self::from_grayscale(&grayscale, width, height)
+        Self::normalize_grayscale(grayscale, width, height)
     }
 
     /// Generate a height field from RGB555 (15-bit) pixel data.
@@ -208,7 +213,7 @@ impl HeightField {
             })
             .collect();
 
-        Self::from_grayscale(&grayscale, width, height)
+        Self::normalize_grayscale(grayscale, width, height)
     }
 
     /// Compute the sand dissolve threshold for a given progress value.

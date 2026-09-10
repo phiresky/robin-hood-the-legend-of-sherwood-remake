@@ -1,6 +1,68 @@
 use super::*;
 
 #[test]
+fn grayscale_normalization_reuses_owned_storage_and_preserves_rounding() {
+    for data in [
+        vec![0],
+        vec![255; 16],
+        vec![7, 19, 21, 30],
+        (0..=255).collect(),
+        (100..=200).rev().collect(),
+    ] {
+        let min = *data.iter().min().unwrap();
+        let max = *data.iter().max().unwrap();
+        let factor = if max > min {
+            255.0 / f32::from(max - min)
+        } else {
+            0.0
+        };
+        let expected: Vec<_> = data
+            .iter()
+            .map(|value| (f32::from(*value - min) * factor) as u8)
+            .collect();
+        let pointer = data.as_ptr();
+        let width = data.len() as u32;
+        let field = HeightField::normalize_grayscale(data, width, 1);
+        assert_eq!(field.data.as_ptr(), pointer);
+        assert_eq!(field.data, expected);
+        assert_eq!((field.width, field.height), (width, 1));
+    }
+}
+
+#[test]
+fn packed_color_height_fields_preserve_all_pixel_values() {
+    let pixels: Vec<u16> = (0..=u16::MAX).collect();
+    for is_565 in [true, false] {
+        let grayscale: Vec<u8> = pixels
+            .iter()
+            .map(|&pixel| {
+                let (r, g, b) = if is_565 {
+                    (
+                        ((pixel & 0xf800) >> 8) as u32,
+                        ((pixel & 0x07e0) >> 3) as u32,
+                        ((pixel & 0x001f) << 3) as u32,
+                    )
+                } else {
+                    (
+                        ((pixel & 0x7c00) >> 7) as u32,
+                        ((pixel & 0x03e0) >> 2) as u32,
+                        ((pixel & 0x001f) << 3) as u32,
+                    )
+                };
+                ((r * 39 + g * 50 + b * 11) / 100) as u8
+            })
+            .collect();
+        let expected = HeightField::from_grayscale(&grayscale, 256, 256);
+        let actual = if is_565 {
+            HeightField::from_rgb565(&pixels, 256, 256)
+        } else {
+            HeightField::from_rgb555(&pixels, 256, 256)
+        };
+        assert_eq!(actual.data, expected.data);
+    }
+}
+
+#[test]
 fn loading_pictures_use_only_the_supplied_preparation_reader() {
     use std::sync::Arc;
     let root = tempfile::tempdir().unwrap();
