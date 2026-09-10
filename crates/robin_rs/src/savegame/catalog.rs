@@ -63,8 +63,8 @@ impl SlotCatalog {
         Ok(entry)
     }
 
-    pub(super) fn name(&self, index: usize) -> Result<SlotName> {
-        Ok(self.entry(index)?.name.clone())
+    pub(super) fn name(&self, index: usize) -> Result<&SlotName> {
+        Ok(&self.entry(index)?.name)
     }
     pub(super) fn handle(&self, index: usize) -> Result<SlotHandle> {
         let entry = self.entry(index)?;
@@ -283,10 +283,14 @@ mod tests {
         ] {
             let index = catalog.insert(published(name), state).unwrap();
             assert_eq!(catalog.state_at(index).unwrap(), state);
-            assert_eq!(catalog.state(&catalog.name(index).unwrap()).unwrap(), state);
+            assert!(std::ptr::eq(
+                catalog.name(index).unwrap(),
+                &catalog.entries[index].name
+            ));
+            assert_eq!(catalog.state(catalog.name(index).unwrap()).unwrap(), state);
         }
         assert!(catalog.state_at(catalog.len()).is_err());
-        let original_name = catalog.name(0).unwrap();
+        let original_name = catalog.name(0).unwrap().clone();
         catalog.metadata_mut(0).unwrap().filename = "Mismatched".into();
         assert!(catalog.state_at(0).is_err());
         assert!(catalog.state(&original_name).is_err());

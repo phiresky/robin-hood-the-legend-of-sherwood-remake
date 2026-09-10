@@ -605,7 +605,10 @@ impl SaveGameManager {
     }
 
     pub fn slot_name(&self, index: usize) -> Result<SlotName, String> {
-        self.catalog.name(index).map_err(|error| error.to_string())
+        self.catalog
+            .name(index)
+            .cloned()
+            .map_err(|error| error.to_string())
     }
 
     /// Find the slot for one of the well-known special filenames, or
@@ -1340,13 +1343,19 @@ impl SaveGameManager {
 
     /// Thumbnail file path.
     pub fn thumb_path(&self, index: usize) -> PathBuf {
-        let filename = self.slot_name(index).expect("invalid save slot identity");
+        let filename = self
+            .catalog
+            .name(index)
+            .expect("invalid save slot identity");
         Path::new(&self.save_directory).join(format!("{}_thumb.png", filename.as_str()))
     }
 
     /// Full path to a save file on disk (JSON format, with `.json` extension).
     pub fn save_path(&self, index: usize) -> PathBuf {
-        let filename = self.slot_name(index).expect("invalid save slot identity");
+        let filename = self
+            .catalog
+            .name(index)
+            .expect("invalid save slot identity");
         Path::new(&self.save_directory).join(format!("{}.json", filename.as_str()))
     }
 
