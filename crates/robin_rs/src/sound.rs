@@ -1213,31 +1213,19 @@ impl SoundManager {
         });
     }
 
-    fn stop_exclamation_channel(&mut self, actor_id: u32, backend: &mut dyn AudioBackend) -> bool {
+    /// Stop the currently playing exclamation channel without dropping pending speech.
+    pub fn stop_exclamation_channel_only(&mut self, actor_id: u32, backend: &mut dyn AudioBackend) {
         if !self.persisted.active {
-            return true;
+            return;
         }
 
-        let mut found_channel = false;
         for i in 0..self.persisted.num_channels as usize {
             if self.runtime.channel_info.get(i).is_some_and(|c| {
                 c.sound_type == SoundType::Exclamation && c.actor_id == Some(actor_id)
             }) {
                 self.stop_channel(i as i32, backend);
-                found_channel = true;
             }
         }
-
-        found_channel
-    }
-
-    /// Stop the currently playing exclamation channel without dropping pending speech.
-    pub fn stop_exclamation_channel_only(
-        &mut self,
-        actor_id: u32,
-        backend: &mut dyn AudioBackend,
-    ) -> bool {
-        self.stop_exclamation_channel(actor_id, backend)
     }
 
     /// Drop queued exclamations for an actor without touching the currently playing channel.
@@ -1247,31 +1235,10 @@ impl SoundManager {
         });
     }
 
-    /// Stop an exclamation by actor ID. Returns true if one was playing on a channel.
-    pub fn stop_exclamation(&mut self, actor_id: u32, backend: &mut dyn AudioBackend) -> bool {
-        let found_channel = self.stop_exclamation_channel(actor_id, backend);
+    /// Stop the actor's audible exclamation and drop its queued speech.
+    pub fn stop_exclamation(&mut self, actor_id: u32, backend: &mut dyn AudioBackend) {
+        self.stop_exclamation_channel_only(actor_id, backend);
         self.drop_pending_exclamations(actor_id);
-
-        found_channel
-    }
-
-    /// Stop every currently audible speech channel while preserving the
-    /// simulation's queued logical speech requests. Runtime language changes
-    /// use this before replacing the localized sample cache so an old-language
-    /// bark cannot continue over the newly selected presentation.
-    pub fn stop_all_exclamation_channels(&mut self, backend: &mut dyn AudioBackend) {
-        let channels: Vec<i32> = self
-            .runtime
-            .channel_info
-            .iter()
-            .enumerate()
-            .filter_map(|(index, info)| {
-                (info.sound_type == SoundType::Exclamation).then_some(index as i32)
-            })
-            .collect();
-        for channel in channels {
-            self.stop_channel(channel, backend);
-        }
     }
 
     // ── Jingle management ────────────────────────────────────────────
@@ -1363,9 +1330,9 @@ impl SoundManager {
     }
 
     /// Play a dialogue WAV file as a music stream.
-    pub fn play_dialog(&mut self, file_path: &str, backend: &mut dyn AudioBackend) -> bool {
+    pub fn play_dialog(&mut self, file_path: &str, backend: &mut dyn AudioBackend) {
         if !self.persisted.sound_system_ready {
-            return true;
+            return;
         }
 
         backend.halt_music();
@@ -1377,16 +1344,13 @@ impl SoundManager {
             self.runtime.dialog_finished = false;
             self.runtime.has_dialog = true;
         }
-
-        true
     }
 
-    pub fn close_dialog(&mut self, backend: &mut dyn AudioBackend) -> bool {
+    pub fn close_dialog(&mut self, backend: &mut dyn AudioBackend) {
         if self.persisted.sound_system_ready {
             backend.halt_music();
             self.runtime.has_dialog = false;
         }
-        true
     }
 
     pub fn get_dialog_volume(&self, backend: &dyn AudioBackend) -> f32 {
@@ -2616,6 +2580,55 @@ mod tests {
         let sources = SoundSourceManager::new();
         mgr.activate(false, &sources);
         assert!(mgr.is_active());
+    }
+
+    #[test]
+    fn speech_stop_commands_keep_channel_and_queue_scope_distinct() {
+        let mut manager = SoundManager::new();
+        let mut backend = MockBackend::new();
+        manager.initialize(&mut backend, false).unwrap();
+        manager.activate(false, &SoundSourceManager::new());
+        let mut channels = Vec::new();
+        for actor in [1u32, 2] {
+            let channel = backend.play_sound("speech.wav", false).unwrap();
+            manager.update_channel_info(channel, SoundType::Exclamation, None, Some(actor));
+            manager.play_exclamation(
+                ExclamationGroup::Pc,
+                0,
+                1,
+                EXCLAMATION_VARIANT_NONE,
+                MapPoint::default(),
+                Some(actor),
+            );
+            channels.push(channel);
+        }
+        manager.stop_exclamation_channel_only(1, &mut backend);
+        assert!(!backend.is_channel_playing(channels[0]));
+        assert!(backend.is_channel_playing(channels[1]));
+        assert_eq!(manager.num_pending_sounds(), 2);
+
+        manager.stop_exclamation(1, &mut backend);
+        assert_eq!(manager.num_pending_sounds(), 1);
+        assert_eq!(manager.runtime.pending_sounds[0].actor_id, Some(2));
+        assert!(backend.is_channel_playing(channels[1]));
+        manager.stop_exclamation(2, &mut backend);
+        assert!(!backend.is_channel_playing(channels[1]));
+        assert_eq!(manager.num_pending_sounds(), 0);
+    }
+
+    #[test]
+    fn dialogue_commands_update_runtime_without_status_placeholders() {
+        let mut manager = SoundManager::new();
+        let mut backend = MockBackend::new();
+        manager.play_dialog("dialogue.wav", &mut backend);
+        assert!(!manager.runtime.has_dialog);
+        manager.close_dialog(&mut backend);
+        manager.initialize(&mut backend, false).unwrap();
+        manager.play_dialog("dialogue.wav", &mut backend);
+        assert!(manager.runtime.has_dialog);
+        assert!(!manager.is_dialog_finished());
+        manager.close_dialog(&mut backend);
+        assert!(!manager.runtime.has_dialog);
     }
 
     #[test]
