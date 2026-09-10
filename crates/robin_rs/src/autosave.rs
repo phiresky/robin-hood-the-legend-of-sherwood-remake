@@ -736,11 +736,10 @@ fn staged_manifest(
     saves.retain(|save| save.filename != metadata.filename);
     saves.push(metadata);
     let remove_count = saves.len().saturating_sub(AUTOSAVE_SLOT_COUNT);
-    let evicted_filenames = saves[..remove_count]
-        .iter()
-        .map(|save| save.filename.clone())
+    let evicted_filenames = saves
+        .drain(..remove_count)
+        .map(|save| save.filename)
         .collect();
-    saves.drain(..remove_count);
     (
         AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
