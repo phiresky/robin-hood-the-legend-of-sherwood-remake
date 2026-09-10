@@ -120,10 +120,9 @@ fn draw_section(
         // let the widget renderer clip; pass the full remaining_h
         // budget but don't break the loop early.
         let remaining_h = (rect.h - (y - rect.y)).max(font.height() as i32);
-        // Both this measurement and `render_text_in_box` below route
-        // through the same `wrap_text` call with the same
-        // `max_lines = remaining_h / line_h`, so the advance can't
-        // drift from the rasterised line count.
+        // Measurement shares the renderer's inset, narrow-wrap fallback,
+        // and remaining-height budget, so the next entry starts after
+        // every line actually drawn.
         let needed_h = measure_text_height_in_box_font(font, &text, text_w, remaining_h)
             .max(font.height() as i32);
         let _ = render_text_in_box_font(

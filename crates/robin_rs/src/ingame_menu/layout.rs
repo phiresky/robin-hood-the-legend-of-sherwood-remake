@@ -705,34 +705,52 @@ pub fn wrap_text_per_char(
 /// given width and height, matching the shared wrap path used by
 /// [`render_text_in_box`].
 ///
-/// Routes through the same [`wrap_text`] call as the renderer, so the
-/// measurement can't drift from what actually gets drawn: both clip to
-/// `box_h / line_h` lines, both apply the same greedy wrap and orphan
-/// avoidance.
+/// Uses the renderer's layout pipeline, including kerning insets, narrow-word
+/// fallback, orphan avoidance, and the same clipped line budget.
 pub fn measure_text_height_in_box(font: &NativeFont, text: &str, box_w: i32, box_h: i32) -> i32 {
-    if text.is_empty() || box_w <= 0 || box_h <= 0 {
-        return 0;
-    }
-    let line_h = font.height() as i32;
-    if line_h <= 0 {
-        return 0;
-    }
-    let max_lines = (box_h / line_h) as usize;
-    let wrap = wrap_text(font, text, box_w, max_lines);
-    wrap.lines.len() as i32 * line_h
+    measure_text_height_in_box_by(
+        text,
+        box_w,
+        box_h,
+        font.height() as i32,
+        |text| font.text_width(text),
+        |text, width, limit| wrap_text_per_char(font, text, width, limit),
+    )
 }
 
 pub fn measure_text_height_in_box_font(font: &Font, text: &str, box_w: i32, box_h: i32) -> i32 {
-    if text.is_empty() || box_w <= 0 || box_h <= 0 {
-        return 0;
-    }
-    let line_h = font.height() as i32;
-    if line_h <= 0 {
-        return 0;
-    }
-    let max_lines = (box_h / line_h) as usize;
-    let wrap = wrap_text_for_box_font(font, text, box_w, max_lines);
-    wrap.lines.len() as i32 * line_h
+    measure_text_height_in_box_by(
+        text,
+        box_w,
+        box_h,
+        font.height() as i32,
+        |text| font.text_width(text),
+        |text, width, limit| wrap_text_per_char_font(font, text, width, limit),
+    )
+}
+
+fn measure_text_height_in_box_by(
+    text: &str,
+    box_w: i32,
+    box_h: i32,
+    line_h: i32,
+    measure: impl Fn(&str) -> i32,
+    wrap_narrow: impl Fn(&str, i32, usize) -> WrapResult,
+) -> i32 {
+    let mut height = 0;
+    // Left/top placement emits exactly one callback per line. No renderer or
+    // baseline is needed to count the rows selected by the shared pipeline.
+    render_text_in_box_by(
+        text,
+        [0, 0, box_w, box_h],
+        (line_h, 0),
+        TextAlign::Left,
+        VAlign::Top,
+        measure,
+        wrap_narrow,
+        |_, _, _| height += line_h,
+    );
+    height
 }
 
 /// Render text inside a virtual box, with horizontal alignment and a
@@ -1460,6 +1478,41 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn boxed_height_uses_rendered_insets_narrow_wrap_and_line_budget() {
+        for (text, width, height, expected) in [
+            ("abc def", 8, 100, 20),
+            ("abcdef", 8, 100, 20),
+            ("abcdef", 4, 100, 20),
+            ("abc", 5, 100, 30),
+            ("abc", 4, 100, 10),
+            ("abc def", 8, 10, 10),
+            ("abc def", 8, 9, 0),
+            ("a\n\nb", 20, 100, 30),
+            ("", 20, 100, 0),
+            ("abc", 0, 100, 0),
+            ("abc", 20, 0, 0),
+        ] {
+            let measured = super::measure_text_height_in_box_by(
+                text,
+                width,
+                height,
+                10,
+                |text| text.chars().count() as i32,
+                |text, width, limit| {
+                    super::wrap_text_units(
+                        text,
+                        width,
+                        limit,
+                        text.grapheme_indices(true),
+                        |unit| unit.chars().count() as i32,
+                    )
+                },
+            );
+            assert_eq!(measured, expected, "{text:?}, {width}x{height}");
+        }
+    }
 
     #[test]
     fn boxed_placement_preserves_insets_alignment_and_baseline_clamping() {
