@@ -1011,7 +1011,7 @@ async fn run_name_prompt(
             // replaced with the "Anonymous" placeholder, and whitespace
             // passes through unchanged. Don't trim here — the caller
             // decides on the empty→Anonymous substitution.
-            break Some((input_widget.edit_text.clone(), difficulty));
+            break Some((input_widget.edit_text, difficulty));
         }
         if cancelled {
             break None;
@@ -1116,19 +1116,12 @@ async fn run_name_prompt(
         // `caret_offset` tracks chars, so we split on char boundaries.
         let caret_elapsed_ms = crate::window::process_uptime_ms().wrapping_sub(caret_started_at_ms);
         let show_caret = (caret_elapsed_ms / 500).is_multiple_of(2);
-        let display = if show_caret {
-            let text = &input_widget.edit_text;
-            let byte_idx = text
-                .char_indices()
-                .nth(input_widget.caret_offset)
-                .map(|(b, _)| b)
-                .unwrap_or(text.len());
-            let (head, tail) = text.split_at(byte_idx);
-            format!("{head}|{tail}")
-        } else {
-            input_widget.edit_text.clone()
-        };
         if let Some(font) = resources.edit_field_font_any() {
+            let display = player_name_display(
+                &input_widget.edit_text,
+                input_widget.caret_offset,
+                show_caret,
+            );
             render_text_virt_font(
                 renderer,
                 font,
@@ -1165,6 +1158,40 @@ async fn run_name_prompt(
     };
     crate::window::stop_text_input();
     outcome
+}
+
+fn player_name_display(text: &str, caret: usize, show_caret: bool) -> std::borrow::Cow<'_, str> {
+    if !show_caret {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let byte_idx = text
+        .char_indices()
+        .nth(caret)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len());
+    let (head, tail) = text.split_at(byte_idx);
+    std::borrow::Cow::Owned(format!("{head}|{tail}"))
+}
+
+#[test]
+fn player_name_display_borrows_plain_text_and_places_caret_at_unicode_boundaries() {
+    let text = String::from("aé界🙂");
+    let plain = player_name_display(&text, 2, false);
+    assert!(matches!(plain, std::borrow::Cow::Borrowed(_)));
+    assert_eq!(plain.as_ptr(), text.as_ptr());
+    assert_eq!(plain, text);
+    for (caret, expected) in [
+        (0, "|aé界🙂"),
+        (1, "a|é界🙂"),
+        (2, "aé|界🙂"),
+        (3, "aé界|🙂"),
+        (4, "aé界🙂|"),
+        (usize::MAX, "aé界🙂|"),
+    ] {
+        assert_eq!(player_name_display(&text, caret, true), expected);
+    }
+    assert_eq!(player_name_display("", 0, true), "|");
+    assert_eq!(player_name_display("", 0, false), "");
 }
 
 const ADVANCED_RULE_COUNT: usize = 18;
