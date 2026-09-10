@@ -179,6 +179,36 @@ fn height_field_from_rgb_wrong_size_panics() {
     HeightField::from_rgb(&[0; 5], 2, 1);
 }
 
+#[test]
+#[should_panic(expected = "height field dimensions must be nonzero")]
+fn grayscale_height_field_rejects_zero_width() {
+    HeightField::from_grayscale(&[], 0, 1);
+}
+
+#[test]
+#[should_panic(expected = "height field dimensions must be nonzero")]
+fn rgb_height_field_rejects_zero_height() {
+    HeightField::from_rgb(&[], 1, 0);
+}
+
+#[test]
+#[should_panic(expected = "height field dimensions must be nonzero")]
+fn rgb565_height_field_rejects_empty_dimensions() {
+    HeightField::from_rgb565(&[], 0, 0);
+}
+
+#[test]
+#[should_panic(expected = "height field dimensions must be nonzero")]
+fn rgb555_height_field_rejects_zero_width() {
+    HeightField::from_rgb555(&[], 0, 10);
+}
+
+#[test]
+#[should_panic(expected = "height field size overflow")]
+fn rgb_height_field_rejects_size_overflow_before_reading_pixels() {
+    HeightField::from_rgb(&[], u32::MAX, u32::MAX);
+}
+
 // -- HeightField threshold -----------------------------------------------
 
 #[test]

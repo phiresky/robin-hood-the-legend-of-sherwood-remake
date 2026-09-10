@@ -81,15 +81,25 @@ pub struct HeightField {
 }
 
 impl HeightField {
+    fn pixel_count(width: u32, height: u32) -> usize {
+        assert!(
+            width != 0 && height != 0,
+            "height field dimensions must be nonzero"
+        );
+        (width as usize)
+            .checked_mul(height as usize)
+            .expect("height field size overflow")
+    }
+
     /// Generate a height field from raw 8-bit grayscale pixel data.
     ///
     /// The values are normalized so the darkest pixel maps to 0 and the
     /// brightest to 255.
     ///
     /// # Panics
-    /// Panics if `data.len() != width * height`.
+    /// Panics if either dimension is zero, the size overflows, or `data.len() != width * height`.
     pub fn from_grayscale(data: &[u8], width: u32, height: u32) -> Self {
-        let expected = (width as usize) * (height as usize);
+        let expected = Self::pixel_count(width, height);
         assert_eq!(
             data.len(),
             expected,
@@ -130,9 +140,11 @@ impl HeightField {
     /// `(R * 39 + G * 50 + B * 11) / 100`, then normalizes.
     ///
     /// # Panics
-    /// Panics if `rgb_data.len() != width * height * 3`.
+    /// Panics if either dimension is zero, the size overflows, or `rgb_data.len() != width * height * 3`.
     pub fn from_rgb(rgb_data: &[u8], width: u32, height: u32) -> Self {
-        let expected = (width as usize) * (height as usize) * 3;
+        let expected = Self::pixel_count(width, height)
+            .checked_mul(3)
+            .expect("height field size overflow");
         assert_eq!(
             rgb_data.len(),
             expected,
@@ -161,9 +173,9 @@ impl HeightField {
     /// - B = bits 4..0,   shifted to 8-bit
     ///
     /// # Panics
-    /// Panics if `pixel_data.len() != width * height`.
+    /// Panics if either dimension is zero, the size overflows, or `pixel_data.len() != width * height`.
     pub fn from_rgb565(pixel_data: &[u16], width: u32, height: u32) -> Self {
-        let expected = (width as usize) * (height as usize);
+        let expected = Self::pixel_count(width, height);
         assert_eq!(
             pixel_data.len(),
             expected,
@@ -192,9 +204,9 @@ impl HeightField {
     /// - B = bits 4..0,   shifted to 8-bit
     ///
     /// # Panics
-    /// Panics if `pixel_data.len() != width * height`.
+    /// Panics if either dimension is zero, the size overflows, or `pixel_data.len() != width * height`.
     pub fn from_rgb555(pixel_data: &[u16], width: u32, height: u32) -> Self {
-        let expected = (width as usize) * (height as usize);
+        let expected = Self::pixel_count(width, height);
         assert_eq!(
             pixel_data.len(),
             expected,
