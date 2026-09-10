@@ -380,17 +380,15 @@ pub async fn open_for_launch(
         Err(error) => error,
     };
     tracing::error!("{original_error}");
-    let profile = context
-        .active_profile_snapshot()
-        .map_err(|error| error.to_string())?;
+    let graphic_config = context.with_active_profile(|profile| profile.graphic_config.clone())?;
     let (width, height) = window.logical_size();
     let mut renderer = Renderer::new(
         window,
         width as u16,
         height as u16,
-        profile.graphic_config.scale_mode,
+        graphic_config.scale_mode,
     );
-    renderer.apply_upscale_config(&profile.graphic_config);
+    renderer.apply_upscale_config(&graphic_config);
     let mut resources = IngameMenuResources::new(
         &mut renderer,
         context.shipping()?,

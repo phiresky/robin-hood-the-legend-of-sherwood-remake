@@ -306,12 +306,12 @@ fn required_save_provenance(
     } else {
         mission_profile.mission_name.clone()
     };
-    let player = host
+    let (player_id, player_name) = host
         .application_context()
-        .active_profile_snapshot()
+        .with_active_profile(|player| (player.id, player.name.clone()))
         .map_err(anyhow::Error::msg)
         .context("save requires an active player profile")?;
-    SaveProvenance::new(mission_name, player.id, player.name)
+    SaveProvenance::new(mission_name, player_id, player_name)
 }
 
 /// Manages a collection of save games for a player profile.
@@ -3567,6 +3567,36 @@ mod tests {
         assert!(!manager.has_restart_save());
         assert!(manager.preflight_restart_save().unwrap().is_none());
         assert_eq!(manager.restart_session_identity(), None);
+    }
+
+    #[test]
+    fn save_provenance_owns_identity_and_requires_an_active_profile() {
+        let (engine, _, profiles, host) = fresh_save_session("Robin 雪");
+        let captured = required_save_provenance(&host, &engine, 17, Some(&profiles)).unwrap();
+        assert_eq!(
+            captured,
+            SaveProvenance::new("Mission 17".into(), 0, "Robin 雪".into()).unwrap()
+        );
+        host.application_context()
+            .with_player_profiles_mut(|players| {
+                players.get_active_mut().unwrap().name = "Renamed Robin".into();
+            })
+            .unwrap();
+        assert_eq!(captured.player_name, "Robin 雪");
+        assert_eq!(
+            required_save_provenance(&host, &engine, 17, Some(&profiles))
+                .unwrap()
+                .player_name,
+            "Renamed Robin"
+        );
+        let scratch = Host::scratch(800.0, 600.0);
+        let expected = scratch
+            .application_context()
+            .active_profile_snapshot()
+            .unwrap_err();
+        let error = required_save_provenance(&scratch, &engine, 17, Some(&profiles)).unwrap_err();
+        assert_eq!(error.to_string(), "save requires an active player profile");
+        assert!(format!("{error:#}").contains(&expected));
     }
 
     #[test]

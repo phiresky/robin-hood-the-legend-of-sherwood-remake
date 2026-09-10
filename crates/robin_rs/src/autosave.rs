@@ -367,12 +367,12 @@ impl AutosaveCoordinator {
             .context("autosave enqueue did not match the current schedule decision")?;
         let filename = self.next_unique_filename(manager)?;
         let display_text = mission_display_name(engine, mission_id, profiles)?;
-        let player = host
+        let (player_id, player_name) = host
             .application_context()
-            .active_profile_snapshot()
+            .with_active_profile(|player| (player.id, player.name.clone()))
             .map_err(anyhow::Error::msg)
             .context("autosave requires an active player profile")?;
-        let provenance = SaveProvenance::new(display_text.clone(), player.id, player.name)?;
+        let provenance = SaveProvenance::new(display_text.clone(), player_id, player_name)?;
         let payload = GameSaveFile::capture_with_game(
             engine,
             host,
