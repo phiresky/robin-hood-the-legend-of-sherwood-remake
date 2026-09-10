@@ -788,11 +788,20 @@ impl ApplicationContext {
     }
 
     pub fn active_profile_snapshot(&self) -> Result<PlayerProfile, String> {
+        self.with_active_profile(Clone::clone)
+    }
+
+    /// Read only the required active-profile values while holding its lock.
+    /// Do not render, await, or re-enter profile services from this callback.
+    pub(crate) fn with_active_profile<R>(
+        &self,
+        read: impl FnOnce(&PlayerProfile) -> R,
+    ) -> Result<R, String> {
         self.with_player_profiles(|profiles| {
             profiles
                 .active_index
                 .and_then(|index| profiles.profiles.get(index))
-                .cloned()
+                .map(read)
         })?
         .ok_or_else(|| "ApplicationContext has no active player profile".to_string())
     }
@@ -1173,7 +1182,7 @@ impl ApplicationContext {
     }
 
     pub fn active_spellforge_trust_grants(&self) -> Result<Vec<SpellforgeTrustGrant>, String> {
-        let profile_id = self.active_profile_snapshot()?.id;
+        let profile_id = self.with_active_profile(|profile| profile.id)?;
         self.with_spellforge_trust(|trust| {
             trust.require_available()?;
             Ok(trust.grants_for_profile(profile_id).to_vec())
@@ -1181,7 +1190,7 @@ impl ApplicationContext {
     }
 
     pub fn is_spellforge_content_trusted(&self, key: SpellforgeTrustKey) -> Result<bool, String> {
-        let profile_id = self.active_profile_snapshot()?.id;
+        let profile_id = self.with_active_profile(|profile| profile.id)?;
         self.with_spellforge_trust(|trust| trust.is_trusted(profile_id, key))?
     }
 
@@ -1191,19 +1200,19 @@ impl ApplicationContext {
         metadata: SpellforgeTrustMetadata,
         approved_unix_seconds: u64,
     ) -> Result<(), String> {
-        let profile_id = self.active_profile_snapshot()?.id;
+        let profile_id = self.with_active_profile(|profile| profile.id)?;
         self.with_spellforge_trust_mut(|trust| {
             trust.grant(profile_id, key, metadata, approved_unix_seconds)
         })?
     }
 
     pub fn revoke_spellforge_content_trust(&self, key: SpellforgeTrustKey) -> Result<bool, String> {
-        let profile_id = self.active_profile_snapshot()?.id;
+        let profile_id = self.with_active_profile(|profile| profile.id)?;
         self.with_spellforge_trust_mut(|trust| trust.revoke(profile_id, key))?
     }
 
     pub fn revoke_all_spellforge_content_trust(&self) -> Result<usize, String> {
-        let profile_id = self.active_profile_snapshot()?.id;
+        let profile_id = self.with_active_profile(|profile| profile.id)?;
         self.with_spellforge_trust_mut(|trust| trust.revoke_all(profile_id))?
     }
 
@@ -1265,7 +1274,7 @@ impl ApplicationContext {
     }
 
     pub fn active_key_configs(&self) -> Result<(KeyConfig, KeyConfig), String> {
-        let profile_id = self.active_profile_snapshot()?.id;
+        let profile_id = self.with_active_profile(|profile| profile.id)?;
         self.with_key_configs(|key_configs| {
             key_configs
                 .get(profile_id)

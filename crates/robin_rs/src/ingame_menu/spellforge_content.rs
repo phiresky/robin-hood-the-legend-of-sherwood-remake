@@ -383,9 +383,7 @@ pub async fn show_spellforge_consent(
 ) -> Result<SpellforgeConsentOutcome, String> {
     if key.package_sha256.is_some()
         && !application_context
-            .active_profile_snapshot()?
-            .gameplay_config
-            .enable_spellforge_missions
+            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)?
     {
         return Err(
             localized_text(application_context, PortTextKey::SpellforgeDisabled).to_owned(),

@@ -35,14 +35,20 @@ pub(crate) async fn show_main_menu_options(
     resources: &IngameMenuResources,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
 ) -> bool {
-    let profile = application_context
-        .active_profile_snapshot()
-        .unwrap_or_else(|error| panic!("Main menu Options requires an active profile: {error}"));
-    let active_profile_id = profile.id;
-    let mut graphic = profile.graphic_config;
-    let mut gameplay = profile.gameplay_config;
-    let mut multiplayer = profile.multiplayer_config;
-    let mut sound_cfg = profile.sound_config;
+    let (active_profile_id, mut graphic, mut gameplay, mut multiplayer, mut sound_cfg) =
+        application_context
+            .with_active_profile(|profile| {
+                (
+                    profile.id,
+                    profile.graphic_config.clone(),
+                    profile.gameplay_config,
+                    profile.multiplayer_config,
+                    profile.sound_config,
+                )
+            })
+            .unwrap_or_else(|error| {
+                panic!("Main menu Options requires an active profile: {error}")
+            });
     let (active, custom) = application_context
         .active_key_configs()
         .unwrap_or_else(|error| panic!("Main menu Options requires active key configs: {error}"));

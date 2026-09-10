@@ -24,10 +24,8 @@ pub(crate) async fn run_main_menu_load(
     save_manager: &mut SaveGameManager,
 ) -> Option<MainMenuChoice> {
     let detailed_metadata = application_context
-        .active_profile_snapshot()
-        .unwrap_or_else(|error| panic!("Load Game requires an active profile: {error}"))
-        .gameplay_config
-        .detailed_save_metadata;
+        .with_active_profile(|profile| profile.gameplay_config.detailed_save_metadata)
+        .unwrap_or_else(|error| panic!("Load Game requires an active profile: {error}"));
     let outcome = show_load_picker(
         event_pump,
         renderer,

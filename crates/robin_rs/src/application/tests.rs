@@ -1093,6 +1093,58 @@ fn frontend_projection_preserves_session_planning_policy() {
 }
 
 #[test]
+fn active_profile_queries_return_owned_values_and_release_the_profile_lock() {
+    let context = context(
+        0,
+        DifficultyLevel::Medium,
+        KeyCode::F4,
+        "profile-query.marker",
+    );
+    let expected = context.active_profile_snapshot().unwrap();
+    let values = context
+        .with_active_profile(|profile| (profile.id, profile.name.clone(), profile.difficulty))
+        .unwrap();
+    assert_eq!(values, (expected.id, expected.name, expected.difficulty));
+    assert!(
+        context
+            .required_services()
+            .unwrap()
+            .player_profiles
+            .try_lock()
+            .is_ok()
+    );
+}
+
+#[test]
+fn unavailable_or_missing_active_profiles_never_invoke_the_reader() {
+    let called = std::cell::Cell::new(false);
+    assert!(
+        ApplicationContext::default()
+            .with_active_profile(|_| called.set(true))
+            .is_err()
+    );
+    assert!(!called.get());
+
+    let context = context(
+        0,
+        DifficultyLevel::Medium,
+        KeyCode::F4,
+        "missing-profile.marker",
+    );
+    let services = context.required_services().unwrap();
+    for index in [None, Some(usize::MAX)] {
+        services.player_profiles.lock().unwrap().active_index = index;
+        let error = context
+            .with_active_profile(|_| called.set(true))
+            .unwrap_err();
+        assert_eq!(error, "ApplicationContext has no active player profile");
+        assert!(!called.get());
+        assert_eq!(context.active_profile_snapshot().unwrap_err(), error);
+        assert!(services.player_profiles.try_lock().is_ok());
+    }
+}
+
+#[test]
 fn context_snapshots_release_locks_before_await() {
     let context = context(0, DifficultyLevel::Medium, KeyCode::F4, "lock.marker");
 

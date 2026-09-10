@@ -288,15 +288,16 @@ pub(crate) async fn show_select_player(
                         };
                         // Persist the selected 4:3 scale reference, not the
                         // transient aspect-adapted canvas dimensions.
-                        let active = application_context
-                            .active_profile_snapshot()
+                        let screen_dims = application_context
+                            .with_active_profile(|profile| {
+                                (
+                                    profile.graphic_config.resolution_x.round() as u32,
+                                    profile.graphic_config.resolution_y.round() as u32,
+                                )
+                            })
                             .unwrap_or_else(|error| {
                                 panic!("new-player flow lost the active profile: {error}")
                             });
-                        let screen_dims = (
-                            active.graphic_config.resolution_x.round() as u32,
-                            active.graphic_config.resolution_y.round() as u32,
-                        );
                         let idx = create_new_profile(
                             application_context,
                             final_name,

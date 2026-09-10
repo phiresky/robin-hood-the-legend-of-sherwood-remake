@@ -1464,9 +1464,8 @@ fn mission_choices(
 
 fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
     let name = application_context
-        .active_profile_snapshot()
-        .unwrap_or_else(|error| panic!("multiplayer menu requires an active profile: {error}"))
-        .name;
+        .with_active_profile(|profile| profile.name.clone())
+        .unwrap_or_else(|error| panic!("multiplayer menu requires an active profile: {error}"));
     if !name.trim().is_empty() {
         return name;
     }
