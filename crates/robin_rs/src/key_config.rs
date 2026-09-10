@@ -141,8 +141,15 @@ impl KeyConfig {
     /// Preserves the existing secondary key if a binding already exists.
     pub fn set_key_by_index(&mut self, index: u16, key: Option<KeyCode>) {
         if let Some(&name) = KEY_NAMES.get(index as usize) {
-            let secondary = self.get_binding(name).and_then(|b| b.secondary_key);
-            self.set_binding(name, key, secondary);
+            if let Some(binding) = self
+                .bindings
+                .iter_mut()
+                .find(|binding| binding.action == name)
+            {
+                binding.primary_key = key;
+            } else {
+                self.set_binding(name, key, None);
+            }
         }
     }
 
@@ -161,14 +168,12 @@ impl KeyConfig {
     /// recreates them from the array.
     pub fn load_keys_array(&mut self, keys: &[Option<KeyCode>]) {
         self.bindings.clear();
-        for (i, &key) in keys.iter().enumerate() {
-            if let Some(&name) = KEY_NAMES.get(i) {
-                self.bindings.push(KeyBinding {
-                    action: name.to_owned(),
-                    primary_key: key,
-                    secondary_key: None,
-                });
-            }
+        for (&name, &key) in KEY_NAMES.iter().zip(keys) {
+            self.bindings.push(KeyBinding {
+                action: name.to_owned(),
+                primary_key: key,
+                secondary_key: None,
+            });
         }
     }
 
@@ -287,6 +292,36 @@ mod tests {
 
     use super::*;
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn indexed_edits_preserve_secondary_keys_and_first_duplicate_semantics() {
+        let mut config = KeyConfig::default();
+        config.set_binding("ZoomIn", Some(KeyCode::PageUp), Some(KeyCode::Home));
+        config.bindings.push(config.bindings[0].clone());
+        config.set_key_by_index(0, Some(KeyCode::PageDown));
+        assert_eq!(config.bindings[0].primary_key, Some(KeyCode::PageDown));
+        assert_eq!(config.bindings[0].secondary_key, Some(KeyCode::Home));
+        assert_eq!(config.bindings[1].primary_key, Some(KeyCode::PageUp));
+        config.set_key_by_index(1, None);
+        assert_eq!(config.bindings.len(), 3);
+        assert_eq!(config.get_binding("ZoomOut").unwrap().secondary_key, None);
+        config.set_key_by_index(u16::MAX, Some(KeyCode::End));
+        assert_eq!(config.bindings.len(), 3);
+    }
+
+    #[test]
+    fn array_import_stops_at_the_action_table_and_clears_old_bindings() {
+        let mut config = KeyConfig::default_preset();
+        config.load_keys_array(&vec![Some(KeyCode::Home); KEY_NAMES.len() + 100]);
+        assert_eq!(config.bindings.len(), KEY_NAMES.len());
+        for (binding, name) in config.bindings.iter().zip(KEY_NAMES) {
+            assert_eq!(&binding.action, name);
+            assert_eq!(binding.primary_key, Some(KeyCode::Home));
+            assert_eq!(binding.secondary_key, None);
+        }
+        config.load_keys_array(&[]);
+        assert!(config.bindings.is_empty());
+    }
 
     #[test]
     fn set_and_get_binding() {
