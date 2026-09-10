@@ -1,7 +1,10 @@
 //! Validated native URL query decoding. Invalid input never becomes an absent option.
 use crate::http_server::{RpcError, ScreenshotFlags, ScreenshotRequest};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    str::FromStr,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct QueryParameters(BTreeMap<String, String>);
@@ -16,10 +19,16 @@ impl QueryParameters {
             if key.is_empty() {
                 return Err(RpcError::invalid_request("empty query parameter name"));
             }
-            if values.insert(key.clone(), value).is_some() {
-                return Err(RpcError::invalid_request(format!(
-                    "duplicate query parameter: {key}"
-                )));
+            match values.entry(key) {
+                Entry::Vacant(entry) => {
+                    entry.insert(value);
+                }
+                Entry::Occupied(entry) => {
+                    return Err(RpcError::invalid_request(format!(
+                        "duplicate query parameter: {}",
+                        entry.key()
+                    )));
+                }
             }
         }
         Ok(Self(values))

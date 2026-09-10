@@ -6,7 +6,7 @@
 //! mounting it into the runtime VFS. Missing or modified engine assets are a
 //! packaging error; they must never silently fall through to retail data.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -146,13 +146,16 @@ pub fn load_validated_bundle(
     let mut bundle = BTreeMap::new();
     let manifest = read_validated_assets(manifest_bytes, read_asset, |entry, bytes| {
         let key = robin_util::asset_fs::bundle_key(Path::new(&entry.path));
-        if bundle
-            .insert(key.clone(), AssetBytes::from(bytes))
-            .is_some()
-        {
-            return Err(anyhow!(
-                "core overlay paths collide after VFS normalization at {key}"
-            ));
+        match bundle.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(AssetBytes::from(bytes));
+            }
+            Entry::Occupied(entry) => {
+                return Err(anyhow!(
+                    "core overlay paths collide after VFS normalization at {}",
+                    entry.key()
+                ));
+            }
         }
         Ok(())
     })?;

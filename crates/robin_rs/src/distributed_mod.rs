@@ -9,7 +9,7 @@ use robin_engine::sbfile::detect_zip_layout_for_mission;
 use robin_engine::spellforge::SpellforgePackage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::io::{Cursor, Read};
 
 use crate::spellforge_trust::{SpellforgeTrustKey, SpellforgeTrustMetadata};
@@ -669,11 +669,16 @@ fn validate_zip(
                 ),
             });
         }
-        if entries.insert(path.clone(), content).is_some() {
-            return Err(DistributedModError::Archive {
-                archive: archive_label,
-                message: format!("duplicate case-insensitive path `{path}`"),
-            });
+        match entries.entry(path) {
+            Entry::Vacant(entry) => {
+                entry.insert(content);
+            }
+            Entry::Occupied(entry) => {
+                return Err(DistributedModError::Archive {
+                    archive: archive_label,
+                    message: format!("duplicate case-insensitive path `{}`", entry.key()),
+                });
+            }
         }
     }
     Ok(entries)
