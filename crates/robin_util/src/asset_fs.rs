@@ -305,6 +305,16 @@ impl AssetVfs {
             .clone()
     }
 
+    /// Observe the cache-invalidation generation without cloning selection
+    /// metadata or bundle handles. This does not pin the selected resources;
+    /// consumers needing a coherent resource view must use `selection_snapshot`.
+    pub fn selection_generation(&self) -> u64 {
+        self.selection
+            .read()
+            .expect("asset selection poisoned")
+            .generation
+    }
+
     pub fn set_locale_bundle(&self, bundle: Option<Arc<Bundle>>) -> Result<(), AssetError> {
         self.select_locale(None, bundle)
     }
@@ -839,6 +849,25 @@ mod tests {
             assert_eq!(is_locale_overlay_key(key), overlay);
             assert_eq!(is_required_locale_key(key), required);
             assert_eq!(is_optional_english_fallback_key(key), english);
+        }
+    }
+
+    #[test]
+    fn generation_observation_tracks_changes_without_updating_frozen_views() {
+        let vfs = AssetVfs::new();
+        assert_eq!(vfs.selection_generation(), 0);
+        vfs.select_locale(Some("one".into()), Some(bundle(&[("text/value", b"one")])))
+            .unwrap();
+        let frozen = vfs.snapshot();
+        let original = frozen.selection_generation();
+        for localized_only in [false, true] {
+            vfs.invalidate_content(localized_only);
+            assert_eq!(
+                vfs.selection_generation(),
+                vfs.selection_snapshot().generation
+            );
+            assert!(vfs.selection_generation() > original);
+            assert_eq!(frozen.selection_generation(), original);
         }
     }
 

@@ -234,7 +234,7 @@ fn sample_cache_key(files: &SbFileSystem, path: &Path) -> String {
     format!(
         "{:?}:{}:{}",
         files.locale_paths(),
-        files.selection_snapshot().generation,
+        files.asset_vfs().selection_generation(),
         path.to_string_lossy().replace('\\', "/")
     )
 }
