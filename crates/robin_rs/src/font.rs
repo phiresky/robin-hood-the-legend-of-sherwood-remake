@@ -58,8 +58,8 @@ fn read_u32_le(data: &[u8], offset: usize) -> u32 {
 
 // Candidate extensions and style variants are optional; an absent face is
 // reported once after exhausting all candidates.
-fn read_font_candidate(files: &SbFileSystem, path: &str) -> Option<Vec<u8>> {
-    match files.try_exists(path) {
+fn load_font_candidate(files: &SbFileSystem, path: &str) -> Option<FontArc> {
+    let bytes = match files.try_exists(path) {
         Ok(false) => None,
         Ok(true) => match files.read_all(path) {
             Ok(bytes) => Some(bytes),
@@ -72,7 +72,30 @@ fn read_font_candidate(files: &SbFileSystem, path: &str) -> Option<Vec<u8>> {
             tracing::warn!("failed to probe font candidate '{path}': {status}");
             None
         }
+    }?;
+    match FontArc::try_from_vec(bytes) {
+        Ok(font) => Some(font),
+        Err(error) => {
+            tracing::warn!("robin_rs font: failed to parse '{path}': {error}");
+            None
+        }
     }
+}
+
+fn font_style_candidates(styles: u32) -> impl Iterator<Item = (&'static str, u32)> {
+    [
+        ("bi", STYLE_BOLD | STYLE_ITALIC),
+        ("-BoldItalic", STYLE_BOLD | STYLE_ITALIC),
+        ("z", STYLE_BOLD | STYLE_ITALIC),
+        ("bd", STYLE_BOLD),
+        ("-Bold", STYLE_BOLD),
+        ("b", STYLE_BOLD),
+        ("i", STYLE_ITALIC),
+        ("-Italic", STYLE_ITALIC),
+        ("", 0),
+    ]
+    .into_iter()
+    .filter(move |&(_, resolved)| styles & resolved == resolved)
 }
 
 fn ttf_search_dirs(sbf_dir: Option<&Path>) -> Vec<PathBuf> {
@@ -264,77 +287,38 @@ impl TrueTypeFont {
 
         let dirs = ttf_search_dirs(sbf_dir);
 
-        // Build candidate list (suffix, styles_resolved). Most-specific first
-        // so that, e.g., a Bold|Italic .tfn prefers a `<base>bi.ttf` over
-        // `<base>bd.ttf` (which would only resolve Bold).
-        let want_bold = self.styles & STYLE_BOLD != 0;
-        let want_italic = self.styles & STYLE_ITALIC != 0;
-        let mut candidates: Vec<(&'static str, u32)> = Vec::new();
-        if want_bold && want_italic {
-            for s in ["bi", "-BoldItalic", "z"] {
-                candidates.push((s, STYLE_BOLD | STYLE_ITALIC));
-            }
-        }
-        if want_bold {
-            for s in ["bd", "-Bold", "b"] {
-                candidates.push((s, STYLE_BOLD));
-            }
-        }
-        if want_italic {
-            for s in ["i", "-Italic"] {
-                candidates.push((s, STYLE_ITALIC));
-            }
-        }
-        candidates.push(("", 0));
-
+        // Most-specific style variants precede upright fallback.
         // `.ttc` TrueType collections load through the same parser (face
         // index 0); the international release ships e.g. `simsun.ttc`.
-        for (suffix, resolved) in candidates {
+        for (suffix, resolved) in font_style_candidates(self.styles) {
             for ext in ["ttf", "ttc"] {
                 let name = format!("{base}{suffix}.{ext}");
                 for dir in &dirs {
                     let path = dir.join(&name);
-                    if let Some(data) = read_font_candidate(files, &path.to_string_lossy()) {
-                        match FontArc::try_from_vec(data) {
-                            Ok(f) => {
-                                self.font = Some(f);
-                                if resolved != 0 {
-                                    tracing::debug!(
-                                        "robin_rs font: '{}' resolved style \
-                                         variant {:#x} via '{}'",
-                                        self.name_str(),
-                                        resolved,
-                                        path.display(),
-                                    );
-                                }
-                                return resolved;
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "robin_rs font: failed to parse '{}': {}",
-                                    path.display(),
-                                    e
-                                );
-                            }
+                    if let Some(font) = load_font_candidate(files, &path.to_string_lossy()) {
+                        self.font = Some(font);
+                        if resolved != 0 {
+                            tracing::debug!(
+                                "robin_rs font: '{}' resolved style variant {:#x} via '{}'",
+                                self.name_str(),
+                                resolved,
+                                path.display(),
+                            );
                         }
+                        return resolved;
                     }
                 }
+
                 // Also consult the game's virtual filesystem so faces shipped
                 // in the datadir or an overlay resolve regardless of the
                 // working directory: the core overlay ships arial.ttf under
                 // Data/Interface/Fonts/, and the original Linux port shipped
                 // it at the datadir root.
-                for vfs_path in [format!("Data/Interface/Fonts/{name}"), name.clone()] {
-                    if let Some(data) = read_font_candidate(files, &vfs_path) {
-                        match FontArc::try_from_vec(data) {
-                            Ok(f) => {
-                                self.font = Some(f);
-                                return resolved;
-                            }
-                            Err(e) => {
-                                tracing::warn!("robin_rs font: failed to parse '{vfs_path}': {e}");
-                            }
-                        }
+                let interface_path = format!("Data/Interface/Fonts/{name}");
+                for vfs_path in [interface_path.as_str(), name.as_str()] {
+                    if let Some(font) = load_font_candidate(files, vfs_path) {
+                        self.font = Some(font);
+                        return resolved;
                     }
                 }
             }
@@ -561,6 +545,46 @@ fn validate_rgba_layout(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn style_candidates_preserve_specificity_and_suffix_precedence() {
+        for (styles, expected) in [
+            (0, vec![""]),
+            (STYLE_BOLD, vec!["bd", "-Bold", "b", ""]),
+            (STYLE_ITALIC, vec!["i", "-Italic", ""]),
+            (
+                STYLE_BOLD | STYLE_ITALIC,
+                vec![
+                    "bi",
+                    "-BoldItalic",
+                    "z",
+                    "bd",
+                    "-Bold",
+                    "b",
+                    "i",
+                    "-Italic",
+                    "",
+                ],
+            ),
+        ] {
+            for extra in [0, 0x8000_0000] {
+                let candidates: Vec<_> = font_style_candidates(styles | extra).collect();
+                assert_eq!(
+                    candidates
+                        .iter()
+                        .map(|(suffix, _)| *suffix)
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert_eq!(candidates.last(), Some(&("", 0)));
+                assert!(
+                    candidates
+                        .iter()
+                        .all(|(_, resolved)| resolved & styles == *resolved)
+                );
+            }
+        }
+    }
 
     #[test]
     fn rgba_layout_validates_visible_rows_without_requiring_trailing_padding() {
