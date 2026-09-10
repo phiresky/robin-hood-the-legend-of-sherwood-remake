@@ -946,28 +946,29 @@ fn rgb565_to_rgba8888(
     alpha_mode: TitbitAlphaMode,
 ) -> Vec<u8> {
     let shadow_alpha = (shadow_level.min(100) as u32 * 255 / 100) as u8;
+    let constant_mode = matches!(alpha_mode, TitbitAlphaMode::ConstantPercent(_));
+    let fixed_alpha = match alpha_mode {
+        TitbitAlphaMode::ConstantPercent(percent) => (percent.min(100) as u32 * 255 / 100) as u8,
+        TitbitAlphaMode::SolidWithShadow | TitbitAlphaMode::BlueChannel => 255,
+    };
     let n = width as usize * height as usize;
     let mut bytes = Vec::with_capacity(n * 4);
 
     for &px in pixels.iter().take(n) {
-        let transparent_pixel = px == transparent
-            || (matches!(alpha_mode, TitbitAlphaMode::ConstantPercent(_))
-                && px == SPRITE_SHADOW_KEY_16);
-        let (b, g, r, a) = if transparent_pixel {
+        let transparent_pixel = px == transparent || (constant_mode && px == SPRITE_SHADOW_KEY_16);
+        let (r, g, b, a) = if transparent_pixel {
             (0, 0, 0, 0)
         } else if alpha_mode == TitbitAlphaMode::SolidWithShadow && px == shadow_color {
             // Black tint so the blend collapses to pure multiply-darken.
             (0, 0, 0, shadow_alpha)
         } else {
-            let alpha = match alpha_mode {
-                TitbitAlphaMode::SolidWithShadow => 255,
-                TitbitAlphaMode::BlueChannel => alpha_from_rgb565_blue(px),
-                TitbitAlphaMode::ConstantPercent(percent) => {
-                    (percent.min(100) as u32 * 255 / 100) as u8
-                }
+            let alpha = if alpha_mode == TitbitAlphaMode::BlueChannel {
+                alpha_from_rgb565_blue(px)
+            } else {
+                fixed_alpha
             };
             let (r, g, b) = robin_util::color::rgb565_to_rgb8(px);
-            (b, g, r, alpha)
+            (r, g, b, alpha)
         };
         bytes.extend_from_slice(&[r, g, b, a]);
     }
@@ -1062,6 +1063,7 @@ mod tests {
             TitbitAlphaMode::ConstantPercent(0),
             TitbitAlphaMode::ConstantPercent(70),
             TitbitAlphaMode::ConstantPercent(100),
+            TitbitAlphaMode::ConstantPercent(u16::MAX),
         ] {
             let bytes = rgb565_to_rgba8888(
                 &pixels,
@@ -1087,7 +1089,11 @@ mod tests {
                         TitbitAlphaMode::SolidWithShadow => 255,
                         TitbitAlphaMode::BlueChannel => ((pixel & 31) * 8) as u8,
                         TitbitAlphaMode::ConstantPercent(percent) => {
-                            (u32::from(percent) * 255 / 100) as u8
+                            if percent >= 100 {
+                                255
+                            } else {
+                                (u32::from(percent) * 255 / 100) as u8
+                            }
                         }
                     };
                     [
