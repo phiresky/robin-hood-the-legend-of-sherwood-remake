@@ -1,7 +1,7 @@
 //! GPU renderer for titbit sprites (floating indicators).
 //!
 //! Loads all sprite rows from `Data/Interface/DEFAULT.RES` at startup,
-//! converts each frame to an ARGB8888 GPU texture with shadow alpha
+//! converts each frame to an RGBA8888 GPU texture with shadow alpha
 //! pre-baked, then in the GPU phase iterates `engine.titbit_manager()
 //! .titbits()` and queues each one as a textured GPU draw.
 //!
@@ -15,7 +15,6 @@ use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
 use crate::host::HostDraw;
 use crate::host::HostTitbitPreview;
-use robin_assets::picture::Picture;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PresentationView;
@@ -811,7 +810,7 @@ fn floor_bottom(anchor: f32, extent: u16) -> i32 {
 
 /// Load every sub-picture of a resource into a vector of GPU textures.
 ///
-/// Each sub-picture is converted RGB565 → ARGB8888 with the shadow key
+/// Each sub-picture is converted RGB565 → RGBA8888 with the shadow key
 /// (`0x001F`) replaced by the day-ambience shadow color, and that shadow
 /// color baked to a semi-transparent alpha so the GPU blend produces
 /// the same dim grey shadow effect as the original software blit path.
@@ -834,31 +833,26 @@ fn load_row(
         }
     };
 
-    // Clone slot vector to release the &mut borrow on resource_manager.
-    let owned: Vec<Option<Picture>> = pictures.to_vec();
-
-    let mut frames = Vec::with_capacity(owned.len());
-    for slot in &owned {
+    let mut frames = Vec::with_capacity(pictures.len());
+    for slot in pictures {
         let Some(pic) = slot else { continue };
         if pic.width == 0 || pic.height == 0 {
             continue;
         }
 
-        // RGB565 source pixels.
-        let source_pixels: Vec<u16> = pic
-            .data
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
         let Some((crop_x, crop_y, crop_w, crop_h)) = pic.opaque_bounds_16() else {
             continue;
         };
         let mut pixels = Vec::with_capacity(crop_w as usize * crop_h as usize);
         for y in 0..crop_h as usize {
             let src = (crop_y as usize + y) * pic.width as usize + crop_x as usize;
-            pixels.extend_from_slice(&source_pixels[src..src + crop_w as usize]);
+            pixels.extend(
+                pic.data[src * 2..(src + crop_w as usize) * 2]
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pixel| u16::from_le_bytes(*pixel)),
+            );
         }
 
         // Replace the magic blue shadow key (0x001F) with the current
@@ -869,10 +863,11 @@ fn load_row(
             crate::markers::apply_arno_law(&mut pixels, shadow_color);
         }
 
-        // Convert to ARGB8888 with shadow alpha pre-baked.
-        // `wipe_shadow` overrides the shadow bake and treats shadow
-        // pixels as fully transparent.
-        let argb_bytes = rgb565_to_argb8888(
+        // Convert to RGBA8888 with shadow alpha pre-baked.
+        // Preserve the existing wipe_shadow override of 100 percent.
+        // TODO: Verify this policy against original rendering: despite the
+        // name, solid-mode shadow pixels become opaque black at 100 percent.
+        let rgba = rgb565_to_rgba8888(
             &pixels,
             crop_w,
             crop_h,
@@ -882,13 +877,6 @@ fn load_row(
             alpha_mode,
         );
 
-        // Build the wgpu RGBA8 texture directly. argb_bytes is
-        // ARGB8888 little-endian, i.e. [B, G, R, A] in memory.
-        // Swizzle to [R, G, B, A] for wgpu's Rgba8UnormSrgb.
-        let mut rgba = Vec::with_capacity(argb_bytes.len());
-        for px in argb_bytes.as_chunks::<4>().0 {
-            rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
-        }
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&format!("titbit res={resource_id}")),
             size: wgpu::Extent3d {
@@ -937,7 +925,7 @@ fn load_row(
     frames
 }
 
-/// Convert RGB565 pixels to ARGB8888 bytes with shadow alpha pre-baked.
+/// Convert RGB565 pixels to RGBA8888 bytes with shadow alpha pre-baked.
 ///
 /// For each input pixel:
 /// - Equal to `transparent` → alpha 0 (skipped)
@@ -948,7 +936,7 @@ fn load_row(
 /// - In blue-channel mode, the source blue component becomes the alpha map,
 ///   matching `SBDRAW_ALPHABLUEONLY`.
 /// - In constant mode, all non-transparent pixels use the given opacity.
-fn rgb565_to_argb8888(
+fn rgb565_to_rgba8888(
     pixels: &[u16],
     width: u16,
     height: u16,
@@ -985,8 +973,7 @@ fn rgb565_to_argb8888(
                 alpha,
             )
         };
-        // ARGB8888 in memory (little-endian on x86): [B, G, R, A].
-        bytes.extend_from_slice(&[b, g, r, a]);
+        bytes.extend_from_slice(&[r, g, b, a]);
     }
 
     bytes
@@ -1071,9 +1058,58 @@ mod tests {
     }
 
     #[test]
+    fn rgba_conversion_preserves_every_rgb565_color_and_alpha_mode() {
+        let pixels: Vec<u16> = (0..=u16::MAX).collect();
+        for mode in [
+            TitbitAlphaMode::SolidWithShadow,
+            TitbitAlphaMode::BlueChannel,
+            TitbitAlphaMode::ConstantPercent(0),
+            TitbitAlphaMode::ConstantPercent(70),
+            TitbitAlphaMode::ConstantPercent(100),
+        ] {
+            let bytes = rgb565_to_rgba8888(
+                &pixels,
+                256,
+                256,
+                TRANSPARENT_COLOR_KEY_16,
+                DEFAULT_SHADOW_COLOR,
+                50,
+                mode,
+            );
+            assert_eq!(bytes.len(), pixels.len() * 4);
+            for (&pixel, actual) in pixels.iter().zip(bytes.as_chunks::<4>().0) {
+                let transparent = pixel == TRANSPARENT_COLOR_KEY_16
+                    || (matches!(mode, TitbitAlphaMode::ConstantPercent(_))
+                        && pixel == SPRITE_SHADOW_KEY_16);
+                let expected = if transparent {
+                    [0, 0, 0, 0]
+                } else if mode == TitbitAlphaMode::SolidWithShadow && pixel == DEFAULT_SHADOW_COLOR
+                {
+                    [0, 0, 0, 127]
+                } else {
+                    let alpha = match mode {
+                        TitbitAlphaMode::SolidWithShadow => 255,
+                        TitbitAlphaMode::BlueChannel => ((pixel & 31) * 8) as u8,
+                        TitbitAlphaMode::ConstantPercent(percent) => {
+                            (u32::from(percent) * 255 / 100) as u8
+                        }
+                    };
+                    [
+                        ((pixel >> 11) * 8) as u8,
+                        (((pixel >> 5) & 63) * 4) as u8,
+                        ((pixel & 31) * 8) as u8,
+                        alpha,
+                    ]
+                };
+                assert_eq!(*actual, expected, "pixel {pixel:#06x}, mode {mode:?}");
+            }
+        }
+    }
+
+    #[test]
     fn blue_channel_alpha_mode_matches_titbit_blit_flags() {
         let px = 0x001F;
-        let bytes = rgb565_to_argb8888(
+        let bytes = rgb565_to_rgba8888(
             &[px],
             1,
             1,
@@ -1087,7 +1123,7 @@ mod tests {
 
     #[test]
     fn constant_alpha_mode_matches_ghost_percent_and_wipes_shadow_key() {
-        let bytes = rgb565_to_argb8888(
+        let bytes = rgb565_to_rgba8888(
             &[0xFFFF, SPRITE_SHADOW_KEY_16],
             2,
             1,
