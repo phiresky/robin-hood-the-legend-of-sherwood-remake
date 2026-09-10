@@ -343,24 +343,14 @@ fn collect_diffs(
                 } else {
                     format!("{path}.{k}")
                 };
-                collect_diffs(
-                    &p,
-                    am.get(k).unwrap_or(&Value::Null),
-                    bm.get(k).unwrap_or(&Value::Null),
-                    out,
-                );
+                collect_optional_diffs(&p, am.get(k), bm.get(k), out);
             }
         }
         (Value::Array(av), Value::Array(bv)) => {
             let n = av.len().max(bv.len());
             for i in 0..n {
                 let p = format!("{path}[{i}]");
-                collect_diffs(
-                    &p,
-                    av.get(i).unwrap_or(&Value::Null),
-                    bv.get(i).unwrap_or(&Value::Null),
-                    out,
-                );
+                collect_optional_diffs(&p, av.get(i), bv.get(i), out);
             }
         }
         _ => out.push(serde_json::json!({
@@ -368,6 +358,75 @@ fn collect_diffs(
             "live": a,
             "replayed": b,
         })),
+    }
+}
+
+/// Absence is not JSON null. Presence flags distinguish missing entries while
+/// retaining the ordinary report's `live` and `replayed` value fields.
+fn collect_optional_diffs(
+    path: &str,
+    live: Option<&serde_json::Value>,
+    replayed: Option<&serde_json::Value>,
+    out: &mut Vec<serde_json::Value>,
+) {
+    match (live, replayed) {
+        (Some(live), Some(replayed)) => collect_diffs(path, live, replayed, out),
+        (None, None) => {}
+        _ => out.push(serde_json::json!({
+            "path": path,
+            "live": live,
+            "replayed": replayed,
+            "live_present": live.is_some(),
+            "replayed_present": replayed.is_some(),
+        })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn missing_null_fields_and_array_elements_remain_visible_in_diagnostics() {
+        let live = json!({"a": null, "items": [1, null]});
+        let replayed = json!({"b": null, "items": [1]});
+        let mut diffs = Vec::new();
+        collect_diffs("", &live, &replayed, &mut diffs);
+        assert_eq!(
+            diffs,
+            vec![
+                json!({"path": "a", "live": null, "replayed": null,
+                "live_present": true, "replayed_present": false}),
+                json!({"path": "b", "live": null, "replayed": null,
+                "live_present": false, "replayed_present": true}),
+                json!({"path": "items[1]", "live": null, "replayed": null,
+                "live_present": true, "replayed_present": false}),
+            ]
+        );
+        let mut reversed = Vec::new();
+        collect_diffs("", &replayed, &live, &mut reversed);
+        for (forward, backward) in diffs.iter().zip(&reversed) {
+            assert_eq!(forward["path"], backward["path"]);
+            assert_eq!(forward["live_present"], backward["replayed_present"]);
+            assert_eq!(forward["replayed_present"], backward["live_present"]);
+        }
+        assert_eq!(reversed.len(), diffs.len());
+    }
+
+    #[test]
+    fn present_value_differences_keep_report_shape_and_skip_equal_subtrees() {
+        let live = json!({"same": {"nested": [null, 1]}, "changed": [1, {"x": true}]});
+        let replayed = json!({"same": {"nested": [null, 1]}, "changed": [2, {"x": null}]});
+        let mut diffs = Vec::new();
+        collect_diffs("", &live, &replayed, &mut diffs);
+        assert_eq!(
+            diffs,
+            vec![
+                json!({"path": "changed[0]", "live": 1, "replayed": 2}),
+                json!({"path": "changed[1].x", "live": true, "replayed": null}),
+            ]
+        );
     }
 }
 
