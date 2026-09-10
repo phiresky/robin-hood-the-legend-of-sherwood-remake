@@ -1346,15 +1346,13 @@ impl SaveGameManager {
         // JSON payload
         let src_json = self.save_path(src);
         let dst_json = self.save_path(dst);
-        let bytes = std::fs::read(&src_json).map_err(|e| format!("read save json: {e}"))?;
-        save_file::atomic_write(&dst_json, &bytes).map_err(|e| format!("copy save json: {e:#}"))?;
+        save_file::atomic_copy(&src_json, &dst_json)
+            .map_err(|e| format!("copy save json: {e:#}"))?;
         // Thumbnail (used by both formats)
         let src_thumb = self.thumb_path(src);
         let dst_thumb = self.thumb_path(dst);
         if src_thumb.exists()
-            && let Err(error) = std::fs::read(&src_thumb)
-                .map_err(anyhow::Error::from)
-                .and_then(|bytes| save_file::atomic_write(&dst_thumb, &bytes))
+            && let Err(error) = save_file::atomic_copy(&src_thumb, &dst_thumb)
         {
             tracing::warn!("Could not rotate save thumbnail: {error:#}");
         }

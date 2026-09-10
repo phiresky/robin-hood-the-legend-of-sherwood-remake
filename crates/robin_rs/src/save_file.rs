@@ -177,7 +177,18 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     atomic_write_with_policy(path, bytes, false)
 }
 
-fn atomic_write_with_policy(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
+/// Copy through the same durable staging boundary without buffering the source.
+pub(crate) fn atomic_copy(source: &Path, destination: &Path) -> Result<()> {
+    let input = fs::File::open(source)
+        .with_context(|| format!("opening atomic-copy source {}", source.display()))?;
+    atomic_write_with_policy(destination, input, true)
+}
+
+fn atomic_write_with_policy(
+    path: &Path,
+    mut input: impl std::io::Read,
+    overwrite: bool,
+) -> Result<()> {
     let parent = path
         .parent()
         .context("atomic write target has no parent directory")?;
@@ -196,9 +207,7 @@ fn atomic_write_with_policy(path: &Path, bytes: &[u8], overwrite: bool) -> Resul
         .prefix(prefix)
         .tempfile_in(parent)
         .with_context(|| format!("creating temporary file beside {}", path.display()))?;
-    use std::io::Write;
-    temporary
-        .write_all(bytes)
+    std::io::copy(&mut input, &mut temporary)
         .with_context(|| format!("writing temporary file for {}", path.display()))?;
     #[cfg(not(target_arch = "wasm32"))]
     temporary
@@ -1152,6 +1161,45 @@ pub fn save_directory_for_profile(profile_id: u32) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn atomic_copy_preserves_bytes_and_keeps_destination_on_missing_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.json");
+        let destination = directory.path().join("destination.json");
+        for size in [0, 1, 8193, 131_072] {
+            let bytes: Vec<_> = (0..size).map(|index| (index % 251) as u8).collect();
+            std::fs::write(&source, &bytes).unwrap();
+            super::atomic_copy(&source, &destination).unwrap();
+            assert_eq!(std::fs::read(&destination).unwrap(), bytes);
+            super::atomic_copy(&destination, &destination).unwrap();
+            assert_eq!(std::fs::read(&destination).unwrap(), bytes);
+        }
+        let before = std::fs::read(&destination).unwrap();
+        assert!(super::atomic_copy(&directory.path().join("missing"), &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), before);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn atomic_stream_failure_keeps_old_destination_and_retires_stage() {
+        use std::io::Read;
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct FailedRead;
+        impl Read for FailedRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("injected source failure"))
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("save.json");
+        std::fs::write(&destination, b"old payload").unwrap();
+        let input = (&b"partial new payload"[..]).chain(FailedRead);
+        let error = super::atomic_write_with_policy(&destination, input, true).unwrap_err();
+        assert!(format!("{error:#}").contains("injected source failure"));
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old payload");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
     use super::*;
     use tempfile::tempdir;
 
