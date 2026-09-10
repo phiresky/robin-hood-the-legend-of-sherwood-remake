@@ -773,7 +773,11 @@ pub(crate) fn render_debug_whatsup_overlay(
         if full_max_x > full_min_x && full_max_y > full_min_y {
             let (sx1, sy1) = to_screen(full_min_x, full_min_y);
             let (sx2, sy2) = to_screen(full_max_x, full_max_y);
-            fill_box_whatsup(renderer, sx1, sy1, sx2 - sx1, sy2 - sy1, 255, 0, 0, false);
+            let width = sx2 - sx1;
+            let height = sy2 - sy1;
+            if width > 0 && height > 0 {
+                renderer.render_gpu_rect(sx1, sy1, width, height, 255, 0, 0, 255);
+            }
         }
 
         // ── White outline around the full bar extent (b3D=false, distance=0) ──
@@ -787,56 +791,4 @@ pub(crate) fn render_debug_whatsup_overlay(
             renderer.render_gpu_line(ex1, ey2, ex1, ey1, 255, 255, 255);
         }
     }
-}
-
-/// Fill a screen-space rectangle and optionally draw a Windows-button
-/// bevel around it.
-///
-/// The base colour is `(r, g, b)` (handled directly by
-/// `render_gpu_rect`, so a depth-aware color helper is not needed);
-/// the bevel uses `min(255, c * 1.5)` for the top-left highlight and
-/// `c * 0.7` for the bottom-right shadow.  The only caller is
-/// `render_debug_whatsup_overlay`, which passes `b3D=false` for both
-/// of its boxes, so the bevel arm is wired up for completeness but
-/// exercised only when a future caller needs it.
-#[allow(clippy::too_many_arguments)]
-fn fill_box_whatsup(
-    renderer: &mut Renderer,
-    sx: i32,
-    sy: i32,
-    w: i32,
-    h: i32,
-    r: u8,
-    g: u8,
-    b: u8,
-    b3d: bool,
-) {
-    if w <= 0 || h <= 0 {
-        return;
-    }
-    renderer.render_gpu_rect(sx, sy, w, h, r, g, b, 255);
-    if !b3d {
-        return;
-    }
-
-    // `(c * 1.5)` clamped to 255.
-    let br = ((r as u16 * 3) / 2).min(255) as u8;
-    let bg = ((g as u16 * 3) / 2).min(255) as u8;
-    let bb = ((b as u16 * 3) / 2).min(255) as u8;
-    // `(c * 0.7)` — float truncation to integer.
-    let dr = (r as f32 * 0.7) as u8;
-    let dg = (g as f32 * 0.7) as u8;
-    let db = (b as f32 * 0.7) as u8;
-
-    let x1 = sx;
-    let y1 = sy;
-    let x2 = sx + w;
-    let y2 = sy + h;
-
-    // Shadow: bottom-left → bottom-right, bottom-right → top-right.
-    renderer.render_gpu_line(x1, y2, x2, y2, dr, dg, db);
-    renderer.render_gpu_line(x2, y2, x2, y1, dr, dg, db);
-    // Highlight: bottom-left → top-left, top-left → top-right.
-    renderer.render_gpu_line(x1, y2, x1, y1, br, bg, bb);
-    renderer.render_gpu_line(x1, y1, x2, y1, br, bg, bb);
 }
