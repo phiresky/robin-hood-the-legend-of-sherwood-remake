@@ -681,13 +681,6 @@ fn wrap_text_by(
     WrapResult { remaining, lines }
 }
 
-/// Returns `true` if any whitespace-separated word in `text` is wider
-/// than `max_w`.  Used to gate the per-character wrap fallback for
-/// narrow boxes / unspaced scripts.
-fn any_word_wider_than(font: &NativeFont, text: &str, max_w: i32) -> bool {
-    text.split_whitespace().any(|w| font.text_width(w) > max_w)
-}
-
 /// Per-character wrap fallback for boxes too narrow to fit any word
 /// (e.g. the 60-px portrait name strip), or for unspaced scripts like
 /// Japanese/Chinese.  Walks `text` character by character, breaks the
@@ -1003,104 +996,16 @@ pub fn render_text_in_box_aligned(
     align: TextAlign,
     valign: VAlign,
 ) -> String {
-    if text.is_empty() || box_w <= 0 || box_h <= 0 {
-        return String::new();
-    }
-    let line_h = font.height() as i32;
-    if line_h <= 0 {
-        return String::new();
-    }
-    let max_lines = (box_h / line_h) as usize;
-
-    // Inset the text rect by the kerning margin on each side before
-    // wrapping and rendering, but only when the box is wide enough to
-    // absorb the inset.
-    let (inner_x, inner_w) = if box_w > 2 * KERNING_MARGIN {
-        (box_x + KERNING_MARGIN, box_w - 2 * KERNING_MARGIN)
-    } else {
-        (box_x, box_w)
-    };
-
-    // VCentered mode forces single-line layout: set the wrap budget
-    // to the full text width so the greedy wrap pass emits one
-    // (overflowing) line per paragraph.
-    let wrap_w = match valign {
-        VAlign::Center => font.text_width(text).max(inner_w),
-        VAlign::Top => inner_w,
-    };
-    // Per-character wrap fallback when any whole word is too wide for
-    // the box.  Only applies to greedy word-wrap (VAlign::Top) —
-    // VCentered forces a single line so the word-overflow doesn't
-    // matter.
-    let wrap = if valign == VAlign::Top && any_word_wider_than(font, text, inner_w) {
-        wrap_text_per_char(font, text, inner_w, max_lines)
-    } else {
-        wrap_text(font, text, wrap_w, max_lines)
-    };
-
-    let baseline = font.baseline() as i32;
-    // For top-origin rendering, `y` is the top of the glyph row.
-    // Centring is anchored on the baseline, so translate through:
-    // baseline_y = box_y + (box_h - baseline) / 2
-    // glyph_top_y = baseline_y - baseline
-    let first_line_y = match valign {
-        VAlign::Top => box_y,
-        VAlign::Center if box_h > line_h => {
-            let total_h = wrap.lines.len() as i32 * line_h;
-            // Centre the text block baseline-wise: the first line's top
-            // sits such that its baseline lands at (box_h - baseline)/2.
-            let baseline_in_box = (box_h - baseline) / 2;
-            let first_baseline_y = box_y + baseline_in_box;
-            let first_top = first_baseline_y - baseline;
-            // Clamp: multi-line text that overflows the box reverts to
-            // top alignment so we never render above `box_y`.
-            if total_h >= box_h {
-                box_y
-            } else {
-                first_top.max(box_y)
-            }
-        }
-        VAlign::Center => box_y,
-    };
-
-    let mut y = first_line_y;
-    for wrapped_line in &wrap.lines {
-        let line = &wrapped_line.text;
-        let tw = font.text_width(line);
-        let is_para_end = wrapped_line.paragraph_end;
-        match align {
-            TextAlign::Left => {
-                render_text_virt(renderer, font, transform, line, inner_x, y);
-            }
-            TextAlign::Center => {
-                render_text_virt(
-                    renderer,
-                    font,
-                    transform,
-                    line,
-                    inner_x + (inner_w - tw) / 2,
-                    y,
-                );
-            }
-            TextAlign::Right => {
-                render_text_virt(renderer, font, transform, line, inner_x + inner_w - tw, y);
-            }
-            TextAlign::Justified => {
-                render_justified_line(
-                    renderer,
-                    font,
-                    transform,
-                    line,
-                    inner_x,
-                    y,
-                    inner_w,
-                    is_para_end,
-                );
-            }
-        }
-        y += line_h;
-    }
-    wrap.remaining
+    render_text_in_box_by(
+        text,
+        [box_x, box_y, box_w, box_h],
+        (font.height() as i32, font.baseline() as i32),
+        align,
+        valign,
+        |text| font.text_width(text),
+        |text, width, limit| wrap_text_per_char(font, text, width, limit),
+        |line, x, y| render_text_virt(renderer, font, transform, line, x, y),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1116,29 +1021,54 @@ pub fn render_text_in_box_aligned_font(
     align: TextAlign,
     valign: VAlign,
 ) -> String {
-    if text.is_empty() || box_w <= 0 || box_h <= 0 {
-        return String::new();
-    }
-    let line_h = font.height() as i32;
-    if line_h <= 0 {
+    render_text_in_box_by(
+        text,
+        [box_x, box_y, box_w, box_h],
+        (font.height() as i32, font.baseline() as i32),
+        align,
+        valign,
+        |text| font.text_width(text),
+        |text, width, limit| wrap_text_per_char_font(font, text, width, limit),
+        |line, x, y| render_text_virt_font(renderer, font, transform, line, x, y),
+    )
+}
+
+/// Shared box geometry and placement; the caller retains its narrow-wrap policy.
+#[allow(clippy::too_many_arguments)]
+fn render_text_in_box_by(
+    text: &str,
+    [box_x, box_y, box_w, box_h]: [i32; 4],
+    (line_h, baseline): (i32, i32),
+    align: TextAlign,
+    valign: VAlign,
+    measure: impl Fn(&str) -> i32,
+    wrap_narrow: impl Fn(&str, i32, usize) -> WrapResult,
+    mut render: impl FnMut(&str, i32, i32),
+) -> String {
+    if text.is_empty() || box_w <= 0 || box_h <= 0 || line_h <= 0 {
         return String::new();
     }
     let max_lines = (box_h / line_h) as usize;
+    // Apply the kerning inset only when the box can absorb both margins.
     let (inner_x, inner_w) = if box_w > 2 * KERNING_MARGIN {
         (box_x + KERNING_MARGIN, box_w - 2 * KERNING_MARGIN)
     } else {
         (box_x, box_w)
     };
+    // VCentered forces one overflowing line per paragraph rather than
+    // falling back to narrow wrapping for words that exceed the box.
     let wrap_w = match valign {
-        VAlign::Center => font.text_width(text).max(inner_w),
+        VAlign::Center => measure(text).max(inner_w),
         VAlign::Top => inner_w,
     };
-    let wrap = if valign == VAlign::Top && any_word_wider_than_font(font, text, inner_w) {
-        wrap_text_per_char_font(font, text, inner_w, max_lines)
-    } else {
-        wrap_text_font(font, text, wrap_w, max_lines)
-    };
-    let baseline = font.baseline() as i32;
+    let wrap =
+        if valign == VAlign::Top && text.split_whitespace().any(|word| measure(word) > inner_w) {
+            wrap_narrow(text, inner_w, max_lines)
+        } else {
+            wrap_text_by(text, wrap_w, max_lines, &measure)
+        };
+    // Centre on the baseline, not on the total block height. Overflowing
+    // blocks revert to top alignment, and no line starts above the box.
     let first_line_y = match valign {
         VAlign::Top => box_y,
         VAlign::Center if box_h > line_h => {
@@ -1154,34 +1084,21 @@ pub fn render_text_in_box_aligned_font(
         }
         VAlign::Center => box_y,
     };
-
     let mut y = first_line_y;
-    for wrapped_line in &wrap.lines {
-        let line = &wrapped_line.text;
-        let tw = font.text_width(line);
-        let is_para_end = wrapped_line.paragraph_end;
+    for line in &wrap.lines {
         match align {
-            TextAlign::Left => render_text_virt_font(renderer, font, transform, line, inner_x, y),
-            TextAlign::Center => render_text_virt_font(
-                renderer,
-                font,
-                transform,
-                line,
-                inner_x + (inner_w - tw) / 2,
-                y,
-            ),
-            TextAlign::Right => {
-                render_text_virt_font(renderer, font, transform, line, inner_x + inner_w - tw, y)
+            TextAlign::Left => render(&line.text, inner_x, y),
+            TextAlign::Center => {
+                render(&line.text, inner_x + (inner_w - measure(&line.text)) / 2, y)
             }
-            TextAlign::Justified => render_justified_line_font(
-                renderer,
-                font,
-                transform,
-                line,
+            TextAlign::Right => render(&line.text, inner_x + inner_w - measure(&line.text), y),
+            TextAlign::Justified => justify_line_by(
+                &line.text,
                 inner_x,
-                y,
                 inner_w,
-                is_para_end,
+                line.paragraph_end,
+                &measure,
+                |word, x| render(word, x, y),
             ),
         }
         y += line_h;
@@ -1309,50 +1226,6 @@ fn wrap_text_units<'a>(
 /// leftover 1-pixels go to the first `slack % word_count` gaps, and
 /// the final word is snapped to `box_x + box_w - last_word_width` so
 /// the line fills exactly.
-#[allow(clippy::too_many_arguments)]
-fn render_justified_line(
-    renderer: &mut Renderer,
-    font: &NativeFont,
-    transform: MenuTransform,
-    line: &str,
-    box_x: i32,
-    y: i32,
-    box_w: i32,
-    is_paragraph_end: bool,
-) {
-    justify_line_by(
-        line,
-        box_x,
-        box_w,
-        is_paragraph_end,
-        |word| font.text_width(word),
-        |word, x| render_text_virt(renderer, font, transform, word, x, y),
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_justified_line_font(
-    renderer: &mut Renderer,
-    font: &Font,
-    transform: MenuTransform,
-    line: &str,
-    box_x: i32,
-    y: i32,
-    box_w: i32,
-    is_paragraph_end: bool,
-) {
-    justify_line_by(
-        line,
-        box_x,
-        box_w,
-        is_paragraph_end,
-        |word| font.text_width(word),
-        |word, x| render_text_virt_font(renderer, font, transform, word, x, y),
-    );
-}
-
-/// Place words using the wrap-time width formula, not whole-line kerning.
-/// Preserve the original word-count divisor and final-word right-edge snap.
 fn justify_line_by(
     line: &str,
     box_x: i32,
@@ -1587,6 +1460,75 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn boxed_placement_preserves_insets_alignment_and_baseline_clamping() {
+        for (bounds, align, valign, expected) in [
+            ([10, 20, 20, 30], TextAlign::Left, VAlign::Top, (12, 20)),
+            ([10, 20, 20, 30], TextAlign::Center, VAlign::Top, (19, 20)),
+            ([10, 20, 20, 30], TextAlign::Right, VAlign::Top, (26, 20)),
+            (
+                [10, 20, 20, 30],
+                TextAlign::Justified,
+                VAlign::Top,
+                (12, 20),
+            ),
+            ([10, 20, 4, 30], TextAlign::Left, VAlign::Top, (10, 20)),
+            ([10, 20, 5, 30], TextAlign::Left, VAlign::Center, (12, 26)),
+            ([10, 20, 20, 10], TextAlign::Left, VAlign::Center, (12, 20)),
+            ([10, 20, 20, 11], TextAlign::Left, VAlign::Center, (12, 20)),
+        ] {
+            let mut drawn = Vec::new();
+            let remaining = super::render_text_in_box_by(
+                "ab",
+                bounds,
+                (10, 6),
+                align,
+                valign,
+                |text| text.len() as i32,
+                |_, _, _| panic!("these cases must use word wrapping"),
+                |text, x, y| drawn.push((text.to_owned(), x, y)),
+            );
+            assert_eq!(drawn, [("ab".to_owned(), expected.0, expected.1)]);
+            assert!(remaining.is_empty());
+        }
+    }
+
+    #[test]
+    fn boxed_placement_preserves_clipping_and_narrow_wrap_dispatch() {
+        let mut drawn = Vec::new();
+        let remaining = super::render_text_in_box_by(
+            "abcdef",
+            [10, 20, 8, 10],
+            (10, 6),
+            TextAlign::Left,
+            VAlign::Top,
+            |text| text.len() as i32,
+            |text, width, limit| {
+                assert_eq!((text, width, limit), ("abcdef", 4, 1));
+                super::wrap_text_units(text, width, limit, text.grapheme_indices(true), |unit| {
+                    unit.len() as i32
+                })
+            },
+            |text, x, y| drawn.push((text.to_owned(), x, y)),
+        );
+        assert_eq!(drawn, [("abcd".to_owned(), 12, 20)]);
+        assert_eq!(remaining, "ef");
+
+        drawn.clear();
+        let remaining = super::render_text_in_box_by(
+            "a\nb\nc",
+            [10, 20, 20, 20],
+            (10, 6),
+            TextAlign::Left,
+            VAlign::Center,
+            |text| text.len() as i32,
+            |_, _, _| panic!("centered paragraphs do not use narrow wrapping"),
+            |text, x, y| drawn.push((text.to_owned(), x, y)),
+        );
+        assert_eq!(drawn, [("a".to_owned(), 12, 20), ("b".to_owned(), 12, 30)]);
+        assert_eq!(remaining, "c");
+    }
 
     fn line_records(wrapped: &super::WrapResult) -> Vec<(&str, bool)> {
         wrapped
