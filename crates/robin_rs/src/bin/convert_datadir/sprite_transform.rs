@@ -680,15 +680,15 @@ pub(super) fn build_rhs_chunk_payload(
         // adjacent-direction), derived from the SHIPPED profile set — the
         // decoder re-derives the identical map from the chunk's RhsData, so
         // the rule must run over exactly what ships.
-        let selfrefs: Vec<Option<robin_assets::sprite_codec::SelfRef>> =
-            match (&prep.rhs_data, &prep.base_rel) {
-                (Some(rhs_data), None) => robin_assets::shipping_datadir::derive_chunk_self_refs(
-                    &rhs_data.profiles,
-                    &blob_ids,
-                ),
-                _ => vec![None; blob_ids.len()],
-            };
-        let has_self_refs = selfrefs.iter().any(Option::is_some);
+        let has_self_refs = match (&prep.rhs_data, &prep.base_rel) {
+            (Some(rhs_data), None) => robin_assets::shipping_datadir::derive_chunk_self_refs(
+                &rhs_data.profiles,
+                &blob_ids,
+            )
+            .iter()
+            .any(Option::is_some),
+            _ => false,
+        };
         if has_base2 && prep.base2_rel.is_none() {
             bail!("RHS {rel} coded base2 sprites without a planned base2 chunk");
         }
@@ -728,13 +728,12 @@ pub(super) fn build_rhs_chunk_payload(
         sprite_count: holder.sprites().len() as u32,
         sprites,
         vq_chunks,
-        rle_jxl_chunks: rle_jxl_chunk
-            .into_iter()
-            .map(|chunk| robin_assets::sprite_groups::split_rle_jxl_chunk(chunk, rle_group_blobs))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flatten()
-            .collect(),
+        rle_jxl_chunks: match rle_jxl_chunk {
+            Some(chunk) => {
+                robin_assets::sprite_groups::split_rle_jxl_chunk(chunk, rle_group_blobs)?
+            }
+            None => Vec::new(),
+        },
     });
     tracing::info!(
         rhs = rel,
