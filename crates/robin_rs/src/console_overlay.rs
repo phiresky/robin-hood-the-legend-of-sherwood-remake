@@ -386,32 +386,23 @@ impl ConsoleOverlay {
         if self.cursor == 0 {
             return;
         }
-        let after = self.cursor_byte_index();
         let before = self
             .input
             .char_indices()
             .nth(self.cursor - 1)
             .map(|(i, _)| i)
-            .unwrap_or(0);
-        self.input.replace_range(before..after, "");
+            .expect("console cursor must not exceed the input character count");
+        self.input.remove(before);
         self.cursor -= 1;
     }
 
     /// Delete the character *at* the cursor (not before it).  No-op at
     /// end-of-line.
     fn delete_at_cursor(&mut self) {
-        let total = self.input.chars().count();
-        if self.cursor >= total {
+        let Some((before, _)) = self.input.char_indices().nth(self.cursor) else {
             return;
-        }
-        let before = self.cursor_byte_index();
-        let after = self
-            .input
-            .char_indices()
-            .nth(self.cursor + 1)
-            .map(|(i, _)| i)
-            .unwrap_or(self.input.len());
-        self.input.replace_range(before..after, "");
+        };
+        self.input.remove(before);
     }
 
     /// Convert the logical cursor column (char index) into the
@@ -1001,6 +992,35 @@ mod tests {
         c.delete_at_cursor();
         assert_eq!(c.input, "ABDE");
         assert_eq!(c.cursor, 2);
+    }
+
+    #[test]
+    fn cursor_deletion_handles_every_unicode_boundary() {
+        for input in ["", "ABCDE", "aé界🙂z", "e\u{301}🙂"] {
+            let characters: Vec<char> = input.chars().collect();
+            for cursor in 0..=characters.len() {
+                let mut console = ConsoleOverlay::new();
+                console.input = input.into();
+                console.cursor = cursor;
+                let mut expected = characters.clone();
+                if cursor > 0 {
+                    expected.remove(cursor - 1);
+                }
+                console.backspace_at_cursor();
+                assert_eq!(console.input, expected.iter().collect::<String>());
+                assert_eq!(console.cursor, cursor.saturating_sub(1));
+
+                console.input = input.into();
+                console.cursor = cursor;
+                let mut expected = characters.clone();
+                if cursor < characters.len() {
+                    expected.remove(cursor);
+                }
+                console.delete_at_cursor();
+                assert_eq!(console.input, expected.iter().collect::<String>());
+                assert_eq!(console.cursor, cursor);
+            }
+        }
     }
 
     #[test]
