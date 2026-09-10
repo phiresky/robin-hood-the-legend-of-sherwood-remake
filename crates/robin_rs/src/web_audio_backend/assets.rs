@@ -6,6 +6,7 @@ use futures::{
     FutureExt as _,
     future::{AbortHandle, Abortable, LocalBoxFuture, Shared},
 };
+use lru::LruCache;
 use robin_assets::shipping_datadir::RemoteAudioAsset;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,19 +22,16 @@ const MAX_DECODED_PCM_BYTES: u64 = 96 * 1024 * 1024;
 struct CachedBuffer {
     buffer: AudioBuffer,
     bytes: u64,
-    last_used: u64,
 }
 
 /// Content-addressed buffers survive mission transitions; active voices own
 /// their buffer references independently of LRU retention.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub(super) struct AudioAssets {
-    #[serde(skip)]
-    buffers: HashMap<String, CachedBuffer>,
+    #[serde(skip, default = "LruCache::unbounded")]
+    buffers: LruCache<String, CachedBuffer>,
     #[serde(skip)]
     cached_bytes: u64,
-    #[serde(skip)]
-    cache_clock: u64,
     #[serde(skip)]
     bundles: AudioBundleCache<js_sys::ArrayBuffer>,
     #[serde(skip)]
@@ -47,6 +45,21 @@ pub(super) struct AudioAssets {
     cancellations: HashMap<String, AbortHandle>,
 }
 
+impl Default for AudioAssets {
+    fn default() -> Self {
+        Self {
+            // Decoded residency is limited by bytes, not the number of buffers.
+            buffers: LruCache::unbounded(),
+            cached_bytes: 0,
+            bundles: Default::default(),
+            encoded_loads: Default::default(),
+            retain_encoded: Default::default(),
+            decode_loads: Default::default(),
+            cancellations: Default::default(),
+        }
+    }
+}
+
 impl Drop for AudioAssets {
     fn drop(&mut self) {
         for handle in self.cancellations.values() {
@@ -57,12 +70,11 @@ impl Drop for AudioAssets {
 
 fn cached_buffer(session: &BrowserAudioSession, key: &str) -> Result<Option<AudioBuffer>, String> {
     session.with_audio(|audio| {
-        audio.assets.cache_clock = audio.assets.cache_clock.wrapping_add(1);
-        let clock = audio.assets.cache_clock;
-        audio.assets.buffers.get_mut(key).map(|cached| {
-            cached.last_used = clock;
-            cached.buffer.clone()
-        })
+        audio
+            .assets
+            .buffers
+            .get(key)
+            .map(|cached| cached.buffer.clone())
     })
 }
 
@@ -72,15 +84,7 @@ fn cache_buffer(
     buffer: AudioBuffer,
 ) -> Result<AudioBuffer, String> {
     session.with_audio(|audio| {
-        if audio.assets.buffers.contains_key(&key) {
-            audio.assets.cache_clock = audio.assets.cache_clock.wrapping_add(1);
-            let clock = audio.assets.cache_clock;
-            let existing = audio
-                .assets
-                .buffers
-                .get_mut(&key)
-                .expect("content-keyed buffer checked above");
-            existing.last_used = clock;
+        if let Some(existing) = audio.assets.buffers.get(&key) {
             return existing.buffer.clone();
         }
         let bytes = u64::from(buffer.length())
@@ -95,36 +99,27 @@ fn cache_buffer(
             );
             return buffer;
         }
-        audio.assets.cache_clock = audio.assets.cache_clock.wrapping_add(1);
-        audio.assets.cached_bytes = audio.assets.cached_bytes.saturating_add(bytes);
-        audio.assets.buffers.insert(
-            key.clone(),
+        while audio.assets.cached_bytes > MAX_DECODED_PCM_BYTES - bytes {
+            let (victim, removed) = audio
+                .assets
+                .buffers
+                .pop_lru()
+                .expect("positive decoded audio residency requires a buffer");
+            audio.assets.cached_bytes -= removed.bytes;
+            tracing::debug!(
+                key = victim,
+                pcm_bytes = removed.bytes,
+                "evicted decoded browser audio under PCM budget"
+            );
+        }
+        audio.assets.cached_bytes += bytes;
+        audio.assets.buffers.put(
+            key,
             CachedBuffer {
                 buffer: buffer.clone(),
                 bytes,
-                last_used: audio.assets.cache_clock,
             },
         );
-        while audio.assets.cached_bytes > MAX_DECODED_PCM_BYTES && audio.assets.buffers.len() > 1 {
-            let Some(victim) = audio
-                .assets
-                .buffers
-                .iter()
-                .filter(|(candidate, _)| candidate.as_str() != key)
-                .min_by_key(|(_, cached)| cached.last_used)
-                .map(|(candidate, _)| candidate.clone())
-            else {
-                break;
-            };
-            if let Some(removed) = audio.assets.buffers.remove(&victim) {
-                audio.assets.cached_bytes = audio.assets.cached_bytes.saturating_sub(removed.bytes);
-                tracing::debug!(
-                    key = victim,
-                    pcm_bytes = removed.bytes,
-                    "evicted decoded browser audio under PCM budget"
-                );
-            }
-        }
         buffer
     })
 }
@@ -404,6 +399,39 @@ mod browser_ownership_tests {
             DecodedRequest::Ready(buffer) => buffer,
             DecodedRequest::Pending(load) => load.await.unwrap(),
         }
+    }
+
+    #[wasm_bindgen_test]
+    async fn decoded_cache_hits_and_duplicate_inserts_preserve_content_and_refresh_order() {
+        let session = session(wav(8192));
+        let buffer = decode(&session).await;
+        cache_buffer(&session, "a".into(), buffer.clone()).unwrap();
+        cache_buffer(&session, "b".into(), buffer.clone()).unwrap();
+        cached_buffer(&session, "a").unwrap().unwrap();
+        session
+            .with_audio(|audio| assert_eq!(audio.assets.buffers.iter().next().unwrap().0, "a"))
+            .unwrap();
+        let replacement = session
+            .with_audio(|audio| audio.context.create_buffer(1, 4, 8000.0).unwrap())
+            .unwrap();
+        let existing = cache_buffer(&session, "b".into(), replacement).unwrap();
+        assert!(js_sys::Object::is(existing.as_ref(), buffer.as_ref()));
+        session
+            .with_audio(|audio| {
+                assert_eq!(audio.assets.buffers.iter().next().unwrap().0, "b");
+                assert_eq!(audio.assets.buffers.len(), 3);
+                assert_eq!(
+                    audio.assets.cached_bytes,
+                    u64::from(buffer.length()) * 4 * 3
+                );
+                let restored: AudioAssets =
+                    serde_json::from_value(serde_json::to_value(&audio.assets).unwrap()).unwrap();
+                assert!(restored.buffers.is_empty());
+                assert_eq!(restored.cached_bytes, 0);
+            })
+            .unwrap();
+        session.retire();
+        assert!(buffer.get_channel_data(0).unwrap()[100] > 0.2);
     }
 
     #[wasm_bindgen_test]

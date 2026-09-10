@@ -26,6 +26,7 @@ bitflags = { workspace = true, features = ["serde"] }
 enum-map = { workspace = true, features = ["serde"] }
 indexmap.workspace = true
 smallvec = "1.16"
+lru = { version = "0.18.4", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_urlencoded = "0.7"
@@ -91,7 +92,6 @@ ogg = { version = "0.9.2", optional = true }
 # point at user-supplied data directories, so restricting their accepted audio
 # formats would be an unnecessary compatibility regression.
 kira = { version = "0.12", optional = true }
-lru = { version = "0.18.4", optional = true }
 # Spatial-audio coordinates for Kira. Web Audio uses StereoPannerNode.
 mint = { version = "0.5", optional = true }
 fs2 = "0.4"
