@@ -69,22 +69,22 @@ impl PickerModel {
 
     /// Refresh after *every* storage outcome, including a published deletion
     /// whose subsequent cleanup failed. Retain identities across reordering.
-    pub fn refresh(&mut self, slots: Vec<PickerSlot>) {
-        let mut names = std::collections::HashSet::new();
-        assert!(
-            slots.iter().all(|slot| names.insert(slot.name.clone())),
-            "picker requires unique slot identities"
-        );
-        self.slots = slots
-            .into_iter()
-            .filter(|slot| match self.mode {
-                SaveLoadMode::Save => !slot.special,
-                SaveLoadMode::Load => {
-                    !slot.hidden_from_load
-                        && (!self.multiplayer_connected || !slot.multiplayer_diagnostic)
-                }
-            })
-            .collect();
+    pub fn refresh(&mut self, mut slots: Vec<PickerSlot>) {
+        {
+            let mut names = std::collections::HashSet::with_capacity(slots.len());
+            assert!(
+                slots.iter().all(|slot| names.insert(&slot.name)),
+                "picker requires unique slot identities"
+            );
+        }
+        slots.retain(|slot| match self.mode {
+            SaveLoadMode::Save => !slot.special,
+            SaveLoadMode::Load => {
+                !slot.hidden_from_load
+                    && (!self.multiplayer_connected || !slot.multiplayer_diagnostic)
+            }
+        });
+        self.slots = slots;
         if let Some(Selection::Existing(name)) = &self.selection
             && !self.slots.iter().any(|slot| &slot.name == name)
         {
@@ -376,6 +376,31 @@ mod tests {
         let save = PickerModel::new(SaveLoadMode::Save, false, 3, rows);
         assert_eq!(save.visible(), vec![1]);
         assert_eq!(save.selected_row(), Some(ListRow::New));
+    }
+
+    #[test]
+    fn refresh_filters_in_place_without_reordering_surviving_slots() {
+        let mut rows = Vec::with_capacity(16);
+        rows.push(slot("Savegame_002", 2));
+        let mut hidden = slot("Savegame_001", 1);
+        hidden.hidden_from_load = true;
+        rows.push(hidden);
+        rows.push(slot("Savegame_000", 0));
+        let pointer = rows.as_ptr();
+        let capacity = rows.capacity();
+        let mut picker = model();
+        picker.refresh(rows);
+        assert_eq!(picker.visible(), [2, 0]);
+        assert_eq!(picker.slots.as_ptr(), pointer);
+        assert_eq!(picker.slots.capacity(), capacity);
+    }
+
+    #[test]
+    #[should_panic(expected = "picker requires unique slot identities")]
+    fn refresh_rejects_duplicates_even_when_both_would_be_filtered() {
+        let mut hidden = slot("Savegame_001", 1);
+        hidden.hidden_from_load = true;
+        model().refresh(vec![hidden.clone(), hidden]);
     }
 
     #[test]
