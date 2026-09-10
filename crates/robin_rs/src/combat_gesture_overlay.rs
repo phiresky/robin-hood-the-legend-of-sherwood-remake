@@ -77,7 +77,8 @@ fn render_guide(
     let columns = 3_i32;
     let cell_w = 92_i32;
     let cell_h = 50_i32;
-    let rows = if show_composites { 6 } else { 3 };
+    let patterns = guide_patterns(show_composites);
+    let rows = patterns.clone().count().div_ceil(columns as usize) as i32;
     let origin_x = (renderer.screen_width() as i32 - columns * cell_w - 8).max(0);
     let origin_y = 8;
     renderer.draw_rect_outline_screen(
@@ -88,16 +89,7 @@ fn render_guide(
         0x7BEF,
     );
 
-    let composites = CompositeSwordTechnique::ALL.map(MouseWayPattern::Composite);
-    for (index, pattern) in LEGACY_PATTERNS
-        .into_iter()
-        .chain(
-            composites
-                .into_iter()
-                .take(if show_composites { 9 } else { 0 }),
-        )
-        .enumerate()
-    {
+    for (index, pattern) in patterns.enumerate() {
         let column = index as i32 % columns;
         let row = index as i32 / columns;
         let x = origin_x + column * cell_w;
@@ -119,6 +111,19 @@ fn render_guide(
         );
         draw_label(renderer, fonts, pattern_label(pattern), x + 3, y + 34);
     }
+}
+
+fn guide_patterns(show_composites: bool) -> impl Iterator<Item = MouseWayPattern> + Clone {
+    LEGACY_PATTERNS.into_iter().chain(
+        CompositeSwordTechnique::ALL
+            .into_iter()
+            .take(if show_composites {
+                CompositeSwordTechnique::ALL.len()
+            } else {
+                0
+            })
+            .map(MouseWayPattern::Composite),
+    )
 }
 
 fn render_coach(frontend: &HostFrontend, renderer: &mut Renderer, fonts: Option<&HudFonts>) {
@@ -231,4 +236,34 @@ fn draw_label(renderer: &mut Renderer, fonts: Option<&HudFonts>, label: &str, x:
             crate::ingame_menu::layout::render_text_screen_font(renderer, font, text, tx, ty)
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guide_includes_complete_catalogues_in_teaching_order() {
+        for show_composites in [false, true] {
+            let patterns = guide_patterns(show_composites);
+            let count = patterns.clone().count();
+            let actual: Vec<_> = patterns.collect();
+            assert_eq!(&actual[..LEGACY_PATTERNS.len()], &LEGACY_PATTERNS);
+            if show_composites {
+                assert_eq!(
+                    count,
+                    LEGACY_PATTERNS.len() + CompositeSwordTechnique::ALL.len()
+                );
+                assert_eq!(
+                    &actual[LEGACY_PATTERNS.len()..],
+                    &CompositeSwordTechnique::ALL.map(MouseWayPattern::Composite)
+                );
+            } else {
+                assert_eq!(count, LEGACY_PATTERNS.len());
+            }
+            let rows = count.div_ceil(3);
+            assert!(count <= rows * 3);
+            assert!(count > (rows - 1) * 3);
+        }
+    }
 }
