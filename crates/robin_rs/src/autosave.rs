@@ -554,7 +554,7 @@ impl AutosaveCoordinator {
         #[cfg(not(target_arch = "wasm32"))]
         let completions: Vec<_> = self.completion_rx.try_iter().collect();
         #[cfg(target_arch = "wasm32")]
-        let completions: Vec<_> = self.completions.borrow_mut().drain(..).collect();
+        let completions = std::mem::take(&mut *self.completions.borrow_mut());
 
         for completion in completions {
             match completion {
