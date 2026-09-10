@@ -1362,83 +1362,50 @@ pub fn resolve_action_drag(
     // captures exactly one action step.
     host.frontend.input.drag_action_dispatched(is_recording);
 
-    let commit_tail = |is_recording: bool| -> PlayerCommand {
-        if is_recording {
-            PlayerCommand::StopRecordingMacro
-        } else {
-            PlayerCommand::UnselectAllActions
-        }
-    };
+    drag_interaction_commands(pc_id, target, selected_action, is_recording)
+}
 
-    // Drag always uses the walking animation regardless of double-
-    // click state.
-    match selected_action {
-        Action::Apple => {
-            let mut cmds = vec![PlayerCommand::LaunchInteraction {
-                actor: pc_id,
-                target,
-                command: Command::ThrowApple,
-                running: false,
-            }];
-            // No unselect — Apple deliberately stays armed.  Only the
-            // recording branch closes the macro.
-            if is_recording {
-                cmds.push(PlayerCommand::StopRecordingMacro);
-            }
-            cmds
-        }
-        Action::Stone => {
-            let mut cmds = vec![PlayerCommand::LaunchInteraction {
-                actor: pc_id,
-                target,
-                command: Command::ThrowStone,
-                running: false,
-            }];
-            if is_recording {
-                cmds.push(PlayerCommand::StopRecordingMacro);
-            }
-            cmds
-        }
-        Action::Hit | Action::HitHard => {
-            vec![PlayerCommand::LaunchInteraction {
-                actor: pc_id,
-                target,
-                command: Command::HitCmd,
-                running: false,
-            }]
-        }
-        Action::Heal => {
-            vec![
-                PlayerCommand::LaunchInteraction {
-                    actor: pc_id,
-                    target,
-                    command: Command::HealCmd,
-                    running: false,
-                },
-                commit_tail(is_recording),
-            ]
-        }
-        Action::Lever => {
-            vec![
-                PlayerCommand::LaunchInteraction {
-                    actor: pc_id,
-                    target,
-                    command: Command::UseLever,
-                    running: false,
-                },
-                commit_tail(is_recording),
-            ]
-        }
-        Action::Strangle => {
-            vec![PlayerCommand::LaunchInteraction {
-                actor: pc_id,
-                target,
-                command: Command::StrangleCmd,
-                running: false,
-            }]
-        }
-        _ => vec![],
-    }
+/// Construct the walking interaction and its action-specific completion policy.
+fn drag_interaction_commands(
+    actor: EntityId,
+    target: EntityId,
+    action: Action,
+    is_recording: bool,
+) -> Vec<PlayerCommand> {
+    let (command, completion) = match action {
+        // Thrown distractions stay armed outside macro recording.
+        Action::Apple => (
+            Command::ThrowApple,
+            is_recording.then_some(PlayerCommand::StopRecordingMacro),
+        ),
+        Action::Stone => (
+            Command::ThrowStone,
+            is_recording.then_some(PlayerCommand::StopRecordingMacro),
+        ),
+        Action::Hit | Action::HitHard => (Command::HitCmd, None),
+        Action::Strangle => (Command::StrangleCmd, None),
+        Action::Heal | Action::Lever => (
+            if action == Action::Heal {
+                Command::HealCmd
+            } else {
+                Command::UseLever
+            },
+            Some(if is_recording {
+                PlayerCommand::StopRecordingMacro
+            } else {
+                PlayerCommand::UnselectAllActions
+            }),
+        ),
+        _ => panic!("unsupported drag interaction action: {action:?}"),
+    };
+    let mut commands = vec![PlayerCommand::LaunchInteraction {
+        actor,
+        target,
+        command,
+        running: false,
+    }];
+    commands.extend(completion);
+    commands
 }
 
 /// Resolve double-click repeat-interact on a cached target.
@@ -3529,6 +3496,55 @@ mod tests {
     }
 
     // ── resolve_action_drag ──
+
+    #[test]
+    fn drag_interactions_preserve_launch_and_completion_policy_for_every_action() {
+        let actor = EntityId::Pc(robin_engine::entity_id::PcId(2));
+        let target = EntityId::Soldier(robin_engine::entity_id::SoldierId(7));
+        for (action, command, regular_tail, recording_tail) in [
+            (
+                Action::Apple,
+                Command::ThrowApple,
+                None,
+                Some(PlayerCommand::StopRecordingMacro),
+            ),
+            (
+                Action::Stone,
+                Command::ThrowStone,
+                None,
+                Some(PlayerCommand::StopRecordingMacro),
+            ),
+            (Action::Hit, Command::HitCmd, None, None),
+            (Action::HitHard, Command::HitCmd, None, None),
+            (Action::Strangle, Command::StrangleCmd, None, None),
+            (
+                Action::Heal,
+                Command::HealCmd,
+                Some(PlayerCommand::UnselectAllActions),
+                Some(PlayerCommand::StopRecordingMacro),
+            ),
+            (
+                Action::Lever,
+                Command::UseLever,
+                Some(PlayerCommand::UnselectAllActions),
+                Some(PlayerCommand::StopRecordingMacro),
+            ),
+        ] {
+            for (recording, tail) in [(false, regular_tail), (true, recording_tail)] {
+                let mut expected = vec![PlayerCommand::LaunchInteraction {
+                    actor,
+                    target,
+                    command,
+                    running: false,
+                }];
+                expected.extend(tail);
+                assert_cmds!(
+                    drag_interaction_commands(actor, target, action, recording),
+                    expected
+                );
+            }
+        }
+    }
 
     #[test]
     fn action_drag_without_armed_action_is_noop() {
