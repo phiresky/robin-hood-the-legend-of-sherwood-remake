@@ -1346,47 +1346,17 @@ pub(crate) fn render_entities_gpu(
         // should still be a shadow.  Always go through the active-
         // profile pointer.
         let sprite = &elem.sprite;
-        let scripts = match sprite.current_scripts_opt() {
-            Some(s) => s,
-            None => {
-                render_entity_fallback(
-                    renderer,
-                    entity.kind(),
-                    screen_x,
-                    screen_y,
-                    screen_w,
-                    screen_h,
-                );
-                continue;
-            }
+        let Some((script, frame, bank_id)) = current_render_frame(sprite) else {
+            render_entity_fallback(
+                renderer,
+                entity.kind(),
+                screen_x,
+                screen_y,
+                screen_w,
+                screen_h,
+            );
+            continue;
         };
-
-        let row = sprite.current_row;
-        let frame = sprite.current_frame;
-        if row as usize >= scripts.len() {
-            render_entity_fallback(
-                renderer,
-                entity.kind(),
-                screen_x,
-                screen_y,
-                screen_w,
-                screen_h,
-            );
-            continue;
-        }
-        let script = &scripts[row as usize];
-        if frame as usize >= script.frame_ids.len() {
-            render_entity_fallback(
-                renderer,
-                entity.kind(),
-                screen_x,
-                screen_y,
-                screen_w,
-                screen_h,
-            );
-            continue;
-        }
-        let bank_id = script.frame_ids[frame as usize];
 
         // Blipped (undiscovered) NPCs render from the `blip00`
         // alternate profile as a silhouette sprite; the alpha-keying
@@ -1923,20 +1893,9 @@ pub(crate) fn render_selection_outlines_gpu(
         // Resolve sprite frame (same calculation as render_entities_gpu).
         // See note there about `current_scripts_opt` vs direct field read.
         let sprite = &elem.sprite;
-        let scripts = match sprite.current_scripts_opt() {
-            Some(s) => s,
-            None => continue,
+        let Some((script, frame, bank_id)) = current_render_frame(sprite) else {
+            continue;
         };
-        let row = sprite.current_row;
-        let frame = sprite.current_frame;
-        if row as usize >= scripts.len() {
-            continue;
-        }
-        let script = &scripts[row as usize];
-        if frame as usize >= script.frame_ids.len() {
-            continue;
-        }
-        let bank_id = script.frame_ids[frame as usize];
 
         // Screen position. Use the same visual anchor as sprite rendering
         // so hover outlines stay aligned with targets and airborne actors.
@@ -2085,21 +2044,9 @@ fn render_fx_entities_gpu<I>(
 
         let elem = entity.element_data();
         let sprite = &elem.sprite;
-        let scripts = match sprite.current_scripts_opt() {
-            Some(s) => s,
-            None => continue,
+        let Some((script, frame, bank_id)) = current_render_frame(sprite) else {
+            continue;
         };
-
-        let row = sprite.current_row;
-        let frame = sprite.current_frame;
-        if row as usize >= scripts.len() {
-            continue;
-        }
-        let script = &scripts[row as usize];
-        if frame as usize >= script.frame_ids.len() {
-            continue;
-        }
-        let bank_id = script.frame_ids[frame as usize];
 
         let world_x = elem.position_map().x;
         let world_y = elem.position_map().y;
@@ -2211,4 +2158,47 @@ mod fog_render_tests {
         });
         assert!(uses_pixel_fog_visibility(&patch));
     }
+}
+
+/// Resolve the active profile and validate its frame without choosing a pass's fallback.
+fn current_render_frame(
+    sprite: &robin_engine::sprite::Sprite,
+) -> Option<(&robin_engine::sprite_script::SpriteScript, u16, u32)> {
+    let script = sprite
+        .current_scripts_opt()?
+        .get(usize::from(sprite.current_row))?;
+    let frame = sprite.current_frame;
+    let bank_id = *script.frame_ids.get(usize::from(frame))?;
+    Some((script, frame, bank_id))
+}
+
+#[test]
+fn render_frame_lookup_preserves_active_rows_and_rejects_missing_frames() {
+    use robin_engine::sprite::Sprite;
+    use robin_engine::sprite_script::SpriteScript;
+    use std::sync::Arc;
+    let mut sprite = Sprite::new(
+        Arc::new(vec![SpriteScript {
+            frame_ids: vec![17, 23],
+            ..Default::default()
+        }]),
+        Arc::new(Vec::new()),
+    );
+    assert_eq!(
+        current_render_frame(&sprite).map(|(_, frame, bank)| (frame, bank)),
+        Some((0, 17))
+    );
+    sprite.current_frame = 1;
+    assert_eq!(
+        current_render_frame(&sprite).map(|(_, frame, bank)| (frame, bank)),
+        Some((1, 23))
+    );
+    sprite.current_frame = 2;
+    assert!(current_render_frame(&sprite).is_none());
+    sprite.current_frame = 0;
+    sprite.current_row = 1;
+    assert!(current_render_frame(&sprite).is_none());
+    sprite.current_row = 0;
+    sprite.use_alternate_profile = true;
+    assert!(current_render_frame(&sprite).is_none());
 }
