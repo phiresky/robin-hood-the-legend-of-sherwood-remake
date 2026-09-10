@@ -364,9 +364,6 @@ fn bundle_recorded_audio(
 ) -> Result<()> {
     use sha2::{Digest as _, Sha256};
     use std::collections::BTreeMap;
-    if groups_by_file.is_empty() {
-        return Ok(());
-    }
     // file -> (logical keys referencing it, encoded size)
     let mut file_refs = BTreeMap::<String, (Vec<String>, u32)>::new();
     for (logical, asset) in &dd.audio_assets {
@@ -398,6 +395,9 @@ fn bundle_recorded_audio(
             .entry(group)
             .or_default()
             .push(file.as_str());
+    }
+    if members_by_group.is_empty() {
+        return Ok(());
     }
     let bundles_dir = data_out.join("audio/bundles");
     fs::create_dir_all(&bundles_dir)?;
@@ -589,6 +589,47 @@ pub(super) fn write_shipping_dependency(
 #[cfg(test)]
 mod boot_trim_tests {
     use super::*;
+
+    #[test]
+    fn empty_group_records_do_not_bypass_catalog_validation() {
+        use robin_assets::shipping_datadir::ShippingAudioAsset;
+        let directory = tempfile::tempdir().unwrap();
+        let mut dd = robin_assets::shipping_datadir::ShippingDatadir::default();
+        bundle_recorded_audio(&mut dd, directory.path(), AudioAssetGroups::new()).unwrap();
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+        dd.audio_assets.insert(
+            "effect".into(),
+            ShippingAudioAsset {
+                file: "audio/assets/effect.opus".into(),
+                encoded_size: 1,
+                duration_ms: 100,
+                bundle_offset: None,
+            },
+        );
+        let original = dd.audio_assets.clone();
+        let error =
+            bundle_recorded_audio(&mut dd, directory.path(), AudioAssetGroups::new()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("never recorded in a bundle group")
+        );
+        assert_eq!(dd.audio_assets, original);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+
+        // Large standalone entries do not need bundle groups, but still
+        // participate in the once-only catalog validation.
+        dd.audio_assets.get_mut("effect").unwrap().encoded_size = AUDIO_BUNDLE_MAX_MEMBER;
+        bundle_recorded_audio(&mut dd, directory.path(), AudioAssetGroups::new()).unwrap();
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+        dd.audio_assets.get_mut("effect").unwrap().bundle_offset = Some(0);
+        assert!(
+            bundle_recorded_audio(&mut dd, directory.path(), AudioAssetGroups::new())
+                .unwrap_err()
+                .to_string()
+                .contains("already bundled")
+        );
+    }
 
     #[test]
     fn later_bundle_input_failure_keeps_original_catalog_and_sources() {
