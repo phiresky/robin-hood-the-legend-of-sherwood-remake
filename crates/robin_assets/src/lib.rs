@@ -42,7 +42,6 @@ pub mod rle_jxl;
 pub mod sb3d;
 #[cfg(feature = "engine-adapters")]
 pub mod scb;
-pub mod serialize;
 #[cfg(feature = "engine-adapters")]
 pub mod shipping_boot_trim;
 #[cfg(feature = "engine-adapters")]
