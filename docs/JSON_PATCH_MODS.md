@@ -48,8 +48,8 @@ intended new identity.
 Dump your base CPF's exact patch keys, fields and enum values:
 
 ```sh
-cargo build -p robin_rs --example cpf_to_json
-target/debug/examples/cpf_to_json --patch-view /absolute/path/Data/Configuration/profile.cpf target/profiles.patch-view.json
+cargo build -p robin_modding_tools --bin cpf_to_json
+target/debug/cpf_to_json --patch-view /absolute/path/Data/Configuration/profile.cpf target/profiles.patch-view.json
 ```
 
 This is before mod patches and mission-derived metadata. Without `--patch-view`,

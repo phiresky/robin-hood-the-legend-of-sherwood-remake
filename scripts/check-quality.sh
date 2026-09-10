@@ -58,6 +58,7 @@ case "$1" in
         cargo check --locked -p robin_rs --example audio_decode_bench --no-default-features --features release
         ;;
     tools)
+        cargo test --locked -p robin_modding_tools
         cargo test --locked -p robin_rs --features tools --bin convert_datadir --bin dump_level
         cargo test --locked -p robin_rs --no-default-features --features projection-export --example export_simulation_content
         cargo check --locked -p robin_rs --features tools,projection-export --bins --examples

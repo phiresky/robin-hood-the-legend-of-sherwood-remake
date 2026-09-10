@@ -117,16 +117,16 @@ Record the actual pickup transition and successful escape. An imported bit alone
 
 The script subagent inspected the full Linux mission scripts and returned the findings summarized above. The parent independently reviewed article evidence, the named siege/duel hooks, and raw bytecode for the Applegoad and tradesman branches. There were **no gameplay proof runs** and no assertion that the other full-game packs, demos, or custom missions share these predicates. Script findings establish authored opportunities and conditions; they do not establish that a restrictive route is fun or feasible on every difficulty.
 
-Inputs are the `.scb` files in [the Linux level directory](../datadirs/fullgame_linux/Data/Levels). The existing [disassembler/decompiler](../crates/robin_rs/examples/disasm_scb.rs) was run without rebuilding or modifying game code:
+Inputs are the `.scb` files in [the Linux level directory](../datadirs/fullgame_linux/Data/Levels). The existing [disassembler/decompiler](../crates/robin_modding_tools/src/bin/disasm_scb.rs) was run without rebuilding or modifying game code:
 
 ```sh
-target/debug/examples/disasm_scb --decompile \
+target/debug/disasm_scb --decompile \
   --datadir datadirs/fullgame_linux \
   --out-dir target/achievement-mission-research \
   datadirs/fullgame_linux/Data/Levels/*.scb
 
 # Raw disassembly for a critical condition; omit --decompile.
-target/debug/examples/disasm_scb \
+target/debug/disasm_scb \
   datadirs/fullgame_linux/Data/Levels/S01_Not_VL.scb
 ```
 

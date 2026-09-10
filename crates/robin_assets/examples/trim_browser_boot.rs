@@ -29,25 +29,29 @@ fn index(root: &Path, path: &Path, files: &mut BTreeMap<String, PathBuf>) -> Res
     Ok(())
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    input: std::path::PathBuf,
+    output: std::path::PathBuf,
+    #[arg(required = true)]
+    sources: Vec<std::path::PathBuf>,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
+    let args = <Args as clap::Parser>::parse();
     ensure!(
-        args.len() >= 3,
-        "usage: trim_browser_boot <input.bin> <new-output.bin> <source Data root> [fallback Data roots...]"
-    );
-    ensure!(
-        !Path::new(&args[1]).exists(),
+        !Path::new(&args.output).exists(),
         "output must not already exist"
     );
     let mut sources = BTreeMap::new();
-    for root in &args[2..] {
+    for root in &args.sources {
         index(Path::new(root), Path::new(root), &mut sources)?;
     }
-    let input = std::fs::read(&args[0])?;
+    let input = std::fs::read(&args.input)?;
     let mut datadir = ShippingDatadir::from_compressed_bytes(&input)?;
     let original_raw = encode_native(&datadir);
     let original_catalog = datadir.audio_assets.clone();
-    let data_dir = Path::new(&args[0])
+    let data_dir = Path::new(&args.input)
         .parent()
         .context("input has no parent")?;
     for asset in original_catalog.values() {
@@ -117,7 +121,7 @@ fn main() -> Result<()> {
             "locale roundtrip mismatch: {name}"
         );
     }
-    std::fs::write(&args[1], &compressed)?;
+    std::fs::write(&args.output, &compressed)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({

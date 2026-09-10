@@ -13,6 +13,7 @@ members = [
     "crates/robin_replay_format",
     "crates/robin_replay_admission_wasm",
     "crates/robin_rs",
+    "crates/robin_modding_tools",
     "crates/robin_engine",
     "crates/robin_lua",
     "crates/robin_ranked_verification",

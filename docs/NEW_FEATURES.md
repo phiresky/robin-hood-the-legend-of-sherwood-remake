@@ -4,6 +4,11 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Bundled modding tools.** Native release packages include `cpf_to_json`,
+  `encode_mod_sprites`, `disasm_scb`, and `dump_res` from the new
+  `robin_modding_tools` crate. Rust command-line tools use Clap derive for
+  consistent help and argument validation. See [Modding tools](MODDING_TOOLS.md).
+
 - **Generic JSON Patch mods.** RFC 6902 operations edit decoded profiles,
   levels and resource descriptors. Profile filenames provide named keys while
   existing numeric slots are preserved. Patches compose across directory and
@@ -23,14 +28,14 @@ A list of which additional features we have added, which ones we might still wan
 
 - **VQ sprite mod packages:** Custom `.rhs.d` directories can contain an
   authored `sprites.vq.zst` instead of PNGs and a manifest. The
-  `encode_mod_sprites` example converts a mod using exact four-pixel RGB565
+  `encode_mod_sprites` binary converts a mod using exact four-pixel RGB565
   dictionaries and the shipping adaptive VQ codec, then verifies every frame
   and animation field through the runtime reader. Transparency, shadow keys,
   odd frame widths, and profile stats are preserved. Loading reconstructs the
   existing runtime sprite representation. These packages require this engine
   update; the source PNG mod remains separately editable.
-  Build with `cargo build -p robin_rs --example encode_mod_sprites`, then run
-  `target/debug/examples/encode_mod_sprites SOURCE_MOD DESTINATION_MOD`.
+  Build with `cargo build -p robin_modding_tools --bin encode_mod_sprites`, then run
+  `target/debug/encode_mod_sprites SOURCE_MOD DESTINATION_MOD`.
   Whole-mod conversion now groups identical animation layouts into
   `Data/Characters/*.sprites.vq.zst` families: one frequency-ranked dictionary
   per character, entropy-selected two-hub colour prediction, temporal/direction

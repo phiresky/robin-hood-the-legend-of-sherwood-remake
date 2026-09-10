@@ -329,11 +329,12 @@ Logging verbosity is controlled by `RUST_LOG` (`info`, `debug`,
 
 ### Developer tools
 
-Notable examples, built on demand with `cargo run --example <name>`:
+The native release packages include four command-line [modding tools](docs/MODDING_TOOLS.md)
+alongside the game executable: `cpf_to_json`, `encode_mod_sprites`, `disasm_scb`,
+and `dump_res`. Build them with `cargo build -p robin_modding_tools --bins`.
 
-    cpf_to_json       — dump a character-profile .cpf file as JSON
-    dump_res          — inspect a .res resource archive
-    disasm_scb        — disassemble a compiled .scb mission script
+Other examples, built on demand with `cargo run --example <name>`:
+
     run_script        — run a mission script headlessly
     count_quads       — render diagnostics
     render_mission_map — render a mission's full map at a chosen frame to PNG

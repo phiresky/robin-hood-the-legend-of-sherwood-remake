@@ -5907,6 +5907,7 @@ dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bytemuck",
  "bzip2",
+ "clap",
  "flate2",
  "foldhash 0.2.0",
  "futures-channel",
@@ -6094,6 +6095,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "robin_modding_tools"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "png",
+ "robin_assets",
+ "robin_engine",
+ "robin_rs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "robin_official_content"
 version = "0.0.0"
 dependencies = [
@@ -6111,6 +6129,7 @@ version = "0.0.0"
 dependencies = [
  "base64 0.23.1",
  "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap",
  "fs2",
  "png",
  "robin_assets",
@@ -6172,6 +6191,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "clap",
  "ed25519-dalek",
  "nix 0.31.3",
  "rand",

@@ -1,5 +1,5 @@
 //! Inspect independently compressed boot fields and individual resource entries.
-use anyhow::{Context, Result};
+use anyhow::Result;
 use robin_assets::shipping_datadir::{ShippingDatadir, encode_native, zstd_max_compress};
 
 fn row(name: &str, bytes: Vec<u8>) -> Result<()> {
@@ -12,10 +12,13 @@ fn row(name: &str, bytes: Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    path: std::path::PathBuf,
+}
+
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .context("usage: boot_inventory <datadir.bin>")?;
+    let path = <Args as clap::Parser>::parse().path;
     let dd = ShippingDatadir::load_from_file(std::path::Path::new(&path))?;
     println!("entry\tbitcode_bytes\tzstd_bytes");
     row("TOTAL", encode_native(&dd))?;

@@ -1,10 +1,10 @@
 //! Tiny CLI: disassemble `.scb` files to stdout or a directory.
 //!
 //! Single-file:
-//!   cargo run --example disasm_scb -- --decompile path/to/mission.scb
+//!   cargo run -p robin_modding_tools --bin disasm_scb -- --decompile path/to/mission.scb
 //!
 //! Batch (writes <out>/<name>.ts per file plus a _duplicates.md summary):
-//!   cargo run --example disasm_scb -- --decompile --datadir <dd> \
+//!   cargo run -p robin_modding_tools --bin disasm_scb -- --decompile --datadir <dd> \
 //!     --out-dir /tmp/decompiled <dd>/Data/Levels/*.scb
 //!
 //! For named output, pass `--datadir <path>` so `GetActorScript(N)` /
@@ -21,7 +21,7 @@ use clap::Parser;
 /// `(file_stem, class_name, body_hash, base_name)`.
 type Occurrence = (String, String, u64, String);
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, serde::Serialize, serde::Deserialize)]
 #[command(about = "Disassemble (or decompile) Robin Hood .scb script files")]
 struct Args {
     /// Decompile to high-level pseudo-source instead of raw disassembly.
@@ -47,7 +47,9 @@ struct Args {
 }
 
 fn main() -> std::process::ExitCode {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
     let args = Args::parse();
 
     if args.paths.is_empty() {

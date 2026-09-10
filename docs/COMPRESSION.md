@@ -4070,8 +4070,8 @@ ZIP CRCs and every extracted entry were also checked against the staged files.
 Build and reproduce with:
 
 ```sh
-cargo build -p robin_rs --bin robin --example encode_mod_sprites
-target/debug/examples/encode_mod_sprites mods/fabri18-sprite-gallery OUTPUT
+cargo build -p robin_modding_tools --bin encode_mod_sprites
+target/debug/encode_mod_sprites mods/fabri18-sprite-gallery OUTPUT
 ```
 
 The example also supports `--family OUTPUT INPUT_RHS_DIR...` for independent

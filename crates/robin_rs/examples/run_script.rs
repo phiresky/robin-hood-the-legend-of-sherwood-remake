@@ -11,14 +11,17 @@ use robin_engine::interp::Vm;
 use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
 use robin_engine::vm::{self, Instruction};
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    path: String,
+    class: String,
+    function: String,
+}
+
 fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt::init();
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 4 {
-        tracing::error!("usage: {} <path.scb> <class> <function>", args[0]);
-        return std::process::ExitCode::from(2);
-    }
-    let (path, class_name, fn_name) = (&args[1], &args[2], &args[3]);
+    let args = <Args as clap::Parser>::parse();
+    let (path, class_name, fn_name) = (&args.path, &args.class, &args.function);
 
     let scb_file = match scb::parse_file(path) {
         Ok(f) => f,

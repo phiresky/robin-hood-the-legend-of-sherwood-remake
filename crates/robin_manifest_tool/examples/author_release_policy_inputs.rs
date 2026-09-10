@@ -64,11 +64,13 @@ fn write<T: serde::Serialize>(path: PathBuf, document: &T) -> Result<()> {
     fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    output: PathBuf,
+}
+
 fn main() -> Result<()> {
-    let output: PathBuf = std::env::args_os()
-        .nth(1)
-        .context("usage: author_release_policy_inputs OUTPUT")?
-        .into();
+    let output = <Args as clap::Parser>::parse().output;
     ensure!(
         !output.exists(),
         "output already exists: {}",

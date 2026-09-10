@@ -18,26 +18,24 @@ use std::ffi::OsString;
 use std::io::{self, Seek as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
-const REQUIRED_PATH_FLAGS: [&str; 6] = [
-    "--request",
-    "--replay",
-    "--config",
-    "--starting-campaign",
-    "--final-campaign",
-    "--result",
-];
-
 /// Frozen six-path invocation. Canonical replay bytes remain outside the
 /// signed request document; the worker re-hashes the one artifact and verifies
 /// those exact bytes without manufacturing a second replay.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(clap::Parser, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[command(name = "robin-replay-verifier", disable_help_flag = true)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerPaths {
+    #[arg(long)]
     pub request: PathBuf,
+    #[arg(long)]
     pub replay: PathBuf,
+    #[arg(long)]
     pub config: PathBuf,
+    #[arg(long)]
     pub starting_campaign: PathBuf,
+    #[arg(long)]
     pub final_campaign: PathBuf,
+    #[arg(long)]
     pub result: PathBuf,
 }
 
@@ -45,12 +43,8 @@ pub struct WorkerPaths {
 pub enum WorkerPathError {
     #[error("unknown verifier argument `{0}`")]
     UnknownFlag(String),
-    #[error("verifier argument `{0}` occurs more than once")]
-    DuplicateFlag(String),
-    #[error("verifier argument `{0}` has no path value")]
-    MissingValue(String),
-    #[error("required verifier argument `{0}` is absent")]
-    MissingFlag(&'static str),
+    #[error(transparent)]
+    Arguments(#[from] clap::Error),
     #[error("verifier path for `{flag}` is not a normalized absolute path: `{path}`")]
     UnsafePath { flag: &'static str, path: PathBuf },
     #[error("verifier input for `{flag}` is not a regular non-symlink file: `{path}`")]
@@ -75,36 +69,19 @@ impl WorkerPaths {
     /// include argv[0]. No positional arguments or `--flag=value` spellings
     /// are accepted, keeping backend invocation and audit logs unambiguous.
     pub fn parse_flags(args: impl IntoIterator<Item = OsString>) -> Result<Self, WorkerPathError> {
-        let mut values = BTreeMap::<String, PathBuf>::new();
-        let mut args = args.into_iter();
-        while let Some(flag) = args.next() {
-            let flag = flag
-                .into_string()
-                .map_err(|flag| WorkerPathError::UnknownFlag(flag.to_string_lossy().into()))?;
-            if !REQUIRED_PATH_FLAGS.contains(&flag.as_str()) {
-                return Err(WorkerPathError::UnknownFlag(flag));
-            }
-            let value = args
-                .next()
-                .ok_or_else(|| WorkerPathError::MissingValue(flag.clone()))?;
-            if values.insert(flag.clone(), PathBuf::from(value)).is_some() {
-                return Err(WorkerPathError::DuplicateFlag(flag));
+        let args = args.into_iter().collect::<Vec<_>>();
+        // This worker is a frozen machine protocol: do not expand it to
+        // --flag=value spellings when changing the CLI parser.
+        for flag in args.iter().step_by(2) {
+            if flag.as_encoded_bytes().contains(&b'=') {
+                return Err(WorkerPathError::UnknownFlag(
+                    flag.to_string_lossy().into_owned(),
+                ));
             }
         }
-
-        let mut take = |flag: &'static str| {
-            values
-                .remove(flag)
-                .ok_or(WorkerPathError::MissingFlag(flag))
-        };
-        let paths = Self {
-            request: take("--request")?,
-            replay: take("--replay")?,
-            config: take("--config")?,
-            starting_campaign: take("--starting-campaign")?,
-            final_campaign: take("--final-campaign")?,
-            result: take("--result")?,
-        };
+        let paths = <Self as clap::Parser>::try_parse_from(
+            std::iter::once(OsString::from("robin-replay-verifier")).chain(args),
+        )?;
         paths.validate()?;
         Ok(paths)
     }
@@ -427,7 +404,7 @@ mod tests {
 
         assert!(matches!(
             WorkerPaths::parse_flags([OsString::from("--unknown"), OsString::from("/tmp/x")]),
-            Err(WorkerPathError::UnknownFlag(_))
+            Err(WorkerPathError::Arguments(_))
         ));
 
         let mut aliased = paths;

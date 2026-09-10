@@ -15,6 +15,7 @@ default = []
 client = ["dep:robin_rs"]
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 base64 = "0.23"
 bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
 fs2 = "0.4"

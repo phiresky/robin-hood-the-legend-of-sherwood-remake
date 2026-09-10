@@ -11,14 +11,14 @@ use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile::{SB_FILE_READ, SbFile};
 use robin_engine::sprite_script::{FrameKind, SpriteInfo, SpriteScriptor, UNMAPPED};
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    #[arg(required = true)]
+    roots: Vec<PathBuf>,
+}
+
 fn main() -> Result<()> {
-    let roots = std::env::args_os()
-        .skip(1)
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
-    if roots.is_empty() {
-        return Err(anyhow!("usage: cloak_art_audit <datadir> [<datadir> ...]"));
-    }
+    let roots = <Args as clap::Parser>::parse().roots;
 
     for root in roots {
         audit_datadir(&root)?;

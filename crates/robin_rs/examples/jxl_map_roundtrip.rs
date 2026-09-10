@@ -8,15 +8,17 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    path: PathBuf,
+}
+
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("usage: jxl_map_roundtrip <datadir.bin>"))?;
+    let path = <Args as clap::Parser>::parse().path;
 
     tracing_subscriber::fmt()
         .with_env_filter(

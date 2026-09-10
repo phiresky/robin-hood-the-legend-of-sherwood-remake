@@ -1,0 +1,25 @@
+[package]
+name = "robin_modding_tools"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+png = "0.18"
+robin_assets.workspace = true
+robin_engine.workspace = true
+# The custom sprite encoder currently shares the client import implementation.
+# TODO: Move the shared sprite import/encode API into robin_assets.
+robin_rs = { path = "../robin_rs", default-features = false }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -9,12 +9,20 @@ use anyhow::Context as _;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+#[command(disable_help_flag = true)]
+struct AdmissionWorkerArgs {
+    #[arg(long, required = true)]
+    internal_replay_admission_worker: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     // Decode public compact replay bytes before initializing any game/service
     // state. The parent process applies OS memory/CPU/file limits and a wall
     // timeout to this hidden one-shot worker.
-    if std::env::args_os().nth(1).as_deref()
-        == Some(std::ffi::OsStr::new("--internal-replay-admission-worker"))
+    if <AdmissionWorkerArgs as clap::Parser>::try_parse()
+        .is_ok_and(|args| args.internal_replay_admission_worker)
     {
         std::process::exit(robin_rs::replay_format::run_native_admission_worker());
     }

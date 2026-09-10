@@ -3,18 +3,13 @@
 
 #![allow(clippy::print_stdout)]
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    data_dir: std::path::PathBuf,
+}
+
 fn main() -> anyhow::Result<()> {
-    let mut arguments = std::env::args_os();
-    let executable = arguments.next().unwrap_or_default();
-    let data_dir = arguments.next().ok_or_else(|| {
-        anyhow::anyhow!(
-            "usage: {} <installation-Data-directory>",
-            std::path::Path::new(&executable).display()
-        )
-    })?;
-    if arguments.next().is_some() {
-        anyhow::bail!("content_identity accepts exactly one Data directory");
-    }
+    let data_dir = <Args as clap::Parser>::parse().data_dir;
     let identity = robin_rs::multiplayer::content_identity::source_content_identity(
         std::path::Path::new(&data_dir),
     )

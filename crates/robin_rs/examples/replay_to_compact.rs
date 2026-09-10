@@ -2,23 +2,17 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use robin_engine::replay::ReplayData;
 
-fn main() -> Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let Some(input) = args.next() else {
-        bail!("usage: replay_to_compact <input.rhrec.jsonl> <output.rhrec>");
-    };
-    let Some(output) = args.next() else {
-        bail!("usage: replay_to_compact <input.rhrec.jsonl> <output.rhrec>");
-    };
-    if args.next().is_some() {
-        bail!("usage: replay_to_compact <input.rhrec.jsonl> <output.rhrec>");
-    }
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    input: PathBuf,
+    output: PathBuf,
+}
 
-    let input = PathBuf::from(input);
-    let output = PathBuf::from(output);
+fn main() -> Result<()> {
+    let Args { input, output } = <Args as clap::Parser>::parse();
     let input_str = input
         .to_str()
         .with_context(|| format!("input path is not UTF-8: {}", input.display()))?;

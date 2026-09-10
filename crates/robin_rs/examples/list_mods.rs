@@ -10,10 +10,14 @@
 use robin_rs::mod_pack::{MissionStatus, enumerate_missions, scan_mods_dir};
 use std::path::Path;
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    #[arg(default_value = "datadirs/mods")]
+    mods_root: String,
+}
+
 fn main() {
-    let mods_root = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "datadirs/mods".to_string());
+    let mods_root = <Args as clap::Parser>::parse().mods_root;
     let mods = scan_mods_dir(Path::new(&mods_root));
     println!("Found {} mods under {mods_root}", mods.len());
     for m in &mods {

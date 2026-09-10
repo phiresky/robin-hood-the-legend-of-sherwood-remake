@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -325,4 +326,43 @@ test('staging renames downloads and both update packages without changing identi
   assert.equal(assets.size, 7);
   assert.equal(assets.has('RELEASES'), false);
   assert.equal(assets.has('assets.win.json'), false);
+});
+
+test('normal release packages contain every modding binary on both platforms', async t => {
+  const workflow = await readFile(new URL('../../.github/workflows/native-release.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /cargo build --locked --release -p robin_modding_tools --bins --features robin_rs\/release/);
+  const stage = workflow.split('      - name: Stage package input\n')[1]
+    .split('\n      - name:')[0].split('        run: |\n')[1]
+    .split('\n').map(line => line.replace(/^          /, '')).join('\n');
+  const binaries = (await readdir(new URL('../../crates/robin_modding_tools/src/bin/', import.meta.url)))
+    .filter(name => name.endsWith('.rs')).map(name => name.slice(0, -3));
+  assert.equal(binaries.length, 4);
+  for (const runtime of ['win-x64', 'linux-x64']) {
+    const root = await mkdtemp(join(tmpdir(), 'modding-package-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const suffix = runtime === 'win-x64' ? '.exe' : '';
+    const target = runtime === 'win-x64' ? 'x86_64-pc-windows-gnu' : 'x86_64-unknown-linux-gnu';
+    const executable = 'robin' + suffix;
+    const packaged = runtime === 'win-x64' ? 'Robin Hood - The Legend of Sherwood.exe' : 'robin';
+    await mkdir(join(root, 'target', target, 'release'), { recursive: true });
+    await mkdir(join(root, 'assets/core-datadir'), { recursive: true });
+    await mkdir(join(root, 'docs'));
+    await writeFile(join(root, 'README.md'), 'readme');
+    for (const name of ['MODDING_TOOLS.md', 'JSON_PATCH_MODS.md']) {
+      await writeFile(join(root, 'docs', name), name);
+    }
+    for (const name of [executable, ...binaries.map(name => name + suffix)]) {
+      await writeFile(join(root, 'target', target, 'release', name), name, { mode: 0o755 });
+    }
+    const script = stage
+      .replaceAll('${{ matrix.runtime }}', runtime)
+      .replaceAll('${{ matrix.target }}', target)
+      .replaceAll('${{ matrix.executable }}', executable)
+      .replaceAll('${{ matrix.pack_executable }}', packaged);
+    execFileSync('bash', ['-e', '-c', script], { cwd: root });
+    for (const name of [...binaries.map(name => name + suffix), packaged]) {
+      assert.equal(await readFile(join(root, 'target/package-input', name), 'utf8'), name === packaged ? executable : name);
+    }
+    assert.equal(await readFile(join(root, 'target/package-input/docs/MODDING_TOOLS.md'), 'utf8'), 'MODDING_TOOLS.md');
+  }
 });

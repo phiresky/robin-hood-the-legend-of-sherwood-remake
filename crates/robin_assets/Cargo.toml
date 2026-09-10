@@ -148,3 +148,6 @@ required-features = ["engine-adapters"]
 [[example]]
 name = "mission_sprite_audit"
 required-features = ["engine-adapters"]
+
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }

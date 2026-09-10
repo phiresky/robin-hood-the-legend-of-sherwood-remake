@@ -1,18 +1,22 @@
 //! Dump a `.res` resource file to JSON.
 //!
-//!   cargo run --bin dump_res -- path/to/file.res
+//!   cargo run -p robin_modding_tools --bin dump_res -- path/to/file.res
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+#[command(about = "Dump a Robin Hood .res resource archive to JSON")]
+struct Args {
+    input: String,
+}
+
 fn main() -> std::process::ExitCode {
-    tracing_subscriber::fmt::init();
-    let mut args = std::env::args();
-    let prog = args.next().unwrap_or_else(|| "dump_res".into());
-    let Some(path) = args.next() else {
-        tracing::error!("usage: {prog} <path-to-file.res>");
-        return std::process::ExitCode::from(2);
-    };
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
+    let args = <Args as clap::Parser>::parse();
+    let path = &args.input;
 
     let mut mgr = robin_assets::resource_manager::ResourceManager::legacy_tool();
-    match mgr.attach_resource_file(&path) {
+    match mgr.attach_resource_file(path) {
         Ok(()) => {
             let json = mgr.dump_json();
             let output = serde_json::to_string_pretty(&json).expect("json serialize");

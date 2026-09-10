@@ -12,6 +12,7 @@ name = "robin-replay-verifier"
 path = "src/bin/robin-replay-verifier.rs"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 anyhow.workspace = true
 bitcode.workspace = true
 ed25519-dalek = "3.0.0"

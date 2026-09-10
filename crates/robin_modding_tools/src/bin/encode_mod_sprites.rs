@@ -99,33 +99,32 @@ fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
     Ok(frames)
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+#[command(about = "Encode custom sprites and terrain in a mod (terrain requires cjxl on PATH)")]
+struct Args {
+    /// Encode a sprite family: --family OUTPUT INPUT_RHS_DIR...
+    #[arg(long, num_args = 2.., conflicts_with_all = ["map", "source", "destination"])]
+    family: Vec<std::path::PathBuf>,
+    /// Encode a terrain PNG: --map INPUT_PNG OUTPUT_MAP
+    #[arg(long, num_args = 2, conflicts_with_all = ["source", "destination"])]
+    map: Vec<std::path::PathBuf>,
+    #[arg(required_unless_present_any = ["family", "map"])]
+    source: Option<std::path::PathBuf>,
+    #[arg(required_unless_present_any = ["family", "map"])]
+    destination: Option<std::path::PathBuf>,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.first().is_some_and(|arg| arg == "--family") {
-        ensure!(
-            args.len() >= 3,
-            "usage: encode_mod_sprites --family OUTPUT INPUT_RHS_DIR..."
-        );
-        let sources = args[2..]
-            .iter()
-            .map(std::path::PathBuf::from)
-            .collect::<Vec<_>>();
-        robin_rs::game_session::encode_custom_sprite_family(&sources, Path::new(&args[1]))?;
+    let args = <Args as clap::Parser>::parse();
+    if !args.family.is_empty() {
+        robin_rs::game_session::encode_custom_sprite_family(&args.family[1..], &args.family[0])?;
         return Ok(());
     }
-    if args.first().is_some_and(|arg| arg == "--map") {
-        ensure!(
-            args.len() == 3,
-            "usage: encode_mod_sprites --map INPUT_PNG OUTPUT_MAP"
-        );
-        return encode_map(Path::new(&args[1]), Path::new(&args[2]));
+    if !args.map.is_empty() {
+        return encode_map(&args.map[0], &args.map[1]);
     }
-    ensure!(
-        args.len() == 2,
-        "usage: encode_mod_sprites SOURCE DESTINATION"
-    );
-    let source = Path::new(&args[0]);
-    let destination = Path::new(&args[1]);
+    let source = args.source.as_deref().expect("required source");
+    let destination = args.destination.as_deref().expect("required destination");
     ensure!(source.is_dir(), "source is not a directory");
     ensure!(!destination.exists(), "destination already exists");
     let count = copy_mod(source, destination).with_context(|| source.display().to_string())?;
@@ -136,6 +135,27 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_preserves_all_modes_and_rejects_ambiguous_invocations() {
+        use clap::Parser;
+        let copy = Args::try_parse_from(["encode", "source", "destination"]).unwrap();
+        assert_eq!(copy.source.unwrap(), Path::new("source"));
+        let family = Args::try_parse_from(["encode", "--family", "output", "a", "b"]).unwrap();
+        assert_eq!(family.family.len(), 3);
+        let map = Args::try_parse_from(["encode", "--map", "input.png", "output.map"]).unwrap();
+        assert_eq!(map.map.len(), 2);
+        for arguments in [
+            vec!["encode"],
+            vec!["encode", "source"],
+            vec!["encode", "--map", "only-input"],
+            vec!["encode", "--family", "only-output"],
+            vec!["encode", "--map", "a", "b", "source", "destination"],
+            vec!["encode", "--family", "a", "b", "--map", "c", "d"],
+        ] {
+            assert!(Args::try_parse_from(arguments).is_err());
+        }
+    }
 
     #[test]
     fn mod_conversion_verifies_frames_and_retains_authored_assets() {

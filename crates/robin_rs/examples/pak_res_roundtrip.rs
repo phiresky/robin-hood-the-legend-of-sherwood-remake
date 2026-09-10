@@ -15,11 +15,13 @@ use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
 use robin_engine::sbfile::{SB_FILE_READ, SbFile};
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    path: PathBuf,
+}
+
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("usage: pak_res_roundtrip <datadir.bin>"))?;
+    let path = <Args as clap::Parser>::parse().path;
 
     let dd = ShippingDatadir::load_from_file(&path)?;
     println!("# loaded {} ({} raw entries)", path.display(), dd.raw.len());
