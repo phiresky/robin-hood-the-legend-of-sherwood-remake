@@ -1,6 +1,24 @@
 //! Plan family hubs and transform the selected RHS dependency closure.
 use super::*;
 
+fn group_character_families(
+    names: impl IntoIterator<Item = String>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut families = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for name in names {
+        let stem = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        if !stem.is_empty() && stem.len() + 2 == name.len() {
+            families.entry(stem.to_owned()).or_default().push(name);
+        }
+    }
+    families.retain(|_, members| members.len() > 1);
+    // Preserve deterministic proxy tie-breaking and fallback-base selection.
+    for members in families.values_mut() {
+        members.sort();
+    }
+    families
+}
+
 fn family_member_script_order<'a>(
     rhs_preps: &'a std::collections::BTreeMap<String, RhsChunkPrep>,
     rel: &str,
@@ -136,18 +154,7 @@ pub(super) fn transform_rhs(
             }
         }
     }
-    disk_character_names.sort();
-    let family_key = |name: &str| -> Option<String> {
-        let stripped = name.trim_end_matches(|c: char| c.is_ascii_digit());
-        (stripped.len() + 2 == name.len() && !stripped.is_empty()).then(|| stripped.to_owned())
-    };
-    let mut families = std::collections::BTreeMap::<String, Vec<String>>::new();
-    for name in &disk_character_names {
-        if let Some(key) = family_key(name) {
-            families.entry(key).or_default().push(name.clone());
-        }
-    }
-    families.retain(|_, members| members.len() > 1);
+    let families = group_character_families(disk_character_names);
 
     // Measured base selection (docs/COMPRESSION.md 2026-08-29): the
     // lexicographically-first member is the best coding hub in only 1 of 9
@@ -590,6 +597,40 @@ pub(super) fn transform_rhs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn character_families_keep_exact_two_digit_suffixes_and_sorted_members() {
+        let names = [
+            "Guard12",
+            "Solo01",
+            "Guard01",
+            "Guard1",
+            "Guard001",
+            "12",
+            "",
+            "Guard",
+            "Hero02",
+            "Hero01",
+            "Élite02",
+            "Élite01",
+            "guard02",
+            "Guard１２",
+        ];
+        let expected = std::collections::BTreeMap::from([
+            ("Guard".into(), vec!["Guard01".into(), "Guard12".into()]),
+            ("Hero".into(), vec!["Hero01".into(), "Hero02".into()]),
+            ("Élite".into(), vec!["Élite01".into(), "Élite02".into()]),
+        ]);
+        assert_eq!(
+            group_character_families(names.into_iter().map(str::to_owned)),
+            expected
+        );
+        assert_eq!(
+            group_character_families(names.into_iter().rev().map(str::to_owned)),
+            expected
+        );
+        assert!(group_character_families([]).is_empty());
+    }
 
     #[test]
     fn family_member_orders_borrow_exact_preparations_without_reloading() {
