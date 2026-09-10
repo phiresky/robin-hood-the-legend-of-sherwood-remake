@@ -261,11 +261,6 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
             --outputDir target/velopack
-          # Preserve the win update channel for existing installations.
-          # Build manifests and legacy Squirrel indexes are not needed.
-          cp target/velopack/*.nupkg target/velopack/releases.win.json target/release-assets/
-          cp target/velopack/io.github.phiresky.robinhood-win-Setup.exe target/release-assets/io.github.phiresky.robinhood-windows-Setup.exe
-          cp target/velopack/io.github.phiresky.robinhood-win-Portable.zip target/release-assets/io.github.phiresky.robinhood-windows-Portable.zip
 
       - name: Build Linux Velopack AppImage
         if: matrix.runtime == 'linux-x64'
@@ -278,8 +273,14 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime linux-x64 \
             --outputDir target/velopack
-          cp target/velopack/*.nupkg target/velopack/releases.linux.json target/release-assets/
-          cp target/velopack/io.github.phiresky.robinhood.AppImage target/release-assets/io.github.phiresky.robinhood-linux.AppImage
+
+      - name: Stage named release assets and update feed
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const channel = '${{ matrix.runtime }}' === 'win-x64' ? 'win' : 'linux';
+            await require('./scripts/release/publish_native_release.ts').stageReleaseAssets(
+              'target/velopack', 'target/release-assets', channel);
 
       - name: List release assets
         shell: bash

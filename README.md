@@ -61,8 +61,9 @@ and will be installed automatically by rustup.
 
 GitHub Releases provides x86-64 Windows and Linux builds, with stable releases
 for version tags and rolling nightly prereleases. Windows downloads include
-`-windows-Setup.exe` and `-windows-Portable.zip`; Linux uses `-linux.AppImage`.
-The two `.nupkg` assets are automatic-update payloads: the unsuffixed package is
+`robinhood-remake-windows-Setup.exe` and `robinhood-remake-windows-Portable.zip`;
+Linux uses `robinhood-remake-linux.AppImage`.
+The two `.nupkg` assets are automatic-update payloads: `-windows-full.nupkg` is
 Windows, and `-linux-full.nupkg` is Linux. Neither needs to be downloaded manually.
 Installed packages should update automatically within their release channel.
 

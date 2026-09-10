@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { inventory, main, packageTimestamp, publish, releaseTag, runTimestamp, type GitHubScriptContext } from './publish_native_release.ts';
+import { stageReleaseAssets, inventory, main, packageTimestamp, publish, releaseTag, runTimestamp, type GitHubScriptContext } from './publish_native_release.ts';
 
 const repo = { owner: 'owner', repo: 'repo' };
 const core = { info() {} };
@@ -13,7 +13,7 @@ const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
   const root = await mkdtemp(join(tmpdir(), 'native-release-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  for (const name of ['io.github.phiresky.robinhood-windows-Setup.exe', 'io.github.phiresky.robinhood-windows-Portable.zip', 'io.github.phiresky.robinhood-linux.AppImage', 'game package.nupkg']) {
+  for (const name of ['robinhood-remake-windows-Setup.exe', 'robinhood-remake-windows-Portable.zip', 'robinhood-remake-linux.AppImage', 'game package.nupkg']) {
     await writeFile(join(root, name), 'package');
   }
   for (const runtime of ['win', 'linux']) {
@@ -286,7 +286,7 @@ test('real Octokit uploads raw bytes to returned URL and decodes binary download
 });
 
 test('inventory requires each user-facing download without raw archives', async t => {
-  for (const name of ['io.github.phiresky.robinhood-windows-Setup.exe', 'io.github.phiresky.robinhood-windows-Portable.zip', 'io.github.phiresky.robinhood-linux.AppImage']) {
+  for (const name of ['robinhood-remake-windows-Setup.exe', 'robinhood-remake-windows-Portable.zip', 'robinhood-remake-linux.AppImage']) {
     const root = await fixture(t);
     const assets = await inventory(root);
     assert.equal(assets.has('robin-windows-x86_64.zip'), false);
@@ -294,4 +294,35 @@ test('inventory requires each user-facing download without raw archives', async 
     await rm(join(root, name));
     await assert.rejects(inventory(root), /missing platform artifact/);
   }
+});
+
+test('staging renames downloads and both update packages without changing identity or hashes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'native-staging-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const output = join(root, 'output');
+  for (const channel of ['win', 'linux'] as const) {
+    const input = join(root, channel);
+    await mkdir(input);
+    const packageId = 'io.github.phiresky.robinhood';
+    const original = `${packageId}-1.2.3${channel === 'linux' ? '-linux' : ''}-full.nupkg`;
+    const entry = { PackageId: packageId, Version: '1.2.3', Type: 'Full',
+      FileName: original, Size: 7, SHA256: hash(Buffer.from('package')) };
+    await writeFile(join(input, original), 'package');
+    await writeFile(join(input, `releases.${channel}.json`), JSON.stringify({ Assets: [entry] }));
+    const downloads = channel === 'win'
+      ? [`${packageId}-win-Setup.exe`, `${packageId}-win-Portable.zip`]
+      : [`${packageId}.AppImage`];
+    for (const name of [...downloads, 'RELEASES', `assets.${channel}.json`]) {
+      await writeFile(join(input, name), 'payload');
+    }
+    await stageReleaseAssets(input, output, channel);
+    const renamed = `robinhood-remake-1.2.3-${channel === 'win' ? 'windows' : 'linux'}-full.nupkg`;
+    const index = JSON.parse(await readFile(join(output, `releases.${channel}.json`), 'utf8'));
+    assert.deepEqual(index.Assets, [{ ...entry, FileName: renamed }]);
+    assert.equal(await readFile(join(output, renamed), 'utf8'), 'package');
+  }
+  const assets = await inventory(output);
+  assert.equal(assets.size, 7);
+  assert.equal(assets.has('RELEASES'), false);
+  assert.equal(assets.has('assets.win.json'), false);
 });
