@@ -303,18 +303,25 @@ impl SessionIngress {
 
     fn poll_captures(&mut self) {
         use futures::FutureExt;
-        let mut pending = Vec::new();
-        for (request, mut capture) in self.captures.drain(..) {
+        let mut index = 0;
+        while index < self.captures.len() {
+            let (request, capture) = &mut self.captures[index];
             if request.response_tx.consumer_gone() {
+                drop(self.captures.remove(index));
                 continue;
             }
-            match capture.as_mut().now_or_never() {
-                None => pending.push((request, capture)),
-                Some(Ok((width, height, rgba))) => request.respond(width, height, &rgba),
-                Some(Err(error)) => request.respond_err(RpcError::internal(error.to_string())),
+            let Some(result) = capture.as_mut().now_or_never() else {
+                index += 1;
+                continue;
+            };
+            // Preserve pending order and allocation; this queue holds at most
+            // MAX_IN_FLIGHT_CAPTURES entries, so shifting survivors is bounded.
+            let (request, _capture) = self.captures.remove(index);
+            match result {
+                Ok((width, height, rgba)) => request.respond(width, height, &rgba),
+                Err(error) => request.respond_err(RpcError::internal(error.to_string())),
             }
         }
-        self.captures = pending;
     }
 
     fn cancel_stopped_work(&mut self) {
@@ -483,6 +490,53 @@ mod tests {
         );
         drop(session);
         assert_cancelled(stopped);
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn capture_polling_preserves_storage_and_polls_each_survivor_once() {
+        for completed_index in 0..2 {
+            let mut session = SessionIngress::detached_for_test();
+            let replies = [
+                queued_screenshot(&mut session),
+                queued_screenshot(&mut session),
+            ];
+            let polls = std::rc::Rc::new(std::cell::Cell::new(0));
+            for (index, shot) in session.take_pending_screenshots(0).into_iter().enumerate() {
+                let polls = polls.clone();
+                session.submit_screenshot(
+                    shot,
+                    Box::pin(std::future::poll_fn(move |_| {
+                        if index == completed_index {
+                            std::task::Poll::Ready(Err(crate::renderer::CaptureError::Map(
+                                "finished".into(),
+                            )))
+                        } else {
+                            polls.set(polls.get() + 1);
+                            std::task::Poll::Pending
+                        }
+                    })),
+                );
+            }
+            let storage = session.captures.as_ptr();
+            let capacity = session.captures.capacity();
+            for expected_polls in 1..=3 {
+                session.poll_captures();
+                assert_eq!(polls.get(), expected_polls);
+                assert_eq!(session.captures.len(), 1);
+                assert_eq!(session.captures.as_ptr(), storage);
+                assert_eq!(session.captures.capacity(), capacity);
+            }
+            assert!(
+                matches!(replies[completed_index].try_recv().unwrap(), Err(error) if error.message.contains("finished"))
+            );
+            assert!(replies[1 - completed_index].try_recv().is_err());
+            drop(replies);
+            session.poll_captures();
+            assert_eq!(polls.get(), 3, "cancelled captures must not be polled");
+            assert!(session.captures.is_empty());
+            assert_eq!(session.captures.capacity(), capacity);
+        }
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
