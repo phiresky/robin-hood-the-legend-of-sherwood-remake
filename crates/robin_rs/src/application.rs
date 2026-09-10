@@ -178,9 +178,23 @@ impl Drop for ApplicationServices {
 ///
 /// `MissionLaunch` initially carries a bootstrap context containing only parsed
 /// options. `rust_init` supplies the required profile/key/shipping services
-/// before an async game loop begins. Service accessors take snapshots while
-/// holding a lock and return owned data, so no lock guard can cross an
-/// `.await`.
+/// before an async game loop begins. Service accessors project the required
+/// owned data while holding a lock, so no lock guard can cross an `.await`.
+/// Whole-profile snapshots are test helpers, not production service APIs.
+///
+/// ```compile_fail
+/// use robin_rs::application::ApplicationContext;
+/// fn snapshot(context: &ApplicationContext) {
+///     let _ = context.active_profile_snapshot();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use robin_rs::application::ApplicationContext;
+/// fn snapshot(context: &ApplicationContext) {
+///     let _ = context.player_profiles_snapshot();
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplicationContext {
     // Launch overrides belong to this context; profiles and services are shared.
@@ -783,11 +797,13 @@ impl ApplicationContext {
         Ok(read(&localization))
     }
 
-    pub fn player_profiles_snapshot(&self) -> Result<PlayerProfileManager, String> {
+    #[cfg(test)]
+    pub(crate) fn player_profiles_snapshot(&self) -> Result<PlayerProfileManager, String> {
         self.with_player_profiles(Clone::clone)
     }
 
-    pub fn active_profile_snapshot(&self) -> Result<PlayerProfile, String> {
+    #[cfg(test)]
+    pub(crate) fn active_profile_snapshot(&self) -> Result<PlayerProfile, String> {
         self.with_active_profile(Clone::clone)
     }
 
