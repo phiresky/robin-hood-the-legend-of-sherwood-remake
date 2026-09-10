@@ -244,14 +244,15 @@ impl StatureHudLayout {
     /// disabled (tooltips are tied to the widget rect, not its enable
     /// state).
     pub fn hit_test_geometric(&self, x: i32, y: i32) -> Option<StatureButton> {
-        let pt = Point::new(x, y);
-        if self.up.contains_point(pt) {
-            return Some(StatureButton::Up);
-        }
-        if self.down.contains_point(pt) {
-            return Some(StatureButton::Down);
-        }
-        None
+        self.hit_test(
+            x,
+            y,
+            StatureEnable {
+                up_enabled: true,
+                down_enabled: true,
+                ..Default::default()
+            },
+        )
     }
 }
 
@@ -511,5 +512,28 @@ pub fn draw_tooltip(
             mouse_y,
             cursor_size,
         );
+    }
+}
+
+#[cfg(test)]
+mod hit_order_tests {
+    use super::*;
+
+    #[test]
+    fn geometric_hits_ignore_enable_state_but_preserve_overlap_priority() {
+        let rect = ScreenRect::new(0, 0, 10, 10);
+        let layout = StatureHudLayout {
+            up: rect,
+            down: rect,
+        };
+        assert_eq!(layout.hit_test_geometric(1, 1), Some(StatureButton::Up));
+        assert_eq!(layout.hit_test(1, 1, StatureEnable::default()), None);
+        let last_only = StatureEnable {
+            down_enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(layout.hit_test(1, 1, last_only), Some(StatureButton::Down));
+        assert_eq!(layout.hit_test_geometric(10, 1), None);
+        assert_eq!(layout.hit_test_geometric(1, 10), None);
     }
 }

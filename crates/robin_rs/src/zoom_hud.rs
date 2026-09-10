@@ -157,14 +157,15 @@ impl ZoomHudLayout {
     /// disabled (widgets own their tooltip independently of their
     /// enable state).
     pub fn hit_test_geometric(&self, x: i32, y: i32) -> Option<ZoomButton> {
-        let pt = Point::new(x, y);
-        if self.zoom_up.contains_point(pt) {
-            return Some(ZoomButton::ZoomUp);
-        }
-        if self.zoom_down.contains_point(pt) {
-            return Some(ZoomButton::ZoomDown);
-        }
-        None
+        self.hit_test(
+            x,
+            y,
+            ZoomButtonEnable {
+                zoom_up: true,
+                zoom_down: true,
+                ..Default::default()
+            },
+        )
     }
 }
 
@@ -553,5 +554,28 @@ mod tests {
         // Switching targets resets the timer.
         t.update(Some(ZoomButton::ZoomDown));
         assert_eq!(t.ready_button(), None);
+    }
+}
+
+#[cfg(test)]
+mod hit_order_tests {
+    use super::*;
+
+    #[test]
+    fn geometric_hits_ignore_enable_state_but_preserve_overlap_priority() {
+        let rect = ScreenRect::new(0, 0, 10, 10);
+        let layout = ZoomHudLayout {
+            zoom_up: rect,
+            zoom_down: rect,
+        };
+        assert_eq!(layout.hit_test_geometric(1, 1), Some(ZoomButton::ZoomUp));
+        assert_eq!(layout.hit_test(1, 1, ZoomButtonEnable::default()), None);
+        let last_only = ZoomButtonEnable {
+            zoom_down: true,
+            ..Default::default()
+        };
+        assert_eq!(layout.hit_test(1, 1, last_only), Some(ZoomButton::ZoomDown));
+        assert_eq!(layout.hit_test_geometric(10, 1), None);
+        assert_eq!(layout.hit_test_geometric(1, 10), None);
     }
 }

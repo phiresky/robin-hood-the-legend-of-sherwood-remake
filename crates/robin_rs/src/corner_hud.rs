@@ -199,17 +199,16 @@ impl CornerHudLayout {
     /// Geometric hit-test that ignores the enable mask — used so the
     /// tooltip still surfaces when the button is disabled.
     pub fn hit_test_geometric(&self, x: i32, y: i32) -> Option<CornerButton> {
-        let pt = Point::new(x, y);
-        if self.clock.contains_point(pt) {
-            return Some(CornerButton::Clock);
-        }
-        if self.sight.contains_point(pt) {
-            return Some(CornerButton::Sight);
-        }
-        if self.quickstart.contains_point(pt) {
-            return Some(CornerButton::QuickStart);
-        }
-        None
+        self.hit_test(
+            x,
+            y,
+            CornerButtonEnable {
+                clock: true,
+                sight: true,
+                quickstart: true,
+                ..Default::default()
+            },
+        )
     }
 }
 
@@ -563,5 +562,32 @@ mod tests {
         assert_eq!(layout.hit_test(pt.0, pt.1, all), Some(CornerButton::Clock));
         let none = CornerButtonEnable::default();
         assert_eq!(layout.hit_test(pt.0, pt.1, none), None);
+    }
+}
+
+#[cfg(test)]
+mod hit_order_tests {
+    use super::*;
+
+    #[test]
+    fn geometric_hits_ignore_enable_state_but_preserve_overlap_priority() {
+        let rect = ScreenRect::new(0, 0, 10, 10);
+        let layout = CornerHudLayout {
+            clock: rect,
+            sight: rect,
+            quickstart: rect,
+        };
+        assert_eq!(layout.hit_test_geometric(1, 1), Some(CornerButton::Clock));
+        assert_eq!(layout.hit_test(1, 1, CornerButtonEnable::default()), None);
+        let last_only = CornerButtonEnable {
+            quickstart: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            layout.hit_test(1, 1, last_only),
+            Some(CornerButton::QuickStart)
+        );
+        assert_eq!(layout.hit_test_geometric(10, 1), None);
+        assert_eq!(layout.hit_test_geometric(1, 10), None);
     }
 }
