@@ -317,19 +317,21 @@ impl FrameWnd {
                 .iter()
                 .any(|e| e.msg_type == UiMsg::WidgetActivated);
             if activated {
-                let group: Option<Vec<WidgetId>> = match &self.widgets[idx] {
-                    Widget::RadioButton(rb) if !rb.group_members.is_empty() => {
-                        Some(rb.group_members.clone())
-                    }
-                    _ => None,
-                };
-                if let Some(group) = group {
-                    for other_id in group {
+                // Keep the active button's group borrowed while mutating
+                // siblings, preserving the original first-match lookup order.
+                let (before, remaining) = self.widgets.split_at_mut(idx);
+                let (active, after) = remaining
+                    .split_first_mut()
+                    .expect("the current input widget exists");
+                if let Widget::RadioButton(rb) = active {
+                    for &other_id in &rb.group_members {
                         if other_id == widget_id {
                             continue;
                         }
-                        if let Some(Widget::RadioButton(other)) =
-                            self.widgets.iter_mut().find(|w| w.id() == other_id)
+                        if let Some(Widget::RadioButton(other)) = before
+                            .iter_mut()
+                            .chain(after.iter_mut())
+                            .find(|w| w.id() == other_id)
                         {
                             other.set_active_other();
                         }

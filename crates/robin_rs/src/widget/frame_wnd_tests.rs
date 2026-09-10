@@ -363,6 +363,40 @@ fn radio_group_exclusion_deselects_siblings() {
 }
 
 #[test]
+fn radio_group_activation_at_each_position_preserves_nonmembers() {
+    for active in 0..3 {
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 400.0, 400.0), 0);
+        for index in 0..4 {
+            let mut radio =
+                make_radio_widget(10 + index, 10.0, 10.0 + index as f32 * 30.0, 80.0, 20.0);
+            if index < 3 {
+                // Repeated and missing IDs retain their existing no-op behavior.
+                radio.group_members = vec![12, 10, 11, 10, 999];
+            }
+            radio.set_selected(index != active);
+            frame.add_widget_absolute(Widget::RadioButton(radio));
+        }
+        let input = make_input(50.0, 20.0 + active as f32 * 30.0, MouseButtons::LEFT_CLICK);
+        let events = frame.process_input(&input);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.msg_type == UiMsg::WidgetActivated
+                    && event.origin_widget_id == 10 + active)
+        );
+        for index in 0..4 {
+            let Widget::RadioButton(radio) = frame.widget(10 + index).unwrap() else {
+                panic!("expected radio button");
+            };
+            assert_eq!(radio.is_pushed(), index == active || index == 3);
+            if index < 3 {
+                assert_eq!(radio.group_members, [12, 10, 11, 10, 999]);
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_activation_without_group_does_not_touch_others() {
     // Radio buttons with empty group_members must not interfere with
     // each other — matches the slider sub-button case where exclusion
