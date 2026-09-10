@@ -583,6 +583,10 @@ pub fn peek_rhm_header_in_zip(zip_path: &Path, rhm_entry: &str) -> Result<RhmHea
     peek_rhm_header(&mut archive, rhm_entry)
 }
 
+// Outer wrapper, header wrapper, control CRC, ambiance, then a u16 byte length.
+const RHM_NAME_LENGTH_OFFSET: usize = 12 + 12 + 4 + 4;
+const RHM_HEADER_PREFIX_LEN: usize = RHM_NAME_LENGTH_OFFSET + 2;
+
 fn peek_rhm_header(
     archive: &mut zip::ZipArchive<fs::File>,
     rhm_entry: &str,
@@ -590,21 +594,34 @@ fn peek_rhm_header(
     let mut entry = archive
         .by_name(rhm_entry)
         .map_err(|e| format!("entry {rhm_entry}: {e}"))?;
-    let mut buf = Vec::with_capacity(256);
-    // 12 (outer) + 12 (header chunk) + 4 (crc) + 4 (ambiance) + 2 (str len) = 34
-    // bytes minimum; string follows, plus 4 bytes profile_id which we skip.
-    // Mission filenames are short (~10 chars), so reading 256 bytes covers
-    // all real cases.
+    let mut buf = Vec::with_capacity(RHM_HEADER_PREFIX_LEN);
     entry
         .by_ref()
-        .take(256)
+        .take(RHM_HEADER_PREFIX_LEN as u64)
         .read_to_end(&mut buf)
         .map_err(|e| format!("read {rhm_entry}: {e}"))?;
+    if buf.len() == RHM_HEADER_PREFIX_LEN {
+        // A u16 bounds this read to 65,535 bytes even for an untrusted archive.
+        // Leave the remaining mission payload unread.
+        let name_len = rhm_name_length(&buf);
+        entry
+            .by_ref()
+            .take(name_len as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("read {rhm_entry}: {e}"))?;
+    }
     parse_rhm_header(&buf)
 }
 
+fn rhm_name_length(prefix: &[u8]) -> usize {
+    u16::from_le_bytes([
+        prefix[RHM_NAME_LENGTH_OFFSET],
+        prefix[RHM_NAME_LENGTH_OFFSET + 1],
+    ]) as usize
+}
+
 fn parse_rhm_header(bytes: &[u8]) -> Result<RhmHeader, String> {
-    if bytes.len() < 34 {
+    if bytes.len() < RHM_HEADER_PREFIX_LEN {
         return Err(format!("file too short ({} bytes)", bytes.len()));
     }
     // Outer file tag must be a known mission marker.
@@ -631,9 +648,8 @@ fn parse_rhm_header(bytes: &[u8]) -> Result<RhmHeader, String> {
     }
     // After inner tag+size+version (12 bytes) and crc+ambiance (8 bytes),
     // the next field is a u16 LE string length, then the bytes.
-    let str_off = 12 + 12 + 4 + 4;
-    let len = u16::from_le_bytes([bytes[str_off], bytes[str_off + 1]]) as usize;
-    let str_start = str_off + 2;
+    let len = rhm_name_length(bytes);
+    let str_start = RHM_HEADER_PREFIX_LEN;
     let str_end = str_start
         .checked_add(len)
         .ok_or_else(|| "string length overflow".to_string())?;
@@ -1201,6 +1217,39 @@ mod tests {
             let leaf = name.rsplit('/').next().unwrap();
             let basename = rhm_basename(&name);
             assert!(format!("{basename}.rhm").eq_ignore_ascii_case(leaf));
+        }
+    }
+
+    #[test]
+    fn zip_header_reader_honors_declared_name_length() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("mission.zip");
+        for len in [0, 10, 222, 223, usize::from(u16::MAX)] {
+            let name = "x".repeat(len);
+            write_test_zip(&path, &[("Data/Levels/Test.rhm", &minimal_rhm(&name))]);
+            let header = peek_rhm_header_in_zip(&path, "Data/Levels/Test.rhm").unwrap();
+            assert_eq!(header.map_filename, name);
+        }
+    }
+
+    #[test]
+    fn zip_header_reader_keeps_parser_truncation_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("mission.zip");
+        let bytes = minimal_rhm("longer");
+        for len in [
+            0,
+            12,
+            RHM_HEADER_PREFIX_LEN - 1,
+            RHM_HEADER_PREFIX_LEN,
+            RHM_HEADER_PREFIX_LEN + 2,
+        ] {
+            let truncated = &bytes[..len];
+            write_test_zip(&path, &[("Data/Levels/Test.rhm", truncated)]);
+            assert_eq!(
+                peek_rhm_header_in_zip(&path, "Data/Levels/Test.rhm").unwrap_err(),
+                parse_rhm_header(truncated).unwrap_err(),
+            );
         }
     }
 
