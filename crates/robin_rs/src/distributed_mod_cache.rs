@@ -114,9 +114,13 @@ impl DistributedModCache {
         std::fs::create_dir_all(&root)
             .map_err(|error| format!("create distributed-mod cache {}: {error}", root.display()))?;
         let index_path = root.join(CACHE_INDEX_FILE);
-        let index = match std::fs::read(&index_path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|error| format!("parse {}: {error}", index_path.display()))?,
+        let index = match std::fs::File::open(&index_path) {
+            Ok(file) => {
+                serde_json::from_reader(std::io::BufReader::new(file)).map_err(|error| {
+                    let operation = if error.is_io() { "read" } else { "parse" };
+                    format!("{operation} {}: {error}", index_path.display())
+                })?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => CacheIndex::default(),
             Err(error) => return Err(format!("read {}: {error}", index_path.display())),
         };
@@ -954,6 +958,37 @@ mod tests {
         .unwrap();
         let hash = validated.package.manifest.full_mod_sha256;
         (validated.package.encode().unwrap(), hash)
+    }
+
+    #[test]
+    fn index_loading_accepts_buffer_spanning_json_and_rejects_corruption_before_cleanup() {
+        let temp = tempfile::tempdir().unwrap();
+        let save_directory = temp.path().to_str().unwrap();
+        let cache = DistributedModCache::open(save_directory).unwrap();
+        let index_path = cache.root.join(CACHE_INDEX_FILE);
+        let mut padded = vec![b' '; 8193];
+        padded.extend(serde_json::to_vec(&cache.index).unwrap());
+        std::fs::write(&index_path, &padded).unwrap();
+        let reopened = DistributedModCache::open(save_directory).unwrap();
+        assert_eq!(
+            serde_json::to_value(&reopened.index).unwrap(),
+            serde_json::to_value(&cache.index).unwrap()
+        );
+
+        let orphan = cache.complete_path(&[9; 32]);
+        std::fs::write(&orphan, b"not examined before index admission").unwrap();
+        for invalid in [b"".as_slice(), b"{", b"\xff", b"{}{}"] {
+            std::fs::write(&index_path, invalid).unwrap();
+            let error = DistributedModCache::open(save_directory).unwrap_err();
+            assert!(error.starts_with("parse "), "{error}");
+            assert_eq!(std::fs::read(&index_path).unwrap(), invalid);
+            assert!(orphan.is_file());
+        }
+        std::fs::remove_file(&index_path).unwrap();
+        std::fs::create_dir(&index_path).unwrap();
+        let error = DistributedModCache::open(save_directory).unwrap_err();
+        assert!(error.starts_with("read "), "{error}");
+        assert!(orphan.is_file());
     }
 
     #[test]
