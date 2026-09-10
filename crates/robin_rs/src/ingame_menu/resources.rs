@@ -389,7 +389,7 @@ pub const MT_INFOBULLE_QG_BACKTOMAP: usize = 300;
 pub struct MenuText {
     strings: Vec<String>,
     /// English fallbacks for the ids we actually use, indexed by id.
-    fallbacks: HashMap<usize, &'static str>,
+    fallbacks: Option<&'static HashMap<usize, &'static str>>,
 }
 
 impl MenuText {
@@ -427,7 +427,7 @@ impl MenuText {
 
         Self {
             strings,
-            fallbacks: default_fallbacks(),
+            fallbacks: Some(default_fallbacks()),
         }
     }
 
@@ -436,7 +436,7 @@ impl MenuText {
     pub fn english_fallbacks_only() -> Self {
         Self {
             strings: Vec::new(),
-            fallbacks: default_fallbacks(),
+            fallbacks: Some(default_fallbacks()),
         }
     }
 
@@ -457,7 +457,11 @@ impl MenuText {
         {
             return s.clone();
         }
-        self.fallbacks.get(&id).copied().unwrap_or("").to_string()
+        self.fallbacks
+            .and_then(|fallbacks| fallbacks.get(&id))
+            .copied()
+            .unwrap_or("")
+            .to_string()
     }
 
     /// Look up an application-owned string by its namespaced key. These keys
@@ -473,7 +477,13 @@ impl MenuText {
     }
 }
 
-fn default_fallbacks() -> HashMap<usize, &'static str> {
+fn default_fallbacks() -> &'static HashMap<usize, &'static str> {
+    static FALLBACKS: std::sync::LazyLock<HashMap<usize, &'static str>> =
+        std::sync::LazyLock::new(build_default_fallbacks);
+    &FALLBACKS
+}
+
+fn build_default_fallbacks() -> HashMap<usize, &'static str> {
     // Hardcoded English strings match `1033/Data/Interface/Start.sxt` from
     // the international release.  Used when no `.sxt` file is available
     // so the Rust port is still usable on developer machines without the
@@ -902,7 +912,6 @@ pub struct MenuFonts {
     pub list_default: Option<Font>,
     pub list_focused: Option<Font>,
     pub list_selected: Option<Font>,
-    pub list_fallback: Option<Font>,
 }
 
 impl MenuFonts {
@@ -948,7 +957,6 @@ impl MenuFonts {
             list_default: load_any("ListDefault"),
             list_focused: load_any("ListFocused"),
             list_selected: load_any("ListSelected"),
-            list_fallback: load_any("Default"),
         }
     }
 }
@@ -1617,7 +1625,7 @@ impl IngameMenuResources {
         } else {
             self.fonts.list_default.as_ref()
         }
-        .or(self.fonts.list_fallback.as_ref())
+        .or(self.fonts.default_any.as_ref())
     }
 
     /// Test-only constructor: build a resources struct with empty
@@ -1650,10 +1658,7 @@ impl IngameMenuResources {
             blazon_tiny: [None, None, None],
             blazon_huge: [None, None, None],
             fonts: MenuFonts::default(),
-            menu_text: MenuText {
-                strings: Vec::new(),
-                fallbacks: default_fallbacks(),
-            },
+            menu_text: MenuText::english_fallbacks_only(),
             portrait_cache: HashMap::new(),
             owners: Vec::new(),
         }
@@ -2192,11 +2197,60 @@ mod tests {
 
         let text = MenuText {
             strings: Vec::new(),
-            fallbacks: default_fallbacks(),
+            fallbacks: Some(default_fallbacks()),
         };
         assert_eq!(text.get(MT_BTN_OK), "OK");
         assert_eq!(text.get(MT_BTN_CONTINUE), "Continue");
         assert_eq!(text.get(MT_TTL_MISSION_WON), "Mission Won");
+    }
+
+    #[test]
+    fn menu_text_instances_borrow_one_immutable_fallback_table() {
+        let first = MenuText::english_fallbacks_only();
+        let second = MenuText::english_fallbacks_only();
+        assert!(std::ptr::eq(
+            first.fallbacks.unwrap(),
+            second.fallbacks.unwrap()
+        ));
+        assert!(MenuText::default().fallbacks.is_none());
+        assert_eq!(first.get(usize::MAX), "");
+        assert_eq!(second.get(MT_BTN_OK), "OK");
+    }
+
+    #[test]
+    fn list_fonts_preserve_state_precedence_and_share_default_font() {
+        let make_font = |height| {
+            Font::TrueType(TrueTypeFont::from_parts(
+                &[0; 32],
+                height,
+                0,
+                0,
+                &[0; 32],
+                0x00FF_FFFF,
+                &[],
+            ))
+        };
+        let mut resources = IngameMenuResources::stub();
+        for (focused, selected) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert!(resources.list_font(focused, selected).is_none());
+        }
+        resources.fonts.default_any = Some(make_font(11));
+        for (focused, selected) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert!(std::ptr::eq(
+                resources.list_font(focused, selected).unwrap(),
+                resources.fonts.default_any.as_ref().unwrap(),
+            ));
+        }
+        resources.fonts.list_default = Some(make_font(12));
+        assert_eq!(resources.list_font(true, true).unwrap().height(), 12);
+        resources.fonts.list_focused = Some(make_font(13));
+        assert_eq!(resources.list_font(false, false).unwrap().height(), 12);
+        assert_eq!(resources.list_font(true, false).unwrap().height(), 13);
+        assert_eq!(resources.list_font(false, true).unwrap().height(), 13);
+        resources.fonts.list_selected = Some(make_font(14));
+        assert_eq!(resources.list_font(false, true).unwrap().height(), 14);
+        assert_eq!(resources.list_font(true, true).unwrap().height(), 14);
+        assert_eq!(resources.list_font(true, false).unwrap().height(), 13);
     }
 
     #[test]
@@ -2205,7 +2259,7 @@ mod tests {
         strings[MT_BTN_OK] = "Aceptar".to_string();
         let text = MenuText {
             strings,
-            fallbacks: default_fallbacks(),
+            fallbacks: Some(default_fallbacks()),
         };
         assert_eq!(text.get(MT_BTN_OK), "Aceptar");
     }
@@ -2215,7 +2269,7 @@ mod tests {
         let strings = vec![String::new(); 32];
         let text = MenuText {
             strings,
-            fallbacks: default_fallbacks(),
+            fallbacks: Some(default_fallbacks()),
         };
         // Empty string in table — should fall back
         assert_eq!(text.get(MT_BTN_OK), "OK");
@@ -2227,7 +2281,7 @@ mod tests {
         strings[MT_STR_PRODUCTION_FORECAST_RATE] = "Localized production-rate text".to_string();
         let text = MenuText {
             strings,
-            fallbacks: default_fallbacks(),
+            fallbacks: Some(default_fallbacks()),
         };
 
         assert_eq!(
