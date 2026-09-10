@@ -173,14 +173,6 @@ pub(crate) async fn show_custom_missions(
     }
 
     loop {
-        let play_enabled = entries[selected].status.is_ok();
-        // Update the Play button's enabled flag in place — selecting a
-        // broken row should grey the button without resetting its
-        // hover/push state machine.
-        if let Some(w) = frame.widget_mut(ID_PLAY) {
-            w.base_mut().enabled = play_enabled;
-        }
-
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
         let (events, transform) =
@@ -196,53 +188,12 @@ pub(crate) async fn show_custom_missions(
             }
             match event {
                 GameEvent::Quit => activated = Some(ID_CANCEL),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => activated = Some(ID_CANCEL),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => {
-                    selected = selected.saturating_sub(1);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => {
-                    if selected + 1 < entries.len() {
-                        selected += 1;
+                GameEvent::KeyDown { keycode, .. } => {
+                    if let Some(action) =
+                        mission_key_action(keycode, &mut selected, &entries, visible_rows)
+                    {
+                        activated = Some(action);
                     }
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::PageUp,
-                    ..
-                } => {
-                    selected = selected.saturating_sub(visible_rows);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::PageDown,
-                    ..
-                } => {
-                    selected = (selected + visible_rows).min(entries.len().saturating_sub(1));
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Home,
-                    ..
-                } => selected = 0,
-                GameEvent::KeyDown {
-                    keycode: Keycode::End,
-                    ..
-                } => selected = entries.len().saturating_sub(1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } if play_enabled => {
-                    activated = Some(ID_PLAY);
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
@@ -284,6 +235,13 @@ pub(crate) async fn show_custom_missions(
             }
         }
 
+        // Selection may have changed during this event batch. Update enablement
+        // before widget processing and drawing, without resetting button state.
+        frame
+            .widget_mut(ID_PLAY)
+            .expect("picker always has a Play button")
+            .base_mut()
+            .enabled = entries[selected].status.is_ok();
         let widget_input = input_state.as_widget_input();
         let events = frame.process_input(&widget_input);
         input_state.end_frame();
@@ -360,6 +318,32 @@ pub(crate) async fn show_custom_missions(
         renderer.present();
         crate::window::sleep_ui_frame().await;
     }
+}
+
+/// Apply keys against the current selection, including changes from earlier
+/// events in this frame. The picker only runs with a nonempty entry list.
+fn mission_key_action(
+    key: Keycode,
+    selected: &mut usize,
+    entries: &[MissionEntry],
+    visible_rows: usize,
+) -> Option<u32> {
+    match key {
+        Keycode::Escape => return Some(ID_CANCEL),
+        Keycode::Up => *selected = selected.saturating_sub(1),
+        Keycode::Down => *selected = selected.saturating_add(1).min(entries.len() - 1),
+        Keycode::PageUp => *selected = selected.saturating_sub(visible_rows),
+        Keycode::PageDown => {
+            *selected = selected.saturating_add(visible_rows).min(entries.len() - 1)
+        }
+        Keycode::Home => *selected = 0,
+        Keycode::End => *selected = entries.len() - 1,
+        Keycode::Return | Keycode::KpEnter if entries[*selected].status.is_ok() => {
+            return Some(ID_PLAY);
+        }
+        _ => {}
+    }
+    None
 }
 
 fn draw_title(renderer: &mut Renderer, resources: &IngameMenuResources, transform: MenuTransform) {
@@ -524,19 +508,8 @@ fn mission_detail_lines(
 mod tests {
     use super::*;
 
-    #[test]
-    fn long_mission_details_wrap_without_dropping_status_or_description() {
-        let name = [0; 32];
-        let font = crate::native_font::Font::TrueType(crate::font::TrueTypeFont::from_parts(
-            &name,
-            18,
-            0,
-            0,
-            &name,
-            0,
-            include_bytes!("../../../../assets/core-datadir/Data/Interface/Fonts/arial.ttf"),
-        ));
-        let entry = MissionEntry {
+    fn mission_entry() -> MissionEntry {
+        MissionEntry {
             mod_slug: String::new(),
             mod_title: "Multi-team Demos".into(),
             author: "Robin Rust port".into(),
@@ -554,7 +527,76 @@ mod tests {
                 reason: "Unable to locate level MultiTeamAllPcsCircle.level".into(),
             },
             preview_image: None,
+        }
+    }
+
+    #[test]
+    fn keyboard_activation_uses_selection_from_previous_events() {
+        let broken = mission_entry();
+        let mut ready = mission_entry();
+        ready.status = MissionStatus::Ok {
+            map_filename: "demo.rhp".into(),
         };
+        let entries = [broken, ready];
+        let mut selected = 0;
+        for enter in [Keycode::Return, Keycode::KpEnter] {
+            assert_eq!(mission_key_action(enter, &mut selected, &entries, 5), None);
+            assert_eq!(
+                mission_key_action(Keycode::Down, &mut selected, &entries, 5),
+                None
+            );
+            assert_eq!(selected, 1);
+            assert_eq!(
+                mission_key_action(enter, &mut selected, &entries, 5),
+                Some(ID_PLAY)
+            );
+            assert_eq!(
+                mission_key_action(Keycode::Up, &mut selected, &entries, 5),
+                None
+            );
+            assert_eq!(selected, 0);
+            assert_eq!(mission_key_action(enter, &mut selected, &entries, 5), None);
+        }
+        assert_eq!(
+            mission_key_action(Keycode::Escape, &mut selected, &entries, 5),
+            Some(ID_CANCEL)
+        );
+    }
+
+    #[test]
+    fn keyboard_navigation_stays_within_entries() {
+        let entries = [mission_entry(), mission_entry(), mission_entry()];
+        for page in [0, 1, 2, 10, usize::MAX] {
+            for initial in 0..entries.len() {
+                for (key, expected) in [
+                    (Keycode::Up, initial.saturating_sub(1)),
+                    (Keycode::Down, (initial + 1).min(2)),
+                    (Keycode::PageUp, initial.saturating_sub(page)),
+                    (Keycode::PageDown, initial.saturating_add(page).min(2)),
+                    (Keycode::Home, 0),
+                    (Keycode::End, 2),
+                ] {
+                    let mut selected = initial;
+                    assert_eq!(mission_key_action(key, &mut selected, &entries, page), None);
+                    assert_eq!(selected, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_mission_details_wrap_without_dropping_status_or_description() {
+        let name = [0; 32];
+        let font = crate::native_font::Font::TrueType(crate::font::TrueTypeFont::from_parts(
+            &name,
+            18,
+            0,
+            0,
+            &name,
+            0,
+            include_bytes!("../../../../assets/core-datadir/Data/Interface/Fonts/arial.ttf"),
+        ));
+        let entry = mission_entry();
         let width = 180;
         let lines = mission_detail_lines(&font, &entry, width);
         assert!(lines.len() > ((DETAIL_H - 16) / (font.height() as i32 + 2)) as usize);
