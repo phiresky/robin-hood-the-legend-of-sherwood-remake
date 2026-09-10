@@ -361,6 +361,32 @@ fn loading_screen_absolute_updates_are_monotonic() {
 }
 
 #[test]
+fn loading_screen_rejects_invalid_absolute_and_incremental_levels() {
+    let mut screen = LoadingScreen::default();
+    screen.initialize(800, 600, 10.0);
+    screen.update(42, 7.0);
+    for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+        screen.update(43, invalid);
+        assert_eq!(screen.string_id, 43);
+        assert_eq!(screen.current_level, 7.0);
+        screen.increment(44, invalid);
+        assert_eq!(screen.string_id, 44);
+        assert_eq!(screen.current_level, 7.0);
+        screen.increment_level(invalid);
+        assert_eq!(screen.current_level, 7.0);
+        assert_eq!(screen.progress(), 0.7);
+    }
+    screen.update_level(f32::MAX);
+    screen.increment_level(f32::MAX);
+    assert_eq!(screen.current_level, f32::MAX);
+    assert_eq!(screen.progress(), 1.0);
+    screen.initialize(800, 600, 10.0);
+    assert_eq!(screen.current_level, 0.0);
+    screen.increment_level(2.0);
+    assert_eq!(screen.progress(), 0.2);
+}
+
+#[test]
 fn loading_screen_increment_adds_delta() {
     let mut screen = LoadingScreen::default();
     screen.initialize(800, 600, 10.0);

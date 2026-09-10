@@ -320,6 +320,10 @@ impl LoadingScreen {
     }
 
     fn set_level_monotonic(&mut self, level: f32) {
+        if !level.is_finite() {
+            tracing::warn!(level, "Loading screen progress update is not finite");
+            return;
+        }
         if level < self.current_level {
             tracing::warn!(
                 from = self.current_level,
@@ -347,14 +351,15 @@ impl LoadingScreen {
     }
 
     /// Increment progress by a delta and set the status string ID.
+    /// Backward or non-finite updates are logged and ignored, as for [`update`](Self::update).
     pub fn increment(&mut self, string_id: u32, delta: f32) {
-        self.string_id = string_id;
-        self.current_level += delta;
+        self.update(string_id, self.current_level + delta);
     }
 
     /// Increment progress by a delta (keeping current string).
+    /// Uses the same validation as [`update_level`](Self::update_level).
     pub fn increment_level(&mut self, delta: f32) {
-        self.current_level += delta;
+        self.update_level(self.current_level + delta);
     }
 
     /// Normalized progress in `0.0..=1.0`.
