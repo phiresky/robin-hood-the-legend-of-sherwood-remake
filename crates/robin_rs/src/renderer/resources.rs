@@ -540,41 +540,7 @@ impl GpuResources {
             return false;
         }
         let rgba = rgb565_to_rgba_opaque(pixels, width as usize, height as usize);
-        upload_counter::inc("background texture");
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("level background"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (_texture, view) = upload_rgba_texture(gpu, &rgba, width, height, "background texture");
         let bind_group = make_tex_bg(
             &gpu.device,
             &self.bgl_tex,
