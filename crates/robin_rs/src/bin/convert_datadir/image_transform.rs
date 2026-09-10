@@ -1,6 +1,65 @@
 //! Image transformation while preserving the legacy conversion formats.
 use super::*;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgb565_conversions_skip_padding_and_share_validation() {
+        let mut picture = Picture {
+            width: 1,
+            height: 2,
+            pitch: 3,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: vec![0x00, 0xf8, 0xaa, 0x1f, 0x00],
+            palette: None,
+        };
+        assert_eq!(picture_rgb16_canvas(&picture).unwrap(), [0xf800, 0x001f]);
+        assert_eq!(picture_to_rgb888(&picture).unwrap(), [255, 0, 0, 0, 0, 255]);
+        picture.data.pop();
+        assert!(picture_rgb16_canvas(&picture).is_err());
+        assert!(picture_to_rgb888(&picture).is_err());
+        picture.pitch = 1;
+        assert!(picture_rgb16_canvas(&picture).is_err());
+        assert!(picture_to_rgb888(&picture).is_err());
+        picture.pixel_format = robin_assets::picture::PixelFormat::Unset;
+        assert!(picture_rgb16_canvas(&picture).is_err());
+    }
+
+    #[test]
+    fn tightly_packed_rgb565_retains_every_color() {
+        let picture = Picture {
+            width: 256,
+            height: 256,
+            pitch: 0,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: (0..=u16::MAX).flat_map(u16::to_le_bytes).collect(),
+            palette: None,
+        };
+        assert!(
+            picture_rgb16_canvas(&picture)
+                .unwrap()
+                .into_iter()
+                .eq(0..=u16::MAX)
+        );
+        let rgb = picture_to_rgb888(&picture).unwrap();
+        for (word, pixel) in (0..=u16::MAX).zip(rgb.chunks_exact(3)) {
+            let r = ((word >> 11) & 31) as u8;
+            let g = ((word >> 5) & 63) as u8;
+            let b = (word & 31) as u8;
+            assert_eq!(
+                pixel,
+                [
+                    (r << 3) | (r >> 2),
+                    (g << 2) | (g >> 4),
+                    (b << 3) | (b >> 2)
+                ]
+            );
+        }
+    }
+}
+
 /// Decode a packed 16-bit (`.map`) image and re-encode it as JXL via
 /// the `cjxl` CLI. `quality = None` → lossless modular (`-d 0 --modular=1`);
 /// `Some(q)` → VarDCT at quality `q`. Use effort 7: effort 9 did not
@@ -148,6 +207,17 @@ pub(super) fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Re
 
 /// Row-major RGB565 words of an `Rgb16` picture, dropping any pitch padding.
 pub(super) fn picture_rgb16_canvas(pic: &Picture) -> Result<Vec<u16>> {
+    let pixels = picture_rgb16_pixels(pic)?;
+    let mut canvas = Vec::with_capacity(usize::from(pic.width) * usize::from(pic.height));
+    canvas.extend(pixels);
+    Ok(canvas)
+}
+
+fn picture_rgb16_pixels(pic: &Picture) -> Result<impl Iterator<Item = u16> + '_> {
+    anyhow::ensure!(
+        pic.pixel_format == robin_assets::picture::PixelFormat::Rgb16,
+        "RGB565 conversion requires an Rgb16 picture"
+    );
     let width = pic.width as usize;
     let height = pic.height as usize;
     let pitch = if pic.pitch == 0 {
@@ -155,20 +225,29 @@ pub(super) fn picture_rgb16_canvas(pic: &Picture) -> Result<Vec<u16>> {
     } else {
         pic.pitch as usize
     };
-    let mut canvas = Vec::with_capacity(width * height);
-    for y in 0..height {
-        let row = pic
-            .data
-            .get(y * pitch..y * pitch + width * 2)
-            .ok_or_else(|| anyhow!("picture row {y} is short of {width} RGB565 pixels"))?;
-        canvas.extend(
-            row.as_chunks::<2>()
-                .0
-                .iter()
-                .map(|c| u16::from_le_bytes([c[0], c[1]])),
-        );
-    }
-    Ok(canvas)
+    anyhow::ensure!(
+        pitch >= width * 2,
+        "RGB565 picture pitch is shorter than a row"
+    );
+    let required = if height == 0 || width == 0 {
+        0
+    } else {
+        (height - 1)
+            .checked_mul(pitch)
+            .and_then(|start| start.checked_add(width * 2))
+            .context("RGB565 picture layout exceeds address space")?
+    };
+    anyhow::ensure!(
+        pic.data.len() >= required,
+        "RGB565 picture data is truncated"
+    );
+    Ok((0..height).flat_map(move |y| {
+        // Empty-width pictures have no rows to read, regardless of pitch.
+        let start = if width == 0 { 0 } else { y * pitch };
+        pic.data[start..start + width * 2]
+            .chunks_exact(2)
+            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+    }))
 }
 
 /// Opaque RGB (maps); effort 7 — effort 9 did not produce a meaningful size
@@ -279,31 +358,19 @@ pub(super) fn encode_pixels_to_jxl(
 pub(super) fn picture_to_rgb888(pic: &Picture) -> Result<Vec<u8>> {
     use robin_assets::picture::PixelFormat;
 
-    let n = pic.width as usize * pic.height as usize;
-    let mut rgb = Vec::with_capacity(n * 3);
     match pic.pixel_format {
         PixelFormat::Rgb16 => {
-            if pic.data.len() < n * 2 {
-                bail!("RGB565 picture data is truncated");
-            }
-            for i in 0..n {
-                let lo = pic.data[i * 2] as u16;
-                let hi = pic.data[i * 2 + 1] as u16;
-                let px = lo | (hi << 8);
-                let r5 = ((px >> 11) & 0x1F) as u8;
-                let g6 = ((px >> 5) & 0x3F) as u8;
-                let b5 = (px & 0x1F) as u8;
-                rgb.push((r5 << 3) | (r5 >> 2));
-                rgb.push((g6 << 2) | (g6 >> 4));
-                rgb.push((b5 << 3) | (b5 >> 2));
-            }
+            let pixels = picture_rgb16_pixels(pic)?;
+            let mut rgb = Vec::with_capacity(usize::from(pic.width) * usize::from(pic.height) * 3);
+            rgb.extend(pixels.flat_map(robin_assets::rle_jxl::expand565));
+            Ok(rgb)
         }
         _ => {
             let rgba = pic.to_rgba8888(None);
-            for px in rgba.as_chunks::<4>().0 {
-                rgb.extend_from_slice(&px[..3]);
-            }
+            Ok(rgba
+                .chunks_exact(4)
+                .flat_map(|px| px[..3].iter().copied())
+                .collect())
         }
     }
-    Ok(rgb)
 }
