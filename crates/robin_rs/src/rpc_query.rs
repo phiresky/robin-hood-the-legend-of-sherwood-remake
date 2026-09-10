@@ -2,6 +2,7 @@
 use crate::http_server::{RpcError, ScreenshotFlags, ScreenshotRequest};
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, btree_map::Entry},
     str::FromStr,
 };
@@ -81,11 +82,18 @@ fn decode_component(raw: &str) -> Result<String, RpcError> {
             return Err(RpcError::invalid_request("malformed query percent escape"));
         }
     }
-    let form = raw.replace('+', " ");
-    percent_encoding::percent_decode_str(&form)
+    let form = if raw.contains('+') {
+        Cow::Owned(raw.replace('+', " "))
+    } else {
+        Cow::Borrowed(raw)
+    };
+    let decoded = percent_encoding::percent_decode_str(&form)
         .decode_utf8()
-        .map(|value| value.into_owned())
-        .map_err(|_| RpcError::invalid_request("query parameter is not valid UTF-8"))
+        .map_err(|_| RpcError::invalid_request("query parameter is not valid UTF-8"))?;
+    Ok(match decoded {
+        Cow::Borrowed(_) => form.into_owned(),
+        Cow::Owned(value) => value,
+    })
 }
 
 pub(crate) fn screenshot(query: &str) -> Result<ScreenshotRequest, RpcError> {
@@ -141,6 +149,31 @@ pub(crate) fn decompile_class(query: &str) -> Result<Option<String>, RpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_decoding_preserves_form_rules_and_decodes_only_once() {
+        for (input, expected) in [
+            ("", ""),
+            ("plain", "plain"),
+            ("雪", "雪"),
+            ("two+words", "two words"),
+            ("%E9%9B%AA", "雪"),
+            ("%2B+%252B", "+ %2B"),
+            ("left%26right%3Dvalue", "left&right=value"),
+        ] {
+            assert_eq!(decode_component(input).unwrap(), expected, "{input}");
+        }
+        for input in ["%", "%2", "%GG", "text+%"] {
+            assert_eq!(
+                decode_component(input).unwrap_err().message,
+                "malformed query percent escape"
+            );
+        }
+        assert_eq!(
+            decode_component("%FF").unwrap_err().message,
+            "query parameter is not valid UTF-8"
+        );
+    }
 
     #[test]
     fn valid_values_and_native_defaults_are_preserved() {
