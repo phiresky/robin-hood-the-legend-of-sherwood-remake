@@ -2597,7 +2597,7 @@ impl Renderer {
     /// a single horizontal strip; alpha comes from the font's
     /// alpha-channel picture. Per-string layout uses
     /// `NativeFont::layout_quads` for the same spacing rules as the
-    /// CPU-path `render_to_argb`. Result: zero per-string upload —
+    /// CPU-path glyph rasterization. Result: zero per-string upload —
     /// dynamic labels (counters, FPS overlay, dialogue) cost only
     /// `len(text)` quads in the GPU queue.
     pub fn render_text_argb(
@@ -2638,15 +2638,14 @@ impl Renderer {
     ///
     /// `ab_glyph` doesn't ship a glyph atlas (and the .tfn font set is
     /// only used for list views, so per-string upload cost is trivial),
-    /// so we rasterise into a temporary ARGB buffer sized by
+    /// so we rasterise into a temporary RGBA buffer sized by
     /// `font.total_pixel_height()` and upload as a one-shot wgpu
     /// texture, then queue the same blended quad the native-font path uses.
     pub fn render_text_truetype(&mut self, font: &TrueTypeFont, text: &str, x: i32, y: i32) {
         if text.is_empty() || !font.is_valid() {
             return;
         }
-        let chars: Vec<u32> = text.chars().map(|c| c as u32).collect();
-        let raw_w = font.get_string_width_total(&chars);
+        let raw_w = font.get_string_width_total(text.chars().map(u32::from));
         if raw_w <= 0 {
             return;
         }
@@ -2661,14 +2660,8 @@ impl Renderer {
             return;
         }
         let pitch = (w as usize) * 4;
-        let mut argb = vec![0u8; pitch * h as usize];
-        font.render_to_argb(&mut argb, w as i32, h as i32, pitch, text, 0, 0);
-
-        // ARGB8888 LE = [B, G, R, A] in memory → [R, G, B, A] for wgpu.
-        let mut rgba = Vec::with_capacity(argb.len());
-        for px in argb.as_chunks::<4>().0 {
-            rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
-        }
+        let mut rgba = vec![0u8; pitch * h as usize];
+        font.render_to_rgba(&mut rgba, w as i32, h as i32, pitch, text, 0, 0);
         let (_tex, view) = upload_rgba_texture(&self.gpu, &rgba, w, h, "tt scratch");
         let tex_idx = self.queue_frame_texture(&view);
         self.frame.queued.push(QueuedDraw {

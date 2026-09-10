@@ -265,7 +265,7 @@ impl NativeFont {
     /// Lay out `text` at `(x, y)` and return one `TextQuad` per
     /// glyph — destination rect in pixel space + UV rect in 0..1
     /// atlas coordinates. Uses the same per-character spacing logic
-    /// as `text_width` / `render_to_argb`.
+    /// as `text_width`.
     pub fn layout_quads(&self, text: &str, x: i32, y: i32) -> Vec<TextQuad> {
         let mut out = Vec::new();
         let aw = self.glyph_width as f32;
@@ -407,10 +407,7 @@ impl Font {
     pub fn text_width(&self, text: &str) -> i32 {
         match self {
             Font::Native(f) => f.text_width(text),
-            Font::TrueType(f) => {
-                let chars: Vec<u32> = text.chars().map(|c| c as u32).collect();
-                f.get_string_width_total(&chars)
-            }
+            Font::TrueType(f) => f.get_string_width_total(text.chars().map(u32::from)),
         }
     }
 

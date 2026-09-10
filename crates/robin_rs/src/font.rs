@@ -404,7 +404,7 @@ impl TrueTypeFont {
     }
 
     /// Total rasterised pixel height (ascent + descent), used to size a
-    /// scratch ARGB buffer that won't clip descenders. Falls back to the
+    /// scratch RGBA buffer that won't clip descenders. Falls back to the
     /// .tfn `height` field when the TTF face isn't loaded.
     pub fn total_pixel_height(&self) -> u32 {
         match self.font {
@@ -429,28 +429,28 @@ impl TrueTypeFont {
 
     /// Sum of per-character advances. Truncate each advance before adding,
     /// matching the legacy metrics rather than rounding the final total.
-    pub fn get_string_width_total(&self, chars: &[u32]) -> i32 {
+    pub fn get_string_width_total(&self, chars: impl IntoIterator<Item = u32>) -> i32 {
         chars
-            .iter()
-            .map(|&ch| self.get_char_width_total(ch) as i32)
+            .into_iter()
+            .map(|ch| self.get_char_width_total(ch) as i32)
             .sum()
     }
 
     // -- Glyph rasterisation -------------------------------------------------
 
-    /// Rasterise `text` into an ARGB8888 buffer using
+    /// Rasterise `text` into an RGBA8888 buffer using
     /// `ab_glyph::Font::outline_glyph`. The font's `color` field is
     /// applied as the foreground.
     ///
-    /// Buffer layout: ARGB8888 little-endian memory order, each pixel is
-    /// 4 bytes `[B, G, R, A]`. `pitch` is in **bytes**.
+    /// Buffer layout: RGBA8888 byte order, each pixel is
+    /// 4 bytes `[R, G, B, A]`. `pitch` is in **bytes**.
     ///
     /// Wired into the renderer via `Renderer::render_text_truetype`,
-    /// which sizes a scratch ARGB buffer with [`Self::total_pixel_height`],
+    /// which sizes a scratch RGBA buffer with [`Self::total_pixel_height`],
     /// calls this method, then uploads the buffer as a one-shot GPU
     /// texture for the standard blend-quad path.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_to_argb(
+    pub fn render_to_rgba(
         &self,
         data: &mut [u8],
         surface_w: i32,
@@ -497,9 +497,9 @@ impl TrueTypeFont {
                         // multiplies RGB by alpha; premultiplying here would
                         // apply coverage twice and make TrueType list text
                         // thin and low contrast.
-                        data[off] = b;
+                        data[off] = r;
                         data[off + 1] = g;
-                        data[off + 2] = r;
+                        data[off + 2] = b;
                         data[off + 3] = data[off + 3].max(alpha);
                     }
                 });
@@ -635,7 +635,7 @@ mod tests {
 
         // "Hello" width should be positive
         let hello: Vec<u32> = "Hello".chars().map(|c| c as u32).collect();
-        let w = f.get_string_width_total(&hello);
+        let w = f.get_string_width_total(hello.iter().copied());
         assert!(
             w > 0,
             "string width of 'Hello' should be positive, got {}",
@@ -643,12 +643,12 @@ mod tests {
         );
 
         // Empty string width should be 0
-        let w_empty = f.get_string_width_total(&[]);
+        let w_empty = f.get_string_width_total([]);
         assert_eq!(w_empty, 0);
 
         // Width should scale roughly with length
         let hh: Vec<u32> = "HelloHello".chars().map(|c| c as u32).collect();
-        let w2 = f.get_string_width_total(&hh);
+        let w2 = f.get_string_width_total(hh.iter().copied());
         assert_eq!(w2, w * 2, "double string should be double width");
     }
 
@@ -670,13 +670,44 @@ mod tests {
             .filter_map(|&code| char::from_u32(code))
             .map(|ch| scaled.h_advance(face.glyph_id(ch)) as u32 as i32)
             .sum();
-        assert_eq!(font.get_string_width_total(&chars), expected);
+        assert_eq!(font.get_string_width_total(chars), expected);
         assert_eq!(font.get_char_width_total(0xd800), 0);
         assert_eq!(font.get_char_width_total(u32::MAX), 0);
-        assert_eq!(
-            TrueTypeFont::new_invalid().get_string_width_total(&chars),
-            0
-        );
+        assert_eq!(TrueTypeFont::new_invalid().get_string_width_total(chars), 0);
+    }
+
+    #[test]
+    fn rgba_rasterization_preserves_straight_color_coverage_and_row_padding() {
+        let mut font = make_test_font();
+        font.color = 0x0040_2080; // COLORREF: R=128, G=32, B=64
+        let width = 48usize;
+        let height = 40usize;
+        let pitch = width * 4 + 12;
+        for x in [2, -8] {
+            let mut pixels = vec![0u8; pitch * height];
+            for row in pixels.chunks_exact_mut(pitch) {
+                row[width * 4..].fill(0x55);
+            }
+            font.render_to_rgba(&mut pixels, width as i32, height as i32, pitch, "AV", x, 1);
+            let mut visible = 0;
+            let mut partial_coverage = 0;
+            for row in pixels.chunks_exact(pitch) {
+                assert!(row[width * 4..].iter().all(|&byte| byte == 0x55));
+                for pixel in row[..width * 4].chunks_exact(4) {
+                    if pixel[3] == 0 {
+                        assert_eq!(&pixel[..3], &[0, 0, 0]);
+                    } else {
+                        visible += 1;
+                        assert_eq!(&pixel[..3], &[128, 32, 64]);
+                        if pixel[3] < 255 {
+                            partial_coverage += 1;
+                        }
+                    }
+                }
+            }
+            assert!(visible > 0);
+            assert!(partial_coverage > 0);
+        }
     }
 
     #[test]
