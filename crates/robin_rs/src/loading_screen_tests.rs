@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn packed_height_fields_match_equivalent_rgb_for_all_sixteen_bit_values() {
+    let pixels: Vec<u16> = (0..=u16::MAX).collect();
+    for is_565 in [false, true] {
+        let rgb: Vec<u8> = pixels
+            .iter()
+            .flat_map(|&pixel| {
+                if is_565 {
+                    [
+                        ((pixel & 0xF800) >> 8) as u8,
+                        ((pixel & 0x07E0) >> 3) as u8,
+                        ((pixel & 31) << 3) as u8,
+                    ]
+                } else {
+                    [
+                        ((pixel & 0x7C00) >> 7) as u8,
+                        ((pixel & 0x03E0) >> 2) as u8,
+                        ((pixel & 31) << 3) as u8,
+                    ]
+                }
+            })
+            .collect();
+        let expected = HeightField::from_rgb(&rgb, 256, 256);
+        let actual = if is_565 {
+            HeightField::from_rgb565(&pixels, 256, 256)
+        } else {
+            HeightField::from_rgb555(&pixels, 256, 256)
+        };
+        assert_eq!(actual.data, expected.data);
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+    }
+}
+
+#[test]
 fn grayscale_normalization_reuses_owned_storage_and_preserves_rounding() {
     for data in [
         vec![0],

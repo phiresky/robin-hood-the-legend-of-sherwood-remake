@@ -80,6 +80,11 @@ pub struct HeightField {
     pub height: u32,
 }
 
+/// Retail luminance weighting shared by all height-field source formats.
+fn height_luminance(r: u8, g: u8, b: u8) -> u8 {
+    ((u32::from(r) * 39 + u32::from(g) * 50 + u32::from(b) * 11) / 100) as u8
+}
+
 impl HeightField {
     fn pixel_count(width: u32, height: u32) -> usize {
         assert!(
@@ -157,10 +162,7 @@ impl HeightField {
             .as_chunks::<3>()
             .0
             .iter()
-            .map(|px| {
-                let (r, g, b) = (px[0] as u32, px[1] as u32, px[2] as u32);
-                ((r * 39 + g * 50 + b * 11) / 100) as u8
-            })
+            .map(|px| height_luminance(px[0], px[1], px[2]))
             .collect();
 
         Self::normalize_grayscale(grayscale, width, height)
@@ -187,10 +189,8 @@ impl HeightField {
         let grayscale: Vec<u8> = pixel_data
             .iter()
             .map(|&color| {
-                let r = ((color & 0xF800) >> 8) as u32;
-                let g = ((color & 0x07E0) >> 3) as u32;
-                let b = ((color & 0x001F) << 3) as u32;
-                ((r * 39 + g * 50 + b * 11) / 100) as u8
+                let (r, g, b) = robin_util::color::rgb565_to_rgb8(color);
+                height_luminance(r, g, b)
             })
             .collect();
 
@@ -218,10 +218,10 @@ impl HeightField {
         let grayscale: Vec<u8> = pixel_data
             .iter()
             .map(|&color| {
-                let r = ((color & 0x7C00) >> 7) as u32;
-                let g = ((color & 0x03E0) >> 2) as u32;
-                let b = ((color & 0x001F) << 3) as u32;
-                ((r * 39 + g * 50 + b * 11) / 100) as u8
+                let r = ((color & 0x7C00) >> 7) as u8;
+                let g = ((color & 0x03E0) >> 2) as u8;
+                let b = ((color & 0x001F) << 3) as u8;
+                height_luminance(r, g, b)
             })
             .collect();
 
