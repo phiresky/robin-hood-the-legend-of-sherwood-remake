@@ -187,9 +187,14 @@ pub(super) fn write_prepared_shipping_payload(
         publication::publish_bytes(&path, &compressed)?;
         Ok(len)
     } else {
-        Ok(fs::metadata(&path)
-            .with_context(|| format!("stat reused payload {}", path.display()))?
-            .len() as usize)
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("stat reused payload {}", path.display()))?;
+        anyhow::ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "reused payload is not a regular file: {}",
+            path.display()
+        );
+        usize::try_from(metadata.len()).context("reused payload size exceeds address space")
     }
 }
 
@@ -209,7 +214,10 @@ pub(super) fn prepare_shipping_payload(
         let expected = robin_assets::shipping_datadir::encode_mission_native(payload);
         let mut candidates = fs::read_dir(output_dir)
             .with_context(|| format!("read_dir {}", output_dir.display()))?
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()
+            .with_context(|| format!("enumerate resume candidates in {}", output_dir.display()))?
+            .into_iter()
             .filter(|path| {
                 path.file_name()
                     .and_then(|name| name.to_str())
@@ -220,15 +228,29 @@ pub(super) fn prepare_shipping_payload(
             .collect::<Vec<_>>();
         candidates.sort();
         for path in candidates {
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("stat resume candidate {}", path.display()))?;
+            anyhow::ensure!(
+                metadata.is_file() && !metadata.file_type().is_symlink(),
+                "resume candidate is not a regular file: {}",
+                path.display()
+            );
             let compressed = match fs::read(&path) {
                 Ok(compressed) => compressed,
-                Err(_) => continue,
+                Err(error) => {
+                    tracing::warn!(path = %path.display(), %error, "cannot read resume candidate; skipping");
+                    continue;
+                }
             };
-            let decoded =
-                match robin_assets::shipping_datadir::decode_mission_compressed(&compressed) {
-                    Ok(decoded) => decoded,
-                    Err(_) => continue,
-                };
+            let decoded = match robin_assets::shipping_datadir::decode_mission_compressed(
+                &compressed,
+            ) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    tracing::warn!(path = %path.display(), %error, "invalid resume candidate; skipping");
+                    continue;
+                }
+            };
             if robin_assets::shipping_datadir::encode_mission_native(&decoded) == expected {
                 let filename = path
                     .file_name()
@@ -249,6 +271,72 @@ pub(super) fn prepare_shipping_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_regular_resume_candidates_are_reencoded() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test-w17-invalid.rhmission.zst");
+        fs::write(&path, b"incomplete compressed payload").unwrap();
+        let payload = ShippingMission::default();
+        let (_, compressed) =
+            prepare_shipping_payload(directory.path(), "test", &payload, 17, true).unwrap();
+        let decoded =
+            robin_assets::shipping_datadir::decode_mission_compressed(&compressed.unwrap())
+                .unwrap();
+        assert_eq!(
+            robin_assets::shipping_datadir::encode_mission_native(&decoded),
+            robin_assets::shipping_datadir::encode_mission_native(&payload)
+        );
+        assert_eq!(fs::read(path).unwrap(), b"incomplete compressed payload");
+    }
+
+    #[test]
+    fn payload_reuse_requires_a_regular_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let filename = "test-w17-invalid.rhmission.zst";
+        let path = directory.path().join(filename);
+        fs::create_dir(&path).unwrap();
+        assert!(write_prepared_shipping_payload(directory.path(), filename, None).is_err());
+        assert!(
+            prepare_shipping_payload(
+                directory.path(),
+                "test",
+                &ShippingMission::default(),
+                17,
+                true
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file")
+        );
+        assert!(path.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn payload_reuse_refuses_symlinks_without_reading_the_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = tempfile::NamedTempFile::new().unwrap();
+        fs::write(target.path(), b"retained").unwrap();
+        let filename = "test-w17-invalid.rhmission.zst";
+        let path = directory.path().join(filename);
+        std::os::unix::fs::symlink(target.path(), &path).unwrap();
+        assert!(write_prepared_shipping_payload(directory.path(), filename, None).is_err());
+        assert!(
+            prepare_shipping_payload(
+                directory.path(),
+                "test",
+                &ShippingMission::default(),
+                17,
+                true
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file")
+        );
+        assert_eq!(fs::read(target.path()).unwrap(), b"retained");
+        assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+    }
 
     #[test]
     fn streamed_file_digest_matches_bytes_and_length() {
