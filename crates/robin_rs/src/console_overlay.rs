@@ -23,6 +23,7 @@
 //! - Auto-close on `WIN` / `WINCAMPAIGN` / `LOSE`.
 
 use crate::host::Host;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::gfx_types::Keycode;
@@ -144,6 +145,14 @@ enum OutputLine {
     Error(String),
 }
 
+/// A repeated-Tab cycle retains the typed prefix, not its last substitution.
+#[derive(Debug, Serialize, Deserialize)]
+struct CompletionCycle {
+    prefix: String,
+    index: usize,
+    use_final: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct ConsoleOverlay {
     visible: bool,
@@ -164,11 +173,9 @@ pub struct ConsoleOverlay {
     /// Saved input line when the user starts navigating history, so
     /// pressing ↓ past the end restores what they were typing.
     history_saved_input: Option<String>,
-    /// Index into the tab-completion candidate list, for cycling on
-    /// repeated Tab presses.  Each press advances one slot and wraps.
-    /// Cleared whenever the user edits the input, so a fresh prefix
-    /// starts cycling from 0.
-    completion_index: Option<usize>,
+    /// Original prefix and position for repeated Tab presses.
+    /// Cleared whenever the user edits the input.
+    completion: Option<CompletionCycle>,
     /// View offset from the bottom of `output` (for Page Up/Down
     /// scrolling).  0 = pinned to latest line.
     scroll_from_bottom: usize,
@@ -209,7 +216,7 @@ impl ConsoleOverlay {
             self.cursor = 0;
             self.history_cursor = None;
             self.history_saved_input = None;
-            self.completion_index = None;
+            self.completion = None;
         }
         self.caret_timer = 0;
         self.scroll_from_bottom = 0;
@@ -223,7 +230,7 @@ impl ConsoleOverlay {
             self.cursor = 0;
             self.history_cursor = None;
             self.history_saved_input = None;
-            self.completion_index = None;
+            self.completion = None;
             self.scroll_from_bottom = 0;
             true
         } else {
@@ -271,7 +278,7 @@ impl ConsoleOverlay {
                             self.caret_timer = 0;
                             self.history_cursor = None;
                             self.history_saved_input = None;
-                            self.completion_index = None;
+                            self.completion = None;
                         }
                     }
                 }
@@ -284,13 +291,13 @@ impl ConsoleOverlay {
                         consumed_any = true;
                         self.backspace_at_cursor();
                         self.caret_timer = 0;
-                        self.completion_index = None;
+                        self.completion = None;
                     }
                     Keycode::Delete => {
                         consumed_any = true;
                         self.delete_at_cursor();
                         self.caret_timer = 0;
-                        self.completion_index = None;
+                        self.completion = None;
                     }
                     Keycode::Left => {
                         consumed_any = true;
@@ -446,7 +453,7 @@ impl ConsoleOverlay {
         self.cursor = 0;
         self.history_cursor = None;
         self.history_saved_input = None;
-        self.completion_index = None;
+        self.completion = None;
         self.scroll_from_bottom = 0;
         if trimmed.is_empty() {
             return;
@@ -612,7 +619,7 @@ impl ConsoleOverlay {
         self.input.clone_from(&self.cmd_history[next]);
         self.cursor = self.input.chars().count();
         self.history_cursor = Some(next);
-        self.completion_index = None;
+        self.completion = None;
         self.caret_timer = 0;
     }
 
@@ -632,26 +639,32 @@ impl ConsoleOverlay {
             self.history_cursor = Some(next);
         }
         self.cursor = self.input.chars().count();
-        self.completion_index = None;
+        self.completion = None;
         self.caret_timer = 0;
     }
 
     fn tab_complete(&mut self, dev: &DevState) {
-        // Complete the *first* token only — multi-word commands
-        // (e.g. "BIG BROTHER") are completed token-by-token.  Copy
-        // the tokenised prefix + trailing out of `self.input` first so
-        // we can mutate `self` freely for the rest of the function.
-        let (prefix_upper, trailing) = {
+        // Complete only the first token; the user supplies any remaining
+        // command words and arguments. Retain the original prefix while
+        // cycling, but never carry a cycle across keyword-table changes.
+        let cycle = self
+            .completion
+            .take()
+            .filter(|cycle| cycle.use_final == dev.console.use_final);
+        let (prefix_upper, previous_index, trailing) = {
             let trimmed = self.input.trim_start();
             let first_token_end = trimmed
                 .find(|c: char| c.is_whitespace())
                 .unwrap_or(trimmed.len());
-            let prefix = trimmed[..first_token_end].to_ascii_uppercase();
+            let (prefix, previous_index) = match cycle {
+                Some(cycle) => (cycle.prefix, Some(cycle.index)),
+                None => (trimmed[..first_token_end].to_ascii_uppercase(), None),
+            };
             let trail = trimmed[first_token_end..].trim_start().to_string();
-            (prefix, trail)
+            (prefix, previous_index, trail)
         };
         if prefix_upper.is_empty() {
-            self.completion_index = None;
+            self.completion = None;
             return;
         }
         // Pick the keyword set that matches the current cheat table.
@@ -669,7 +682,7 @@ impl ConsoleOverlay {
             .collect();
         match matches.as_slice() {
             [] => {
-                self.completion_index = None;
+                self.completion = None;
             }
             [single] => {
                 // Unique match: replace the typed prefix with the
@@ -680,7 +693,7 @@ impl ConsoleOverlay {
                 completed.push_str(&trailing);
                 self.input = completed;
                 self.cursor = self.input.chars().count();
-                self.completion_index = None;
+                self.completion = None;
                 self.caret_timer = 0;
             }
             many => {
@@ -689,16 +702,20 @@ impl ConsoleOverlay {
                 // the candidates so the user sees what's on offer;
                 // subsequent Tabs substitute the actual keyword into
                 // the input line one at a time.
-                let first_press = self.completion_index.is_none();
+                let first_press = previous_index.is_none();
                 if first_press {
                     let joined = many.join("  ");
                     self.push_output(OutputLine::Response(joined));
                 }
-                let idx = match self.completion_index {
+                let idx = match previous_index {
                     None => 0,
                     Some(i) => (i + 1) % many.len(),
                 };
-                self.completion_index = Some(idx);
+                self.completion = Some(CompletionCycle {
+                    prefix: prefix_upper,
+                    index: idx,
+                    use_final: dev.console.use_final,
+                });
                 let pick = many[idx];
                 let mut completed = String::with_capacity(pick.len() + trailing.len() + 1);
                 completed.push_str(pick);
@@ -765,7 +782,7 @@ impl ConsoleOverlay {
             self.cursor = 0;
             self.history_cursor = None;
             self.history_saved_input = None;
-            self.completion_index = None;
+            self.completion = None;
             self.scroll_from_bottom = 0;
             true
         } else {
@@ -925,16 +942,49 @@ mod tests {
         c.toggle();
         c.input = "h".to_string();
         c.cursor = 1;
+        for expected in [
+            "HADES",
+            "HELP",
+            "HIGHLANDER",
+            "HIGHLANDER2",
+            "HONOLULU",
+            "HADES",
+        ] {
+            c.tab_complete(&dev);
+            assert_eq!(c.input, expected);
+            assert_eq!(c.cursor, expected.chars().count());
+            assert_eq!(c.output.len(), 1, "list candidates only on the first press");
+        }
+        assert!(matches!(c.output.back(), Some(OutputLine::Response(text))
+            if text == "HADES  HELP  HIGHLANDER  HIGHLANDER2  HONOLULU"));
+    }
+
+    #[test]
+    fn tab_cycle_preserves_arguments_and_resets_for_history_or_mode_changes() {
+        let mut dev = DevState::default();
+        let mut c = ConsoleOverlay::new();
+        c.input = "  h   café 界".to_string();
+        for expected in ["HADES café 界", "HELP café 界", "HIGHLANDER café 界"] {
+            c.tab_complete(&dev);
+            assert_eq!(c.input, expected);
+            assert_eq!(c.cursor, expected.chars().count());
+        }
+
+        // Switching to shipping keywords must not keep cycling dev commands.
+        dev.console.use_final = true;
         c.tab_complete(&dev);
-        // First press prints the list *and* selects the first match.
-        assert!(matches!(c.output.back(), Some(OutputLine::Response(_))));
-        let first = c.input.clone();
-        assert!(first.starts_with('H'));
-        // Second press advances to the next candidate.
+        assert_eq!(c.input, "HIGHLANDER café 界");
+        assert!(c.completion.is_none());
+
+        dev.console.use_final = false;
+        c.input = "h".to_string();
         c.tab_complete(&dev);
-        let second = c.input.clone();
-        assert_ne!(first, second);
-        assert!(second.starts_with('H'));
+        assert!(c.completion.is_some());
+        c.cmd_history.push("fre".to_string());
+        c.history_prev();
+        assert!(c.completion.is_none());
+        c.tab_complete(&dev);
+        assert_eq!(c.input, "FREEZE ");
     }
 
     #[test]
