@@ -14,6 +14,7 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
@@ -1039,30 +1040,32 @@ fn relative_time_quantity(seconds: u64) -> (u64, RelativeTimeUnit) {
 /// clipped metadata is visibly abbreviated instead of looking like a
 /// broken string.
 fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
+    truncate_to_pixel_width_by(text, max_w, |candidate| font.text_width(candidate))
+}
+
+fn truncate_to_pixel_width_by(text: &str, max_w: i32, measure: impl Fn(&str) -> i32) -> String {
     if max_w <= 0 {
         return String::new();
     }
-    if font.text_width(text) <= max_w {
+    if measure(text) <= max_w {
         return text.to_string();
     }
 
     let ellipsis = "...";
-    let ellipsis_w = font.text_width(ellipsis);
+    let ellipsis_w = measure(ellipsis);
     if ellipsis_w > max_w {
         return String::new();
     }
 
     let budget = max_w - ellipsis_w;
-    // `text` doesn't fit in full — scan prefix-by-prefix for the
-    // longest one that does.  `char_indices()` yields byte offsets at
-    // the *start* of each char, so `text[..idx]` is the prefix with
-    // `idx` excluded.
+    // Keep complete graphemes, including combining marks and emoji sequences.
     let mut fit_end = 0;
-    for (idx, _) in text.char_indices() {
-        if font.text_width(&text[..idx]) > budget {
-            return format!("{}{}", &text[..fit_end], ellipsis);
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let end = index + grapheme.len();
+        if measure(&text[..end]) > budget {
+            break;
         }
-        fit_end = idx;
+        fit_end = end;
     }
     format!("{}{}", &text[..fit_end], ellipsis)
 }
@@ -1205,6 +1208,30 @@ pub(crate) fn finish_picker_delete(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn save_text_truncation_keeps_graphemes_and_ascii_ellipsis_policy() {
+        let measure = |text: &str| text.chars().count() as i32;
+        for (text, width, expected) in [
+            ("abcdef", 5, "ab..."),
+            ("abcdef", 3, "..."),
+            ("abcdef", 2, ""),
+            ("abcdef", 0, ""),
+            ("abcdef", -1, ""),
+            ("a", 1, "a"),
+            ("", 1, ""),
+            ("e\u{301}clair", 4, "..."),
+            ("e\u{301}clair", 5, "e\u{301}..."),
+            ("👩‍💻abc", 5, "..."),
+            ("👩‍💻abcd", 6, "👩‍💻..."),
+            ("ab cd ef", 6, "ab ..."),
+        ] {
+            assert_eq!(
+                super::truncate_to_pixel_width_by(text, width, measure),
+                expected
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
