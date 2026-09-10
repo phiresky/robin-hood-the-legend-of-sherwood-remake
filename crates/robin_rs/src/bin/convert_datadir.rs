@@ -2111,7 +2111,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     for (index, profile) in cpf.characters.iter().enumerate() {
         let profile_index = u32::try_from(index).context("character profile index exceeds u32")?;
         let required = character_rhs_requirements.entry(profile_index).or_default();
-        add_character_rhs_profiles_for_index(required, &cpf, index, &in_path, false);
+        add_character_rhs_profiles_for_index(required, &cpf, index, &in_path, false)?;
         add_character_action_rhs_profiles(
             required,
             profile

@@ -168,7 +168,7 @@ pub(super) fn plan_missions(
                 cpf,
                 idx,
                 &in_path,
-            );
+            )?;
             if let Some(profile) = cpf.characters.get(idx)
                 && profile.exclamation_id != 0
             {
@@ -245,7 +245,7 @@ pub(super) fn plan_missions(
                 cpf,
                 profile_index,
                 &in_path,
-            );
+            )?;
             if let Some(profile) = cpf.characters.get(profile_index)
                 && profile.exclamation_id != 0
             {

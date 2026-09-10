@@ -168,6 +168,40 @@ mod hub_resolution_tests {
     use super::*;
 
     #[test]
+    fn character_requirements_reject_invalid_indices_but_allow_absent_optional_assets() {
+        let mut profiles = ProfileManager::default();
+        let mut required = std::collections::BTreeMap::new();
+        for required_on_disk in [false, true] {
+            let error = add_character_rhs_profiles_for_index(
+                &mut required,
+                &profiles,
+                7,
+                &|_| panic!("invalid index must fail before lookup"),
+                required_on_disk,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("index 7"));
+            assert!(required.is_empty());
+        }
+        profiles
+            .characters
+            .push(robin_engine::profiles::CharacterProfile {
+                filename: "Hero".into(),
+                profile_name: "Hero profile".into(),
+                ..Default::default()
+            });
+        add_character_rhs_profiles_for_index(&mut required, &profiles, 0, &|_| None, false)
+            .unwrap();
+        assert!(required.is_empty());
+        add_required_character_rhs_profiles_for_index(&mut required, &profiles, 0, &|_| None)
+            .unwrap();
+        assert_eq!(
+            required["Characters/Hero.rhs"],
+            BTreeSet::from(["Hero profile".to_owned()])
+        );
+    }
+
+    #[test]
     fn positional_pairing_matches_unique_hub_reference_for_short_orders() {
         let orders: Vec<Vec<u32>> = (0..=4)
             .flat_map(|length| {
@@ -386,8 +420,8 @@ pub(super) fn add_required_character_rhs_profiles_for_index(
     profiles: &ProfileManager,
     index: usize,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
-) {
-    add_character_rhs_profiles_for_index(required, profiles, index, in_path, true);
+) -> Result<()> {
+    add_character_rhs_profiles_for_index(required, profiles, index, in_path, true)
 }
 
 /// `required_on_disk = true` insists the RHS exists (mission-authored
@@ -400,10 +434,11 @@ pub(super) fn add_character_rhs_profiles_for_index(
     index: usize,
     in_path: &impl Fn(&str) -> Option<PathBuf>,
     required_on_disk: bool,
-) {
-    let Some(profile) = profiles.characters.get(index) else {
-        return;
-    };
+) -> Result<()> {
+    let profile = profiles
+        .characters
+        .get(index)
+        .ok_or_else(|| anyhow!("character profile index {index} does not exist"))?;
     // Character profile indices identify physical RHS files. Do not group by
     // localized profile name: RobinHood and RobinTown can share one logical
     // name in legacy profile tables but original-game PC initialization selects
@@ -418,6 +453,7 @@ pub(super) fn add_character_rhs_profiles_for_index(
             profile.filename,
         );
     }
+    Ok(())
 }
 
 pub(super) fn normalize_robin_profile_index(
