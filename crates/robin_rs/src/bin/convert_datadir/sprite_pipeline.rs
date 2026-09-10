@@ -1,6 +1,30 @@
 //! Plan family hubs and transform the selected RHS dependency closure.
 use super::*;
 
+fn family_member_script_order<'a>(
+    rhs_preps: &'a std::collections::BTreeMap<String, RhsChunkPrep>,
+    rel: &str,
+    in_path: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Result<std::borrow::Cow<'a, [u32]>> {
+    // Only exact paths can reuse preparation: distinct case aliases may
+    // resolve to distinct files on a case-sensitive source filesystem.
+    if let Some(prep) = rhs_preps.get(rel) {
+        return Ok(std::borrow::Cow::Borrowed(&prep.script_order));
+    }
+    let path =
+        in_path(rel).ok_or_else(|| anyhow!("family member RHS {rel} missing from the datadir"))?;
+    let (_, profiles) =
+        sprite_script::SpriteScriptor::load_all_profiles_legacy(&path.to_string_lossy())
+            .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
+    let mut order = Vec::new();
+    for (_, info) in &profiles {
+        for script in info.scripts.iter() {
+            order.extend_from_slice(&script.frame_ids);
+        }
+    }
+    Ok(std::borrow::Cow::Owned(order))
+}
+
 fn pick_weighted_family_hub(
     costs: &[(f64, &String)],
     mission_use_count: &impl Fn(&str) -> usize,
@@ -133,24 +157,14 @@ pub(super) fn transform_rhs(
     // family half of the corpus at zero format cost (the chunk already
     // records `base_rhs`). Falls back to the first member when the proxy
     // cannot be computed (e.g. indices beyond the 12-bit proxy key).
-    let mut member_orders = std::collections::BTreeMap::<String, Vec<u32>>::new();
+    let mut member_orders = std::collections::BTreeMap::new();
     for members in families.values() {
         for name in members {
             if member_orders.contains_key(name) {
                 continue;
             }
             let rel = format!("Characters/{name}.rhs");
-            let path = in_path(&rel)
-                .ok_or_else(|| anyhow!("family member RHS {rel} missing from the datadir"))?;
-            let (_, profiles) =
-                sprite_script::SpriteScriptor::load_all_profiles_legacy(&path.to_string_lossy())
-                    .map_err(|error| anyhow!("rhs {rel}: {error}"))?;
-            let mut order = Vec::new();
-            for (_, info) in &profiles {
-                for script in info.scripts.iter() {
-                    order.extend_from_slice(&script.frame_ids);
-                }
-            }
+            let order = family_member_script_order(&rhs_preps, &rel, in_path)?;
             member_orders.insert(name.clone(), order);
         }
     }
@@ -576,6 +590,42 @@ pub(super) fn transform_rhs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn family_member_orders_borrow_exact_preparations_without_reloading() {
+        let mut preparations = std::collections::BTreeMap::new();
+        preparations.insert(
+            "Characters/Hero01.rhs".into(),
+            RhsChunkPrep {
+                rhs_data: None,
+                matched_profiles: 0,
+                script_order: vec![7, 2, 7, 9],
+                used_sprite_ids: BTreeSet::from([2]),
+                base_rel: None,
+                base_ids: Default::default(),
+                base2_rel: None,
+                base2_ids: Default::default(),
+            },
+        );
+        let order = family_member_script_order(&preparations, "Characters/Hero01.rhs", &|_| {
+            panic!("already prepared RHS must not be resolved or reloaded")
+        })
+        .unwrap();
+        assert!(matches!(order, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(order.as_ref(), [7, 2, 7, 9]);
+        assert_eq!(
+            order.as_ptr(),
+            preparations["Characters/Hero01.rhs"].script_order.as_ptr()
+        );
+        for rel in ["Characters/hero01.rhs", "Characters/Hero02.rhs"] {
+            let error = family_member_script_order(&preparations, rel, &|requested| {
+                assert_eq!(requested, rel);
+                None
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains(rel));
+        }
+    }
 
     #[test]
     fn hub_selection_weights_only_eligible_candidates_once() {
