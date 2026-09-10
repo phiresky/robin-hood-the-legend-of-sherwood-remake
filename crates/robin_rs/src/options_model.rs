@@ -130,9 +130,7 @@ impl GraphicsEdit {
     }
 
     pub(crate) fn resolution_changed(&self) -> bool {
-        (self.working.resolution_x - self.original.resolution_x).abs() > 0.5
-            || (self.working.resolution_y - self.original.resolution_y).abs() > 0.5
-            || self.working.adaptive_widescreen != self.original.adaptive_widescreen
+        resolution_changed(&self.original, &self.working)
     }
 
     pub(crate) fn commit(self, accepted: bool, target: &mut GraphicConfig) -> (bool, bool) {
@@ -146,6 +144,12 @@ impl GraphicsEdit {
         *target = self.working;
         (true, resolution_changed)
     }
+}
+
+fn resolution_changed(original: &GraphicConfig, working: &GraphicConfig) -> bool {
+    (working.resolution_x - original.resolution_x).abs() > 0.5
+        || (working.resolution_y - original.resolution_y).abs() > 0.5
+        || working.adaptive_widescreen != original.adaptive_widescreen
 }
 
 pub(crate) fn graphic_eq(left: &GraphicConfig, right: &GraphicConfig) -> bool {
@@ -291,11 +295,7 @@ impl OptionsController {
         match &self.snapshot {
             PageSnapshot::Graphics(original) => {
                 effects.profile_changed = reapply || !graphic_eq(original, &self.graphic.working);
-                effects.resolution_changed = GraphicsEdit {
-                    original: original.clone(),
-                    working: self.graphic.working.clone(),
-                }
-                .resolution_changed();
+                effects.resolution_changed = resolution_changed(original, &self.graphic.working);
             }
             PageSnapshot::Sounds(original) => {
                 effects.profile_changed = reapply || !sound_eq(original, &self.sound.working)
@@ -738,6 +738,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn graphics_acceptance_preserves_resolution_threshold_and_reapply_policy() {
+        use super::*;
+        for delta in [-1.0, -0.5, -0.25, 0.0, 0.25, 0.5, 1.0] {
+            for horizontal in [false, true] {
+                for reapply in [false, true] {
+                    let mut editor = controller();
+                    editor.enter_page(OptionsPage::Graphics);
+                    let mut legacy = GraphicsEdit::new(editor.graphic.working.clone());
+                    if horizontal {
+                        legacy.working.resolution_x += delta;
+                    } else {
+                        legacy.working.resolution_y += delta;
+                    }
+                    editor.graphic.working = legacy.working.clone();
+                    let expected = delta.abs() > 0.5;
+                    assert_eq!(legacy.resolution_changed(), expected);
+                    assert_eq!(editor.accept_page(reapply).resolution_changed, expected);
+                }
+            }
+        }
+        let mut editor = controller();
+        editor.enter_page(OptionsPage::Graphics);
+        editor.graphic.working.display_shadow = !editor.graphic.working.display_shadow;
+        let effects = editor.accept_page(false);
+        assert!(effects.profile_changed);
+        assert!(!effects.resolution_changed);
     }
 
     #[test]
