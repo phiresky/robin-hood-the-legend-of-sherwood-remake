@@ -302,7 +302,7 @@ pub async fn play_video(
                     break 'pump;
                 }
             }
-            blit.upload_frame(&window.gpu, rgba.data(0), rgba.stride(0), vid_w, vid_h);
+            blit.upload_frame(&window.gpu, rgba.data(0), rgba.stride(0));
             blit.present(window)?;
         }
     }
@@ -340,8 +340,6 @@ struct VideoBlit {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     letterbox_buffer: wgpu::Buffer,
-    vid_w: u32,
-    vid_h: u32,
     upscale: crate::gpu_upscale::GpuUpscale,
     graphics: robin_engine::graphic_config::GraphicConfig,
     presentation_frame: usize,
@@ -527,22 +525,13 @@ impl VideoBlit {
             texture,
             bind_group,
             letterbox_buffer: buffer,
-            vid_w,
-            vid_h,
             upscale: crate::gpu_upscale::GpuUpscale::new(gpu.clone(), target_format),
             graphics,
             presentation_frame: 0,
         }
     }
 
-    fn upload_frame(
-        &self,
-        gpu: &crate::window::GpuContext,
-        rgba: &[u8],
-        stride: usize,
-        vid_w: u32,
-        vid_h: u32,
-    ) {
+    fn upload_frame(&self, gpu: &crate::window::GpuContext, rgba: &[u8], stride: usize) {
         // ffmpeg's RGBA stride may include row padding; `write_texture`
         // wants `bytes_per_row` honoured.
         gpu.queue.write_texture(
@@ -556,11 +545,11 @@ impl VideoBlit {
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(stride as u32),
-                rows_per_image: Some(vid_h),
+                rows_per_image: Some(self.texture.height()),
             },
             wgpu::Extent3d {
-                width: vid_w,
-                height: vid_h,
+                width: self.texture.width(),
+                height: self.texture.height(),
                 depth_or_array_layers: 1,
             },
         );
@@ -582,7 +571,7 @@ impl VideoBlit {
         let swap_h = frame.texture.height() as f32;
         // Letterbox: largest aspect-correct rect fitting in the
         // swapchain. Rect is in NDC: x/y in [-1, 1], w/h in [0, 2].
-        let vid_aspect = self.vid_w as f32 / self.vid_h as f32;
+        let vid_aspect = self.texture.width() as f32 / self.texture.height() as f32;
         let swap_aspect = swap_w / swap_h;
         let (w_ndc, h_ndc) = if swap_aspect >= vid_aspect {
             (2.0 * vid_aspect / swap_aspect, 2.0)
