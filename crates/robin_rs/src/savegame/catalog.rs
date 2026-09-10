@@ -89,6 +89,10 @@ impl SlotCatalog {
         let index = self
             .find(name.as_str())
             .with_context(|| format!("save slot {} no longer exists", name.as_str()))?;
+        self.state_at(index)
+    }
+
+    pub(super) fn state_at(&self, index: usize) -> Result<SlotState> {
         Ok(self.entry(index)?.state)
     }
 
@@ -268,6 +272,25 @@ impl std::ops::IndexMut<usize> for SlotCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indexed_state_lookup_retains_identity_validation() {
+        let mut catalog = SlotCatalog::default();
+        for (name, state) in [
+            ("Draft", SlotState::Draft),
+            ("Manual", SlotState::Published),
+            ("Restart", SlotState::Session),
+        ] {
+            let index = catalog.insert(published(name), state).unwrap();
+            assert_eq!(catalog.state_at(index).unwrap(), state);
+            assert_eq!(catalog.state(&catalog.name(index).unwrap()).unwrap(), state);
+        }
+        assert!(catalog.state_at(catalog.len()).is_err());
+        let original_name = catalog.name(0).unwrap();
+        catalog.metadata_mut(0).unwrap().filename = "Mismatched".into();
+        assert!(catalog.state_at(0).is_err());
+        assert!(catalog.state(&original_name).is_err());
+    }
 
     fn published(name: &str) -> SaveGame {
         let mut slot = SaveGame::new(name.into(), name.into(), 1);

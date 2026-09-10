@@ -1048,8 +1048,7 @@ impl SaveGameManager {
             slot.filename
         );
         anyhow::ensure!(
-            self.slot_state(&SlotName::new(slot.filename.clone()).map_err(anyhow::Error::msg)?)?
-                != SlotState::Draft,
+            self.catalog.state_at(index)? != SlotState::Draft,
             "save slot {} is an unpublished draft",
             slot.filename
         );
@@ -1220,8 +1219,7 @@ impl SaveGameManager {
             .catalog
             .get(index)
             .context("delete slot no longer exists")?;
-        if self.slot_state(&self.slot_name(index).map_err(anyhow::Error::msg)?)? == SlotState::Draft
-        {
+        if self.catalog.state_at(index)? == SlotState::Draft {
             // A failed/new draft never acquired authority to delete a payload
             // that another writer may have created at the selected basename.
             self.catalog.remove(index)?;
@@ -1379,7 +1377,7 @@ impl SaveGameManager {
     }
 
     fn copy_display_metadata(&mut self, src: usize, dst: usize) -> Result<()> {
-        let state = self.slot_state(&self.slot_name(src).map_err(anyhow::Error::msg)?)?;
+        let state = self.catalog.state_at(src)?;
         let src = self
             .catalog
             .get(src)
@@ -1587,7 +1585,7 @@ impl SaveGameManager {
             digest: Sha256::digest(bytes).into(),
         };
         let overwrite =
-            self.catalog[index].is_special() || self.slot_state(handle.name())? != SlotState::Draft;
+            self.catalog[index].is_special() || self.catalog.state_at(index)? != SlotState::Draft;
         let payload_path = self.save_path(index);
         if let Err(error) = persistence::publish_payload(
             &self.owned_recovery_path(),
