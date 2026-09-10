@@ -1564,28 +1564,29 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
         commands
     };
 
-    // Swordfighting → parry
-    if is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
-        let mut cmds = Vec::new();
-        for pc_id in selected_combatants {
-            let is_fighting = engine
-                .get_entity(pc_id)
-                .and_then(|e| e.human_data())
-                .is_some_and(|h| !h.opponents.is_empty());
-            if is_fighting {
-                cmds.push(PlayerCommand::LaunchSelfAbility {
-                    actor: pc_id,
-                    command: Command::ParrySword,
-                });
-            }
+    // Swordfighting → parry. Building the commands also determines whether
+    // this branch owns the click; no separate selection scan is needed.
+    let mut parries = Vec::new();
+    for pc_id in selected_combatants {
+        let is_fighting = engine
+            .get_entity(pc_id)
+            .and_then(|e| e.human_data())
+            .is_some_and(|h| !h.opponents.is_empty());
+        if is_fighting {
+            parries.push(PlayerCommand::LaunchSelfAbility {
+                actor: pc_id,
+                command: Command::ParrySword,
+            });
         }
-        return finish(cmds);
+    }
+    if !parries.is_empty() {
+        return finish(parries);
     }
 
-    if engine.hero_selection(local_seat).is_empty() {
-        return finish(Vec::new());
-    }
     let selected = engine.hero_selection(local_seat);
+    let Some(&first_selected) = selected.first() else {
+        return finish(Vec::new());
+    };
 
     // Action selected → cancel
     let selected_action = engine.selected_action_for_seat(local_seat);
@@ -1606,11 +1607,10 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
             // first — if anything was queued, drain it and keep Bow
             // armed.  Only an empty queue falls through to deselecting
             // the action.
-            let first = selected.first().copied();
-            if let Some(pc_id) = first
-                && engine.pc_has_pending_shoot_bow(pc_id)
-            {
-                return finish(vec![PlayerCommand::ClearShootList { pc_id }]);
+            if engine.pc_has_pending_shoot_bow(first_selected) {
+                return finish(vec![PlayerCommand::ClearShootList {
+                    pc_id: first_selected,
+                }]);
             }
             return finish(vec![PlayerCommand::UnselectAllActions]);
         }
@@ -3370,6 +3370,40 @@ mod tests {
 
         let cmds = resolve_right_click(&engine, host.transport.local_seat());
         assert_cmds!(cmds, vec![PlayerCommand::StopPc { pc_id: pc }]);
+    }
+
+    #[test]
+    fn right_click_parries_only_engaged_units_without_stopping_idle_selection() {
+        let (mut engine, assets, _) = fixture();
+        let idle = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let opponent = add_soldier(&mut engine, 20.0, 20.0, 100);
+        let first = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
+        let second = add_fighting_allied_soldier(&mut engine, 12.0, 10.0, opponent);
+        select(&mut engine, &assets, idle);
+        apply(
+            &mut engine,
+            &assets,
+            PlayerCommand::SelectTacticalUnits {
+                soldiers: vec![first, second],
+                append: true,
+            },
+        );
+        assert_eq!(engine.hero_selection(PlayerId(0)), &[idle]);
+        assert_eq!(engine.tactical_selection(PlayerId(0)), &[first, second]);
+        assert_cmds!(
+            resolve_right_click(&engine, PlayerId(0)),
+            vec![
+                PlayerCommand::LaunchSelfAbility {
+                    actor: first,
+                    command: Command::ParrySword
+                },
+                PlayerCommand::LaunchSelfAbility {
+                    actor: second,
+                    command: Command::ParrySword
+                },
+                PlayerCommand::ClearTacticalSelection,
+            ]
+        );
     }
 
     #[test]
