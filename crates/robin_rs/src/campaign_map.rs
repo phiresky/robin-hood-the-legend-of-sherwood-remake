@@ -1792,12 +1792,10 @@ fn render_campaign_progress(
         );
         progress_rect(renderer, transform, (x, y, 3, h), color);
         let wrap = layout::wrap_text_for_box_font(font, &entry.name, w - 20, 2);
-        for (line, text) in wrap.lines.iter().enumerate() {
-            let text = if line == 1 && !wrap.remaining.is_empty() {
-                format!("{text}...")
-            } else {
-                text.clone()
-            };
+        for (line, mut text) in wrap.lines.into_iter().enumerate() {
+            if line == 1 && !wrap.remaining.is_empty() {
+                text.push_str("...");
+            }
             progress_text(
                 renderer,
                 font,
@@ -2102,31 +2100,33 @@ fn detail_lines(
 ) -> Vec<String> {
     let font = assets.progress_font.as_ref().expect("mission details font");
     let width = campaign_scroll_views(assets)[TEXT_VIEW].content_width() - 32;
-    let mut sections = vec!["ENTRY REQUIREMENTS".to_owned()];
-    if node.availability_notes.is_empty() {
-        sections.push("This mission is currently offered in Sherwood.".into());
-    } else {
-        sections.extend(node.availability_notes.iter().cloned());
-    }
-    sections.push(String::new());
-    sections.push("MISSION BRIEFING".into());
-    sections.push(
-        node.briefing
-            .as_deref()
-            .or(node.description.as_deref())
-            .unwrap_or("No mission briefing is available in this content.")
-            .into(),
-    );
-    sections
-        .into_iter()
+    detail_sections(node)
         .flat_map(|text| {
             if text.is_empty() {
                 vec![String::new()]
             } else {
-                layout::wrap_text_for_box_font(font, &text, width, usize::MAX).lines
+                layout::wrap_text_for_box_font(font, text, width, usize::MAX).lines
             }
         })
         .collect()
+}
+
+fn detail_sections(
+    node: &crate::campaign_progress::CampaignProgressNode,
+) -> impl Iterator<Item = &str> {
+    let requirements = std::iter::once("This mission is currently offered in Sherwood.")
+        .filter(move |_| node.availability_notes.is_empty())
+        .chain(node.availability_notes.iter().map(String::as_str));
+    std::iter::once("ENTRY REQUIREMENTS")
+        .chain(requirements)
+        .chain([
+            "",
+            "MISSION BRIEFING",
+            node.briefing
+                .as_deref()
+                .or(node.description.as_deref())
+                .unwrap_or("No mission briefing is available in this content."),
+        ])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2930,6 +2930,54 @@ fn fixture_plays(count: u64) -> Vec<crate::campaign_progress::MissionPlay> {
 mod browser_tests {
     use super::*;
     use robin_engine::{mission::Mission, profiles::MissionProfile};
+
+    #[test]
+    fn detail_sections_borrow_text_and_preserve_fallback_precedence() {
+        let mut state = browser();
+        let node = &mut state.graph.nodes[0];
+        node.availability_notes = vec!["First requirement".into(), "".into(), "条件".into()];
+        node.description = Some("Description".into());
+        node.briefing = Some("Briefing 雪".into());
+        let sections: Vec<_> = detail_sections(node).collect();
+        assert_eq!(
+            sections,
+            [
+                "ENTRY REQUIREMENTS",
+                "First requirement",
+                "",
+                "条件",
+                "",
+                "MISSION BRIEFING",
+                "Briefing 雪",
+            ]
+        );
+        assert_eq!(sections[1].as_ptr(), node.availability_notes[0].as_ptr());
+        assert_eq!(sections[3].as_ptr(), node.availability_notes[2].as_ptr());
+        assert_eq!(
+            sections[6].as_ptr(),
+            node.briefing.as_ref().unwrap().as_ptr()
+        );
+
+        node.availability_notes.clear();
+        node.briefing = Some(String::new());
+        assert_eq!(
+            detail_sections(node).collect::<Vec<_>>(),
+            [
+                "ENTRY REQUIREMENTS",
+                "This mission is currently offered in Sherwood.",
+                "",
+                "MISSION BRIEFING",
+                "",
+            ]
+        );
+        node.briefing = None;
+        assert_eq!(detail_sections(node).last(), Some("Description"));
+        node.description = None;
+        assert_eq!(
+            detail_sections(node).last(),
+            Some("No mission briefing is available in this content.")
+        );
+    }
 
     #[test]
     fn campaign_views_scroll_independently_and_hit_test_the_visible_cards() {
