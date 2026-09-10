@@ -601,8 +601,6 @@ impl LoadingScreenRenderer {
             assets_picture::PixelFormat::Rgb16,
             "loading-screen mask must be RGB565"
         );
-        let initial_pixels: Vec<_> = bytes_to_u16_pixels(&pic_initial.data).collect();
-        let final_pixels: Vec<_> = bytes_to_u16_pixels(&pic_final.data).collect();
         let height_field = HeightField::from_rgb565_pixels(
             bytes_to_u16_pixels(&pic_mask.data),
             width as u32,
@@ -614,13 +612,13 @@ impl LoadingScreenRenderer {
         let loading_dissolve = renderer.create_loading_dissolve_textures(
             width as u32,
             height as u32,
-            &initial_pixels,
-            &final_pixels,
+            bytes_to_u16_pixels(&pic_initial.data),
+            bytes_to_u16_pixels(&pic_final.data),
             &height_field,
         )?;
         // GPU textures own the uploaded pixels. Do not retain the CPU images
         // during font preparation or the subsequent mission load.
-        drop((initial_pixels, final_pixels, height_field));
+        drop(height_field);
 
         // Paint the framebuffer black and present *before* loading any
         // pictures/fonts, so the previous frame (main menu, window-

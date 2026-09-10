@@ -1211,8 +1211,8 @@ impl Renderer {
         &self,
         width: u32,
         height: u32,
-        initial_pixels: &[u16],
-        final_pixels: &[u16],
+        initial_pixels: impl ExactSizeIterator<Item = u16>,
+        final_pixels: impl ExactSizeIterator<Item = u16>,
         height_field: &crate::loading_screen::HeightField,
     ) -> Option<crate::loading_dissolve_gpu::LoadingDissolveTextures> {
         crate::loading_dissolve_gpu::upload_textures(

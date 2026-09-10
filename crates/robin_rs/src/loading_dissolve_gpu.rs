@@ -105,12 +105,17 @@ pub(crate) fn upload_textures(
     gpu: &GpuContext,
     width: u32,
     height: u32,
-    initial_pixels: &[u16],
-    final_pixels: &[u16],
+    initial_pixels: impl ExactSizeIterator<Item = u16>,
+    final_pixels: impl ExactSizeIterator<Item = u16>,
     height_field: &HeightField,
 ) -> Option<LoadingDissolveTextures> {
-    let expected = match validate_upload(width, height, initial_pixels, final_pixels, height_field)
-    {
+    let expected = match validate_upload(
+        width,
+        height,
+        initial_pixels.len(),
+        final_pixels.len(),
+        height_field,
+    ) {
         Ok(expected) => expected,
         Err(reason) => {
             tracing::warn!(width, height, reason, "loading dissolve upload rejected");
@@ -149,8 +154,8 @@ pub(crate) fn upload_textures(
 fn validate_upload(
     width: u32,
     height: u32,
-    initial_pixels: &[u16],
-    final_pixels: &[u16],
+    initial_pixel_count: usize,
+    final_pixel_count: usize,
     height_field: &HeightField,
 ) -> Result<usize, &'static str> {
     if width == 0 || height == 0 {
@@ -160,8 +165,8 @@ fn validate_upload(
         .checked_mul(height as usize)
         .filter(|count| count.checked_mul(4).is_some())
         .ok_or("RGBA image size overflow")?;
-    if initial_pixels.len() != expected
-        || final_pixels.len() != expected
+    if initial_pixel_count != expected
+        || final_pixel_count != expected
         || height_field.data.len() != expected
         || height_field.width != width
         || height_field.height != height
@@ -219,10 +224,10 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 /// surface (backgrounds, sprites, managed surfaces) is expanded.
 /// No colour-key or shadow-key handling: these are literal screen
 /// captures.
-fn rgb565_to_rgba_opaque(pixels: &[u16], out: &mut Vec<u8>) {
+fn rgb565_to_rgba_opaque(pixels: impl ExactSizeIterator<Item = u16>, out: &mut Vec<u8>) {
     out.clear();
     out.reserve(pixels.len() * 4);
-    for &px in pixels {
+    for px in pixels {
         let (r, g, b) = rgb565_to_rgb8(px);
         out.extend_from_slice(&[r, g, b, 255]);
     }
@@ -237,7 +242,7 @@ mod tests {
         let mut rgba = Vec::with_capacity(16);
         let allocation = rgba.as_ptr();
         for pixels in [&[0xFFFF, 0xF800, 0x07E0][..], &[0], &[], &[0x001F, 0xFFFF]] {
-            rgb565_to_rgba_opaque(pixels, &mut rgba);
+            rgb565_to_rgba_opaque(pixels.iter().copied(), &mut rgba);
             assert_eq!(rgba.as_ptr(), allocation);
             assert_eq!(rgba.len(), pixels.len() * 4);
             for (&pixel, actual) in pixels.iter().zip(rgba.as_chunks::<4>().0) {
@@ -254,28 +259,28 @@ mod tests {
             width: 3,
             height: 2,
         };
-        assert_eq!(validate_upload(3, 2, &[0; 6], &[0; 6], &mask), Ok(6));
-        assert!(validate_upload(0, 2, &[], &[], &mask).is_err());
-        assert!(validate_upload(3, 0, &[], &[], &mask).is_err());
+        assert_eq!(validate_upload(3, 2, 6, 6, &mask), Ok(6));
+        assert!(validate_upload(0, 2, 0, 0, &mask).is_err());
+        assert!(validate_upload(3, 0, 0, 0, &mask).is_err());
         assert_eq!(
-            validate_upload(u32::MAX, u32::MAX, &[], &[], &mask),
+            validate_upload(u32::MAX, u32::MAX, 0, 0, &mask),
             Err("RGBA image size overflow")
         );
-        assert!(validate_upload(3, 2, &[0; 5], &[0; 6], &mask).is_err());
-        assert!(validate_upload(3, 2, &[0; 6], &[0; 7], &mask).is_err());
-        assert!(validate_upload(2, 3, &[0; 6], &[0; 6], &mask).is_err());
+        assert!(validate_upload(3, 2, 5, 6, &mask).is_err());
+        assert!(validate_upload(3, 2, 6, 7, &mask).is_err());
+        assert!(validate_upload(2, 3, 6, 6, &mask).is_err());
         let short_mask = HeightField {
             data: vec![0; 5],
             ..mask
         };
-        assert!(validate_upload(3, 2, &[0; 6], &[0; 6], &short_mask).is_err());
+        assert!(validate_upload(3, 2, 6, 6, &short_mask).is_err());
     }
 
     #[test]
     fn opaque_conversion_preserves_every_rgb565_value() {
         let pixels: Vec<_> = (0..=u16::MAX).collect();
         let mut rgba = Vec::new();
-        rgb565_to_rgba_opaque(&pixels, &mut rgba);
+        rgb565_to_rgba_opaque(pixels.iter().copied(), &mut rgba);
         assert_eq!(rgba.len(), pixels.len() * 4);
         for (pixel, color) in pixels.into_iter().zip(rgba.chunks_exact(4)) {
             assert_eq!(
