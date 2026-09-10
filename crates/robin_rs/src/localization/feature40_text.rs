@@ -8,9 +8,12 @@
 
 use super::{FEATURE40_PORT_TEXT_KEYS, PortTextKey, normalize_locale};
 
-const TEXT_COUNT: usize = 70;
+const TEXT_COUNT: usize = FEATURE40_PORT_TEXT_KEYS.len();
 
 pub(super) fn text(locale: &str, key: PortTextKey) -> Option<&'static str> {
+    let index = FEATURE40_PORT_TEXT_KEYS
+        .iter()
+        .position(|candidate| *candidate == key)?;
     let normalized = normalize_locale(locale);
     let table = match normalized.as_str() {
         "en" | "en-us" | "und" => &EN,
@@ -30,10 +33,7 @@ pub(super) fn text(locale: &str, key: PortTextKey) -> Option<&'static str> {
         "th" | "th-th" => &TH,
         _ => return None,
     };
-    FEATURE40_PORT_TEXT_KEYS
-        .iter()
-        .position(|candidate| *candidate == key)
-        .map(|index| table[index])
+    Some(table[index])
 }
 
 const EN: [&str; TEXT_COUNT] = [

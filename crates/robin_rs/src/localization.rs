@@ -1430,6 +1430,25 @@ mod tests {
     }
 
     #[test]
+    fn feature_catalogue_leaves_other_keys_to_their_own_text_policy() {
+        for locale in ["en-US", "de-DE", "PT_br.UTF-8", "unknown", ""] {
+            for key in [
+                PortTextKey::Language,
+                PortTextKey::Automatic,
+                PortTextKey::Apply,
+                PortTextKey::SaveFailed,
+            ] {
+                assert_eq!(feature40_text::text(locale, key), None);
+            }
+        }
+        assert_eq!(port_text(Some("de-DE"), PortTextKey::Language), "Sprache");
+        assert_eq!(
+            port_text(Some("unknown"), PortTextKey::Language),
+            "Language"
+        );
+    }
+
+    #[test]
     fn locale_matching_ignores_encoding_case_and_separator() {
         assert!(locale_eq("pt-BR", "pt_BR.UTF-8"));
         assert_eq!(locale_primary("ZH_tw.UTF-8"), "zh");
