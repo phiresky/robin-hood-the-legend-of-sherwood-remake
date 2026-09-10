@@ -34,6 +34,29 @@ fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, Stri
     let mut reader = decoder
         .read_info()
         .map_err(|error| format!("failed to decode PNG header '{path}': {error}"))?;
+    let header = reader.info();
+    let width = u16::try_from(header.width)
+        .map_err(|_| format!("terrain PNG '{path}' is too wide: {}", header.width))?;
+    let height = u16::try_from(header.height)
+        .map_err(|_| format!("terrain PNG '{path}' is too tall: {}", header.height))?;
+    let pitch = width
+        .checked_mul(2)
+        .ok_or_else(|| format!("terrain PNG '{path}' RGB565 row stride exceeds u16"))?;
+    if header.bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "hackable terrain PNG '{path}' uses unsupported bit depth {:?}",
+            header.bit_depth
+        ));
+    }
+    if !matches!(
+        header.color_type,
+        png::ColorType::Rgb | png::ColorType::Rgba
+    ) {
+        return Err(format!(
+            "hackable terrain PNG '{path}' uses unsupported color type {:?}",
+            header.color_type
+        ));
+    }
     let mut buffer = vec![
         0;
         reader
@@ -44,9 +67,9 @@ fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, Stri
         .next_frame(&mut buffer)
         .map_err(|error| format!("failed to decode PNG pixels '{path}': {error}"))?;
     let data = &buffer[..info.buffer_size()];
-    let mut rgb565 = Vec::with_capacity(info.width as usize * info.height as usize * 2);
+    let mut rgb565 = Vec::with_capacity(usize::from(pitch) * usize::from(height));
     let mut push_pixel = |r: u8, g: u8, b: u8| {
-        let pixel = ((r as u16 & 0xf8) << 8) | ((g as u16 & 0xfc) << 3) | ((b as u16) >> 3);
+        let pixel = robin_util::color::rgb565(r, g, b);
         rgb565.extend_from_slice(&pixel.to_le_bytes());
     };
     match info.color_type {
@@ -66,14 +89,10 @@ fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, Stri
             ));
         }
     }
-    let width = u16::try_from(info.width)
-        .map_err(|_| format!("terrain PNG '{path}' is too wide: {}", info.width))?;
-    let height = u16::try_from(info.height)
-        .map_err(|_| format!("terrain PNG '{path}' is too tall: {}", info.height))?;
     Ok(Picture {
         width,
         height,
-        pitch: width * 2,
+        pitch,
         pixel_format: robin_assets::picture::PixelFormat::Rgb16,
         data: rgb565,
         palette: None,
@@ -90,6 +109,20 @@ fn decode_occlusion_depth_png(
     let mut reader = decoder
         .read_info()
         .map_err(|error| format!("failed to decode occlusion-depth PNG '{path}': {error}"))?;
+    let header = reader.info();
+    if header.width != u32::from(expected_width) || header.height != u32::from(expected_height) {
+        return Err(format!(
+            "occlusion-depth PNG '{path}' is {}x{}, expected {}x{}",
+            header.width, header.height, expected_width, expected_height
+        ));
+    }
+    if header.color_type != png::ColorType::Grayscale || header.bit_depth != png::BitDepth::Sixteen
+    {
+        return Err(format!(
+            "occlusion-depth PNG '{path}' must be 16-bit grayscale, got {:?} {:?}",
+            header.color_type, header.bit_depth
+        ));
+    }
     let mut buffer = vec![
         0;
         reader.output_buffer_size().ok_or_else(|| format!(
@@ -99,18 +132,6 @@ fn decode_occlusion_depth_png(
     let info = reader
         .next_frame(&mut buffer)
         .map_err(|error| format!("failed to decode occlusion-depth PNG '{path}': {error}"))?;
-    if info.width != u32::from(expected_width) || info.height != u32::from(expected_height) {
-        return Err(format!(
-            "occlusion-depth PNG '{path}' is {}x{}, expected {}x{}",
-            info.width, info.height, expected_width, expected_height
-        ));
-    }
-    if info.color_type != png::ColorType::Grayscale || info.bit_depth != png::BitDepth::Sixteen {
-        return Err(format!(
-            "occlusion-depth PNG '{path}' must be 16-bit grayscale, got {:?} {:?}",
-            info.color_type, info.bit_depth
-        ));
-    }
     let data = &buffer[..info.buffer_size()];
     Ok(data
         .as_chunks::<2>()
@@ -1103,6 +1124,65 @@ mod tests {
             .unwrap();
             assert_eq!(night.pixels, expected);
             assert_eq!(night_minimap.pixels, expected);
+        }
+    }
+
+    #[test]
+    fn level_png_headers_are_validated_before_pixel_decoding() {
+        for (width, height, color, depth, terrain_error, depth_error) in [
+            (
+                65_536,
+                1,
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                "too wide",
+                "expected 2x2",
+            ),
+            (
+                1,
+                65_536,
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                "too tall",
+                "expected 2x2",
+            ),
+            (
+                32_768,
+                1,
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                "row stride exceeds u16",
+                "expected 2x2",
+            ),
+            (
+                2,
+                2,
+                png::ColorType::Rgb,
+                png::BitDepth::Sixteen,
+                "unsupported bit depth",
+                "must be 16-bit grayscale",
+            ),
+            (
+                2,
+                2,
+                png::ColorType::Grayscale,
+                png::BitDepth::Eight,
+                "unsupported color type",
+                "must be 16-bit grayscale",
+            ),
+        ] {
+            let mut bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(color);
+            encoder.set_depth(depth);
+            let mut writer = encoder.write_header().unwrap();
+            // Invalid image data must not mask an unsupported header.
+            writer.write_chunk(png::chunk::IDAT, &[]).unwrap();
+            drop(writer);
+            let error = decode_hackable_terrain_png(&bytes, "terrain.png").unwrap_err();
+            assert!(error.contains(terrain_error), "{error}");
+            let error = decode_occlusion_depth_png(&bytes, "depth.png", 2, 2).unwrap_err();
+            assert!(error.contains(depth_error), "{error}");
         }
     }
 
