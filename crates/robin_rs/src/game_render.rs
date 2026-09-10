@@ -2034,17 +2034,11 @@ pub(crate) fn render_bg_animations_gpu(
     presentation: &FramePresentationInputs,
     renderer: &mut Renderer,
 ) {
-    let bg_animation_ids = engine.bg_animation_ids();
-    if bg_animation_ids.is_empty() {
+    let mut bg_animation_ids = engine.bg_animation_ids().peekable();
+    if bg_animation_ids.peek().is_none() {
         return;
     }
-    render_fx_entities_gpu(
-        bg_animation_ids.iter().copied(),
-        engine,
-        host,
-        presentation,
-        renderer,
-    );
+    render_fx_entities_gpu(bg_animation_ids, engine, host, presentation, renderer);
 }
 
 fn render_fx_entities_gpu<I>(

@@ -299,7 +299,7 @@ impl<'world> PresentationView<'world> {
         self.inner.pc_draws_selection_mark(pc_id)
     }
 
-    pub fn bg_animation_ids(&self) -> Vec<EntityId> {
+    pub fn bg_animation_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.inner.bg_animation_ids()
     }
 

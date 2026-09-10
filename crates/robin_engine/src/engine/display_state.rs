@@ -1041,7 +1041,15 @@ mod display_order_tests {
             None,
         ));
 
-        assert_eq!(engine.bg_animation_ids(), vec![background]);
+        let second_background = engine.add_entity(fx_entity(
+            WorldPoint3D::new(20.0, 20.0, 0.0),
+            Vec::new(),
+            None,
+        ));
+        assert_eq!(
+            engine.bg_animation_ids().collect::<Vec<_>>(),
+            vec![background, second_background],
+        );
         assert_eq!(engine.compute_display_order().ids, vec![elevated]);
     }
 

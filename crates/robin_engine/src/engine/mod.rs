@@ -4587,13 +4587,12 @@ impl EngineInner {
         }
     }
 
-    /// Background animation entity ids.
-    pub fn bg_animation_ids(&self) -> Vec<EntityId> {
+    /// Background animation entity ids in occupied-entity order, without a snapshot allocation.
+    pub fn bg_animation_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.world
             .entities
             .occupied()
             .filter_map(|(id, entity)| entity.is_background_animation().then_some(id))
-            .collect()
     }
 
     /// Quick-select group `idx` (0 = group 1, 8 = group 9).
