@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::sync::LazyLock;
 
 /// Maximum number of points kept in the mouse-way polyline.
 pub const MOUSEWAY_POINT_LIMIT: usize = 350;
@@ -401,10 +402,11 @@ impl MouseWay {
             .filter_map(|pattern| score_legacy_pattern(pattern, &input, direction))
             .fold(0.0_f32, f32::max);
 
-        let mut ranked = CompositeSwordTechnique::ALL.map(|technique| {
-            let template = normalized_resampled(composite_template(technique).iter().copied());
-            (technique, path_similarity(&input, &template, false, false))
-        });
+        let mut ranked = NORMALIZED_COMPOSITE_TEMPLATES
+            .each_ref()
+            .map(|(technique, template)| {
+                (*technique, path_similarity(&input, template, false, false))
+            });
         ranked.sort_by(|left, right| right.1.total_cmp(&left.1));
         let (nearest_composite, best_composite) = ranked[0];
         let second_composite = ranked[1].1;
@@ -570,12 +572,37 @@ fn quality_from_similarity(similarity: f32) -> GestureQuality {
     }
 }
 
+// Templates are immutable: normalize once using the same arithmetic as live
+// paths, then share the resulting samples across evaluations and combatants.
+static NORMALIZED_LEGACY_TEMPLATES: LazyLock<
+    [(MouseWayPattern, Vec<(f32, f32)>); LEGACY_PATTERNS.len()],
+> = LazyLock::new(|| {
+    LEGACY_PATTERNS.map(|pattern| {
+        let template =
+            legacy_template(pattern).expect("legacy catalogue pattern must have a template");
+        (pattern, normalized_resampled(template.iter().copied()))
+    })
+});
+
+static NORMALIZED_COMPOSITE_TEMPLATES: LazyLock<
+    [(CompositeSwordTechnique, Vec<(f32, f32)>); CompositeSwordTechnique::ALL.len()],
+> = LazyLock::new(|| {
+    CompositeSwordTechnique::ALL.map(|technique| {
+        (
+            technique,
+            normalized_resampled(composite_template(technique).iter().copied()),
+        )
+    })
+});
+
 fn score_legacy_pattern(
     pattern: MouseWayPattern,
     input: &[(f32, f32)],
     direction: ScreenVec,
 ) -> Option<f32> {
-    let template = normalized_resampled(legacy_template(pattern)?.iter().copied());
+    let (_, template) = NORMALIZED_LEGACY_TEMPLATES
+        .iter()
+        .find(|(candidate, _)| *candidate == pattern)?;
     let actor_relative = matches!(
         pattern,
         MouseWayPattern::ThrustA
@@ -595,7 +622,7 @@ fn score_legacy_pattern(
     let rotation_invariant = matches!(pattern, MouseWayPattern::ThrustF | MouseWayPattern::ThrustG);
     Some(path_similarity(
         &scored_input,
-        &template,
+        template,
         cyclic,
         rotation_invariant,
     ))
@@ -931,6 +958,37 @@ pub fn is_self_intersecting(points: &VecDeque<ScreenPoint>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prepared_templates_match_fresh_normalization_bit_for_bit_in_catalogue_order() {
+        for ((pattern, cached), expected_pattern) in
+            NORMALIZED_LEGACY_TEMPLATES.iter().zip(LEGACY_PATTERNS)
+        {
+            assert_eq!(*pattern, expected_pattern);
+            let fresh = normalized_resampled(legacy_template(*pattern).unwrap().iter().copied());
+            assert_eq!(cached.len(), fresh.len());
+            for (cached, fresh) in cached.iter().zip(fresh) {
+                assert_eq!(
+                    (cached.0.to_bits(), cached.1.to_bits()),
+                    (fresh.0.to_bits(), fresh.1.to_bits())
+                );
+            }
+        }
+        for ((technique, cached), expected_technique) in NORMALIZED_COMPOSITE_TEMPLATES
+            .iter()
+            .zip(CompositeSwordTechnique::ALL)
+        {
+            assert_eq!(*technique, expected_technique);
+            let fresh = normalized_resampled(composite_template(*technique).iter().copied());
+            assert_eq!(cached.len(), fresh.len());
+            for (cached, fresh) in cached.iter().zip(fresh) {
+                assert_eq!(
+                    (cached.0.to_bits(), cached.1.to_bits()),
+                    (fresh.0.to_bits(), fresh.1.to_bits())
+                );
+            }
+        }
+    }
 
     #[test]
     fn north_alignment_borrows_degenerate_facing_and_preserves_rotation_arithmetic() {
