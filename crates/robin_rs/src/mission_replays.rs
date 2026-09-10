@@ -289,20 +289,16 @@ fn backfill(
         if find_in(dir, key, completed_at).is_some() {
             continue;
         }
-        std::fs::create_dir_all(&dir)?;
-        let mut file = tempfile::NamedTempFile::new_in(&dir)?;
-        serde_json::to_writer(
-            &mut file,
-            &RecordingLink {
+        let file = stage_recording_link(
+            dir,
+            RecordingLink {
                 key,
                 completed_at,
                 path: path.canonicalize()?,
             },
         )?;
         // A newly completed live attempt wins over an older background scan.
-        match file
-            .persist_noclobber(dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence)))
-        {
+        match file.persist_noclobber(recording_link_path(dir, key)) {
             Ok(_) => {}
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
@@ -317,6 +313,22 @@ struct RecordingLink {
     key: MissionAttemptKey,
     completed_at: Option<i64>,
     path: PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn recording_link_path(dir: &std::path::Path, key: MissionAttemptKey) -> PathBuf {
+    dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn stage_recording_link(
+    dir: &std::path::Path,
+    link: RecordingLink,
+) -> Result<tempfile::NamedTempFile, Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(dir)?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
+    serde_json::to_writer(&mut file, &link)?;
+    Ok(file)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -353,17 +365,15 @@ impl RecordingIndex {
                 return;
             };
             let save = || -> Result<(), Box<dyn std::error::Error>> {
-                std::fs::create_dir_all(&dir)?;
-                let mut file = tempfile::NamedTempFile::new_in(&dir)?;
-                serde_json::to_writer(
-                    &mut file,
-                    &RecordingLink {
+                let file = stage_recording_link(
+                    dir,
+                    RecordingLink {
                         key,
                         completed_at,
                         path,
                     },
                 )?;
-                file.persist(dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence)))?;
+                file.persist(recording_link_path(dir, key))?;
                 Ok(())
             };
             if let Err(error) = save() {
@@ -400,7 +410,7 @@ fn find_in(
     key: MissionAttemptKey,
     completed_at: Option<i64>,
 ) -> Option<PathBuf> {
-    let file = dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence));
+    let file = recording_link_path(dir, key);
     let bytes = match std::fs::read(file) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
@@ -494,6 +504,40 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn staging_a_recording_link_does_not_publish_and_drop_retires_the_temp_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let attempts = directory.path().join("attempts");
+        let key = MissionAttemptKey {
+            campaign_run_id: 41,
+            sequence: 7,
+        };
+        let path = directory.path().join("recording 雪.rhrec.jsonl");
+        let file = stage_recording_link(
+            &attempts,
+            RecordingLink {
+                key,
+                completed_at: Some(200),
+                path: path.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            recording_link_path(&attempts, key),
+            attempts.join("41-7.json")
+        );
+        assert!(!recording_link_path(&attempts, key).exists());
+        let decoded: RecordingLink =
+            serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+        assert_eq!(decoded.key, key);
+        assert_eq!(decoded.completed_at, Some(200));
+        assert_eq!(decoded.path, path);
+        let temporary_path = file.path().to_owned();
+        drop(file);
+        assert!(!temporary_path.exists());
+        assert!(!recording_link_path(&attempts, key).exists());
     }
 
     #[test]
