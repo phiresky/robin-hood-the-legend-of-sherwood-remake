@@ -159,45 +159,69 @@ fn join_scan(worker: std::thread::JoinHandle<Result<(), String>>) -> Result<(), 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct ReplayAttemptState {
+    run: Option<u64>,
+    sequence: u64,
+    terminal_nonce: Option<u64>,
+    terminal_count: usize,
+    completed_at: Option<i64>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ReplayAttemptState {
+    fn from_campaign(campaign: &robin_engine::campaign::Campaign) -> Result<Self, String> {
+        Ok(Self {
+            run: campaign.history_run_id(),
+            sequence: campaign
+                .latest_mission_attempt()
+                .map_or(0, |attempt| attempt.sequence())
+                .checked_add(1)
+                .ok_or("Attempt sequence overflow")?,
+            terminal_nonce: None,
+            terminal_count: 0,
+            completed_at: None,
+        })
+    }
+
+    fn identity(self) -> Result<Option<(MissionAttemptKey, Option<i64>)>, String> {
+        if self.terminal_count != 1 {
+            return Ok(None);
+        }
+        let run = self
+            .run
+            .or(self.terminal_nonce)
+            .ok_or("Recording has no campaign identity")?;
+        Ok(Some((
+            MissionAttemptKey {
+                campaign_run_id: run,
+                sequence: self.sequence,
+            },
+            self.completed_at,
+        )))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn replay_attempt_identity(
     data: &robin_engine::replay::ReplayData,
 ) -> Result<Option<(MissionAttemptKey, Option<i64>)>, String> {
     use robin_engine::player_command::PlayerCommand;
     let campaign: robin_engine::campaign::Campaign =
         bitcode::decode(&data.header().campaign).map_err(|e| e.to_string())?;
-    let mut run = campaign.history_run_id();
-    let mut sequence = campaign
-        .latest_mission_attempt()
-        .map_or(0, |attempt| attempt.sequence())
-        .checked_add(1)
-        .ok_or("Attempt sequence overflow")?;
-    let mut terminal_nonce = None;
-    let mut terminal_count = 0;
-    let mut completed_at = None;
+    let mut state = ReplayAttemptState::from_campaign(&campaign)?;
     let mut markers = std::collections::BTreeMap::new();
     for ordinal in 0..data.frame_count() {
         if data.save_marker_for_frame(ordinal).is_some() {
-            markers.insert(
-                ordinal,
-                (run, sequence, terminal_nonce, terminal_count, completed_at),
-            );
+            markers.insert(ordinal, state);
         }
         if let Some(load) = data.load_back_for_frame(ordinal) {
             if let Some(snapshot) = &load.snapshot {
                 let save: crate::save_file::GameSaveFile =
                     serde_json::from_slice(&snapshot.payload).map_err(|error| error.to_string())?;
-                let campaign = save.engine.campaign();
-                run = campaign.history_run_id();
-                sequence = campaign
-                    .latest_mission_attempt()
-                    .map_or(0, |attempt| attempt.sequence())
-                    .checked_add(1)
-                    .ok_or("Attempt sequence overflow")?;
-                terminal_nonce = None;
-                terminal_count = 0;
-                completed_at = None;
+                state = ReplayAttemptState::from_campaign(save.engine.campaign())?;
             } else {
-                (run, sequence, terminal_nonce, terminal_count, completed_at) = *markers
+                state = *markers
                     .get(&load.to_frame)
                     .ok_or("attempt identity references a missing save marker")?;
             }
@@ -217,25 +241,13 @@ fn replay_attempt_identity(
                 ..
             } = &input.player_input().command
             {
-                terminal_count += 1;
-                terminal_nonce = *campaign_run_nonce;
-                completed_at = *completed_at_unix_seconds;
+                state.terminal_count += 1;
+                state.terminal_nonce = *campaign_run_nonce;
+                state.completed_at = *completed_at_unix_seconds;
             }
         }
     }
-    if terminal_count != 1 {
-        return Ok(None);
-    }
-    let run = run
-        .or(terminal_nonce)
-        .ok_or("Recording has no campaign identity")?;
-    Ok(Some((
-        MissionAttemptKey {
-            campaign_run_id: run,
-            sequence,
-        },
-        completed_at,
-    )))
+    state.identity()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
