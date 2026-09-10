@@ -1,6 +1,7 @@
 //! Deterministic payload encoding, resume validation and web manifest packaging.
 use super::*;
 
+// Recognize stages left by converter versions preceding shared publication.
 const MANIFEST_STAGING_PREFIX: &str = ".robin-web-manifest-";
 
 pub(super) fn write_web_content_manifest(
@@ -24,10 +25,10 @@ pub(super) fn write_web_content_manifest(
                 entry.with_context(|| format!("enumerate web content {}", directory.display()))?;
             let path = entry.path();
             if directory == data_out
-                && entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(MANIFEST_STAGING_PREFIX))
+                && entry.file_name().to_str().is_some_and(|name| {
+                    name.starts_with(MANIFEST_STAGING_PREFIX)
+                        || name.starts_with(publication::ARTIFACT_STAGING_PREFIX)
+                })
             {
                 // TODO: recover abandoned stages once converter runs have an
                 // exclusive ownership protocol; do not delete another run's file.
@@ -117,31 +118,7 @@ pub(super) fn write_web_content_manifest(
         files,
     };
     let bytes = serde_json::to_vec(&manifest).context("serialize web content manifest")?;
-    // Generated artifacts retain ordinary output-file permissions, unlike
-    // private user archives. tempfile applies the process umask to this mode.
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(MANIFEST_STAGING_PREFIX);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        builder.permissions(fs::Permissions::from_mode(0o666));
-    }
-    let mut temporary = builder
-        .tempfile_in(data_out)
-        .context("stage web content manifest")?;
-    std::io::Write::write_all(&mut temporary, &bytes)
-        .context("write staged web content manifest")?;
-    temporary
-        .as_file()
-        .sync_all()
-        .context("sync staged web content manifest")?;
-    temporary
-        .persist(&manifest_path)
-        .with_context(|| format!("publish {}", manifest_path.display()))?;
-    #[cfg(unix)]
-    fs::File::open(data_out)?
-        .sync_all()
-        .context("sync web content manifest directory")?;
+    publication::publish_bytes(&manifest_path, &bytes)?;
     tracing::info!(manifest = %manifest_path.display(), "wrote exact web content closure");
     Ok(())
 }
@@ -296,19 +273,22 @@ mod tests {
         use robin_rs::multiplayer::content_identity::{
             WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
         };
-        let temp = tempfile::tempdir().unwrap();
-        let manifest = temp.path().join(WEB_CONTENT_MANIFEST_NAME);
-        let stage = temp
-            .path()
-            .join(format!("{MANIFEST_STAGING_PREFIX}abandoned"));
-        fs::write(&manifest, b"previous publication").unwrap();
-        fs::write(&stage, b"incomplete replacement").unwrap();
-        let error =
-            write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64))
-                .unwrap_err();
-        assert!(error.to_string().contains("manifest stage"));
-        assert_eq!(fs::read(manifest).unwrap(), b"previous publication");
-        assert_eq!(fs::read(stage).unwrap(), b"incomplete replacement");
+        for prefix in [
+            MANIFEST_STAGING_PREFIX,
+            publication::ARTIFACT_STAGING_PREFIX,
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let manifest = temp.path().join(WEB_CONTENT_MANIFEST_NAME);
+            let stage = temp.path().join(format!("{prefix}abandoned"));
+            fs::write(&manifest, b"previous publication").unwrap();
+            fs::write(&stage, b"incomplete replacement").unwrap();
+            let error =
+                write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64))
+                    .unwrap_err();
+            assert!(error.to_string().contains("manifest stage"));
+            assert_eq!(fs::read(manifest).unwrap(), b"previous publication");
+            assert_eq!(fs::read(stage).unwrap(), b"incomplete replacement");
+        }
     }
 
     #[cfg(unix)]
