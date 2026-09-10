@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["Pillow>=10"]
+# ///
 """Import Fabri18's numbered sprite-bank replacements as an additive mod."""
 
 from __future__ import annotations
@@ -13,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+
+from profile_patch_tools import load_catalog, soldier_copy_patch
 
 
 @dataclass(frozen=True)
@@ -296,14 +302,14 @@ def write_preview(destination: Path, preview_frames: list[tuple[str, Path]]) -> 
     sheet.save(destination / "preview.png", optimize=True)
 
 
-def write_gallery(destination: Path, additions: list[dict], preview_frames: list[tuple[str, Path]]) -> None:
+def write_gallery(destination: Path, additions: list[dict], preview_frames: list[tuple[str, Path]], catalog: dict) -> None:
     config = destination / "Data/Configuration"
     levels = destination / "Data/Levels"
     config.mkdir(parents=True)
     levels.mkdir(parents=True)
     (destination / "Data/Characters/mission-scoped.json").write_text("{}\n")
-    (config / "soldier-profiles.patch.json").write_text(
-        json.dumps({"soldiers": additions}, indent=2) + "\n"
+    (config / "profiles.patch.json").write_text(
+        json.dumps([op for addition in additions for op in soldier_copy_patch(catalog, **addition)], indent=2) + "\n"
     )
 
     soldiers = []
@@ -386,6 +392,8 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, default=Path("mods/fabri18-sprite-gallery"))
     parser.add_argument("--preview-only", action="store_true")
+    parser.add_argument("--profile-catalog", type=Path, default=Path("target/profiles.patch-view.json"),
+                        help="base catalog exported by cpf_to_json --patch-view")
     parser.add_argument(
         "--profiles-only",
         action="store_true",
@@ -393,16 +401,16 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.profiles_only:
-        patch = args.output / "Data/Configuration/soldier-profiles.patch.json"
-        if not patch.is_file():
-            raise RuntimeError(f"missing generated profile patch: {patch}")
-        patch.write_text(json.dumps({"soldiers": all_profile_additions()}, indent=2) + "\n")
+        patch = args.output / "Data/Configuration/profiles.patch.json"
+        if not patch.parent.is_dir():
+            raise RuntimeError(f"missing generated profile directory: {patch.parent}")
+        catalog = load_catalog(args.profile_catalog)
+        operations = [op for addition in all_profile_additions() for op in soldier_copy_patch(catalog, **addition)]
+        patch.write_text(json.dumps(operations, indent=2) + "\n")
         print(f"Refreshed profile stats for {len(all_profile_additions())} profiles")
         return 0
     if args.preview_only:
-        additions = json.loads(
-            (args.output / "Data/Configuration/soldier-profiles.patch.json").read_text()
-        )["soldiers"]
+        additions = all_profile_additions()
         previews = []
         for addition in additions:
             rhs = args.output / "Data/Characters" / f"{addition['filename']}.rhs.d"
@@ -451,7 +459,7 @@ def main() -> int:
                 )
                 additions.append(profile_addition(archive, unit_key))
                 previews.append((label, preview))
-    write_gallery(args.output, additions, previews)
+    write_gallery(args.output, additions, previews, load_catalog(args.profile_catalog))
     print(f"Imported {len(additions)} new soldier profiles into {args.output}")
     return 0
 

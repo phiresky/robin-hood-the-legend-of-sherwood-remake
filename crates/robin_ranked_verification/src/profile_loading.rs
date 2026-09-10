@@ -68,6 +68,25 @@ pub fn load_profiles(
         }
     };
 
+    let mut profiles = profiles;
+    let path = robin_engine::content_patch::PROFILE_PATCH_PATH;
+    robin_engine::content_patch::reject_legacy(
+        files,
+        "Data/Configuration/soldier-profiles.patch.json",
+        path,
+    )
+    .map_err(|message| ProfileLoadError::Decode { path, message })?;
+    let layers = robin_engine::content_patch::read_layers(files, path)
+        .map_err(|message| ProfileLoadError::Decode { path, message })?;
+    for (index, bytes) in layers.iter().enumerate() {
+        profiles =
+            robin_engine::content_patch::apply_profiles(&profiles, bytes).map_err(|message| {
+                ProfileLoadError::Decode {
+                    path,
+                    message: format!("layer {index}: {message}"),
+                }
+            })?;
+    }
     Ok(profiles)
 }
 
@@ -75,6 +94,33 @@ pub fn load_profiles(
 mod tests {
     use super::*;
     use std::error::Error;
+
+    #[test]
+    fn verifier_applies_generic_profile_patch_to_actual_catalog() {
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let base = ProfileManager {
+            soldiers: vec![robin_engine::profiles::SoldierProfile {
+                filename: "Guard".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        vfs.install_preloaded_asset(
+            "Data/Configuration/profile.cpf.json",
+            serde_json::to_vec(&base).unwrap(),
+        )
+        .unwrap();
+        vfs.install_preloaded_asset(
+            robin_engine::content_patch::PROFILE_PATCH_PATH,
+            br#"[
+            {"op":"replace","path":"/soldiers/Guard/life_point","value":150}
+        ]"#
+            .to_vec(),
+        )
+        .unwrap();
+        let result = load_profiles(&GlobalOptions::default(), &SbFileSystem::new(vfs)).unwrap();
+        assert_eq!(result.soldiers[0].life_point, 150);
+    }
 
     #[test]
     fn verifier_keeps_profile_json_source_chain() {

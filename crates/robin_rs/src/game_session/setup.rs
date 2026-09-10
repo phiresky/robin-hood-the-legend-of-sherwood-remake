@@ -11,7 +11,7 @@ mod localization;
 mod resources;
 
 use custom_sprites::prepare_custom_character_dirs;
-use localization::{apply_custom_mission_text_patch, descriptor_mission_id};
+use localization::apply_mission_descriptor_patch;
 pub use localization::{load_fixed_vip_name_map, load_peasant_name_pool};
 pub(super) use resources::{
     DecodingInterfaceResources, MissionEngineResources, MissionProcessResources,
@@ -388,8 +388,7 @@ pub(super) fn pre_decode_maps_and_resources(
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
     let mut level_descriptors = {
         let campaign = engine.campaign();
-        let mission_id =
-            descriptor_mission_id(campaign, profiles, files).map_err(|error| error.to_string())?;
+        let mission_id = crate::main_entry::current_mission_id(campaign, profiles);
         crate::mission_descriptors::for_presentation(
             host.application_context(),
             host.frontend.resources.shipping.as_deref(),
@@ -397,7 +396,7 @@ pub(super) fn pre_decode_maps_and_resources(
         )
     };
     if let Some(descriptors) = level_descriptors.as_mut() {
-        apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors, files)
+        apply_mission_descriptor_patch(engine.campaign(), profiles, descriptors, files)
             .map_err(|error| error.to_string())?;
     }
     timer.step("level descriptors");
@@ -1174,7 +1173,8 @@ pub(super) fn prepare_mission(
             tracing::info!(mission = name, "level loaded from shipping mission payload");
             progress(1.0);
             progress(1.0);
-            Ok(level)
+            engine_api::level_loading::apply_loaded_level_patch(level, name, &files)
+                .map_err(|e| format!("Level patch failed: {e}"))
         } else {
             engine_api::level_loading::load_mission_for_campaign_with_files(
                 &campaign,
@@ -2378,7 +2378,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_preparation_keeps_descriptor_aliases_and_text_in_their_reader() {
+    fn concurrent_preparation_keeps_descriptor_patches_in_their_reader() {
         use engine_sbfile::SbFileSystem;
         use robin_util::asset_fs::{AssetVfs, Bundle};
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
@@ -2388,37 +2388,23 @@ mod tests {
                 let barrier = barrier.clone();
                 std::thread::spawn(move || {
                     let vfs = std::sync::Arc::new(AssetVfs::new());
-                    let alias = format!("alias{id}");
                     let text = format!("installation {id}");
-                    vfs.mount_bundle_first(std::sync::Arc::new(Bundle::from([
-                        (
-                            "levels/shared.characters.patch.json".into(),
-                            serde_json::to_vec(&serde_json::json!({"descriptor_mission": alias}))
-                                .unwrap()
-                                .into(),
-                        ),
-                        (
-                            "levels/shared.text.patch.json".into(),
-                            serde_json::to_vec(&serde_json::json!({"popup_texts": {"0": text}}))
-                                .unwrap()
-                                .into(),
-                        ),
-                    ])))
+                    vfs.mount_bundle_first(std::sync::Arc::new(Bundle::from([(
+                        "levels/shared.descriptors.patch.json".into(),
+                        serde_json::to_vec(&serde_json::json!([
+                            {"op":"replace", "path":"/custom_popup_texts", "value":[text]}
+                        ]))
+                        .unwrap()
+                        .into(),
+                    )])))
                     .unwrap();
                     let files = SbFileSystem::new(vfs).snapshot();
                     let mut profiles = engine_profiles::ProfileManager::new();
-                    profiles.missions = vec![
-                        engine_profiles::MissionProfile {
-                            id: 77,
-                            mission_filename: "shared".into(),
-                            ..Default::default()
-                        },
-                        engine_profiles::MissionProfile {
-                            id,
-                            mission_filename: alias,
-                            ..Default::default()
-                        },
-                    ];
+                    profiles.missions = vec![engine_profiles::MissionProfile {
+                        id,
+                        mission_filename: "shared".into(),
+                        ..Default::default()
+                    }];
                     let campaign = Campaign {
                         current_mission_idx: Some(0),
                         missions: vec![robin_engine::mission::Mission {
@@ -2430,11 +2416,11 @@ mod tests {
                     barrier.wait();
                     for _ in 0..20 {
                         assert_eq!(
-                            descriptor_mission_id(&campaign, &profiles, &files).unwrap(),
+                            crate::main_entry::current_mission_id(&campaign, &profiles),
                             id
                         );
                         let mut descriptors = assets_res_descr::LevelDescriptors::default();
-                        apply_custom_mission_text_patch(
+                        apply_mission_descriptor_patch(
                             &campaign,
                             &profiles,
                             &mut descriptors,

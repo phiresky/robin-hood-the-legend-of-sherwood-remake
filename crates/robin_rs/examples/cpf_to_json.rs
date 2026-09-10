@@ -1,6 +1,6 @@
 //! Converts a binary `.cpf` profile cache file to JSON.
 //!
-//! Usage: cpf_to_json <input.cpf> [output.json]
+//! Usage: cpf_to_json [--patch-view] [--patch file.json]... <input.cpf> [output.json]
 //!
 //! If no output path is given, writes to stdout.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
@@ -10,13 +10,24 @@ use robin_engine::sbfile::{SB_FILE_READ, SbFile};
 
 fn main() {
     tracing_subscriber::fmt::init();
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        tracing::error!("Usage: cpf_to_json <input.cpf> [output.json]");
-        std::process::exit(1);
-    }
-
-    let input_path = &args[1];
+    let args = clap::Command::new("cpf_to_json")
+        .arg(
+            clap::Arg::new("patch-view")
+                .long("patch-view")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("patch")
+                .long("patch")
+                .action(clap::ArgAction::Append),
+        )
+        .arg(clap::Arg::new("input").required(true))
+        .arg(clap::Arg::new("output"))
+        .get_matches();
+    let patch_view = args.get_flag("patch-view");
+    let input_path = args
+        .get_one::<String>("input")
+        .expect("required input argument");
     let mut file = SbFile::open(input_path, SB_FILE_READ).unwrap_or_else(|e| {
         tracing::error!("Failed to open {}: error {}", input_path, e);
         std::process::exit(1);
@@ -39,14 +50,26 @@ fn main() {
         mgr.civilians.len(),
     );
 
-    let json = serde_json::to_string_pretty(&mgr).unwrap();
+    if let Some(patches) = args.get_many::<String>("patch") {
+        for path in patches {
+            let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("read {path}: {error}"));
+            mgr = robin_engine::content_patch::apply_profiles(&mgr, &bytes)
+                .unwrap_or_else(|error| panic!("apply {path}: {error}"));
+        }
+    }
+    let document = if patch_view {
+        robin_engine::content_patch::profile_document(&mgr).expect("build named profile patch view")
+    } else {
+        serde_json::to_value(&mgr).expect("serialize profiles")
+    };
+    let json = serde_json::to_string_pretty(&document).unwrap();
 
-    if args.len() >= 3 {
-        std::fs::write(&args[2], &json).unwrap_or_else(|e| {
-            tracing::error!("Failed to write {}: {}", args[2], e);
+    if let Some(output) = args.get_one::<String>("output") {
+        std::fs::write(output, &json).unwrap_or_else(|e| {
+            tracing::error!("Failed to write {}: {}", output, e);
             std::process::exit(1);
         });
-        tracing::info!("Written to {}", args[2]);
+        tracing::info!("Written to {}", output);
     } else {
         std::io::Write::write_all(&mut std::io::stdout(), json.as_bytes())
             .expect("write to stdout");

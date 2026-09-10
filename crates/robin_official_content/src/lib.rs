@@ -205,8 +205,10 @@ pub fn inventory_loose_source_closure(
         ),
     };
     collect_file(source_root, &profile, &mut selected)?;
-    if let Some(patch) = resolve_unique_child(&configuration, "soldier-profiles.patch.json", false)?
-    {
+    if resolve_unique_child(&configuration, "soldier-profiles.patch.json", false)?.is_some() {
+        bail!("soldier-profiles.patch.json is no longer supported; migrate to profiles.patch.json");
+    }
+    if let Some(patch) = resolve_unique_child(&configuration, "profiles.patch.json", false)? {
         collect_file(source_root, &patch, &mut selected)?;
     }
 
@@ -1006,6 +1008,20 @@ mod tests {
             original_digest,
             "adding a file inside a loader-authoritative root must change provenance"
         );
+    }
+
+    #[test]
+    fn generic_profile_patch_is_bound_by_official_inventory() {
+        let root = fixture();
+        let original = inventory_loose_source_closure(root.path(), "1033")
+            .unwrap()
+            .sha256()
+            .unwrap();
+        let path = "Data/Configuration/profiles.patch.json";
+        write(root.path(), path, b"[]");
+        let patched = inventory_loose_source_closure(root.path(), "1033").unwrap();
+        assert!(patched.files.iter().any(|file| file.path == path));
+        assert_ne!(patched.sha256().unwrap(), original);
     }
 
     #[test]

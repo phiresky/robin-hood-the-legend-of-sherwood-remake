@@ -4,6 +4,13 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Generic JSON Patch mods.** RFC 6902 operations edit decoded profiles,
+  levels and resource descriptors. Profile filenames provide named keys while
+  existing numeric slots are preserved. Patches compose across directory and
+  ZIP overlays, with atomic installation and typed error reporting. Legacy
+  mod patch formats have been removed. See [JSON Patch mods](JSON_PATCH_MODS.md)
+  for filenames, examples, the profile-view exporter and current limits.
+
 - **VQ sprite mod packages:** Custom `.rhs.d` directories can contain an
   authored `sprites.vq.zst` instead of PNGs and a manifest. The
   `encode_mod_sprites` example converts a mod using exact four-pixel RGB565
@@ -532,9 +539,9 @@ A list of which additional features we have added, which ones we might still wan
   Guisbourne, Longchamp, Prince John, Scathlock, and the Sheriff use portraits
   cropped from the Original's dialogue resources, while ordinary and mixed
   groups retain the helmet portrait.
-  Legacy roster mods can preserve compiled-script actor indices while
+  Level JSON patches can preserve compiled-script actor indices while
   overriding beam-me, rescue-PC, and tied-prisoner visuals. A per-mission
-  `.text.patch.json` can override popup, short-briefing, and dialogue strings
+  `.descriptors.patch.json` can override popup, short-briefing, and dialogue strings
   while retaining the base mission's descriptor pictures and timing.
   Mod-added character profiles keep their visible name and NPC exclamation
   bank separate from the internal RHS profile key, so promoted villains retain
@@ -936,10 +943,10 @@ A list of which additional features we have added, which ones we might still wan
 ### Additive hackable sprite mods
 
 - Overlay mods can append soldier profiles through
-  `Data/Configuration/soldier-profiles.patch.json` without replacing the
+  `Data/Configuration/profiles.patch.json` without replacing the
   retail CPF profile table.
-- Added profiles may specify `progression_from` alongside their `template` to
-  extrapolate one additional combat-stat tier from two adjacent retail tiers.
+- The sprite authoring tool can extrapolate one additional combat-stat tier
+  from two adjacent retail tiers and emit concrete JSON Patch operations.
   This supports elite variants beyond the original black-guard ceiling while
   retaining each unit role's established progression.
 - Readable soldier identifiers use normalized CPF filenames. When the retail

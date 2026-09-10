@@ -1008,6 +1008,35 @@ impl SbFileSystem {
         Err(SBFILE_ERROR_FILE_NOT_FOUND)
     }
 
+    /// Read a patch from the base lookup and then every overlay in mount order.
+    /// Unlike `read_all`, patches compose instead of shadowing. A confined
+    /// verifier still reads exclusively from its pinned root.
+    pub fn read_all_layers(&self, path: &str) -> Result<Vec<Vec<u8>>, i32> {
+        let normalised = path.replace('\\', "/");
+        if Path::new(&normalised).is_absolute()
+            || Path::new(&normalised)
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(SBFILE_ERROR_READ);
+        }
+        let base = self.snapshot();
+        base.overlay_paths.lock().unwrap().clear();
+        let mut layers = Vec::new();
+        if base.try_exists(&normalised)? {
+            layers.push(base.read_all(&normalised)?);
+        }
+        if self.ranked_verifier_primary_path.lock().unwrap().is_some() {
+            return Ok(layers);
+        }
+        for overlay in self.overlay_paths.lock().unwrap().iter() {
+            if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
+                layers.push(bytes.to_vec());
+            }
+        }
+        Ok(layers)
+    }
+
     pub fn read_all(&self, path: &str) -> Result<Vec<u8>, i32> {
         Ok(self.open(path, SB_FILE_READ)?.into_bytes())
     }
@@ -2159,6 +2188,70 @@ fn read_from_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_layers_compose_base_and_zip_overlays_in_mount_order() {
+        let path = "Data/Levels/PatchLayers.level.patch.json";
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset(path, b"base".to_vec()).unwrap();
+        let files = SbFileSystem::new(vfs);
+        for (id, bytes) in [
+            ("memory://first.zip", b"first".as_slice()),
+            ("memory://second.zip", b"second".as_slice()),
+        ] {
+            assert_eq!(
+                files.add_overlay_zip_bytes_for_mission(
+                    id,
+                    in_memory_zip(&[(path, bytes), ("Data/Levels/PatchLayers.rhm", b"mission")]),
+                    Some("Data/Levels/PatchLayers.rhm"),
+                ),
+                SBFILE_NO_ERROR
+            );
+        }
+        assert_eq!(
+            files.read_all_layers(path).unwrap(),
+            vec![b"base".to_vec(), b"first".to_vec(), b"second".to_vec()]
+        );
+        assert_eq!(files.read_all(path).unwrap(), b"second");
+        assert!(
+            files
+                .read_all_layers("Data/Levels/missing.patch.json")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(files.read_all_layers("../escape.patch.json").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn patch_layers_respect_directory_order_and_verifier_confinement() {
+        let base = tempfile::tempdir().unwrap();
+        let overlay = tempfile::tempdir().unwrap();
+        std::fs::write(base.path().join("patch.json"), b"base").unwrap();
+        std::fs::write(overlay.path().join("patch.json"), b"overlay").unwrap();
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.set_primary_path(base.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.add_overlay_path(overlay.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.read_all_layers("patch.json").unwrap(),
+            vec![b"base".to_vec(), b"overlay".to_vec()]
+        );
+        let confined = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            confined.lock_ranked_verifier_primary_path(base.path()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            confined.read_all_layers("patch.json").unwrap(),
+            vec![b"base".to_vec()]
+        );
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
