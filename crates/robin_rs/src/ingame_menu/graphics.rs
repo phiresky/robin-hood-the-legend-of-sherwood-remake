@@ -189,7 +189,8 @@ pub async fn show_graphics(
                 GameEvent::Quit => done = true,
                 GameEvent::MouseDown(x, y, 1, _) if page == 2 => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    let row_count = if parameter_page_effect { 5 } else { 3 };
+                    let row_count =
+                        parameter_rows(&edit.working, parameter_page_effect).len() as i32;
                     if (edit.working.scale_mode != TextureScaleMode::RetroArch
                         || parameter_page_effect)
                         && (scale_x..scale_x + scale_btn_w).contains(&vx)
@@ -694,28 +695,58 @@ fn fit_label_by(
     std::borrow::Cow::Owned(out)
 }
 
-fn adjust_parameter(config: &mut GraphicConfig, effect_page: bool, index: usize, increase: bool) {
+fn parameter_rows(
+    config: &GraphicConfig,
+    effect_page: bool,
+) -> impl ExactSizeIterator<Item = (crate::options_model::GraphicsSetting, &'static str, u8)> {
     use crate::options_model::GraphicsSetting::*;
-    let settings: &[crate::options_model::GraphicsSetting] = if effect_page {
-        &[
-            EffectScanlines,
-            EffectPhosphorMask,
-            EffectBloom,
-            EffectCurvature,
-            EffectTemporalFlicker,
-        ]
-    } else {
-        &[
+    let rows = [
+        (
             UpscaleStrength,
+            "Strength",
+            config.upscale_parameters.strength,
+        ),
+        (
             UpscaleEdgeThreshold,
+            "Edge threshold",
+            config.upscale_parameters.edge_threshold,
+        ),
+        (
             UpscaleArtifactRemoval,
-        ]
-    };
-    crate::options_model::adjust_graphics_setting(
-        config,
-        settings[index],
-        if increase { 1 } else { -1 },
-    );
+            "Artifact removal",
+            config.upscale_parameters.artifact_removal,
+        ),
+        (
+            EffectScanlines,
+            "Scanlines",
+            config.texture_effect_parameters.scanlines,
+        ),
+        (
+            EffectPhosphorMask,
+            "Phosphor mask",
+            config.texture_effect_parameters.phosphor_mask,
+        ),
+        (EffectBloom, "Bloom", config.texture_effect_parameters.bloom),
+        (
+            EffectCurvature,
+            "Curvature",
+            config.texture_effect_parameters.curvature,
+        ),
+        (
+            EffectTemporalFlicker,
+            "Temporal flicker",
+            config.texture_effect_parameters.temporal_flicker,
+        ),
+    ];
+    let (start, count) = if effect_page { (3, 5) } else { (0, 3) };
+    rows.into_iter().skip(start).take(count)
+}
+
+fn adjust_parameter(config: &mut GraphicConfig, effect_page: bool, index: usize, increase: bool) {
+    let (setting, _, _) = parameter_rows(config, effect_page)
+        .nth(index)
+        .expect("graphics parameter row must exist");
+    crate::options_model::adjust_graphics_setting(config, setting, if increase { 1 } else { -1 });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -732,33 +763,7 @@ fn draw_parameter_panel(
     let Some(font) = resources.label_font_any() else {
         return;
     };
-    let upscale_values = [
-        ("Strength", config.upscale_parameters.strength),
-        ("Edge threshold", config.upscale_parameters.edge_threshold),
-        (
-            "Artifact removal",
-            config.upscale_parameters.artifact_removal,
-        ),
-    ];
-    let effect_values = [
-        ("Scanlines", config.texture_effect_parameters.scanlines),
-        (
-            "Phosphor mask",
-            config.texture_effect_parameters.phosphor_mask,
-        ),
-        ("Bloom", config.texture_effect_parameters.bloom),
-        ("Curvature", config.texture_effect_parameters.curvature),
-        (
-            "Temporal flicker",
-            config.texture_effect_parameters.temporal_flicker,
-        ),
-    ];
-    let values: &[(&str, u8)] = if effect_page {
-        &effect_values
-    } else {
-        &upscale_values
-    };
-    for (row, (label, value)) in values.iter().enumerate() {
+    for (row, (_, label, value)) in parameter_rows(config, effect_page).enumerate() {
         let row_y = y + row as i32 * PARAMETER_ROW_H;
         render_text_virt_font(
             renderer,
@@ -771,7 +776,7 @@ fn draw_parameter_panel(
         let bar_x = x;
         let (screen_x, screen_y) = transform.to_screen(bar_x, row_y + 22);
         let bar_w = width - 8;
-        let filled = (bar_w * i32::from(*value)) / 100;
+        let filled = (bar_w * i32::from(value)) / 100;
         renderer.fill_screen(
             Some(&engine_sprite::BBox::from_coords(
                 screen_x as f32,
@@ -1020,4 +1025,57 @@ fn graphics_label_fitting_preserves_scalar_boundaries_and_ellipsis_policy() {
         fit_label_by("abcdef", 2, |value| if value == "abcd..." { 2 } else { 10 }),
         "abcd..."
     );
+}
+
+#[test]
+fn every_parameter_row_edits_only_its_displayed_value() {
+    let mut config = GraphicConfig::default();
+    config.upscale_parameters.strength = 5;
+    config.upscale_parameters.edge_threshold = 10;
+    config.upscale_parameters.artifact_removal = 15;
+    config.texture_effect_parameters.scanlines = 20;
+    config.texture_effect_parameters.phosphor_mask = 25;
+    config.texture_effect_parameters.bloom = 30;
+    config.texture_effect_parameters.curvature = 35;
+    config.texture_effect_parameters.temporal_flicker = 40;
+    let values = |config: &GraphicConfig| {
+        parameter_rows(config, false)
+            .chain(parameter_rows(config, true))
+            .map(|(_, _, value)| value)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(values(&config), [5, 10, 15, 20, 25, 30, 35, 40]);
+    for (effect_page, offset, labels) in [
+        (
+            false,
+            0,
+            &["Strength", "Edge threshold", "Artifact removal"][..],
+        ),
+        (
+            true,
+            3,
+            &[
+                "Scanlines",
+                "Phosphor mask",
+                "Bloom",
+                "Curvature",
+                "Temporal flicker",
+            ][..],
+        ),
+    ] {
+        assert_eq!(parameter_rows(&config, effect_page).len(), labels.len());
+        assert_eq!(
+            parameter_rows(&config, effect_page)
+                .map(|(_, label, _)| label)
+                .collect::<Vec<_>>(),
+            labels
+        );
+        for index in 0..labels.len() {
+            let mut edited = config.clone();
+            adjust_parameter(&mut edited, effect_page, index, true);
+            let mut expected = values(&config);
+            expected[offset + index] += 5;
+            assert_eq!(values(&edited), expected);
+        }
+    }
 }
