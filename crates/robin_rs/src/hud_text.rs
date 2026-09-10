@@ -218,10 +218,10 @@ fn entity_display_name(
     }
 }
 
-fn allied_portrait_name(individual_name: String, member_count: usize) -> String {
+fn allied_portrait_name(individual_name: impl FnOnce() -> String, member_count: usize) -> String {
     match member_count {
         0 => panic!("allied portrait group must contain at least one soldier"),
-        1 => individual_name,
+        1 => individual_name(),
         count => format!("{count} soldiers"),
     }
 }
@@ -710,27 +710,32 @@ fn render_portrait_text_gpu(
             is_sword_fighting && (is_selected || (engine.frame_counter() / 10).is_multiple_of(2));
 
         let vis_top = (sh - pos_visage) as i32;
-        let mut name =
-            entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default();
-        if !matches!(item.target(), PortraitTarget::Pc(_)) {
-            name = allied_portrait_name(name, item.members().len());
-        }
-        if !name.is_empty() && !sword_visible {
-            let vip =
-                matches!(item.target(), PortraitTarget::Pc(_)) && is_vip_character(assets, entity);
-            let display_name = prepare_portrait_name(name, vip);
-            let name_x = x + TEXT_OFFSET_X;
-            let name_y = vis_top + TEXT_OFFSET_Y;
-            render_text_in_box_gpu(
-                renderer,
-                font,
-                shadow,
-                &display_name,
-                name_x,
-                name_y,
-                WIDTH_TEXT,
-                Alignment::Centered,
-            );
+        if !sword_visible {
+            let individual_name = || {
+                entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default()
+            };
+            let name = if matches!(item.target(), PortraitTarget::Pc(_)) {
+                individual_name()
+            } else {
+                allied_portrait_name(individual_name, item.members().len())
+            };
+            if !name.is_empty() {
+                let vip = matches!(item.target(), PortraitTarget::Pc(_))
+                    && is_vip_character(assets, entity);
+                let display_name = prepare_portrait_name(name, vip);
+                let name_x = x + TEXT_OFFSET_X;
+                let name_y = vis_top + TEXT_OFFSET_Y;
+                render_text_in_box_gpu(
+                    renderer,
+                    font,
+                    shadow,
+                    &display_name,
+                    name_x,
+                    name_y,
+                    WIDTH_TEXT,
+                    Alignment::Centered,
+                );
+            }
         }
 
         if let Some(label) = collect_peer_label(engine, pc_id) {
@@ -1077,11 +1082,14 @@ mod tests {
     #[test]
     fn allied_group_name_reports_total_soldier_count() {
         assert_eq!(
-            allied_portrait_name("John Smith".to_owned(), 1),
+            allied_portrait_name(|| "John Smith".to_owned(), 1),
             "John Smith"
         );
         assert_eq!(
-            allied_portrait_name("John Smith".to_owned(), 7),
+            allied_portrait_name(
+                || panic!("group label must not resolve an individual name"),
+                7
+            ),
             "7 soldiers"
         );
     }
@@ -1089,7 +1097,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "allied portrait group must contain at least one soldier")]
     fn allied_group_name_rejects_empty_group() {
-        allied_portrait_name(String::new(), 0);
+        allied_portrait_name(String::new, 0);
     }
 
     #[test]
