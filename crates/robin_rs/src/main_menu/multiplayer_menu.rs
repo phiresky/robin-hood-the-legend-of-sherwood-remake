@@ -1392,13 +1392,10 @@ fn mission_choices(
     #[cfg(not(target_arch = "wasm32"))]
     {
         let default_root = crate::mod_pack::default_mods_root();
-        let mut mods = crate::mod_pack::scan_mods_dir(&default_root);
-        if let Some(overlay_root) = crate::main_entry::overlay_mods_dir()
-            && overlay_root != default_root
-        {
-            mods.extend(crate::mod_pack::scan_mods_dir(&overlay_root));
-            mods.sort_by(|a, b| a.details.title.cmp(&b.details.title));
-        }
+        let mods = crate::mod_pack::scan_mission_roots(
+            &default_root,
+            crate::main_entry::overlay_mods_dir().as_deref(),
+        );
         for entry in crate::mod_pack::enumerate_missions(
             &mods,
             application_context

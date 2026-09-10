@@ -156,6 +156,19 @@ pub fn scan_mods_dir(mods_root: &Path) -> Vec<DiscoveredMod> {
     out
 }
 
+/// Combine installed and bundled discovery without scanning an identical root
+/// twice. Keep distinct sources even when their metadata matches: launchers need
+/// the original directory to resolve the selected archive. Equal titles retain
+/// configured-root precedence through the stable sort.
+pub(crate) fn scan_mission_roots(configured: &Path, bundled: Option<&Path>) -> Vec<DiscoveredMod> {
+    let mut mods = scan_mods_dir(configured);
+    if let Some(bundled) = bundled.filter(|root| *root != configured) {
+        mods.extend(scan_mods_dir(bundled));
+        mods.sort_by(|a, b| a.details.title.cmp(&b.details.title));
+    }
+    mods
+}
+
 /// Resolve the directory the mod scanner should walk.
 ///
 /// Priority order:
@@ -752,6 +765,63 @@ pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combined_discovery_preserves_sources_and_skips_identical_roots() {
+        let temporary = tempfile::tempdir().unwrap();
+        let configured = temporary.path().join("configured");
+        let bundled = temporary.path().join("bundled");
+        for (root, slug, title) in [
+            (&configured, "last", "Zulu"),
+            (&configured, "same", "Shared"),
+            (&bundled, "same", "Shared"),
+            (&bundled, "first", "Alpha"),
+        ] {
+            let dir = root.join(slug);
+            fs::create_dir_all(&dir).unwrap();
+            let metadata = serde_json::json!({
+                "slug": slug, "title": title, "page_url": "", "author": "",
+                "map": "", "uploaded": ""
+            });
+            fs::write(
+                dir.join("details.json"),
+                serde_json::to_vec(&metadata).unwrap(),
+            )
+            .unwrap();
+        }
+        let paths = |mods: Vec<DiscoveredMod>| {
+            mods.into_iter()
+                .map(|entry| entry.mod_dir)
+                .collect::<Vec<_>>()
+        };
+        let configured_only = vec![configured.join("same"), configured.join("last")];
+        assert_eq!(
+            paths(scan_mission_roots(&configured, None)),
+            configured_only
+        );
+        assert_eq!(
+            paths(scan_mission_roots(&configured, Some(&configured))),
+            configured_only
+        );
+        assert_eq!(
+            paths(scan_mission_roots(&configured, Some(&bundled))),
+            vec![
+                bundled.join("first"),
+                configured.join("same"),
+                bundled.join("same"),
+                configured.join("last"),
+            ]
+        );
+        let missing = temporary.path().join("missing");
+        assert_eq!(
+            paths(scan_mission_roots(&configured, Some(&missing))),
+            configured_only
+        );
+        assert_eq!(
+            paths(scan_mission_roots(&missing, Some(&bundled))),
+            vec![bundled.join("first"), bundled.join("same")]
+        );
+    }
 
     #[test]
     fn bundled_demos_use_the_supplied_overlay_filesystem() {

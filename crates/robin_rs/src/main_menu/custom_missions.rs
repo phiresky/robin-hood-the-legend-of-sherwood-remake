@@ -22,7 +22,7 @@ use crate::ingame_menu::layout::{
     enter_modal_gpu_phase, render_text_virt_font, wrap_text_for_box_font,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
-use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mods_dir};
+use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mission_roots};
 use crate::renderer::Renderer;
 use crate::scroll_view::ScrollView;
 use crate::ui::MouseButtons;
@@ -94,15 +94,7 @@ pub(crate) async fn show_custom_missions(
     mods_root: &Path,
     files: &robin_engine::sbfile::SbFileSystem,
 ) -> Option<CustomMissionChoice> {
-    let mut mods = scan_mods_dir(mods_root);
-    // Overlay-shipped mods (repo `mods/`, e.g. hackable levels) may also
-    // carry a `details.json`; list them alongside the downloaded packs.
-    if let Some(overlay_root) = crate::main_entry::overlay_mods_dir()
-        && overlay_root != mods_root
-    {
-        mods.extend(scan_mods_dir(&overlay_root));
-        mods.sort_by(|a, b| a.details.title.cmp(&b.details.title));
-    }
+    let mods = scan_mission_roots(mods_root, crate::main_entry::overlay_mods_dir().as_deref());
     let entries = enumerate_missions(&mods, files);
     if entries.is_empty() {
         tracing::info!(
