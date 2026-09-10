@@ -5,6 +5,7 @@
 //! the `PCPortrait` font for portrait text and the `Tooltips` font for
 //! hover labels.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::host::ViewportState;
@@ -148,22 +149,22 @@ impl HudFonts {
 /// name deterministically from the entity ID — drawn from the
 /// localised peasant name pool — so each civilian keeps the same name
 /// across frames without needing mutable state on the civilian.
-fn entity_display_name(
+fn entity_display_name<'a>(
     engine: &PresentationView<'_>,
-    assets: &LevelAssets,
-    portraits: &PortraitCache,
+    assets: &'a LevelAssets,
+    portraits: &'a PortraitCache,
     id: EntityId,
     entity: &Entity,
-) -> Option<String> {
+) -> Option<Cow<'a, str>> {
     match entity {
         Entity::Pc(pc) => {
             if let Some(kind) = engine.pc_character_kind(id) {
                 // Prefer the localized override from the host portrait
                 // cache (VIP branch).
                 if let Some(localized) = portraits.get_localized_name(kind) {
-                    return Some(localized.to_string());
+                    return Some(Cow::Borrowed(localized));
                 }
-                return Some(kind.profile_name().to_string());
+                return Some(Cow::Borrowed(kind.profile_name()));
             }
             // Mod-added PCs deliberately have no retail CharacterKind. Keep
             // their visible label separate from the RHS-internal profile key.
@@ -172,9 +173,9 @@ fn entity_display_name(
                 .get_character(pc.pc.profile_index)
                 .map(|profile| {
                     if profile.display_name.is_empty() {
-                        profile.profile_name.clone()
+                        Cow::Borrowed(profile.profile_name.as_str())
                     } else {
-                        profile.display_name.clone()
+                        Cow::Borrowed(profile.display_name.as_str())
                     }
                 })
         }
@@ -182,16 +183,16 @@ fn entity_display_name(
             if engine.is_player_aligned_camp(s.soldier.cached_camp)
                 && let Some(name) = assets.random_peasant_name(id.index() as usize)
             {
-                Some(name)
+                Some(Cow::Owned(name))
             } else {
                 assets
                     .profile_manager
                     .get_soldier(s.soldier.soldier_profile_index)
                     .map(|p| {
                         if p.display_name.is_empty() {
-                            p.profile_name.clone()
+                            Cow::Borrowed(p.profile_name.as_str())
                         } else {
-                            p.display_name.clone()
+                            Cow::Borrowed(p.display_name.as_str())
                         }
                     })
             }
@@ -203,13 +204,13 @@ fn entity_display_name(
             let is_vip =
                 civ_profile.is_some_and(|p| p.civilian_type == profiles::CivilianType::Vip);
             if !is_vip && let Some(name) = assets.random_peasant_name(id.index() as usize) {
-                Some(name)
+                Some(Cow::Owned(name))
             } else {
                 civ_profile.map(|p| {
                     if p.display_name.is_empty() {
-                        p.profile_name.clone()
+                        Cow::Borrowed(p.profile_name.as_str())
                     } else {
-                        p.display_name.clone()
+                        Cow::Borrowed(p.display_name.as_str())
                     }
                 })
             }
@@ -218,11 +219,14 @@ fn entity_display_name(
     }
 }
 
-fn allied_portrait_name(individual_name: impl FnOnce() -> String, member_count: usize) -> String {
+fn allied_portrait_name<'a>(
+    individual_name: impl FnOnce() -> Cow<'a, str>,
+    member_count: usize,
+) -> Cow<'a, str> {
     match member_count {
         0 => panic!("allied portrait group must contain at least one soldier"),
         1 => individual_name(),
-        count => format!("{count} soldiers"),
+        count => Cow::Owned(format!("{count} soldiers")),
     }
 }
 
@@ -254,9 +258,9 @@ fn is_vip_character(assets: &LevelAssets, entity: &Entity) -> bool {
 ///
 /// For non-VIP characters (merry men), replaces the first space with a
 /// newline to force two-line name display.
-fn prepare_portrait_name(mut name: String, is_vip: bool) -> String {
+fn prepare_portrait_name(mut name: Cow<'_, str>, is_vip: bool) -> Cow<'_, str> {
     if !is_vip && let Some(pos) = name.find(' ') {
-        name.replace_range(pos..pos + 1, "\n");
+        name.to_mut().replace_range(pos..pos + 1, "\n");
     }
     name
 }
@@ -1058,7 +1062,9 @@ mod tests {
             let owned = name.to_owned();
             let pointer = owned.as_ptr();
             let capacity = owned.capacity();
-            let prepared = prepare_portrait_name(owned, vip);
+            let Cow::Owned(prepared) = prepare_portrait_name(Cow::Owned(owned), vip) else {
+                panic!("owned portrait name must keep its storage");
+            };
             assert_eq!(prepared, expected);
             assert_eq!(prepared.as_ptr(), pointer);
             assert_eq!(prepared.capacity(), capacity);
@@ -1086,9 +1092,29 @@ mod tests {
     }
 
     #[test]
+    fn portrait_preparation_borrows_unmodified_names_and_reuses_owned_names() {
+        let name = "Robin Hood";
+        let vip = prepare_portrait_name(Cow::Borrowed(name), true);
+        assert!(matches!(vip, Cow::Borrowed(_)));
+        assert_eq!(vip.as_ptr(), name.as_ptr());
+        assert!(matches!(
+            prepare_portrait_name(Cow::Borrowed("John"), false),
+            Cow::Borrowed("John")
+        ));
+        let wrapped = prepare_portrait_name(Cow::Borrowed("John Smith"), false);
+        assert!(matches!(wrapped, Cow::Owned(_)));
+        assert_eq!(wrapped, "John\nSmith");
+        let owned = String::from("John Smith");
+        let ptr = owned.as_ptr();
+        let wrapped = prepare_portrait_name(Cow::Owned(owned), false);
+        assert_eq!(wrapped.as_ptr(), ptr);
+        assert_eq!(wrapped, "John\nSmith");
+    }
+
+    #[test]
     fn allied_group_name_reports_total_soldier_count() {
         assert_eq!(
-            allied_portrait_name(|| "John Smith".to_owned(), 1),
+            allied_portrait_name(|| Cow::Borrowed("John Smith"), 1),
             "John Smith"
         );
         assert_eq!(
@@ -1103,7 +1129,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "allied portrait group must contain at least one soldier")]
     fn allied_group_name_rejects_empty_group() {
-        allied_portrait_name(String::new, 0);
+        allied_portrait_name(|| Cow::Borrowed(""), 0);
     }
 
     #[test]
