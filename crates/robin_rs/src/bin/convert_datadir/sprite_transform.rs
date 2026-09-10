@@ -543,16 +543,13 @@ pub(super) fn build_rhs_chunk_payload(
     holder: &FrameHolder,
     dict_remaps: Option<&[Vec<u16>]>,
     rel: &str,
-    prep: &RhsChunkPrep,
+    prep: RhsChunkPrep,
     rle_format: RleSpriteFormat,
     vq_group_tiles: usize,
     rle_group_blobs: usize,
     multi_chunk_ids: &std::collections::HashSet<u32>,
 ) -> Result<(ShippingMission, RleJxlChunkStats)> {
     let mut payload = ShippingMission::default();
-    if let Some(rhs_data) = &prep.rhs_data {
-        payload.rhs_files.insert(rel.to_owned(), rhs_data.clone());
-    }
     let mut sprites = Vec::with_capacity(prep.used_sprite_ids.len());
     let mut blob_ids = Vec::new();
     let mut blob_dims = Vec::new();
@@ -656,7 +653,7 @@ pub(super) fn build_rhs_chunk_payload(
     // blanking the rows the chunk covers.
     let (rle_jxl_chunk, rle_stats) = match rle_format.jxl_quality() {
         Some(quality) if is_rle_jxl_bucket_rel(rel) => {
-            build_rle_jxl_chunk(rel, prep, &mut sprites, quality, multi_chunk_ids)?
+            build_rle_jxl_chunk(rel, &prep, &mut sprites, quality, multi_chunk_ids)?
         }
         _ => (None, RleJxlChunkStats::default()),
     };
@@ -751,5 +748,50 @@ pub(super) fn build_rhs_chunk_payload(
         rle_jxl_bytes = rle_stats.jxl_bytes,
         "built shared RHS sprite payload"
     );
+    if let Some(rhs_data) = prep.rhs_data {
+        payload.rhs_files.insert(rel.to_owned(), rhs_data);
+    }
     Ok((payload, rle_stats))
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+
+    #[test]
+    fn payload_takes_ownership_of_prepared_profile_storage() {
+        let profiles = Vec::with_capacity(4);
+        let storage = profiles.as_ptr();
+        let capacity = profiles.capacity();
+        let prep = RhsChunkPrep {
+            rhs_data: Some(RhsData {
+                signature: 123,
+                profiles,
+            }),
+            matched_profiles: 0,
+            script_order: Vec::new(),
+            used_sprite_ids: BTreeSet::new(),
+            base_rel: None,
+            base_ids: Default::default(),
+            base2_rel: None,
+            base2_ids: Default::default(),
+        };
+        let (payload, _) = build_rhs_chunk_payload(
+            &FrameHolder::new(),
+            None,
+            "Characters/Hero.rhs",
+            prep,
+            RleSpriteFormat::Exact,
+            1,
+            1,
+            &Default::default(),
+        )
+        .unwrap();
+        let rhs = &payload.rhs_files["Characters/Hero.rhs"];
+        assert_eq!(rhs.signature, 123);
+        assert!(rhs.profiles.is_empty());
+        assert_eq!(rhs.profiles.as_ptr(), storage);
+        assert_eq!(rhs.profiles.capacity(), capacity);
+        assert!(payload.sprite_bank.as_ref().unwrap().sprites.is_empty());
+    }
 }

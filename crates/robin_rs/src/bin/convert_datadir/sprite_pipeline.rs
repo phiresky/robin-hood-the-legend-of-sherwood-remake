@@ -285,22 +285,19 @@ pub(super) fn transform_rhs(
 
     // Lowercased variant name -> disk-cased base name. CPF-derived rels and
     // on-disk filenames can disagree in case, so matching is case-blind.
-    let variant_base_names: std::collections::BTreeMap<String, String> = families
+    let variant_base_names: std::collections::BTreeMap<String, &str> = families
         .iter()
         .flat_map(|(key, members)| {
-            let base = family_bases[key].clone();
+            let base = family_bases[key].as_str();
             members
                 .iter()
-                .filter({
-                    let base = base.clone();
-                    move |name| **name != base
-                })
-                .map(move |name| (name.to_ascii_lowercase(), base.clone()))
+                .filter(move |name| name.as_str() != base)
+                .map(move |name| (name.to_ascii_lowercase(), base))
         })
         .collect();
     // Lowercased third-and-later member name -> disk-cased second-hub name.
     // hub2 itself keeps coding against hub1 only, so it is excluded here.
-    let variant_base2_names: std::collections::BTreeMap<String, String> = families
+    let variant_base2_names: std::collections::BTreeMap<String, &str> = families
         .iter()
         .filter_map(|(key, members)| {
             let hub2 = family_second_bases.get(key)?;
@@ -309,7 +306,7 @@ pub(super) fn transform_rhs(
                 members
                     .iter()
                     .filter(move |name| *name != hub1 && *name != hub2)
-                    .map(move |name| (name.to_ascii_lowercase(), hub2.clone())),
+                    .map(move |name| (name.to_ascii_lowercase(), hub2.as_str())),
             )
         })
         .flatten()
@@ -334,7 +331,8 @@ pub(super) fn transform_rhs(
         else {
             continue;
         };
-        let Some(base_name) = variant_base_names.get(&name.to_ascii_lowercase()) else {
+        let normalized_name = name.to_ascii_lowercase();
+        let Some(base_name) = variant_base_names.get(&normalized_name) else {
             continue;
         };
         let base_rel = resolve_family_hub_rel(
@@ -345,7 +343,7 @@ pub(super) fn transform_rhs(
             rel,
         )?;
         // Second hub, when this member is third-or-later in a star-2 family.
-        let base2_rel = match variant_base2_names.get(&name.to_ascii_lowercase()) {
+        let base2_rel = match variant_base2_names.get(&normalized_name) {
             Some(hub2_name) => Some(resolve_family_hub_rel(
                 &rhs_preps,
                 &mut loaded_base_script_orders,
@@ -526,22 +524,23 @@ pub(super) fn transform_rhs(
     };
 
     // Phase C: assemble the chunk payloads. `encode_grids` dominates this
-    // stage, so it runs on the bounded worker pool.
+    // stage, so it runs on the bounded worker pool. Consume preparations so
+    // each worker releases its input after building the corresponding payload.
     let built_payloads = compression_pool.install(|| {
         rhs_preps
-            .par_iter()
+            .into_par_iter()
             .map(|(rel, prep)| {
                 let (payload, rle_stats) = build_rhs_chunk_payload(
                     holder,
                     dict_remaps,
-                    rel,
+                    &rel,
                     prep,
                     opts.rle_sprite_format,
                     opts.vq_group_tiles,
                     opts.rle_group_blobs,
                     &multi_chunk_ids,
                 )?;
-                Ok((rel.clone(), payload, rle_stats))
+                Ok((rel, payload, rle_stats))
             })
             .collect::<Vec<Result<(String, ShippingMission, RleJxlChunkStats)>>>()
     });
