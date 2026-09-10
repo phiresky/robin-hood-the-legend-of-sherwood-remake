@@ -299,15 +299,7 @@ impl LocalizationService {
     ) -> Result<Self, LocalizationError> {
         let preferences = load_preferences(&store)?;
         let installed = discover_installed_languages(shipping, &files);
-        let active = match &preferences.selection {
-            LanguageSelection::Auto => resolve_selection(&preferences.selection, &installed),
-            LanguageSelection::Locale(locale) => Some(
-                installed
-                    .iter()
-                    .find(|pack| locale_eq(&pack.locale, locale))
-                    .ok_or_else(|| LocalizationError::Unavailable(locale.clone()))?,
-            ),
-        };
+        let active = resolve_selection(&preferences.selection, &installed)?;
         let active_data_root = active.as_ref().map(|pack| pack.data_root.clone());
         install_file_lookup(active, &installed, shipping, &files)?;
         let active_locale = active.map(|pack| pack.locale.clone());
@@ -376,15 +368,7 @@ impl LocalizationService {
             .files
             .as_ref()
             .ok_or(LocalizationError::MissingFileAuthority)?;
-        let active = match &selection {
-            LanguageSelection::Auto => resolve_selection(&selection, &self.installed),
-            LanguageSelection::Locale(locale) => Some(
-                self.installed
-                    .iter()
-                    .find(|pack| locale_eq(&pack.locale, locale))
-                    .ok_or_else(|| LocalizationError::Unavailable(locale.clone()))?,
-            ),
-        };
+        let active = resolve_selection(&selection, &self.installed)?;
 
         // Re-validate loose content at the commit boundary. A removable or
         // user-edited data directory must not leave half of the UI switched.
@@ -738,16 +722,14 @@ pub fn locale_prefers_truetype(files: &SbFileSystem) -> bool {
 fn resolve_selection<'a>(
     selection: &LanguageSelection,
     installed: &'a [LanguagePack],
-) -> Option<&'a LanguagePack> {
-    if installed.is_empty() {
-        return None;
-    }
+) -> Result<Option<&'a LanguagePack>, LocalizationError> {
     match selection {
         LanguageSelection::Locale(locale) => installed
             .iter()
             .find(|pack| locale_eq(&pack.locale, locale))
-            .or_else(|| auto_language(installed)),
-        LanguageSelection::Auto => auto_language(installed),
+            .map(Some)
+            .ok_or_else(|| LocalizationError::Unavailable(locale.clone())),
+        LanguageSelection::Auto => Ok(auto_language(installed)),
     }
 }
 
@@ -1342,6 +1324,40 @@ mod tests {
                     "{left:?} vs {right:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn selection_resolution_never_falls_back_for_an_explicit_locale() {
+        let installed = [LanguagePack {
+            locale: "en-US".into(),
+            native_name: "English".into(),
+            data_root: "1033".into(),
+            has_voice: false,
+            has_cinematics: false,
+            voice_uses_english_fallback: false,
+            cinematics_use_english_fallback: false,
+            mission_names: Default::default(),
+        }];
+        let selected =
+            resolve_selection(&LanguageSelection::Locale("EN_us.UTF-8".into()), &installed)
+                .unwrap()
+                .unwrap();
+        assert!(std::ptr::eq(selected, &installed[0]));
+        assert!(
+            resolve_selection(&LanguageSelection::Auto, &[])
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            resolve_selection(&LanguageSelection::Auto, &installed).unwrap(),
+            Some(&installed[0])
+        );
+        for packs in [&installed[..], &[][..]] {
+            assert!(matches!(
+                resolve_selection(&LanguageSelection::Locale("fr-FR".into()), packs),
+                Err(LocalizationError::Unavailable(locale)) if locale == "fr-FR"
+            ));
         }
     }
 
