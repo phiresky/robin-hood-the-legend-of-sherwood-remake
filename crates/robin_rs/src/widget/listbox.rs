@@ -1,6 +1,6 @@
 //! Scrollable list box widget.
 //!
-//! The listbox has a 7-state machine for handling item focus, selection,
+//! The listbox has a 6-state machine for handling item focus, selection,
 //! scrollbar interaction, and knob dragging.
 //!
 //! State machine:
@@ -242,6 +242,17 @@ impl<T: Clone> WidgetListbox<T> {
         }
     }
 
+    /// Each nonzero wheel input moves one row, regardless of its magnitude.
+    /// Emit an event only when the viewport actually moves.
+    fn process_mouse_wheel(&mut self, mouse_z: i16) -> Option<UiEvent> {
+        let (scrolled, msg) = match mouse_z.cmp(&0) {
+            std::cmp::Ordering::Greater => (self.scroll_up(), UiMsg::WidgetScrollUp),
+            std::cmp::Ordering::Less => (self.scroll_down(), UiMsg::WidgetScrollDown),
+            std::cmp::Ordering::Equal => return None,
+        };
+        scrolled.then(|| self.base.make_event(msg))
+    }
+
     // ── Hit testing ──────────────────────────────────���─────────────
 
     /// Get the item index at a screen point, or None if not over an item.
@@ -278,7 +289,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     // ── Input processing ───────────────────────────────────────────
 
-    /// Process input for one frame. Drives the 7-state machine.
+    /// Process input for one frame. Drives the 6-state machine.
     pub fn process_input(&mut self, input: &WidgetInput) -> Vec<UiEvent> {
         if !self.base.enabled {
             return self.base.tooltip_event_if_disabled().into_iter().collect();
@@ -332,21 +343,7 @@ impl<T: Clone> WidgetListbox<T> {
         let mut events = Vec::new();
 
         // Mouse wheel scrolling.
-        if mouse_z != 0 {
-            let scrolled = if mouse_z > 0 {
-                self.scroll_up()
-            } else {
-                self.scroll_down()
-            };
-            if scrolled {
-                let msg = if mouse_z > 0 {
-                    UiMsg::WidgetScrollUp
-                } else {
-                    UiMsg::WidgetScrollDown
-                };
-                events.push(self.base.make_event(msg));
-            }
-        }
+        events.extend(self.process_mouse_wheel(mouse_z));
 
         // Double-click activates.
         if buttons.contains(MouseButtons::LEFT_DOUBLE_CLICK)
@@ -400,21 +397,7 @@ impl<T: Clone> WidgetListbox<T> {
         let mut events = Vec::new();
 
         // Mouse wheel.
-        if mouse_z != 0 {
-            let scrolled = if mouse_z > 0 {
-                self.scroll_up()
-            } else {
-                self.scroll_down()
-            };
-            if scrolled {
-                let msg = if mouse_z > 0 {
-                    UiMsg::WidgetScrollUp
-                } else {
-                    UiMsg::WidgetScrollDown
-                };
-                events.push(self.base.make_event(msg));
-            }
-        }
+        events.extend(self.process_mouse_wheel(mouse_z));
 
         // Click inside items → select.
         if buttons.contains(MouseButtons::LEFT_CLICK) {
@@ -459,21 +442,7 @@ impl<T: Clone> WidgetListbox<T> {
         let mut events = Vec::new();
 
         // Mouse wheel.
-        if mouse_z != 0 {
-            let scrolled = if mouse_z > 0 {
-                self.scroll_up()
-            } else {
-                self.scroll_down()
-            };
-            if scrolled {
-                let msg = if mouse_z > 0 {
-                    UiMsg::WidgetScrollUp
-                } else {
-                    UiMsg::WidgetScrollDown
-                };
-                events.push(self.base.make_event(msg));
-            }
-        }
+        events.extend(self.process_mouse_wheel(mouse_z));
 
         // Click to transition out.
         if buttons.contains(MouseButtons::LEFT_CLICK) {
@@ -499,19 +468,7 @@ impl<T: Clone> WidgetListbox<T> {
 
         // Mouse wheel.
         if mouse_z != 0 {
-            let scrolled = if mouse_z > 0 {
-                self.scroll_up()
-            } else {
-                self.scroll_down()
-            };
-            if scrolled {
-                let msg = if mouse_z > 0 {
-                    UiMsg::WidgetScrollUp
-                } else {
-                    UiMsg::WidgetScrollDown
-                };
-                events.push(self.base.make_event(msg));
-            }
+            events.extend(self.process_mouse_wheel(mouse_z));
             return events;
         }
 
@@ -612,6 +569,70 @@ impl<T: Clone> WidgetListbox<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wheel_events_only_report_actual_single_row_movement() {
+        for state in [
+            ListboxState::ItemsFocused,
+            ListboxState::ItemsPushed,
+            ListboxState::ItemsSelected,
+            ListboxState::ScrollFocused,
+        ] {
+            for (first, delta, expected_first, expected_msg) in [
+                (0, 1, 0, None),
+                (0, i16::MAX, 0, None),
+                (0, -1, 1, Some(UiMsg::WidgetScrollDown)),
+                (0, i16::MIN, 1, Some(UiMsg::WidgetScrollDown)),
+                (1, 1, 0, Some(UiMsg::WidgetScrollUp)),
+                (1, -1, 2, Some(UiMsg::WidgetScrollDown)),
+                (1, 0, 1, None),
+                (2, -1, 2, None),
+            ] {
+                let mut list = WidgetListbox {
+                    items: (0..4)
+                        .map(|i| ListboxItem {
+                            text: i.to_string(),
+                            data: (),
+                            flags: 0,
+                        })
+                        .collect(),
+                    visible_count: 2,
+                    first_visible: first,
+                    state,
+                    ..Default::default()
+                };
+                let mouse = ScreenPoint::new(-1.0, -1.0);
+                let buttons = MouseButtons::empty();
+                let events = match state {
+                    ListboxState::ItemsFocused => list.process_items_focused(mouse, buttons, delta),
+                    ListboxState::ItemsPushed => list.process_items_pushed(mouse, buttons, delta),
+                    ListboxState::ItemsSelected => {
+                        list.process_items_selected(mouse, buttons, delta)
+                    }
+                    ListboxState::ScrollFocused => {
+                        list.process_scroll_focused(mouse, buttons, delta)
+                    }
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    list.first_visible, expected_first,
+                    "{state:?}, {first}, {delta}"
+                );
+                assert_eq!(
+                    events
+                        .iter()
+                        .map(|event| event.msg_type)
+                        .collect::<Vec<_>>(),
+                    expected_msg.into_iter().collect::<Vec<_>>(),
+                    "{state:?}, {first}, {delta}"
+                );
+                if state == ListboxState::ScrollFocused && delta != 0 {
+                    // Wheel input consumes the frame even at a scroll boundary.
+                    assert_eq!(list.state, state);
+                }
+            }
+        }
+    }
 
     #[test]
     fn column_layout_empty_renders_single_cell() {
