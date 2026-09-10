@@ -71,8 +71,11 @@ impl PlayerProfileStore {
         let existing = match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Native { directory: root } => {
-                match std::fs::read_to_string(root.join("profiles.json")) {
-                    Ok(serialized) => Some(decode_native_archive(&serialized, directory)?),
+                match std::fs::File::open(root.join("profiles.json")) {
+                    Ok(file) => Some(decode_native_archive(
+                        std::io::BufReader::new(file),
+                        directory,
+                    )?),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error),
                 }
@@ -208,11 +211,24 @@ impl PlayerProfileStore {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn decode_native_archive(
-    serialized: &str,
+    input: impl std::io::Read,
     directory: &str,
 ) -> std::io::Result<PlayerProfileManager> {
-    let mut manager: PlayerProfileManager = serde_json::from_str(serialized)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let manager = serde_json::from_reader(input).map_err(|error| {
+        std::io::Error::new(
+            error
+                .io_error_kind()
+                .unwrap_or(std::io::ErrorKind::InvalidData),
+            error,
+        )
+    })?;
+    finish_loading_archive(manager, directory)
+}
+
+fn finish_loading_archive(
+    mut manager: PlayerProfileManager,
+    directory: &str,
+) -> std::io::Result<PlayerProfileManager> {
     manager
         .validate_archive()
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
@@ -224,6 +240,64 @@ fn decode_native_archive(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn native_and_browser_decoders_share_archive_admission() {
+        let mut manager = PlayerProfileManager::new("obsolete-directory".into());
+        manager.create_profile("Robin 雪".into(), DifficultyLevel::Medium);
+        manager.set_active(0);
+        for active_index in [0, 99] {
+            manager.active_index = Some(active_index);
+            let mut native = vec![b' '; 8193];
+            native.extend(serde_json::to_vec(&manager).unwrap());
+            let browser = serde_json::to_string(&BrowserProfileEnvelope {
+                schema_version: BROWSER_PROFILE_SCHEMA_VERSION,
+                manager: &manager,
+            })
+            .unwrap();
+            let native =
+                decode_native_archive(std::io::BufReader::new(native.as_slice()), "selected");
+            let browser = decode_browser_profile_archive(&browser, "selected");
+            if active_index == 0 {
+                let native = native.unwrap();
+                let browser = browser.unwrap();
+                assert_eq!(native.save_directory, "selected");
+                assert_eq!(
+                    serde_json::to_value(native).unwrap(),
+                    serde_json::to_value(browser).unwrap()
+                );
+            } else {
+                assert_eq!(native.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+                assert_eq!(browser.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+            }
+        }
+    }
+
+    #[test]
+    fn native_decoder_distinguishes_read_errors_from_invalid_json() {
+        #[derive(Serialize, Deserialize)]
+        struct FailedRead;
+        impl std::io::Read for FailedRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected read failure",
+                ))
+            }
+        }
+        assert_eq!(
+            decode_native_archive(FailedRead, "selected")
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        for bytes in [b"".as_slice(), b"{", &[0xff]] {
+            assert_eq!(
+                decode_native_archive(bytes, "selected").unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
+    }
 
     #[test]
     fn directory_lookup_borrows_the_selected_storage_path() {
@@ -673,10 +747,5 @@ fn decode_browser_profile_archive(
             ),
         ));
     }
-    let mut manager = envelope.manager;
-    manager
-        .validate_archive()
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    manager.save_directory = directory.to_owned();
-    Ok(manager)
+    finish_loading_archive(envelope.manager, directory)
 }
