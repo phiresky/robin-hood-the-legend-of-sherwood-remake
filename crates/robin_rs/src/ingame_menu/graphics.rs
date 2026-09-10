@@ -642,10 +642,12 @@ fn draw_preset_list(
     let Some(font) = resources.label_font_any() else {
         return;
     };
-    for row in 0..PRESET_LIST_ROWS {
-        let Some(preset) = presets.get(scroll + row) else {
-            break;
-        };
+    for (row, preset) in presets
+        .iter()
+        .skip(scroll)
+        .take(PRESET_LIST_ROWS)
+        .enumerate()
+    {
         let y = PRESET_LIST_Y + row as i32 * PRESET_LIST_ROW_H;
         let is_selected = preset.id == selected;
         if is_selected {
