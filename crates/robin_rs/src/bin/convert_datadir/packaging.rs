@@ -1,6 +1,8 @@
 //! Deterministic payload encoding, resume validation and web manifest packaging.
 use super::*;
 
+const MANIFEST_STAGING_PREFIX: &str = ".robin-web-manifest-";
+
 pub(super) fn write_web_content_manifest(
     data_out: &Path,
     edition: robin_rs::multiplayer::content_identity::WebContentEdition,
@@ -12,10 +14,6 @@ pub(super) fn write_web_content_manifest(
     };
 
     let manifest_path = data_out.join(WEB_CONTENT_MANIFEST_NAME);
-    if manifest_path.exists() {
-        fs::remove_file(&manifest_path)
-            .with_context(|| format!("remove stale {}", manifest_path.display()))?;
-    }
     let mut paths = Vec::new();
     let mut pending = vec![data_out.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -25,10 +23,34 @@ pub(super) fn write_web_content_manifest(
             let entry =
                 entry.with_context(|| format!("enumerate web content {}", directory.display()))?;
             let path = entry.path();
+            if directory == data_out
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(MANIFEST_STAGING_PREFIX))
+            {
+                // TODO: recover abandoned stages once converter runs have an
+                // exclusive ownership protocol; do not delete another run's file.
+                bail!(
+                    "web content has a concurrent or abandoned manifest stage: {}",
+                    path.display()
+                );
+            }
             let metadata = fs::symlink_metadata(&path)
                 .with_context(|| format!("stat web content {}", path.display()))?;
             if metadata.file_type().is_symlink() {
                 bail!("web content package refuses symlink {}", path.display());
+            }
+            if path == manifest_path {
+                if !metadata.is_file() {
+                    bail!(
+                        "web content manifest is not a regular file: {}",
+                        path.display()
+                    );
+                }
+                // Keep the previous publication until its replacement is ready,
+                // but never include the manifest in its own content closure.
+                continue;
             }
             if metadata.is_dir() {
                 pending.push(path);
@@ -49,7 +71,7 @@ pub(super) fn write_web_content_manifest(
 
     let mut datadir = None;
     let mut files = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut seen = BTreeSet::from([WEB_CONTENT_MANIFEST_NAME.to_owned()]);
     for (relative, path) in paths {
         if relative == "conversion-plan.json" {
             // Inspectable converter diagnostics are not runtime content.
@@ -95,8 +117,31 @@ pub(super) fn write_web_content_manifest(
         files,
     };
     let bytes = serde_json::to_vec(&manifest).context("serialize web content manifest")?;
-    fs::write(&manifest_path, bytes)
-        .with_context(|| format!("write {}", manifest_path.display()))?;
+    // Generated artifacts retain ordinary output-file permissions, unlike
+    // private user archives. tempfile applies the process umask to this mode.
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(MANIFEST_STAGING_PREFIX);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let mut temporary = builder
+        .tempfile_in(data_out)
+        .context("stage web content manifest")?;
+    std::io::Write::write_all(&mut temporary, &bytes)
+        .context("write staged web content manifest")?;
+    temporary
+        .as_file()
+        .sync_all()
+        .context("sync staged web content manifest")?;
+    temporary
+        .persist(&manifest_path)
+        .with_context(|| format!("publish {}", manifest_path.display()))?;
+    #[cfg(unix)]
+    fs::File::open(data_out)?
+        .sync_all()
+        .context("sync web content manifest directory")?;
     tracing::info!(manifest = %manifest_path.display(), "wrote exact web content closure");
     Ok(())
 }
@@ -228,6 +273,99 @@ pub(super) fn prepare_shipping_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stale_manifest_stage_is_not_published_as_runtime_content() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = temp.path().join(WEB_CONTENT_MANIFEST_NAME);
+        let stage = temp
+            .path()
+            .join(format!("{MANIFEST_STAGING_PREFIX}abandoned"));
+        fs::write(&manifest, b"previous publication").unwrap();
+        fs::write(&stage, b"incomplete replacement").unwrap();
+        let error =
+            write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64))
+                .unwrap_err();
+        assert!(error.to_string().contains("manifest stage"));
+        assert_eq!(fs::read(manifest).unwrap(), b"previous publication");
+        assert_eq!(fs::read(stage).unwrap(), b"incomplete replacement");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn published_manifest_uses_normal_output_permissions() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
+        };
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = tempfile::tempdir().unwrap();
+        let datadir = temp.path().join("datadir.bin");
+        fs::write(&datadir, b"boot").unwrap();
+        fs::write(temp.path().join("mission.rhmission.zst"), b"mission").unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        assert_eq!(
+            fs::metadata(temp.path().join(WEB_CONTENT_MANIFEST_NAME))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            fs::metadata(datadir).unwrap().permissions().mode() & 0o777,
+        );
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn failed_manifest_preparation_preserves_the_previous_publication() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let datadir = temp.path().join("datadir.bin");
+        fs::write(&datadir, b"boot").unwrap();
+        fs::write(temp.path().join("mission.rhmission.zst"), b"mission").unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        let manifest = temp.path().join(WEB_CONTENT_MANIFEST_NAME);
+        let before = fs::read(&manifest).unwrap();
+        fs::remove_file(&datadir).unwrap();
+        assert!(
+            write_web_content_manifest(temp.path(), WebContentEdition::Demo, "b".repeat(64))
+                .is_err()
+        );
+        assert_eq!(fs::read(&manifest).unwrap(), before);
+        fs::write(&datadir, b"boot").unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "b".repeat(64)).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
+        assert_eq!(after["native_content_sha256"], "b".repeat(64));
+        assert_eq!(after["files"].as_array().unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_publication_refuses_a_symlink_without_touching_its_target() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), b"retained").unwrap();
+        let manifest = temp.path().join(WEB_CONTENT_MANIFEST_NAME);
+        std::os::unix::fs::symlink(outside.path(), &manifest).unwrap();
+        let error =
+            write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64))
+                .unwrap_err();
+        assert!(error.to_string().contains("symlink"));
+        assert!(
+            fs::symlink_metadata(manifest)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(outside.path()).unwrap(), b"retained");
+    }
+
     #[test]
     fn manifest_files_keep_case_sensitive_lexical_order() {
         use robin_rs::multiplayer::content_identity::{
