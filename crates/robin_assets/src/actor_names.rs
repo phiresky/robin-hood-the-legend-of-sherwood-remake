@@ -667,7 +667,7 @@ fn sanitize_identifier(s: &str) -> String {
 }
 
 /// `"Femme_officier_8000023e"` → `"Femme_officier"`.
-fn sanitize_class_name(class: &str) -> String {
+pub(crate) fn sanitize_class_name(class: &str) -> String {
     let trimmed = match class.rsplit_once('_') {
         Some((head, tail)) if tail.len() == 8 && tail.chars().all(|c| c.is_ascii_hexdigit()) => {
             head
@@ -750,6 +750,26 @@ mod tests {
         assert_eq!(sanitize_class_name("Parchment_80000239"), "Parchment");
         assert_eq!(sanitize_class_name("PlainName"), "PlainName");
         assert_eq!(sanitize_class_name("Name_ghijklmn"), "Name_ghijklmn");
+    }
+
+    #[test]
+    fn class_lookup_names_match_slot_names_at_normalization_boundaries() {
+        for (class, expected) in [
+            ("__Scroll--Name___ABCDEF09", "Scroll_Name"),
+            ("Scroll_1234567", "Scroll_1234567"),
+            ("Scroll_123456789", "Scroll_123456789"),
+            ("Scroll_abcdefgh", "Scroll_abcdefgh"),
+            ("Scroll_12345678_abcdef09", "Scroll_12345678"),
+            ("éScroll 雪_80000239", "Scroll"),
+            ("123Scroll_80000239", "123Scroll"),
+        ] {
+            assert_eq!(sanitize_class_name(class), expected, "{class}");
+            assert_eq!(pick_base_name(Some(class), None).as_deref(), Some(expected));
+        }
+        for class in ["", "___", "_80000239"] {
+            assert_eq!(sanitize_class_name(class), "");
+            assert_eq!(pick_base_name(Some(class), None), None);
+        }
     }
 
     #[test]

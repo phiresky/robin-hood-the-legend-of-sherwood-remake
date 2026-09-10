@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Write};
 
-use crate::actor_names::{ActorNames, ScriptKind};
+use crate::actor_names::{ActorNames, ScriptKind, sanitize_class_name};
 use crate::scb::{ClassEntry, ScbFile};
 use robin_engine::natives::{native_name, native_signature_by_index};
 use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode};
@@ -1610,7 +1610,7 @@ fn build_scroll_popup_text_map(scb: &ScbFile, names: &ActorNames) -> HashMap<usi
             continue;
         }
         if let Some(id) = find_first_popup_text_id(class) {
-            by_sanitized.insert(sanitize_class_name_for_lookup(&class.class_name), id);
+            by_sanitized.insert(sanitize_class_name(&class.class_name), id);
         }
     }
     if by_sanitized.is_empty() {
@@ -1678,29 +1678,6 @@ fn strip_dedup_suffix(name: &str) -> &str {
     } else {
         name
     }
-}
-
-/// Mirror of `actor_names::sanitize_class_name` — reproduced here so
-/// we don't need to expose it from that module just for this lookup.
-fn sanitize_class_name_for_lookup(class: &str) -> String {
-    let trimmed = match class.rsplit_once('_') {
-        Some((head, tail)) if tail.len() == 8 && tail.chars().all(|c| c.is_ascii_hexdigit()) => {
-            head
-        }
-        _ => class,
-    };
-    let mut out = String::with_capacity(trimmed.len());
-    let mut last_underscore = false;
-    for c in trimmed.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c);
-            last_underscore = false;
-        } else if !last_underscore {
-            out.push('_');
-            last_underscore = true;
-        }
-    }
-    out.trim_matches('_').to_owned()
 }
 
 /// Header emitted once per file: alias every "semantic" type seen in
