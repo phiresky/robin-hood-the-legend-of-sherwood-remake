@@ -1101,7 +1101,12 @@ impl OptionsTaskState {
                 .pager
                 .page
                 .min(OptionsPager::page_count(total_settings) - 1);
-            let mut visible = settings[self.pager.visible_range(total_settings)].to_vec();
+            let range = self.pager.visible_range(total_settings);
+            let mut visible = settings
+                .into_iter()
+                .skip(range.start)
+                .take(range.len())
+                .collect::<Vec<_>>();
             visible.push(OptionRow {
                 action: OptionRowAction::PreviousPage,
                 label: "Previous Page".to_string(),
