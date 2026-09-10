@@ -402,6 +402,7 @@ fn bundle_recorded_audio(
     let bundles_dir = data_out.join("audio/bundles");
     fs::create_dir_all(&bundles_dir)?;
     let (mut bundled_files, mut bundle_count, mut bundled_bytes) = (0usize, 0usize, 0u64);
+    let mut prepared = Vec::with_capacity(members_by_group.len());
     for (group, members) in members_by_group {
         // BTreeMap iteration already sorted members by content-hash name.
         let mut bytes = Vec::new();
@@ -420,6 +421,12 @@ fn bundle_recorded_audio(
             .with_context(|| format!("write {bundle_rel}"))?;
         bundle_count += 1;
         bundled_bytes += bytes.len() as u64;
+        prepared.push((bundle_rel, members, offsets));
+    }
+    // All inputs and bundle outputs must succeed before changing catalog
+    // references or deleting any standalone source. Retain only metadata
+    // between phases, not every bundle's encoded bytes.
+    for (bundle_rel, members, offsets) in prepared {
         for (&file, offset) in members.iter().zip(offsets) {
             for logical in &file_refs[file].0 {
                 let asset = dd
@@ -429,6 +436,8 @@ fn bundle_recorded_audio(
                 asset.file = bundle_rel.clone();
                 asset.bundle_offset = Some(offset);
             }
+            // TODO: coordinate cleanup with final boot-index/manifest
+            // publication; per-file atomic writes are not a directory transaction.
             fs::remove_file(data_out.join(file))
                 .with_context(|| format!("remove bundled standalone {file}"))?;
             bundled_files += 1;
@@ -580,6 +589,49 @@ pub(super) fn write_shipping_dependency(
 #[cfg(test)]
 mod boot_trim_tests {
     use super::*;
+
+    #[test]
+    fn later_bundle_input_failure_keeps_original_catalog_and_sources() {
+        use robin_assets::shipping_datadir::ShippingAudioAsset;
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("audio/assets")).unwrap();
+        let mut dd = robin_assets::shipping_datadir::ShippingDatadir::default();
+        let mut groups = AudioAssetGroups::new();
+        for (name, bytes) in [("a", &b"a"[..]), ("z", &b"too long"[..])] {
+            let file = format!("audio/assets/{name}.opus");
+            fs::write(directory.path().join(&file), bytes).unwrap();
+            dd.audio_assets.insert(
+                name.to_owned(),
+                ShippingAudioAsset {
+                    file: file.clone(),
+                    encoded_size: 1,
+                    duration_ms: 123,
+                    bundle_offset: None,
+                },
+            );
+            groups.insert(file, [name.to_owned()].into());
+        }
+        let original = dd.audio_assets.clone();
+        let error = bundle_recorded_audio(&mut dd, directory.path(), groups).unwrap_err();
+        assert!(format!("{error:#}").contains("cataloged as 1"));
+        assert_eq!(dd.audio_assets, original);
+        assert_eq!(
+            fs::read(directory.path().join("audio/assets/a.opus")).unwrap(),
+            b"a"
+        );
+        assert_eq!(
+            fs::read(directory.path().join("audio/assets/z.opus")).unwrap(),
+            b"too long"
+        );
+        // An already completed output is harmless and can be overwritten on
+        // retry; the old catalog still references its intact standalone files.
+        assert_eq!(
+            fs::read_dir(directory.path().join("audio/bundles"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn recorded_audio_bundles_preserve_bytes_aliases_and_large_files() {
