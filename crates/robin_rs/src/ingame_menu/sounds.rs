@@ -14,6 +14,7 @@ use robin_engine::coordinates::ScreenBBox;
 use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
+use crate::options_model::SoundSetting;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{UiEvent, UiMsg, UiState};
@@ -42,6 +43,17 @@ const ID_SLIDER_BASE: u32 = 400; // 400..404 — one per volume slider
 /// Config's discrete volume range: 0..=9 inclusive, so 10 ticks.
 const SLIDER_STEPS: u32 = 10;
 const SLIDER_MAX: u16 = 9;
+
+const SOUND_SLIDERS: [(SoundSetting, usize); 5] = [
+    (SoundSetting::FxVolume, MT_STR_SOUND_VOL_FX),
+    (SoundSetting::DialogueVolume, MT_STR_SOUND_VOL_DIALOGUE),
+    (SoundSetting::MusicVolume, MT_STR_SOUND_VOL_MUSIC),
+    (SoundSetting::CommentVolume, MT_STR_SOUND_VOL_COMMENT),
+    (
+        SoundSetting::CommentFrequency,
+        MT_STR_SOUND_COMMENT_FREQUENCY,
+    ),
+];
 
 /// Display the sounds sub-screen.  Returns `true` on OK when anything changed.
 ///
@@ -182,47 +194,13 @@ pub async fn show_sounds(
     // ── Slider widgets ────────────────────────────────────────────
     // Same virtual rects the pre-widget version drew at; now they drive
     // hit-testing + drag state through `WidgetSlider`.
-    let slider_w = 200i32;
-    let slider_h = 16i32;
-    let slider_rects = [
-        MenuRect {
-            x: 30,
-            y: 290,
-            w: slider_w,
-            h: slider_h,
-        },
-        MenuRect {
-            x: 30,
-            y: 330,
-            w: slider_w,
-            h: slider_h,
-        },
-        MenuRect {
-            x: 30,
-            y: 370,
-            w: slider_w,
-            h: slider_h,
-        },
-        MenuRect {
-            x: 30,
-            y: 410,
-            w: slider_w,
-            h: slider_h,
-        },
-        MenuRect {
-            x: 30,
-            y: 450,
-            w: slider_w,
-            h: slider_h,
-        },
-    ];
-    let slider_labels = [
-        resources.menu_text.get(MT_STR_SOUND_VOL_FX),
-        resources.menu_text.get(MT_STR_SOUND_VOL_DIALOGUE),
-        resources.menu_text.get(MT_STR_SOUND_VOL_MUSIC),
-        resources.menu_text.get(MT_STR_SOUND_VOL_COMMENT),
-        resources.menu_text.get(MT_STR_SOUND_COMMENT_FREQUENCY),
-    ];
+    let slider_rects: [MenuRect; SOUND_SLIDERS.len()] = std::array::from_fn(|index| MenuRect {
+        x: 30,
+        y: 290 + index as i32 * 40,
+        w: 200,
+        h: 16,
+    });
+    let slider_labels = SOUND_SLIDERS.map(|(_, label)| resources.menu_text.get(label));
     for (i, rect) in slider_rects.iter().enumerate() {
         let mut slider = WidgetSlider::new(ID_SLIDER_BASE + i as u32);
         slider.base.bbox = ScreenBBox::from_coords(
@@ -457,7 +435,7 @@ pub async fn show_sounds(
 }
 
 fn is_slider_id(id: u32) -> bool {
-    (ID_SLIDER_BASE..ID_SLIDER_BASE + 5).contains(&id)
+    (ID_SLIDER_BASE..ID_SLIDER_BASE + SOUND_SLIDERS.len() as u32).contains(&id)
 }
 
 /// Forward to [`widget_bridge::play_widget_noise_tracked`] only when
@@ -498,18 +476,36 @@ fn slider_value(config: &SoundConfig, idx: usize) -> u16 {
         2 => config.music_volume,
         3 => config.exclamation_volume,
         4 => config.amount_of_speaking,
-        _ => 0,
+        _ => panic!("invalid sound slider index {idx}"),
     }
 }
 
 fn store_slider_value(config: &mut SoundConfig, idx: usize, value: u16) {
-    use crate::options_model::SoundSetting::*;
-    let settings = [
-        FxVolume,
-        DialogueVolume,
-        MusicVolume,
-        CommentVolume,
-        CommentFrequency,
-    ];
-    *crate::options_model::sound_value_mut(config, settings[idx]) = value.min(SLIDER_MAX);
+    *crate::options_model::sound_value_mut(config, SOUND_SLIDERS[idx].0) = value.min(SLIDER_MAX);
+}
+
+#[test]
+fn sound_slider_order_matches_numeric_settings_and_widget_ids() {
+    let mut config = SoundConfig::default();
+    for (index, (setting, _)) in SOUND_SLIDERS.iter().enumerate() {
+        store_slider_value(&mut config, index, index as u16 + 1);
+        assert_eq!(slider_value(&config, index), index as u16 + 1);
+        assert_eq!(
+            *crate::options_model::sound_value_mut(&mut config, *setting),
+            index as u16 + 1
+        );
+        assert!(is_slider_id(ID_SLIDER_BASE + index as u32));
+    }
+    assert!(!is_slider_id(ID_SLIDER_BASE - 1));
+    assert!(!is_slider_id(ID_SLIDER_BASE + SOUND_SLIDERS.len() as u32));
+    for index in 0..SOUND_SLIDERS.len() {
+        store_slider_value(&mut config, index, u16::MAX);
+        assert_eq!(slider_value(&config, index), SLIDER_MAX);
+    }
+}
+
+#[test]
+#[should_panic(expected = "invalid sound slider index")]
+fn invalid_sound_slider_index_is_not_a_zero_volume() {
+    slider_value(&SoundConfig::default(), SOUND_SLIDERS.len());
 }
