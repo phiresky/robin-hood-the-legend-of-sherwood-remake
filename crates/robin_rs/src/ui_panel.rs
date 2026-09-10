@@ -22,7 +22,9 @@ use robin_engine::engine::PresentationView;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
-use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormation};
+use robin_engine::tactical_control::{
+    CombatStance, TacticalDuty, TacticalFormation, TacticalPinnedGroup,
+};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -1353,40 +1355,56 @@ pub(crate) fn portrait_bar_items<'a>(
     seat: PlayerId,
     screen_width: u16,
 ) -> (Vec<PortraitBarItem<'a>>, bool) {
-    let mut all: Vec<_> = engine
-        .displayed_pc_ids()
-        .into_iter()
-        .map(|pc| PortraitBarItem {
-            target: PortraitTarget::Pc(pc),
-            members: Cow::Owned(vec![pc]),
+    build_portrait_page(
+        &engine.displayed_pc_ids(),
+        engine.tactical_pinned_groups(seat),
+        engine.tactical_selection(seat),
+        portrait_capacity(screen_width),
+        engine.tactical_first_visible_portrait(seat),
+    )
+}
+
+/// Construct only visible items, keeping heroes, pinned groups, and the
+/// optional transient selection in their established cyclic order.
+fn build_portrait_page<'a>(
+    pcs: &[EntityId],
+    groups: &'a [TacticalPinnedGroup],
+    selection: &'a [EntityId],
+    capacity: usize,
+    first_visible: usize,
+) -> (Vec<PortraitBarItem<'a>>, bool) {
+    let include_selection =
+        !selection.is_empty() && !groups.iter().any(|group| group.members == selection);
+    let count = pcs.len() + groups.len() + usize::from(include_selection);
+    let paged = count > capacity;
+    let offset = if paged { first_visible % count } else { 0 };
+    let items = (offset..count)
+        .chain(0..offset)
+        .take(capacity)
+        .map(|index| {
+            if let Some(&pc) = pcs.get(index) {
+                PortraitBarItem {
+                    target: PortraitTarget::Pc(pc),
+                    members: Cow::Owned(vec![pc]),
+                }
+            } else if let Some(group) = groups.get(index - pcs.len()) {
+                PortraitBarItem {
+                    target: PortraitTarget::AlliedGroup(group.id),
+                    members: Cow::Borrowed(&group.members),
+                }
+            } else {
+                assert!(
+                    include_selection,
+                    "portrait page index must refer to an existing item"
+                );
+                PortraitBarItem {
+                    target: PortraitTarget::AlliedSelection,
+                    members: Cow::Borrowed(selection),
+                }
+            }
         })
         .collect();
-    for group in engine.tactical_pinned_groups(seat) {
-        all.push(PortraitBarItem {
-            target: PortraitTarget::AlliedGroup(group.id),
-            members: Cow::Borrowed(&group.members),
-        });
-    }
-    let selection = engine.tactical_selection(seat);
-    if !selection.is_empty()
-        && !engine
-            .tactical_pinned_groups(seat)
-            .iter()
-            .any(|group| group.members == selection)
-    {
-        all.push(PortraitBarItem {
-            target: PortraitTarget::AlliedSelection,
-            members: Cow::Borrowed(selection),
-        });
-    }
-    let capacity = portrait_capacity(screen_width);
-    let paged = all.len() > capacity;
-    if paged {
-        let offset = engine.tactical_first_visible_portrait(seat) % all.len();
-        all.rotate_left(offset);
-        all.truncate(capacity);
-    }
-    (all, paged)
+    (items, paged)
 }
 
 fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
@@ -4129,6 +4147,80 @@ mod tests {
         );
     }
     use super::*;
+
+    #[test]
+    fn portrait_pages_match_rotate_then_truncate_without_copying_group_members() {
+        use robin_engine::entity_id::{PcId, SoldierId};
+        let pcs = [EntityId::Pc(PcId(1)), EntityId::Pc(PcId(2))];
+        let soldiers = [
+            EntityId::Soldier(SoldierId(7)),
+            EntityId::Soldier(SoldierId(8)),
+        ];
+        let groups = [
+            TacticalPinnedGroup {
+                id: 3,
+                members: soldiers.to_vec(),
+            },
+            TacticalPinnedGroup {
+                id: 4,
+                members: vec![soldiers[1]],
+            },
+        ];
+        let reversed = [soldiers[1], soldiers[0]];
+        for pc_count in 0..=pcs.len() {
+            for group_count in 0..=groups.len() {
+                let pcs = &pcs[..pc_count];
+                let groups = &groups[..group_count];
+                for selection in [&[][..], &soldiers[..], &reversed[..], &soldiers[1..]] {
+                    let mut all: Vec<_> = pcs
+                        .iter()
+                        .map(|&pc| (PortraitTarget::Pc(pc), vec![pc]))
+                        .collect();
+                    all.extend(groups.iter().map(|group| {
+                        (PortraitTarget::AlliedGroup(group.id), group.members.clone())
+                    }));
+                    if !selection.is_empty()
+                        && !groups.iter().any(|group| group.members == selection)
+                    {
+                        all.push((PortraitTarget::AlliedSelection, selection.to_vec()));
+                    }
+                    for capacity in 0..=6 {
+                        for first in [0, 1, 2, 3, 4, 5, 6, usize::MAX] {
+                            let mut expected = all.clone();
+                            let expected_paged = expected.len() > capacity;
+                            if expected_paged {
+                                let offset = first % expected.len();
+                                expected.rotate_left(offset);
+                                expected.truncate(capacity);
+                            }
+                            let (actual, paged) =
+                                build_portrait_page(pcs, groups, selection, capacity, first);
+                            assert_eq!(paged, expected_paged);
+                            let values: Vec<_> = actual
+                                .iter()
+                                .map(|item| (item.target, item.members.to_vec()))
+                                .collect();
+                            assert_eq!(values, expected);
+                            for item in actual {
+                                let source = match item.target {
+                                    PortraitTarget::Pc(_) => continue,
+                                    PortraitTarget::AlliedGroup(id) => groups
+                                        .iter()
+                                        .find(|group| group.id == id)
+                                        .unwrap()
+                                        .members
+                                        .as_slice(),
+                                    PortraitTarget::AlliedSelection => selection,
+                                };
+                                assert!(matches!(item.members, Cow::Borrowed(_)));
+                                assert_eq!(item.members.as_ptr(), source.as_ptr());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn portrait_capacity_tracks_available_width() {
