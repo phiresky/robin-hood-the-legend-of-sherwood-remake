@@ -284,11 +284,7 @@ fn sample_cache_key(files: &SbFileSystem, path: &Path) -> String {
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
 fn load_static_sound(files: &SbFileSystem, path: &Path) -> Result<StaticSoundData, String> {
-    let bytes = files
-        .read_all(&path.to_string_lossy())
-        .map_err(|status| format!("audio reader failed for {}: {status}", path.display()))?;
-    let bytes = repair_legacy_vorbis_comment(bytes)?;
-    StaticSoundData::from_cursor(Cursor::new(bytes)).map_err(|error| error.to_string())
+    StaticSoundData::from_cursor(read_audio_cursor(files, path)?).map_err(|error| error.to_string())
 }
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
@@ -296,11 +292,17 @@ fn load_streaming_sound(
     files: &SbFileSystem,
     path: &Path,
 ) -> Result<StreamingSoundData<FromFileError>, String> {
+    StreamingSoundData::from_cursor(read_audio_cursor(files, path)?)
+        .map_err(|error| error.to_string())
+}
+
+/// Both decoder modes use the supplied reader and the same legacy metadata repair.
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+fn read_audio_cursor(files: &SbFileSystem, path: &Path) -> Result<Cursor<Vec<u8>>, String> {
     let bytes = files
         .read_all(&path.to_string_lossy())
         .map_err(|status| format!("audio reader failed for {}: {status}", path.display()))?;
-    let bytes = repair_legacy_vorbis_comment(bytes)?;
-    StreamingSoundData::from_cursor(Cursor::new(bytes)).map_err(|error| error.to_string())
+    repair_legacy_vorbis_comment(bytes).map(Cursor::new)
 }
 
 // The original Sonic Foundry encoder wrote this bare encoder name as its sole
