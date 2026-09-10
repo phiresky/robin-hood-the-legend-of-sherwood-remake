@@ -204,6 +204,38 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn retiring_jobs_preserves_only_completed_products_and_always_cancels() {
+        for terminal in [None, Some(false), Some(true)] {
+            let previous = build_test(key(1), None);
+            let completed = build_test(key(2), None);
+            let job = LoadingJob::new(key(2));
+            match terminal {
+                Some(true) => job.finish(JobResult::Complete(completed.clone())),
+                Some(false) => job.finish(JobResult::Failed),
+                None => {}
+            }
+            let mut state = State {
+                ready: Some(previous.clone()),
+                loading: Some(job.clone()),
+                localized_epoch: 7,
+            };
+            state.retire_loading();
+            assert!(state.loading.is_none());
+            assert!(job.is_cancelled());
+            assert!(job.wait().is_none());
+            assert_eq!(state.localized_epoch, 7);
+            let expected = if terminal == Some(true) {
+                &completed
+            } else {
+                &previous
+            };
+            assert!(Arc::ptr_eq(state.ready.as_ref().unwrap(), expected));
+            state.retire_loading();
+            assert!(Arc::ptr_eq(state.ready.as_ref().unwrap(), expected));
+        }
+    }
+
+    #[test]
     fn application_owners_do_not_share_entries_or_invalidation() {
         let first = ApplicationAssetCache::default();
         let second = ApplicationAssetCache::default();
@@ -635,6 +667,19 @@ struct State {
     localized_epoch: u64,
 }
 
+impl State {
+    /// Retain completed products for possible stable-bank reuse, but prevent
+    /// this job from publishing after its key or locale epoch has changed.
+    fn retire_loading(&mut self) {
+        if let Some(job) = self.loading.take() {
+            if let Some(cache) = job.completed() {
+                self.ready = Some(cache);
+            }
+            job.cancel();
+        }
+    }
+}
+
 /// A job never retains its application owner. Cancellation wakes consumers
 /// immediately, even when an underlying asset read cannot be interrupted.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -786,12 +831,7 @@ impl ApplicationAssetCache {
             .localized_epoch
             .checked_add(1)
             .expect("asset cache epoch exhausted");
-        if let Some(job) = state.loading.take() {
-            if let Some(cache) = job.completed() {
-                state.ready = Some(cache);
-            }
-            job.cancel();
-        }
+        state.retire_loading();
     }
 
     pub fn start_background_warmup(
@@ -872,11 +912,7 @@ impl ApplicationAssetCache {
                 return cache.clone();
             }
             if state.loading.as_ref().is_some_and(|job| job.key != key) {
-                let stale = state.loading.take().expect("checked active cache job");
-                if let Some(cache) = stale.completed() {
-                    state.ready = Some(cache);
-                }
-                stale.cancel();
+                state.retire_loading();
             }
             let stable = state
                 .ready
