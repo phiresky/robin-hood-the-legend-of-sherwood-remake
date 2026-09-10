@@ -116,6 +116,48 @@ fn frame_drain_continues_only_after_a_decoded_frame() {
     }
 }
 
+#[cfg(all(test, feature = "video"))]
+#[test]
+fn rgba_scaling_reuses_storage_and_overwrites_previous_pixels() {
+    use ffmpeg_next::{format::Pixel, frame::Video, software::scaling};
+    let mut input = Video::new(Pixel::RGB24, 3, 2);
+    let mut output = Video::empty();
+    let mut scaler = scaling::Context::get(
+        Pixel::RGB24,
+        3,
+        2,
+        Pixel::RGBA,
+        3,
+        2,
+        scaling::Flags::BILINEAR,
+    )
+    .unwrap();
+    let mut output_pointer = None;
+    for color in [[255, 0, 0], [0, 128, 255], [4, 5, 6]] {
+        let stride = input.stride(0);
+        input.data_mut(0).fill(0);
+        for y in 0..2 {
+            for x in 0..3 {
+                input.data_mut(0)[y * stride + x * 3..y * stride + x * 3 + 3]
+                    .copy_from_slice(&color);
+            }
+        }
+        scaler.run(&input, &mut output).unwrap();
+        let pointer = output.data(0).as_ptr();
+        assert_eq!(*output_pointer.get_or_insert(pointer), pointer);
+        assert_eq!((output.width(), output.height()), (3, 2));
+        let stride = output.stride(0);
+        for y in 0..2 {
+            for x in 0..3 {
+                assert_eq!(
+                    &output.data(0)[y * stride + x * 4..y * stride + x * 4 + 4],
+                    &[color[0], color[1], color[2], 255],
+                );
+            }
+        }
+    }
+}
+
 /// Play a cutscene video file.
 ///
 /// Decodes Ogg Theora video + Vorbis audio via `ffmpeg-next`, blits
@@ -299,6 +341,10 @@ pub async fn play_video(
     // ── Main decode / display loop ──────────────────────────────────
     let wall_start = web_time::Instant::now();
     let mut skipped = false;
+    // receive_frame releases the previous decoded frame; the fixed-size scaler
+    // overwrites and reuses its RGBA allocation throughout this cutscene.
+    let mut frame = ffmpeg_next::frame::Video::empty();
+    let mut rgba = ffmpeg_next::frame::Video::empty();
     'pump: for (stream, packet) in ictx.packets() {
         if poll_skip(window) {
             skipped = true;
@@ -311,9 +357,7 @@ pub async fn play_video(
             tracing::warn!(%error, "Skipping rejected cutscene video packet");
             continue;
         }
-        let mut frame = ffmpeg_next::frame::Video::empty();
         while decoded_frame_available(video_dec.receive_frame(&mut frame), "video") {
-            let mut rgba = ffmpeg_next::frame::Video::empty();
             if let Err(error) = scaler.run(&frame, &mut rgba) {
                 tracing::warn!(%error, "Skipping cutscene video frame after scaling failure");
                 continue;
