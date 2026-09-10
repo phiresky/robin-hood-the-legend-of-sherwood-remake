@@ -126,15 +126,7 @@ impl DiscoveredMod {
 /// picker unavailable.
 pub fn scan_mods_dir(mods_root: &Path) -> Vec<DiscoveredMod> {
     let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(mods_root) else {
-        tracing::info!(
-            "scan_mods_dir: {} not readable, no custom missions available",
-            mods_root.display()
-        );
-        return out;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for path in discovery_paths(mods_root) {
         if !path.is_dir() {
             continue;
         }
@@ -154,6 +146,29 @@ pub fn scan_mods_dir(mods_root: &Path) -> Vec<DiscoveredMod> {
     }
     out.sort_by(|a, b| a.details.title.cmp(&b.details.title));
     out
+}
+
+/// Missing optional roots are ordinary discovery misses. Other failures remain
+/// best-effort too, but must not hide the reason installed content was omitted.
+fn discovery_paths(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => Some(entries),
+        Err(error) => {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                tracing::info!(path = %root.display(), "mod discovery directory is absent");
+            } else {
+                tracing::warn!(path = %root.display(), %error, "cannot read mod discovery directory");
+            }
+            None
+        }
+    };
+    entries.into_iter().flatten().filter_map(move |entry| match entry {
+        Ok(entry) => Some(entry.path()),
+        Err(error) => {
+            tracing::warn!(path = %root.display(), %error, "skipping unreadable mod discovery entry");
+            None
+        }
+    })
 }
 
 /// Combine installed and bundled discovery without scanning an identical root
@@ -776,10 +791,7 @@ fn mount_for_launch_inner(
 /// locally renamed ZIPs are accepted too. Extension matching ignores ASCII
 /// case; filename ordering does not. Missing or empty directories yield `None`.
 pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
-    fs::read_dir(lib_dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
+    discovery_paths(lib_dir)
         .filter(|p| {
             p.is_file()
                 && p.file_name()
@@ -792,6 +804,16 @@ pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_treats_non_directory_roots_as_unavailable() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("not-a-directory");
+        fs::write(&file, b"not a directory").unwrap();
+        assert!(discovery_paths(&file).next().is_none());
+        assert!(scan_mods_dir(&file).is_empty());
+        assert_eq!(find_lib_zip(&file), None);
+    }
 
     #[test]
     fn language_labels_keep_first_data_levels_pair_and_borrow_its_predecessor() {
