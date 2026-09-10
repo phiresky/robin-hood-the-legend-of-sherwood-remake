@@ -414,9 +414,16 @@ impl TrueTypeFont {
     /// Sum of per-character advances. Truncate each advance before adding,
     /// matching the legacy metrics rather than rounding the final total.
     pub fn get_string_width_total(&self, chars: impl IntoIterator<Item = u32>) -> i32 {
+        let scaled = self
+            .font
+            .as_ref()
+            .map(|font| font.as_scaled(self.px_scale()));
         chars
             .into_iter()
-            .map(|ch| self.get_char_width_total(ch) as i32)
+            .map(|ch| match (&scaled, char::from_u32(ch)) {
+                (Some(font), Some(ch)) => font.h_advance(font.glyph_id(ch)) as u32 as i32,
+                _ => 0,
+            })
             .sum()
     }
 
@@ -756,6 +763,31 @@ mod tests {
         assert_eq!(font.get_char_width_total(0xd800), 0);
         assert_eq!(font.get_char_width_total(u32::MAX), 0);
         assert_eq!(TrueTypeFont::new_invalid().get_string_width_total(chars), 0);
+    }
+
+    #[test]
+    fn string_measurement_matches_individual_advances_at_multiple_sizes() {
+        let mut font = make_test_font();
+        let codes = [0, 32, 65, 86, 105, 0x301, 0x4E2D, 0x1F600, 0xDFFF, 0x110000];
+        for height in [0, 1, 7, 12, 19, 48, 127] {
+            font.height = height;
+            let expected: i32 = codes
+                .iter()
+                .map(|&code| font.get_char_width_total(code) as i32)
+                .sum();
+            assert_eq!(
+                font.get_string_width_total(codes),
+                expected,
+                "height {height}"
+            );
+        }
+        let mut consumed = 0;
+        let missing = TrueTypeFont::new_invalid();
+        assert_eq!(
+            missing.get_string_width_total(codes.into_iter().inspect(|_| consumed += 1)),
+            0
+        );
+        assert_eq!(consumed, codes.len());
     }
 
     #[test]
