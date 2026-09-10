@@ -187,46 +187,45 @@ impl KiraAudioBackend {
         channel
     }
 
-    /// Get-or-create the spatial sub-track for a channel slot, set its
-    /// position, and return a mutable handle. Returns `None` if track
-    /// allocation fails.
+    /// Get-or-create the spatial sub-track for a channel slot and update its
+    /// position. Allocation failures retain the backend error for the caller.
     fn ensure_spatial_track(
         &mut self,
         idx: usize,
         pos: [f32; 3],
-    ) -> Option<&mut SpatialTrackHandle> {
+    ) -> Result<&mut SpatialTrackHandle, crate::sound::PlaybackError> {
         let mint_pos = mint::Vector3 {
             x: pos[0],
             y: pos[1],
             z: pos[2],
         };
-        if self.spatial_tracks[idx].is_none() {
-            let listener_id = self.listener.id();
-            let track = self
-                .manager
-                .as_mut()
-                .expect("live Kira backend lost its AudioManager")
-                .add_spatial_sub_track(
-                    listener_id,
-                    mint_pos,
-                    // Distance attenuation is already baked into our
-                    // per-sound volume by `SoundGeometry`, so we
-                    // disable kira's built-in falloff and let the
-                    // spatial track only contribute panning.
-                    SpatialTrackBuilder::new().attenuation_function(None),
-                )
-                .map_err(
-                    |error| tracing::warn!(idx, %error, "kira spatial track allocation failed"),
-                )
-                .ok()?;
-            self.spatial_tracks[idx] = Some(track);
-        } else {
-            self.spatial_tracks[idx]
-                .as_mut()
-                .unwrap()
-                .set_position(mint_pos, Tween::default());
+        let slot = &mut self.spatial_tracks[idx];
+        match slot {
+            Some(track) => {
+                track.set_position(mint_pos, Tween::default());
+                Ok(track)
+            }
+            None => {
+                let track = self
+                    .manager
+                    .as_mut()
+                    .expect("live Kira backend lost its AudioManager")
+                    .add_spatial_sub_track(
+                        self.listener.id(),
+                        mint_pos,
+                        // SoundGeometry already supplies distance attenuation;
+                        // the spatial track contributes panning only.
+                        SpatialTrackBuilder::new().attenuation_function(None),
+                    )
+                    .map_err(|error| {
+                        tracing::warn!(idx, %error, "kira spatial track allocation failed");
+                        crate::sound::PlaybackError::Backend(format!(
+                            "spatial track allocation failed: {error}"
+                        ))
+                    })?;
+                Ok(slot.insert(track))
+            }
         }
-        self.spatial_tracks[idx].as_mut()
     }
 
     fn resolve_music_path(files: &SbFileSystem, path: &str) -> Result<PathBuf, String> {
@@ -419,8 +418,7 @@ impl AudioBackend for KiraAudioBackend {
         let data = self.load_sample(request.asset)?;
         let data = prepare_sample(data, request.fraction, request.looping, request.volume);
         let handle = if let Some(position) = request.spatial_position {
-            self.ensure_spatial_track(idx, position)
-                .ok_or_else(|| PlaybackError::Backend("spatial track allocation failed".into()))?
+            self.ensure_spatial_track(idx, position)?
                 .play(data)
                 .map_err(|error| PlaybackError::Backend(error.to_string()))?
         } else {
