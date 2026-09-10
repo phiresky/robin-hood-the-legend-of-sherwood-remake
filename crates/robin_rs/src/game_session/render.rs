@@ -545,8 +545,7 @@ fn begin_screenshot_rgba(
     request: &crate::http_server::ScreenshotRequest,
     ctx: &mut RenderContext<'_>,
 ) -> Result<crate::renderer::PendingCapture, String> {
-    let mut scratch_dev = dev.clone();
-    crate::http_server::apply_screenshot_flags(&mut scratch_dev.debug, &request.flags);
+    let scratch_dev = crate::rpc_screenshot::screenshot_dev_state(dev, &request.flags);
 
     if request.full_map {
         begin_wide_map_rgba(

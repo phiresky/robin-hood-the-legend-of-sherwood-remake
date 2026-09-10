@@ -6,6 +6,19 @@ pub(crate) fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
     !request.hide_ui && !request.full_map && request.flags == ScreenshotFlags::default()
 }
 
+/// Borrow unchanged developer state; isolate request-local overrides in a clone.
+pub(crate) fn screenshot_dev_state<'a>(
+    dev: &'a engine_api::DevState,
+    flags: &ScreenshotFlags,
+) -> std::borrow::Cow<'a, engine_api::DevState> {
+    if *flags == ScreenshotFlags::default() {
+        return std::borrow::Cow::Borrowed(dev);
+    }
+    let mut snapshot = dev.clone();
+    apply_screenshot_flags(&mut snapshot.debug, flags);
+    std::borrow::Cow::Owned(snapshot)
+}
+
 /// Merge a request's `Some(x)` overrides onto `debug`, mutating in
 /// place.  Apply this to a **cloned** `DevState` so the live state
 /// stays untouched — the caller keeps the original and passes the
@@ -148,6 +161,32 @@ fn screenshot_target_dimensions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn screenshot_state_borrows_without_overrides_and_isolates_explicit_false() {
+        let mut live = engine_api::DevState::default();
+        live.debug.fps_display = true;
+        live.debug.noise_display = true;
+        live.noise_display_start_radius = 42;
+        let unchanged = super::screenshot_dev_state(&live, &ScreenshotFlags::default());
+        assert!(matches!(unchanged, std::borrow::Cow::Borrowed(_)));
+        assert!(std::ptr::eq(unchanged.as_ref(), &live));
+
+        let flags = ScreenshotFlags {
+            fps: Some(false),
+            entity_ids: Some(true),
+            ..Default::default()
+        };
+        let changed = super::screenshot_dev_state(&live, &flags);
+        assert!(matches!(changed, std::borrow::Cow::Owned(_)));
+        assert!(!changed.debug.fps_display);
+        assert!(changed.debug.entity_ids);
+        assert!(changed.debug.noise_display);
+        assert_eq!(changed.noise_display_start_radius, 42);
+        assert!(live.debug.fps_display);
+        assert!(!live.debug.entity_ids);
+        assert!(live.debug.noise_display);
+    }
+
     use super::*;
 
     #[test]
