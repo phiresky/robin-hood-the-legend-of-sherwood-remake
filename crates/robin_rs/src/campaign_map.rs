@@ -1369,19 +1369,74 @@ fn progress_text(
     layout::render_text_virt_font(renderer, font, transform, &text, x, y);
 }
 
-fn fit_progress_text(font: &Font, text: &str, width: i32) -> String {
+fn fit_progress_text<'a>(font: &Font, text: &'a str, width: i32) -> std::borrow::Cow<'a, str> {
+    fit_progress_text_by(text, width, |candidate| font.text_width(candidate))
+}
+
+fn fit_progress_text_by(
+    text: &str,
+    width: i32,
+    measure: impl Fn(&str) -> i32,
+) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
     use unicode_segmentation::UnicodeSegmentation;
-    if font.text_width(text) <= width {
-        return text.to_owned();
+
+    if measure(text) <= width {
+        return Cow::Borrowed(text);
     }
-    let mut end = text.len();
+    let mut candidate = String::with_capacity(text.len() + 3);
+    candidate.push_str(text);
+    candidate.push_str("...");
     for (index, _) in text.grapheme_indices(true).rev() {
-        end = index;
-        if font.text_width(&format!("{}...", &text[..end])) <= width {
+        candidate.truncate(index);
+        candidate.push_str("...");
+        if measure(&candidate) <= width {
             break;
         }
     }
-    format!("{}...", &text[..end])
+    // Preserve the campaign view's marker even when the width cannot fit it.
+    Cow::Owned(candidate)
+}
+
+#[test]
+fn progress_text_fitting_borrows_labels_and_preserves_grapheme_truncation() {
+    use std::borrow::Cow;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let measure = |text: &str| text.chars().count() as i32;
+    for text in ["", "abc", "e\u{0301}clair", "👩‍💻🏹ab", "a b c"] {
+        for width in -1..=measure(text) + 4 {
+            // Reference the previous reverse scan, including its too-small-width policy.
+            let expected = if measure(text) <= width {
+                text.to_owned()
+            } else {
+                let mut end = text.len();
+                for (index, _) in text.grapheme_indices(true).rev() {
+                    end = index;
+                    if measure(&format!("{}...", &text[..end])) <= width {
+                        break;
+                    }
+                }
+                format!("{}...", &text[..end])
+            };
+            let actual = fit_progress_text_by(text, width, measure);
+            assert_eq!(actual, expected, "{text:?}, {width}");
+            if measure(text) <= width {
+                assert!(matches!(actual, Cow::Borrowed(_)));
+                assert_eq!(actual.as_ptr(), text.as_ptr());
+            }
+        }
+    }
+}
+
+#[test]
+fn progress_text_fitting_measures_complete_marked_candidates() {
+    let result = fit_progress_text_by("abcd", 2, |candidate| match candidate {
+        "abcd" | "abc..." => 10,
+        "ab..." => 2,
+        _ => panic!("the reverse scan should stop on the first fitting candidate"),
+    });
+    assert_eq!(result, "ab...");
 }
 
 fn progress_button(
