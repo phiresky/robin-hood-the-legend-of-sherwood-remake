@@ -393,15 +393,15 @@ fn allied_portrait_tooltip(
     seat: robin_engine::player_command::PlayerId,
     hit: PortraitHit,
 ) -> String {
-    let members: Vec<_> = match hit.target {
-        PortraitTarget::AlliedSelection => engine.tactical_selection(seat).to_vec(),
+    let members = match hit.target {
+        PortraitTarget::AlliedSelection => engine.tactical_selection(seat),
         PortraitTarget::AlliedGroup(group_id) => engine
             .tactical_pinned_groups(seat)
             .iter()
             .find(|group| group.id == group_id)
             .unwrap_or_else(|| panic!("tooltip references missing allied group {group_id}"))
             .members
-            .clone(),
+            .as_slice(),
         PortraitTarget::Pc(_) => panic!("allied tooltip requested for PC portrait"),
     };
     let order = members

@@ -706,14 +706,14 @@ fn on_portrait_click(
 
     if !matches!(hit.target, PortraitTarget::Pc(_)) {
         let members = match hit.target {
-            PortraitTarget::AlliedSelection => engine.tactical_selection(local_seat).to_vec(),
+            PortraitTarget::AlliedSelection => engine.tactical_selection(local_seat),
             PortraitTarget::AlliedGroup(group_id) => engine
                 .tactical_pinned_groups(local_seat)
                 .iter()
                 .find(|group| group.id == group_id)
                 .unwrap_or_else(|| panic!("portrait references missing allied group {group_id}"))
                 .members
-                .clone(),
+                .as_slice(),
             PortraitTarget::Pc(_) => unreachable!(),
         };
         match hit.area {
@@ -734,7 +734,7 @@ fn on_portrait_click(
                     .map_or(CombatStance::Defensive, |order| order.stance)
                     .next();
                 let cmd = PlayerCommand::SetCombatStance {
-                    soldiers: members,
+                    soldiers: members.to_vec(),
                     stance,
                 };
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
@@ -744,7 +744,8 @@ fn on_portrait_click(
                     .first()
                     .and_then(|id| engine.tactical_order(*id))
                     .map_or(TacticalFormation::Line, |order| order.formation);
-                host.frontend.arm_tactical_patrol(members, formation);
+                host.frontend
+                    .arm_tactical_patrol(members.to_vec(), formation);
             }
             PortraitHitArea::AlliedAction(2) => {
                 let formation = members
@@ -753,7 +754,7 @@ fn on_portrait_click(
                     .map_or(TacticalFormation::Line, |order| order.formation)
                     .next();
                 let cmd = PlayerCommand::SetTacticalFormation {
-                    soldiers: members,
+                    soldiers: members.to_vec(),
                     formation,
                 };
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
@@ -765,7 +766,7 @@ fn on_portrait_click(
                     host,
                     engine,
                     local_seat,
-                    &members,
+                    members,
                     shift_held || ctrl_held,
                     hit.area,
                 );
