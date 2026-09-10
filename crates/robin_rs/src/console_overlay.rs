@@ -212,11 +212,7 @@ impl ConsoleOverlay {
             // Drop any in-progress edit when we close, so reopening
             // doesn't surprise the user with old text.  History is
             // preserved.
-            self.input.clear();
-            self.cursor = 0;
-            self.history_cursor = None;
-            self.history_saved_input = None;
-            self.completion = None;
+            self.reset_edit_session();
         }
         self.caret_timer = 0;
         self.scroll_from_bottom = 0;
@@ -226,16 +222,22 @@ impl ConsoleOverlay {
     pub fn close(&mut self) -> bool {
         if self.visible {
             self.visible = false;
-            self.input.clear();
-            self.cursor = 0;
-            self.history_cursor = None;
-            self.history_saved_input = None;
-            self.completion = None;
-            self.scroll_from_bottom = 0;
+            self.reset_edit_session();
             true
         } else {
             false
         }
+    }
+
+    /// Drop the current edit and browsing state, preserving submitted
+    /// history, output, visibility, animation, and pending command effects.
+    fn reset_edit_session(&mut self) {
+        self.input.clear();
+        self.cursor = 0;
+        self.history_cursor = None;
+        self.history_saved_input = None;
+        self.completion = None;
+        self.scroll_from_bottom = 0;
     }
 
     /// Process events while the console is visible.
@@ -450,11 +452,7 @@ impl ConsoleOverlay {
     ) {
         let line = std::mem::take(&mut self.input);
         let trimmed = line.trim();
-        self.cursor = 0;
-        self.history_cursor = None;
-        self.history_saved_input = None;
-        self.completion = None;
-        self.scroll_from_bottom = 0;
+        self.reset_edit_session();
         if trimmed.is_empty() {
             return;
         }
@@ -778,12 +776,7 @@ impl ConsoleOverlay {
         if self.pending_close {
             self.pending_close = false;
             self.visible = false;
-            self.input.clear();
-            self.cursor = 0;
-            self.history_cursor = None;
-            self.history_saved_input = None;
-            self.completion = None;
-            self.scroll_from_bottom = 0;
+            self.reset_edit_session();
             true
         } else {
             false
@@ -921,6 +914,53 @@ mod tests {
         c.toggle();
         assert!(c.close());
         assert!(!c.is_visible());
+    }
+
+    #[test]
+    fn closing_paths_reset_edits_without_discarding_history_or_command_effects() {
+        for path in 0..3 {
+            let mut c = ConsoleOverlay {
+                visible: true,
+                input: "unfinished".into(),
+                cursor: 3,
+                cmd_history: vec!["HELP".into()],
+                output: VecDeque::from([OutputLine::Response("kept".into())]),
+                history_cursor: Some(0),
+                history_saved_input: Some("draft".into()),
+                completion: Some(CompletionCycle {
+                    prefix: "h".into(),
+                    index: 2,
+                    use_final: false,
+                }),
+                scroll_from_bottom: 4,
+                caret_timer: 17,
+                pending_close: true,
+                pending_load_campaign: Some("campaign.sav".into()),
+                pending_deity_invoked: true,
+            };
+            match path {
+                0 => assert!(!c.toggle()),
+                1 => assert!(c.close()),
+                2 => assert!(c.take_pending_close()),
+                _ => unreachable!(),
+            }
+            assert!(!c.visible);
+            assert!(c.input.is_empty());
+            assert_eq!(c.cursor, 0);
+            assert!(c.history_cursor.is_none());
+            assert!(c.history_saved_input.is_none());
+            assert!(c.completion.is_none());
+            assert_eq!(c.scroll_from_bottom, 0);
+            assert_eq!(c.caret_timer, if path == 0 { 0 } else { 17 });
+            assert_eq!(c.cmd_history, ["HELP"]);
+            assert!(matches!(c.output.front(), Some(OutputLine::Response(text)) if text == "kept"));
+            assert_eq!(c.pending_close, path != 2);
+            assert_eq!(
+                c.pending_load_campaign.as_deref(),
+                Some(std::path::Path::new("campaign.sav"))
+            );
+            assert!(c.pending_deity_invoked);
+        }
     }
 
     #[test]
