@@ -30,8 +30,13 @@ pub(crate) fn elide_text_to_width_by(
     if !force_marker && measure(text) <= max_width {
         return text.to_owned();
     }
-    if force_marker && measure(&format!("{text}{ELLIPSIS}")) <= max_width {
-        return format!("{text}{ELLIPSIS}");
+    let mut candidate = String::new();
+    if force_marker {
+        candidate.push_str(text);
+        candidate.push_str(ELLIPSIS);
+        if measure(&candidate) <= max_width {
+            return candidate;
+        }
     }
 
     let mut fit_end = 0usize;
@@ -40,13 +45,21 @@ pub(crate) fn elide_text_to_width_by(
         .map(|(index, _)| index)
         .chain(std::iter::once(text.len()))
     {
-        let candidate = format!("{}{ELLIPSIS}", text[..boundary].trim_end());
+        candidate.clear();
+        candidate.push_str(text[..boundary].trim_end());
+        candidate.push_str(ELLIPSIS);
         if measure(&candidate) > max_width {
             break;
         }
         fit_end = boundary;
     }
-    format!("{}{ELLIPSIS}", text[..fit_end].trim_end())
+    candidate.clear();
+    candidate.push_str(text[..fit_end].trim_end());
+    candidate.push_str(ELLIPSIS);
+    // A rejected full string or large grapheme can leave substantial scratch
+    // capacity. Do not retain that storage with the much shorter result.
+    candidate.shrink_to_fit();
+    candidate
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1727,6 +1740,37 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn text_elision_preserves_measurement_order_and_whitespace_policy() {
+        for (text, budget, force, expected, measured) in [
+            (
+                "ab cd",
+                4,
+                false,
+                "ab…",
+                vec!["…", "ab cd", "…", "a…", "ab…", "ab…", "ab c…"],
+            ),
+            ("a ", 5, true, "a …", vec!["…", "a …"]),
+            (
+                "a bc",
+                3,
+                true,
+                "a…",
+                vec!["…", "a bc…", "…", "a…", "a…", "a b…"],
+            ),
+            ("é", 1, false, "é", vec!["…", "é"]),
+            ("anything", 0, false, "", vec![]),
+        ] {
+            let calls = std::cell::RefCell::new(Vec::new());
+            let output = super::elide_text_to_width_by(text, budget, force, |candidate| {
+                calls.borrow_mut().push(candidate.to_owned());
+                candidate.chars().count() as i32
+            });
+            assert_eq!(output, expected);
+            assert_eq!(*calls.borrow(), measured);
+        }
+    }
+
     use super::*;
 
     #[test]
