@@ -110,13 +110,19 @@ impl ScrollView {
     fn axis(&self, x: i32, y: i32) -> i32 {
         if self.horizontal { x } else { y }
     }
+    fn track_origin(&self) -> (i32, i32) {
+        if self.horizontal {
+            (
+                self.bounds[0],
+                self.bounds[1] + self.bounds[3] - self.scrollbar_width,
+            )
+        } else {
+            (self.bounds[0] + self.content_width(), self.bounds[1])
+        }
+    }
     fn in_track(&self, x: i32, y: i32) -> bool {
-        self.contains(x, y)
-            && if self.horizontal {
-                y >= self.bounds[1] + self.bounds[3] - self.scrollbar_width
-            } else {
-                x >= self.bounds[0] + self.content_width()
-            }
+        let (track_x, track_y) = self.track_origin();
+        self.contains(x, y) && x >= track_x && y >= track_y
     }
     pub fn visible_count(&self) -> usize {
         (self.length() / self.row_height) as usize
@@ -249,14 +255,7 @@ impl ScrollView {
         skin: &[Option<MenuSurface>; 6],
     ) {
         if self.max_offset() > 0 {
-            let (x, y) = if self.horizontal {
-                (
-                    self.bounds[0],
-                    self.bounds[1] + self.bounds[3] - self.scrollbar_width,
-                )
-            } else {
-                (self.bounds[0] + self.content_width(), self.bounds[1])
-            };
+            let (x, y) = self.track_origin();
             widget_bridge::draw_scrollbar_slices(
                 renderer,
                 transform,
@@ -290,6 +289,44 @@ mod tests {
             drag_grab: None,
         }
     }
+    #[test]
+    fn track_origin_and_hit_testing_share_horizontal_and_vertical_boundaries() {
+        for horizontal in [false, true] {
+            for width in [1, 16, 23] {
+                let mut v =
+                    ScrollView::with_geometry([-10, 20, 200, 103], 20, width, 16, horizontal);
+                let expected_origin = if horizontal {
+                    (-10, 123 - width)
+                } else {
+                    (190 - width, 20)
+                };
+                assert_eq!(v.track_origin(), expected_origin);
+                for total in [0, 1, 100] {
+                    v.set_total(total);
+                    for x in [-11, -10, 189 - width, 190 - width, 189, 190] {
+                        for y in [19, 20, 122 - width, 123 - width, 122, 123] {
+                            let inside = (-10..190).contains(&x) && (20..123).contains(&y);
+                            let expected = inside
+                                && if horizontal {
+                                    y >= 123 - width
+                                } else {
+                                    x >= 190 - width
+                                };
+                            assert_eq!(
+                                v.in_track(x, y),
+                                expected,
+                                "{horizontal}, {width}, {total}, ({x}, {y})"
+                            );
+                            if expected {
+                                assert_eq!(v.row_at(x, y), None);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn horizontal_view_uses_x_for_dragging_and_a_bottom_scrollbar() {
         let mut v = ScrollView::with_geometry([30, 40, 400, 100], 100, 16, 16, true);
