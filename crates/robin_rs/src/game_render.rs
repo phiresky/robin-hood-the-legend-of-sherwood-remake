@@ -12,7 +12,7 @@ use crate::ingame_menu::layout;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{GroundPoint, MapPoint};
+use robin_engine::coordinates::{GroundPoint, MapPoint, SpriteAnchor, SpriteFrameOffset};
 use robin_engine::element as engine_element;
 use robin_engine::element::{ElementKind, Entity, OutlineColorName, Posture, RenderingProperties};
 use robin_engine::engine as engine_api;
@@ -1391,12 +1391,14 @@ pub(crate) fn render_entities_gpu(
             //   screen_xy   = (blit_origin - view) * zoom
             // The floor() in world space (before zoom) is critical for
             // pixel-perfect alignment.
-            let center = &sprite.center;
-            let offset = script.offsets[frame as usize];
-            let sprite_x = (world_x - center.x).floor() + offset.x;
-            let sprite_y = (world_y - center.y).floor() + offset.y;
-            let dst_x = ((sprite_x - view.x) * zoom) as i32;
-            let dst_y = ((sprite_y - view.y) * zoom) as i32;
+            let placement = sprite_placement(
+                MapPoint::new(world_x, world_y),
+                sprite.center,
+                script.offsets[frame as usize],
+                view,
+                zoom,
+            );
+            let (dst_x, dst_y) = placement.screen_origin;
 
             let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
             let kind = entity.kind();
@@ -1445,10 +1447,16 @@ pub(crate) fn render_entities_gpu(
                 // Render the vanishing ghost at the pre-teleport
                 // position first, so the appearing sprite stacks on
                 // top.
-                let ghost_x = (before.x - center.x).floor() + offset.x;
-                let ghost_y = (before.y - center.y).floor() + offset.y;
-                let ghost_dst_x = ((ghost_x - view.x) * zoom) as i32;
-                let ghost_dst_y = ((ghost_y - view.y) * zoom) as i32;
+                let ghost = sprite_placement(
+                    before,
+                    sprite.center,
+                    script.offsets[frame as usize],
+                    view,
+                    zoom,
+                );
+                let (ghost_dst_x, ghost_dst_y) = ghost.screen_origin;
+                let ghost_x = ghost.world_origin.x;
+                let ghost_y = ghost.world_origin.y;
                 let ghost_rect = zoomed_sprite_rect(ghost_dst_x, ghost_dst_y, sw, sh, zoom);
                 let ghost_draw_checkpoint = renderer.draw_queue_checkpoint();
                 renderer.render_cached_sprite_alpha(
@@ -1548,10 +1556,10 @@ pub(crate) fn render_entities_gpu(
             // pixels reappear in front of the actor; elsewhere the
             // texture is transparent and the sprite stays visible.
             let sprite_world_bbox = engine_coordinates::MapBBox::from_coords(
-                sprite_x,
-                sprite_y,
-                sprite_x + sw as f32,
-                sprite_y + sh as f32,
+                placement.world_origin.x,
+                placement.world_origin.y,
+                placement.world_origin.x + sw as f32,
+                placement.world_origin.y + sh as f32,
             );
             let actor_position = engine_coordinates::MapPoint::new(world_x, world_y);
             // The mask lookup switches between
@@ -1914,12 +1922,14 @@ pub(crate) fn render_selection_outlines_gpu(
         }
 
         // Sprite-position calculation (same as render_entities_gpu).
-        let center = &sprite.center;
-        let offset = script.offsets[frame as usize];
-        let sprite_x = (world_x - center.x).floor() + offset.x;
-        let sprite_y = (world_y - center.y).floor() + offset.y;
-        let dst_x = ((sprite_x - view.x) * zoom) as i32;
-        let dst_y = ((sprite_y - view.y) * zoom) as i32;
+        let placement = sprite_placement(
+            MapPoint::new(world_x, world_y),
+            sprite.center,
+            script.offsets[frame as usize],
+            view,
+            zoom,
+        );
+        let (dst_x, dst_y) = placement.screen_origin;
 
         if let Some((ow, oh)) = renderer.ensure_outline_cached(
             host.frontend.resources.frame_holder(),
@@ -2080,12 +2090,14 @@ fn render_fx_entities_gpu<I>(
             shadow_color,
             shadow_level,
         ) {
-            let center = &sprite.center;
-            let offset = script.offsets[frame as usize];
-            let sprite_x = (world_x - center.x).floor() + offset.x;
-            let sprite_y = (world_y - center.y).floor() + offset.y;
-            let dst_x = ((sprite_x - view.x) * zoom) as i32;
-            let dst_y = ((sprite_y - view.y) * zoom) as i32;
+            let placement = sprite_placement(
+                MapPoint::new(world_x, world_y),
+                sprite.center,
+                script.offsets[frame as usize],
+                view,
+                zoom,
+            );
+            let (dst_x, dst_y) = placement.screen_origin;
 
             let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
             renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
@@ -2201,4 +2213,59 @@ fn render_frame_lookup_preserves_active_rows_and_rejects_missing_frames() {
     sprite.current_row = 0;
     sprite.use_alternate_profile = true;
     assert!(current_render_frame(&sprite).is_none());
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct SpritePlacement {
+    world_origin: MapPoint,
+    screen_origin: (i32, i32),
+}
+
+/// Floor the sprite anchor in world space before zoom, then truncate screen pixels.
+fn sprite_placement(
+    position: MapPoint,
+    center: SpriteAnchor,
+    offset: SpriteFrameOffset,
+    view: MapPoint,
+    zoom: f32,
+) -> SpritePlacement {
+    let x = (position.x - center.x).floor() + offset.x;
+    let y = (position.y - center.y).floor() + offset.y;
+    SpritePlacement {
+        world_origin: MapPoint::new(x, y),
+        screen_origin: (((x - view.x) * zoom) as i32, ((y - view.y) * zoom) as i32),
+    }
+}
+
+#[test]
+fn sprite_origin_preserves_floor_before_zoom_and_signed_truncation() {
+    for (zoom, expected) in [
+        (0.5, (4, 0)),
+        (1.0, (9, -1)),
+        (1.5, (14, -2)),
+        (2.0, (19, -3)),
+    ] {
+        assert_eq!(
+            sprite_placement(
+                MapPoint::new(10.75, -2.25),
+                SpriteAnchor::new(0.5, 0.5),
+                SpriteFrameOffset::new(0.25, 0.75),
+                MapPoint::new(0.5, -0.5),
+                zoom,
+            )
+            .screen_origin,
+            expected,
+        );
+    }
+    assert_eq!(
+        sprite_placement(
+            MapPoint::ZERO,
+            SpriteAnchor::new(0.25, 0.25),
+            SpriteFrameOffset::ZERO,
+            MapPoint::ZERO,
+            0.5,
+        )
+        .screen_origin,
+        (0, 0),
+    );
 }
