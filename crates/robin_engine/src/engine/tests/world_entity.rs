@@ -362,6 +362,73 @@ fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiContro
 }
 
 #[test]
+fn enemy_ai_hero_rejects_soldier_speech_without_invalid_timing_or_stuck_latch() {
+    use crate::ai::{AiSpeechAttempt, Remark, SpeechFlags, StimulusType};
+    use crate::element::{ActorPc, AiActorData, AiBrain, PcData};
+
+    // Panic is soldier remark 46: the Windows battle recordings attempted
+    // Robin group 0x4852002e, which does not exist in the hero voice bank.
+    assert_eq!(Remark::Panic as u32, 46);
+    for remark in [Remark::Panic, Remark::SeesEnemy, Remark::VipWarcry] {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(Entity::Pc(ActorPc {
+            pc: PcData {
+                ai: Some(Box::new(AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            element: {
+                let mut element = crate::element::ElementData::default();
+                element.kind = crate::element::ElementKind::ActorPc;
+                element
+            },
+            actor: Default::default(),
+            human: Default::default(),
+        }));
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(crate::profiles::CharacterProfile {
+                exclamation_id: 0x4852_0000,
+                ..Default::default()
+            });
+        let flags = SpeechFlags::ALWAYS | SpeechFlags::HOUSE | SpeechFlags::MYTALK_1;
+        let settlement = engine.settle_npc_speech_attempt(
+            &assets,
+            owner,
+            AiSpeechAttempt {
+                remark,
+                flags: flags.bits(),
+            },
+        );
+        assert!(settlement.invoke_finished_callback);
+        assert_eq!(last_speech_impossible(&engine, owner), Some(11));
+        assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+        assert_eq!(exclamation_for(&engine, owner), None);
+        let ai = mytalk_ai(&engine, owner);
+        assert_eq!(ai.current_remark, remark);
+        assert_eq!(ai.outbox.reentrant.self_stimuli.len(), 1);
+        assert_eq!(
+            ai.outbox.reentrant.self_stimuli[0].stimulus_type,
+            StimulusType::EventMyTalk1
+        );
+        engine.finalize_category_speech_rejection(
+            owner,
+            settlement
+                .category_rejection
+                .expect("hero voice category rejection"),
+        );
+        assert_eq!(
+            mytalk_ai(&engine, owner).current_remark,
+            Remark::TheSoundOfSilence
+        );
+        assert_eq!(mytalk_ai(&engine, owner).current_remark_flags, 0);
+    }
+}
+
+#[test]
 fn enemy_ai_hero_speech_completion_clears_enemy_ai_latch() {
     use crate::ai::Remark;
     use crate::element::{ActorPc, AiActorData, AiBrain, ElementData, ElementKind, PcData};
