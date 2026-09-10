@@ -26,9 +26,9 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
 use robin_engine::sprite as engine_sprite;
 
-use crate::ingame_menu::layout::{
-    BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
-};
+use crate::ingame_menu::layout::button_sprite_state;
+#[cfg(test)]
+use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED};
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids::{RHID_CLOCK, RHID_QUICKSTART, RHID_SIGHT};
@@ -213,7 +213,7 @@ impl CornerHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
+use crate::hud_sprite::SpriteFrame;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -302,20 +302,7 @@ pub struct CornerButtonSprites {
 impl CornerButtonSprites {
     pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
         let banks = [&mut self.clock, &mut self.sight, &mut self.quickstart];
-        for bank in &banks {
-            for (upload, _, _) in bank.iter().flatten() {
-                renderer
-                    .validate_surface_retirement(upload)
-                    .expect("HUD bank belongs to its renderer");
-            }
-        }
-        for bank in banks {
-            for frame in bank {
-                if let Some((upload, _, _)) = frame.take() {
-                    renderer.retire_surface(upload);
-                }
-            }
-        }
+        crate::hud_sprite::retire(renderer, banks);
     }
 
     /// Load button sprites from the attached DEFAULT.RES.  Walks
@@ -382,10 +369,7 @@ impl CornerButtonSprites {
         state: usize,
     ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
         let frames = self.frames(btn);
-        frames[state]
-            .as_ref()
-            .or(frames[BTN_STATE_NORMAL].as_ref())
-            .map(|(upload, w, h)| (upload.handle(), *w, *h))
+        crate::hud_sprite::frame(frames, state)
     }
 
     pub fn clock_size(&self) -> Option<(u16, u16)> {
@@ -401,12 +385,7 @@ impl CornerButtonSprites {
     }
 
     fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
-        frames[BTN_STATE_NORMAL]
-            .as_ref()
-            .or(frames[BTN_STATE_HOVER].as_ref())
-            .or(frames[BTN_STATE_PRESSED].as_ref())
-            .or(frames[BTN_STATE_DISABLED].as_ref())
-            .map(|(_, w, h)| (*w, *h))
+        crate::hud_sprite::size(frames)
     }
 }
 

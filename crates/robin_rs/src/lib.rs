@@ -222,6 +222,7 @@ pub mod hardware;
 pub mod host;
 pub mod host_mouse;
 pub mod http_server;
+pub mod hud_sprite;
 pub mod hud_text;
 pub mod level_loading_host;
 pub mod mission_asset_launch;

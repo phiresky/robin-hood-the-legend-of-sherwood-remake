@@ -24,9 +24,9 @@
 use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::sprite as engine_sprite;
 
-use crate::ingame_menu::layout::{
-    BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
-};
+#[cfg(test)]
+use crate::ingame_menu::layout::BTN_STATE_PRESSED;
+use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, button_sprite_state};
 use crate::native_font::Font;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
@@ -308,7 +308,7 @@ impl SherwoodHudLayout {
     }
 }
 
-type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
+use crate::hud_sprite::SpriteFrame;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -410,20 +410,7 @@ impl SherwoodButtonSprites {
             &mut self.quit_mission,
             &mut self.sherwood_trading,
         ];
-        for bank in &banks {
-            for (upload, _, _) in bank.iter().flatten() {
-                renderer
-                    .validate_surface_retirement(upload)
-                    .expect("HUD bank belongs to its renderer");
-            }
-        }
-        for bank in banks {
-            for frame in bank {
-                if let Some((upload, _, _)) = frame.take() {
-                    renderer.retire_surface(upload);
-                }
-            }
-        }
+        crate::hud_sprite::retire(renderer, banks);
     }
 
     /// Load button sprites from the attached DEFAULT.RES.  Missing
@@ -516,20 +503,12 @@ impl SherwoodButtonSprites {
         } else {
             state
         };
-        frames[state]
-            .as_ref()
-            .or(frames[BTN_STATE_NORMAL].as_ref())
-            .map(|(upload, w, h)| (upload.handle(), *w, *h))
+        crate::hud_sprite::frame(frames, state)
     }
 
     fn size(&self, btn: SherwoodButton) -> Option<(u16, u16)> {
         let frames = self.frames(btn);
-        frames[BTN_STATE_NORMAL]
-            .as_ref()
-            .or(frames[BTN_STATE_HOVER].as_ref())
-            .or(frames[BTN_STATE_PRESSED].as_ref())
-            .or(frames[BTN_STATE_DISABLED].as_ref())
-            .map(|(_, w, h)| (*w, *h))
+        crate::hud_sprite::size(frames)
     }
 }
 

@@ -24,9 +24,9 @@ use robin_engine::sprite as engine_sprite;
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
 use robin_engine::resource_ids::{RHID_DOWN_ARROW, RHID_UP_ARROW};
 
-use crate::ingame_menu::layout::{
-    BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
-};
+use crate::ingame_menu::layout::button_sprite_state;
+#[cfg(test)]
+use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED};
 use crate::native_font::Font;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
@@ -256,7 +256,7 @@ impl StatureHudLayout {
     }
 }
 
-type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
+use crate::hud_sprite::SpriteFrame;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
@@ -324,20 +324,7 @@ pub struct StatureSprites {
 impl StatureSprites {
     pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
         let banks = [&mut self.up, &mut self.down];
-        for bank in &banks {
-            for (upload, _, _) in bank.iter().flatten() {
-                renderer
-                    .validate_surface_retirement(upload)
-                    .expect("HUD bank belongs to its renderer");
-            }
-        }
-        for bank in banks {
-            for frame in bank {
-                if let Some((upload, _, _)) = frame.take() {
-                    renderer.retire_surface(upload);
-                }
-            }
-        }
+        crate::hud_sprite::retire(renderer, banks);
     }
 
     /// Walk the four button-state sub-ids for each arrow resource.
@@ -386,10 +373,7 @@ impl StatureSprites {
         state: usize,
     ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
         let f = self.frames(btn);
-        f[state]
-            .as_ref()
-            .or(f[BTN_STATE_NORMAL].as_ref())
-            .map(|(upload, w, h)| (upload.handle(), *w, *h))
+        crate::hud_sprite::frame(f, state)
     }
 
     pub fn up_size(&self) -> Option<(u16, u16)> {
@@ -401,12 +385,7 @@ impl StatureSprites {
     }
 
     fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
-        frames[BTN_STATE_NORMAL]
-            .as_ref()
-            .or(frames[BTN_STATE_HOVER].as_ref())
-            .or(frames[BTN_STATE_PRESSED].as_ref())
-            .or(frames[BTN_STATE_DISABLED].as_ref())
-            .map(|(_, w, h)| (*w, *h))
+        crate::hud_sprite::size(frames)
     }
 }
 
