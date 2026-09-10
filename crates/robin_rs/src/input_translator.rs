@@ -668,33 +668,30 @@ impl InputTranslator {
                     actions.push(GameAction::ZoomIn);
                 }
 
-                // Action slots
-                if key_released(keys, prev, self.key(GameKey::Action1)) {
-                    actions.push(GameAction::SelectAction { index: 0 });
-                }
-                if key_released(keys, prev, self.key(GameKey::Action2)) {
-                    actions.push(GameAction::SelectAction { index: 1 });
-                }
-                if key_released(keys, prev, self.key(GameKey::Action3)) {
-                    actions.push(GameAction::SelectAction { index: 2 });
+                // Action slots precede portrait selection, including when bindings overlap.
+                for (key, index) in [GameKey::Action1, GameKey::Action2, GameKey::Action3]
+                    .into_iter()
+                    .zip(0u8..)
+                {
+                    if key_released(keys, prev, self.key(key)) {
+                        actions.push(GameAction::SelectAction { index });
+                    }
                 }
 
-                // Character selection (portrait index 0–4).
-                // We just emit the index — the caller resolves the entity.
-                if key_released(keys, prev, self.key(GameKey::SelectCharacter1)) {
-                    actions.push(GameAction::SelectCharacter { portrait_index: 0 });
-                }
-                if key_released(keys, prev, self.key(GameKey::SelectCharacter2)) {
-                    actions.push(GameAction::SelectCharacter { portrait_index: 1 });
-                }
-                if key_released(keys, prev, self.key(GameKey::SelectCharacter3)) {
-                    actions.push(GameAction::SelectCharacter { portrait_index: 2 });
-                }
-                if key_released(keys, prev, self.key(GameKey::SelectCharacter4)) {
-                    actions.push(GameAction::SelectCharacter { portrait_index: 3 });
-                }
-                if key_released(keys, prev, self.key(GameKey::SelectCharacter5)) {
-                    actions.push(GameAction::SelectCharacter { portrait_index: 4 });
+                // The caller resolves portrait indices to entities.
+                for (key, portrait_index) in [
+                    GameKey::SelectCharacter1,
+                    GameKey::SelectCharacter2,
+                    GameKey::SelectCharacter3,
+                    GameKey::SelectCharacter4,
+                    GameKey::SelectCharacter5,
+                ]
+                .into_iter()
+                .zip(0u8..)
+                {
+                    if key_released(keys, prev, self.key(key)) {
+                        actions.push(GameAction::SelectCharacter { portrait_index });
+                    }
                 }
             }
         }
@@ -913,6 +910,57 @@ mod tests {
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
         assert!(!actions.contains(&GameAction::SelectAll));
+    }
+
+    #[test]
+    fn overlapping_slot_bindings_emit_every_index_in_action_then_portrait_order() {
+        for flags in [TranslationFlags::ALL, TranslationFlags::empty()] {
+            for locked in [false, true] {
+                let mut translator = make_translator();
+                for (_, binding) in translator.bindings.iter_mut() {
+                    *binding = None;
+                }
+                for key in [
+                    GameKey::Action1,
+                    GameKey::Action2,
+                    GameKey::Action3,
+                    GameKey::SelectCharacter1,
+                    GameKey::SelectCharacter2,
+                    GameKey::SelectCharacter3,
+                    GameKey::SelectCharacter4,
+                    GameKey::SelectCharacter5,
+                ] {
+                    translator.set_binding(key, Some(KeyCode::KeyG));
+                }
+                translator.set_user_locked(locked);
+                let held = keys_down(&[KeyCode::KeyG]);
+                assert!(translator.translate_keyboard(&held, flags).is_empty());
+                assert!(translator.translate_keyboard(&held, flags).is_empty());
+                let expected = if !locked && flags.contains(TranslationFlags::MISSION) {
+                    vec![
+                        GameAction::SelectAction { index: 0 },
+                        GameAction::SelectAction { index: 1 },
+                        GameAction::SelectAction { index: 2 },
+                        GameAction::SelectCharacter { portrait_index: 0 },
+                        GameAction::SelectCharacter { portrait_index: 1 },
+                        GameAction::SelectCharacter { portrait_index: 2 },
+                        GameAction::SelectCharacter { portrait_index: 3 },
+                        GameAction::SelectCharacter { portrait_index: 4 },
+                    ]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(
+                    translator.translate_keyboard(&BTreeSet::new(), flags),
+                    expected
+                );
+                assert!(
+                    translator
+                        .translate_keyboard(&BTreeSet::new(), flags)
+                        .is_empty()
+                );
+            }
+        }
     }
 
     #[test]
