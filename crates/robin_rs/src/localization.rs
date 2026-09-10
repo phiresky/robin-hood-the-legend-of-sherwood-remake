@@ -395,16 +395,9 @@ impl LocalizationService {
                 .find(|pack| locale_eq(&pack.locale, locale))
         });
 
-        if let Err(change) = install_file_lookup(active, &self.installed, shipping, files) {
-            if let Err(rollback) = install_file_lookup(previous, &self.installed, shipping, files) {
-                return Err(LocalizationError::Rollback {
-                    change: Box::new(change),
-                    rollback: Box::new(rollback),
-                });
-            }
-            return Err(change);
-        }
-        if let Err(change) = persist_preferences(&self.store, &next_preferences) {
+        let change = install_file_lookup(active, &self.installed, shipping, files)
+            .and_then(|()| persist_preferences(&self.store, &next_preferences));
+        if let Err(change) = change {
             if let Err(rollback) = install_file_lookup(previous, &self.installed, shipping, files) {
                 return Err(LocalizationError::Rollback {
                     change: Box::new(change),
@@ -1781,6 +1774,49 @@ mod tests {
             );
             assert!(!locale_prefers_truetype(&files), "{language:?}");
         }
+    }
+
+    #[test]
+    fn failed_preference_publication_restores_reader_and_keeps_service_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preferences-is-a-directory");
+        std::fs::create_dir(&path).unwrap();
+        let files = Arc::new(SbFileSystem::new(Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        let mut service = LocalizationService::disabled();
+        service.files = Some(files.clone());
+        service.store = PreferenceStore::Native(path.clone());
+        service.installed = ["en-US", "de-DE"]
+            .map(|locale| LanguagePack {
+                locale: locale.into(),
+                native_name: locale.into(),
+                data_root: String::new(),
+                has_voice: false,
+                has_cinematics: false,
+                voice_uses_english_fallback: false,
+                cinematics_use_english_fallback: false,
+                mission_names: Default::default(),
+            })
+            .to_vec();
+        service.active_locale = Some("en-US".into());
+        service.active_data_root = Some(String::new());
+        install_file_lookup(
+            Some(&service.installed[0]),
+            &service.installed,
+            None,
+            &files,
+        )
+        .unwrap();
+        let before = serde_json::to_value(&service).unwrap();
+        assert!(matches!(
+            service.set_selection(LanguageSelection::Locale("de-DE".into()), None),
+            Err(LocalizationError::PersistPreferences { .. })
+        ));
+        assert_eq!(serde_json::to_value(&service).unwrap(), before);
+        assert_eq!(files.presentation_locale().as_deref(), Some("en-US"));
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]
