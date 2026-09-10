@@ -226,7 +226,7 @@ impl LoadPickerModalState {
         match self.controller.take_action() {
             Some(PickerAction::Cancel) => return Some(SaveLoadOutcome::Cancel),
             Some(PickerAction::Accept(PickerTarget::Existing(name))) => {
-                match save_manager.find_by_filename(name.as_str()) {
+                match self.model.visible_slot_index(&name) {
                     Some(slot) => return Some(SaveLoadOutcome::Slot(slot)),
                     None => self
                         .model

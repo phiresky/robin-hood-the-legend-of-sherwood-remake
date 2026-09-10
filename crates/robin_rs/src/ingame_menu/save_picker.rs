@@ -99,6 +99,14 @@ impl PickerModel {
         self.slots.iter().map(|slot| slot.manager_index).collect()
     }
 
+    /// Resolve an identity only within the latest filtered storage snapshot.
+    pub fn visible_slot_index(&self, name: &SlotName) -> Option<usize> {
+        self.slots
+            .iter()
+            .find(|slot| &slot.name == name)
+            .map(|slot| slot.manager_index)
+    }
+
     pub fn selected_row(&self) -> Option<ListRow> {
         match &self.selection {
             None => None,
@@ -376,6 +384,23 @@ mod tests {
         let save = PickerModel::new(SaveLoadMode::Save, false, 3, rows);
         assert_eq!(save.visible(), vec![1]);
         assert_eq!(save.selected_row(), Some(ListRow::New));
+    }
+
+    #[test]
+    fn visible_identity_lookup_tracks_manager_indices_and_filtering() {
+        let name = SlotName::new("Savegame_001").unwrap();
+        let mut picker = model();
+        assert_eq!(picker.visible_slot_index(&name), Some(1));
+        picker.refresh(vec![slot("Savegame_001", 7), slot("Savegame_000", 2)]);
+        assert_eq!(picker.visible_slot_index(&name), Some(7));
+        let mut hidden = slot("Savegame_001", 9);
+        hidden.hidden_from_load = true;
+        picker.refresh(vec![hidden, slot("Savegame_000", 2)]);
+        assert_eq!(picker.visible_slot_index(&name), None);
+        assert_eq!(
+            picker.visible_slot_index(&SlotName::new("Savegame_099").unwrap()),
+            None
+        );
     }
 
     #[test]

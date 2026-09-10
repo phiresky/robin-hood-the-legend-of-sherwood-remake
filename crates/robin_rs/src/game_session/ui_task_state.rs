@@ -1639,9 +1639,9 @@ impl SaveLoadTaskState {
                 }
                 PickerTarget::Existing(name) => {
                     self.refresh(manager);
-                    let slot = manager
-                        .find_by_filename(name.as_str())
-                        .filter(|slot| self.model.visible().contains(slot))
+                    let slot = self
+                        .model
+                        .visible_slot_index(&name)
                         .ok_or_else(|| "the selected save is no longer available".to_string())?;
                     if self.mode == SaveLoadMode::Save {
                         let text = accepted_name(
