@@ -1970,12 +1970,24 @@ pub fn is_selected_unit_swordfighting(
     engine: &engine_api::PresentationView<'_>,
     local_seat: PlayerId,
 ) -> bool {
-    selected_units(engine, local_seat).into_iter().any(|id| {
-        engine
-            .get_entity(id)
-            .and_then(|entity| entity.human_data())
-            .is_some_and(|human| !human.opponents.is_empty())
-    })
+    first_selected_swordfighter(engine, local_seat).is_some()
+}
+
+/// Borrow the first engaged selection in hero-then-tactical order.
+pub(crate) fn first_selected_swordfighter<'world>(
+    engine: &engine_api::PresentationView<'world>,
+    local_seat: PlayerId,
+) -> Option<&'world Entity> {
+    engine
+        .hero_selection(local_seat)
+        .iter()
+        .chain(engine.tactical_selection(local_seat))
+        .filter_map(|&id| engine.get_entity(id))
+        .find(|entity| {
+            entity
+                .human_data()
+                .is_some_and(|human| !human.opponents.is_empty())
+        })
 }
 
 fn sword_strike_target_is_in_same_sector(
@@ -3535,6 +3547,27 @@ mod tests {
 
         let cmds = resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(50.0, 50.0), true);
         assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn swordfighter_query_borrows_only_an_engaged_selected_entity() {
+        let (mut engine, assets, _) = fixture();
+        let idle = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
+        let opponent = add_soldier(&mut engine, 20.0, 20.0, 100);
+        let allied = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
+        assert!(first_selected_swordfighter(&engine.presentation_view(), PlayerId(0)).is_none());
+        select(&mut engine, &assets, idle);
+        assert!(first_selected_swordfighter(&engine.presentation_view(), PlayerId(0)).is_none());
+        select_allied(&mut engine, &assets, allied);
+        assert!(std::ptr::eq(
+            first_selected_swordfighter(&engine.presentation_view(), PlayerId(0)).unwrap(),
+            engine.get_entity(allied).unwrap()
+        ));
+        apply(&mut engine, &assets, PlayerCommand::ClearTacticalSelection);
+        assert!(!is_selected_unit_swordfighting(
+            &engine.presentation_view(),
+            PlayerId(0)
+        ));
     }
 
     #[test]

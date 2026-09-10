@@ -22,15 +22,12 @@ pub fn render(
     renderer: &mut Renderer,
     fonts: Option<&HudFonts>,
 ) {
-    let swordfighting = crate::game_input::is_selected_unit_swordfighting(engine, local_seat);
-    if swordfighting
-        && frontend
-            .preferences()
-            .gameplay_config()
-            .show_combat_gesture_guide
+    if frontend
+        .preferences()
+        .gameplay_config()
+        .show_combat_gesture_guide
+        && let Some(facing) = first_selected_swordfighter_direction(engine, local_seat)
     {
-        let facing = first_selected_swordfighter_direction(engine, local_seat)
-            .unwrap_or(ScreenVec::new(0.0, -1.0));
         render_guide(renderer, fonts, engine.more_combat_gestures(), facing);
     }
 
@@ -61,24 +58,14 @@ fn first_selected_swordfighter_direction(
     engine: &PresentationView<'_>,
     local_seat: PlayerId,
 ) -> Option<ScreenVec> {
-    engine
-        .hero_selection(local_seat)
-        .iter()
-        .chain(engine.tactical_selection(local_seat))
-        .filter_map(|id| engine.get_entity(*id))
-        .find(|entity| {
-            entity
-                .human_data()
-                .is_some_and(|human| !human.opponents.is_empty())
-        })
-        .map(|entity| {
-            let direction =
-                crate::shadow_polygon::sector_to_direction(entity.element_data().direction());
-            ScreenVec::new(
-                direction[0],
-                direction[1] * crate::shadow_polygon::ASPECT_RATIO,
-            )
-        })
+    crate::game_input::first_selected_swordfighter(engine, local_seat).map(|entity| {
+        let direction =
+            crate::shadow_polygon::sector_to_direction(entity.element_data().direction());
+        ScreenVec::new(
+            direction[0],
+            direction[1] * crate::shadow_polygon::ASPECT_RATIO,
+        )
+    })
 }
 
 fn render_guide(
