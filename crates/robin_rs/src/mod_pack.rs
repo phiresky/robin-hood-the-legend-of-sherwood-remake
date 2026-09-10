@@ -15,7 +15,7 @@
 //! Lua / Spellforge runtime support is the job of a separate agent —
 //! this module is purely concerned with discovery and file-system layering.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -341,9 +341,9 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                 ));
                 continue;
             }
-            let (mut archive, entry_names) =
+            let (mut archive, directory) =
                 match open_mission_zip(&zip_path).and_then(|mut archive| {
-                    let names = archive_entry_names(&mut archive)?;
+                    let names = archive_directory(&mut archive)?;
                     Ok((archive, names))
                 }) {
                     Ok(inspected) => inspected,
@@ -357,7 +357,7 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                         continue;
                     }
                 };
-            let rhm_entries = selectable_rhm_entries(&entry_names);
+            let rhm_entries = selectable_rhm_entries(&directory.names);
             if rhm_entries.is_empty() {
                 out.push(broken_entry(
                     m,
@@ -376,7 +376,7 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                 let basename = rhm_basename(&rhm_zip_entry);
                 let expected_mounted_rhm =
                     format!("data/levels/{}.rhm", basename.to_ascii_lowercase());
-                let status = match selected_mission_layout(&entry_names, &rhm_zip_entry)
+                let status = match selected_mission_layout(&directory.names, &rhm_zip_entry)
                     .and_then(|layout| {
                         if layout.mounted_rhm_path != expected_mounted_rhm {
                             return Err(format!(
@@ -384,7 +384,7 @@ pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<M
                                 layout.mounted_rhm_path
                             ));
                         }
-                        peek_rhm_header(&mut archive, &rhm_zip_entry)
+                        peek_rhm_header(&mut archive, &directory, &rhm_zip_entry)
                     })
                 {
                     Ok(header) => MissionStatus::Ok {
@@ -496,8 +496,8 @@ fn mission_language_label(zip_entry: &str) -> Option<&str> {
 /// central-directory order silently choose one.
 pub fn list_rhm_in_zip(zip_path: &Path) -> Result<Vec<String>, String> {
     let mut archive = open_mission_zip(zip_path)?;
-    let entry_names = archive_entry_names(&mut archive)?;
-    Ok(selectable_rhm_entries(&entry_names))
+    let directory = archive_directory(&mut archive)?;
+    Ok(selectable_rhm_entries(&directory.names))
 }
 
 fn selectable_rhm_entries(entry_names: &[String]) -> Vec<String> {
@@ -515,17 +515,33 @@ fn open_mission_zip(zip_path: &Path) -> Result<zip::ZipArchive<fs::File>, String
     zip::ZipArchive::new(file).map_err(|e| format!("not a zip: {e}"))
 }
 
-fn archive_entry_names(archive: &mut zip::ZipArchive<fs::File>) -> Result<Vec<String>, String> {
-    let mut entry_names: Vec<String> = Vec::with_capacity(archive.len());
+/// One inspected central directory: display paths retain their spelling,
+/// while lookup follows the overlay's normalized first-entry-wins policy.
+#[derive(Debug, Serialize, Deserialize)]
+struct ArchiveDirectory {
+    names: Vec<String>,
+    indices: HashMap<String, usize>,
+}
+
+fn archive_directory(archive: &mut zip::ZipArchive<fs::File>) -> Result<ArchiveDirectory, String> {
+    let mut directory = ArchiveDirectory {
+        names: Vec::with_capacity(archive.len()),
+        indices: HashMap::with_capacity(archive.len()),
+    };
     for i in 0..archive.len() {
         let entry = archive
             .by_index_raw(i)
             .map_err(|e| format!("entry {i}: {e}"))?;
         if !entry.is_dir() && !entry.name().is_empty() {
-            entry_names.push(entry.name().replace('\\', "/"));
+            let name = entry.name().replace('\\', "/");
+            directory
+                .indices
+                .entry(name.to_ascii_lowercase())
+                .or_insert(i);
+            directory.names.push(name);
         }
     }
-    Ok(entry_names)
+    Ok(directory)
 }
 
 /// Exact selected archive layout reported by author tooling and used by the
@@ -542,8 +558,8 @@ pub fn selected_mission_layout_in_zip(
     rhm_entry: &str,
 ) -> Result<SelectedMissionLayout, String> {
     let mut archive = open_mission_zip(zip_path)?;
-    let entries = archive_entry_names(&mut archive)?;
-    selected_mission_layout(&entries, rhm_entry)
+    let directory = archive_directory(&mut archive)?;
+    selected_mission_layout(&directory.names, rhm_entry)
 }
 
 fn selected_mission_layout(
@@ -580,7 +596,8 @@ pub struct RhmHeader {
 pub fn peek_rhm_header_in_zip(zip_path: &Path, rhm_entry: &str) -> Result<RhmHeader, String> {
     let file = fs::File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("not a zip: {e}"))?;
-    peek_rhm_header(&mut archive, rhm_entry)
+    let directory = archive_directory(&mut archive)?;
+    peek_rhm_header(&mut archive, &directory, rhm_entry)
 }
 
 // Outer wrapper, header wrapper, control CRC, ambiance, then a u16 byte length.
@@ -589,20 +606,17 @@ const RHM_HEADER_PREFIX_LEN: usize = RHM_NAME_LENGTH_OFFSET + 2;
 
 fn peek_rhm_header(
     archive: &mut zip::ZipArchive<fs::File>,
+    directory: &ArchiveDirectory,
     rhm_entry: &str,
 ) -> Result<RhmHeader, String> {
     // Match the overlay index: slash-normalized ASCII-insensitive paths,
     // with the first central-directory entry winning any aliases. Exact
     // by_name lookup can otherwise inspect different bytes than gameplay.
-    let normalized = rhm_entry.replace('\\', "/");
-    let index = (0..archive.len())
-        .find(|&index| {
-            archive
-                .name_for_index(index)
-                .expect("ZIP index within archive length")
-                .replace('\\', "/")
-                .eq_ignore_ascii_case(&normalized)
-        })
+    let normalized = rhm_entry.replace('\\', "/").to_ascii_lowercase();
+    let index = directory
+        .indices
+        .get(&normalized)
+        .copied()
         .ok_or_else(|| format!("entry {rhm_entry}: not found in archive"))?;
     let mut entry = archive
         .by_index(index)
@@ -887,10 +901,12 @@ mod tests {
         writer.start_file("notes.txt", options).unwrap();
         writer.finish().unwrap();
         let mut archive = open_mission_zip(&path).unwrap();
-        assert_eq!(
-            archive_entry_names(&mut archive).unwrap(),
-            ["Data/Levels/Test.rhm", "notes.txt"]
-        );
+        let directory = archive_directory(&mut archive).unwrap();
+        assert_eq!(directory.names, ["Data/Levels/Test.rhm", "notes.txt"]);
+        // Omitting the directory from display names must not renumber ZIP entries.
+        assert_eq!(directory.indices["data/levels/test.rhm"], 1);
+        assert_eq!(directory.indices["notes.txt"], 2);
+        assert!(!directory.indices.contains_key("data/levels/"));
         assert_eq!(list_rhm_in_zip(&path).unwrap(), ["Data/Levels/Test.rhm"]);
     }
 
