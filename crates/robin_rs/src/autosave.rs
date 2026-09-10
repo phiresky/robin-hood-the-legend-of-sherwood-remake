@@ -98,8 +98,9 @@ impl AutosaveManifest {
 }
 
 /// Fully captured write request. Engine state is cloned on the game thread;
-/// serialization and persistence happen on the single writer.
-#[derive(Clone, Serialize, Deserialize)]
+/// serialization and persistence happen on the single writer. Transfer the job
+/// into its queue; duplicating it would copy the entire captured game state.
+#[derive(Serialize, Deserialize)]
 struct AutosaveJob {
     capture_sequence: u32,
     save_directory: String,
