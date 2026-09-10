@@ -267,7 +267,7 @@ impl Default for WidgetBase {
 impl WidgetBase {
     /// Initialize the widget.
     pub fn create(&mut self, text: &str, bbox: ScreenBBox, flags: u32) {
-        self.text = text.to_string();
+        text.clone_into(&mut self.text);
         self.bbox = bbox;
         self.flags = flags;
         self.created = true;
@@ -292,12 +292,12 @@ impl WidgetBase {
     }
 
     pub fn set_text(&mut self, text: &str) {
-        self.text = text.to_string();
+        text.clone_into(&mut self.text);
         self.renderer.set_text(text);
     }
 
     pub fn set_tooltip_text(&mut self, text: &str) {
-        self.tooltip_text = text.to_string();
+        text.clone_into(&mut self.tooltip_text);
     }
 
     pub fn has_tooltip(&self) -> bool {

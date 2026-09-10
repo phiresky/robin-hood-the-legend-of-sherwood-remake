@@ -74,3 +74,38 @@ impl WidgetLabel {
         }
     }
 }
+
+#[test]
+fn repeated_label_text_updates_reuse_storage_and_refresh_both_buffers() {
+    use super::WidgetRenderer;
+    use crate::ui::{RendererBase, RendererBitmap};
+    let mut label = WidgetLabel::new(1);
+    label.base.text = String::with_capacity(64);
+    label.base.tooltip_text = String::with_capacity(64);
+    label.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
+        base: RendererBase {
+            text: String::with_capacity(64),
+            ..Default::default()
+        },
+    });
+    let text_pointer = label.base.text.as_ptr();
+    let tooltip_pointer = label.base.tooltip_text.as_ptr();
+    let renderer_pointer = label.base.renderer.base().unwrap().text.as_ptr();
+    for text in ["Robin Hood", "罗宾", "", ""] {
+        label.set_text(text);
+        label.base.set_tooltip_text(text);
+        assert_eq!(label.base.text, text);
+        assert_eq!(label.base.tooltip_text, text);
+        assert_eq!(label.base.renderer.base().unwrap().text, text);
+        assert_eq!(label.base.text.as_ptr(), text_pointer);
+        assert_eq!(label.base.tooltip_text.as_ptr(), tooltip_pointer);
+        assert_eq!(
+            label.base.renderer.base().unwrap().text.as_ptr(),
+            renderer_pointer
+        );
+        assert!(label.probe_refresh(0).is_some());
+        assert!(label.probe_refresh(0).is_none());
+        assert!(label.probe_refresh(1).is_some());
+        assert!(label.probe_refresh(1).is_none());
+    }
+}

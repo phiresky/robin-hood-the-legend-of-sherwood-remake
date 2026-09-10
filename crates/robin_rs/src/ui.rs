@@ -596,7 +596,7 @@ impl RendererBase {
     }
 
     pub fn set_text(&mut self, text: &str) {
-        self.text = text.to_string();
+        text.clone_into(&mut self.text);
     }
 
     pub fn last_rendered(&self) -> u32 {
