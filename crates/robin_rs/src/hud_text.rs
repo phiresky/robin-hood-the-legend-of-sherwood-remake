@@ -252,13 +252,11 @@ fn is_vip_character(assets: &LevelAssets, entity: &Entity) -> bool {
 ///
 /// For non-VIP characters (merry men), replaces the first space with a
 /// newline to force two-line name display.
-fn prepare_portrait_name(name: &str, is_vip: bool) -> String {
+fn prepare_portrait_name(mut name: String, is_vip: bool) -> String {
     if !is_vip && let Some(pos) = name.find(' ') {
-        let mut s = name.to_string();
-        s.replace_range(pos..pos + 1, "\n");
-        return s;
+        name.replace_range(pos..pos + 1, "\n");
     }
-    name.to_string()
+    name
 }
 
 /// Horizontal alignment for boxed text.
@@ -706,7 +704,7 @@ fn render_portrait_text_gpu(
         if !name.is_empty() && !sword_visible {
             let vip =
                 matches!(item.target(), PortraitTarget::Pc(_)) && is_vip_character(assets, entity);
-            let display_name = prepare_portrait_name(&name, vip);
+            let display_name = prepare_portrait_name(name, vip);
             let name_x = x + TEXT_OFFSET_X;
             let name_y = vis_top + TEXT_OFFSET_Y;
             render_text_in_box_gpu(
@@ -985,14 +983,43 @@ mod tests {
     }
 
     #[test]
+    fn portrait_name_preparation_reuses_owned_storage() {
+        for (name, vip, expected) in [
+            ("Jean Pierre Martin", false, "Jean\nPierre Martin"),
+            ("Émile Dubois", false, "Émile\nDubois"),
+            ("Robin Hood", true, "Robin Hood"),
+            ("SingleName", false, "SingleName"),
+            ("John\tSmith", false, "John\tSmith"),
+            ("", false, ""),
+        ] {
+            let owned = name.to_owned();
+            let pointer = owned.as_ptr();
+            let capacity = owned.capacity();
+            let prepared = prepare_portrait_name(owned, vip);
+            assert_eq!(prepared, expected);
+            assert_eq!(prepared.as_ptr(), pointer);
+            assert_eq!(prepared.capacity(), capacity);
+        }
+    }
+
+    #[test]
     fn prepare_name_non_vip_wraps() {
-        assert_eq!(prepare_portrait_name("John Smith", false), "John\nSmith");
-        assert_eq!(prepare_portrait_name("SingleName", false), "SingleName");
+        assert_eq!(
+            prepare_portrait_name("John Smith".into(), false),
+            "John\nSmith"
+        );
+        assert_eq!(
+            prepare_portrait_name("SingleName".into(), false),
+            "SingleName"
+        );
     }
 
     #[test]
     fn prepare_name_vip_no_wrap() {
-        assert_eq!(prepare_portrait_name("Robin Hood", true), "Robin Hood");
+        assert_eq!(
+            prepare_portrait_name("Robin Hood".into(), true),
+            "Robin Hood"
+        );
     }
 
     #[test]
