@@ -706,16 +706,47 @@ mod tests {
 
         assert_eq!(state.request_sale(&resources, TradeQuantity::One), None);
         assert!(state.request_sale(&resources, TradeQuantity::One).is_some());
-        state.assign_request_id(42, Type::MakeArrow, TradeQuantity::One);
-
-        state.apply_receipt(&resources, receipt(41, 0, 999));
+        state.apply_receipt(&resources, receipt(42, 0, 999));
         assert_eq!(state.rows[0].stock, 10);
         assert_eq!(state.ransom, 100);
-        assert!(state.awaiting_receipt.is_some());
+        assert_eq!(state.awaiting_receipt.as_ref().unwrap().request_id, None);
+        state.assign_request_id(42, Type::MakeArrow, TradeQuantity::One);
 
+        let mut wrong_item = receipt(42, 0, 999);
+        wrong_item.prod_type = Type::MakeNet;
+        let mut wrong_quantity = receipt(42, 0, 999);
+        wrong_quantity.quantity = TradeQuantity::Five;
+        let stocks: Vec<_> = state.rows.iter().map(|row| row.stock).collect();
+        let waiting_status = state.status.clone();
+        for invalid in [receipt(41, 0, 999), wrong_item, wrong_quantity] {
+            state.apply_receipt(&resources, invalid);
+            assert_eq!(
+                state.rows.iter().map(|row| row.stock).collect::<Vec<_>>(),
+                stocks
+            );
+            assert_eq!(state.ransom, 100);
+            assert_eq!(state.status, waiting_status);
+            assert_eq!(
+                state.awaiting_receipt,
+                Some(super::PendingSale {
+                    request_id: Some(42),
+                    prod_type: Type::MakeArrow,
+                    quantity: TradeQuantity::One,
+                })
+            );
+            assert!(state.request_sale(&resources, TradeQuantity::One).is_none());
+        }
+
+        // Selection changes must not redirect the in-flight sale to another item.
+        state.move_selection(1);
+        assert!(state.request_sale(&resources, TradeQuantity::One).is_none());
         state.apply_receipt(&resources, receipt(42, 9, 101));
         assert_eq!(state.rows[0].stock, 9);
         assert_eq!(state.ransom, 101);
         assert!(state.awaiting_receipt.is_none());
+        assert_eq!(state.rows[1].stock, stocks[1]);
+        state.apply_receipt(&resources, receipt(42, 0, 999));
+        assert_eq!(state.rows[0].stock, 9);
+        assert_eq!(state.ransom, 101);
     }
 }
