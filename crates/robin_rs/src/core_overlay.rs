@@ -7,7 +7,6 @@
 //! packaging error; they must never silently fall through to retail data.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,13 +14,13 @@ use anyhow::{Context as _, Result, anyhow};
 use robin_assets::shipping_datadir::SHIPPING_DATADIR_VERSION;
 #[cfg(not(target_arch = "wasm32"))]
 use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR};
+use robin_run_protocol::Digest32;
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
 use robin_run_protocol::{
     OfficialBuiltInOverlayKindV2, OfficialBuiltInOverlaySourceManifestV2, Validate as _,
 };
 use robin_util::asset_fs::{AssetBytes, AssetVfs, Bundle};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 pub const CORE_OVERLAY_MANIFEST_PATH: &str = "core-overlay-manifest.json";
 pub const CORE_OVERLAY_MANIFEST_SCHEMA: u32 = 1;
@@ -334,17 +333,12 @@ fn validate_manifest_inventory(manifest: &CoreOverlayManifest) -> Result<()> {
 }
 
 fn validate_file(entry: &CoreOverlayFile, bytes: &[u8]) -> Result<()> {
-    if entry.sha256.len() != 64
-        || !entry
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(anyhow!(
+    let expected: Digest32 = entry.sha256.parse().map_err(|_| {
+        anyhow!(
             "core overlay asset {} has a non-canonical SHA-256 digest",
             entry.path
-        ));
-    }
+        )
+    })?;
     if bytes.len() as u64 != entry.size {
         return Err(anyhow!(
             "core overlay asset {} has {} bytes; manifest requires {}",
@@ -353,12 +347,8 @@ fn validate_file(entry: &CoreOverlayFile, bytes: &[u8]) -> Result<()> {
             entry.size
         ));
     }
-    let digest_bytes = Sha256::digest(bytes);
-    let mut digest = String::with_capacity(digest_bytes.len() * 2);
-    for byte in digest_bytes {
-        write!(&mut digest, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    if digest != entry.sha256 {
+    let digest = Digest32::digest_bytes(bytes);
+    if digest != expected {
         return Err(anyhow!(
             "core overlay asset {} failed SHA-256 validation: expected {}, got {}",
             entry.path,
@@ -683,6 +673,44 @@ mod tests {
                     .contains("symlink")
             );
         }
+    }
+
+    #[test]
+    fn digest_validation_preserves_canonical_text_and_error_precedence() {
+        let canonical = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let mut entry = CoreOverlayFile {
+            path: "fixture".into(),
+            size: 3,
+            sha256: canonical.into(),
+        };
+        validate_file(&entry, b"abc").unwrap();
+        for invalid in [
+            String::new(),
+            "0".repeat(63),
+            "g".repeat(64),
+            "é".repeat(32),
+            canonical.to_ascii_uppercase(),
+        ] {
+            entry.sha256 = invalid;
+            let error = validate_file(&entry, b"wrong size").unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "core overlay asset fixture has a non-canonical SHA-256 digest"
+            );
+        }
+        entry.sha256 = canonical.into();
+        assert_eq!(
+            validate_file(&entry, b"abcd").unwrap_err().to_string(),
+            "core overlay asset fixture has 4 bytes; manifest requires 3"
+        );
+        let error = validate_file(&entry, b"abd").unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "core overlay asset fixture failed SHA-256 validation: expected {canonical}, got {}",
+                Digest32::digest_bytes(b"abd")
+            )
+        );
     }
 
     #[test]
