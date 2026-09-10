@@ -84,10 +84,17 @@ impl KeyConfigStore {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load(directory: &str) -> std::io::Result<Self> {
         let path = Self::store_path(directory);
-        match fs::read_to_string(&path) {
-            Ok(data) => {
-                let store: KeyConfigStore = serde_json::from_str(&data)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        match fs::File::open(&path) {
+            Ok(file) => {
+                let store: KeyConfigStore = serde_json::from_reader(std::io::BufReader::new(file))
+                    .map_err(|error| {
+                        std::io::Error::new(
+                            error
+                                .io_error_kind()
+                                .unwrap_or(std::io::ErrorKind::InvalidData),
+                            error,
+                        )
+                    })?;
                 store.finish_loading(directory)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -404,6 +411,35 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("keyconfigs.json")).unwrap();
         assert!(KeyConfigStore::load(dir.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn buffered_native_load_preserves_json_error_classification() {
+        let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().to_str().unwrap();
+        let path = KeyConfigStore::store_path(directory);
+        let mut store = KeyConfigStore::new(directory.into());
+        store
+            .entry_or_default(7)
+            .active
+            .set_binding("自定义", Some(KeyCode::KeyA), None);
+        let encoded = serde_json::to_vec(&store).unwrap();
+        let mut padded = vec![b' '; 8193];
+        padded.extend_from_slice(&encoded);
+        fs::write(&path, &padded).unwrap();
+        assert_eq!(
+            serde_json::to_value(KeyConfigStore::load(directory).unwrap()).unwrap(),
+            serde_json::to_value(&store).unwrap()
+        );
+        let mut trailing = encoded.clone();
+        trailing.extend_from_slice(b" {}");
+        for invalid in [vec![], b"{".to_vec(), vec![0xff], trailing] {
+            fs::write(&path, invalid).unwrap();
+            assert_eq!(
+                KeyConfigStore::load(directory).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
     }
 
     #[test]
