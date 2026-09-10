@@ -1,6 +1,7 @@
 //! Mission minimap rendering.
 
 use crate::host::HostDraw;
+use crate::mission_render_resources::SpriteSurface;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer, SurfaceHandle};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
@@ -76,13 +77,13 @@ pub(crate) fn render_minimap(
         )
         .expect("mission minimap must belong to the live renderer");
 
-    render_minimap_fog(engine, mm, level_size_for(host), renderer);
+    let level_size = host.viewport().level_size;
+    render_minimap_fog(engine, mm, level_size, renderer);
 
     // Draw viewport indicator rectangle.
     let camera_pos = host.viewport().view_position;
     let screen_size = host.viewport().screen_size;
     let zoom = host.viewport().zoom_factor;
-    let level_size = host.viewport().level_size;
 
     // The visible area in world coordinates (accounting for zoom and
     // panel height).  Divide by zoom first, then subtract
@@ -111,15 +112,12 @@ pub(crate) fn render_minimap(
     // ── Element dots ──
     // Sort for minimap, draw each active non-highlighted element's
     // dot, then draw delayed highlights.
-    if host.frontend.resources.mission_surfaces.dots().is_empty() {
+    let dots = host.frontend.resources.mission_surfaces.dots();
+    if dots.is_empty() {
         return;
     }
 
-    let widget_box = if mm.map_box().is_somewhere() {
-        *mm.map_box()
-    } else {
-        return;
-    };
+    let widget_box = map_box;
 
     let sorted = engine.sort_for_minimap();
     for id in sorted {
@@ -148,12 +146,12 @@ pub(crate) fn render_minimap(
             None => continue,
         };
         refresh_dot(
-            host,
+            dots,
             mm,
             level_size,
             entity.element_data().position_map(),
             dot_type,
-            &widget_box,
+            widget_box,
             renderer,
         );
     }
@@ -172,12 +170,12 @@ pub(crate) fn render_minimap(
                 continue;
             }
             refresh_dot_alpha(
-                host,
+                dots,
                 mm,
                 level_size,
                 marker.position,
                 engine_minimap::DotType::Enemy,
-                &widget_box,
+                widget_box,
                 marker.alpha,
                 renderer,
             );
@@ -197,12 +195,12 @@ pub(crate) fn render_minimap(
             None => continue,
         };
         refresh_dot(
-            host,
+            dots,
             mm,
             level_size,
             entity.element_data().position_map(),
             engine_minimap::DotType::Highlighted,
-            &widget_box,
+            widget_box,
             renderer,
         );
     }
@@ -211,7 +209,7 @@ pub(crate) fn render_minimap(
 /// Blit a single minimap dot sprite centred on a converted world
 /// position.
 fn refresh_dot(
-    host: &HostDraw<'_>,
+    dots: &[Option<SpriteSurface>],
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
@@ -220,7 +218,7 @@ fn refresh_dot(
     renderer: &mut Renderer,
 ) {
     let Some((surface, src_box, dst_box)) =
-        clipped_dot_blit(host, mm, level_size, world_pos, dot_type, widget_box)
+        clipped_dot_blit(dots, mm, level_size, world_pos, dot_type, widget_box)
     else {
         return;
     };
@@ -239,7 +237,7 @@ fn refresh_dot(
 
 #[allow(clippy::too_many_arguments)]
 fn refresh_dot_alpha(
-    host: &HostDraw<'_>,
+    dots: &[Option<SpriteSurface>],
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
@@ -249,7 +247,7 @@ fn refresh_dot_alpha(
     renderer: &mut Renderer,
 ) {
     let Some((surface, src_box, dst_box)) =
-        clipped_dot_blit(host, mm, level_size, world_pos, dot_type, widget_box)
+        clipped_dot_blit(dots, mm, level_size, world_pos, dot_type, widget_box)
     else {
         return;
     };
@@ -266,7 +264,7 @@ fn refresh_dot_alpha(
 }
 
 fn clipped_dot_blit(
-    host: &HostDraw<'_>,
+    dots: &[Option<SpriteSurface>],
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
@@ -274,7 +272,7 @@ fn clipped_dot_blit(
     widget_box: &engine_coordinates::ScreenBBox,
 ) -> Option<(SurfaceHandle, BBox, BBox)> {
     let idx = dot_type as usize;
-    let (surface, dot_w, dot_h) = match host.frontend.resources.mission_surfaces.dots().get(idx) {
+    let (surface, dot_w, dot_h) = match dots.get(idx) {
         Some(Some(frame)) => frame.parts(),
         _ => return None,
     };
@@ -313,10 +311,6 @@ fn clipped_dot_rectangles(
     let src_box = BBox::from_coords(0.0, 0.0, right - top_left.x, bottom - top_left.y);
     let dst_box = BBox::from_coords(top_left.x, top_left.y, right, bottom);
     Some((src_box, dst_box))
-}
-
-fn level_size_for(host: &HostDraw<'_>) -> engine_coordinates::MapSize {
-    host.viewport().level_size
 }
 
 fn render_minimap_fog(
