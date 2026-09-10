@@ -149,52 +149,64 @@ impl CampaignMapAssets {
         resources: Option<&mut IngameMenuResources>,
         files: &robin_engine::sbfile::SbFileSystem,
     ) -> Self {
-        let Some(resources) = resources else {
-            return Self {
-                font: load_campaign_font(files),
-                progress_font: load_progress_font(files, "MenuButtonEnabled"),
-                progress_title_font: load_progress_font(files, "MissionTitle"),
+        let mut assets = if let Some(resources) = resources {
+            Self {
+                scrollbar: resources.list_scrollbar,
+                background: resources.default_picture(renderer, resource_ids::RHID_CAMPAIGN_MAP),
+                locations: std::array::from_fn(|i| {
+                    let id = LOCATION_RESOURCE_IDS[i];
+                    (id != 0)
+                        .then(|| resources.default_picture(renderer, id))
+                        .flatten()
+                }),
+                mini_blazon: resources.default_picture(renderer, resource_ids::RHID_MINI_BLAZON),
+                maxi_blazon: resources.default_picture(renderer, resource_ids::RHID_MAXI_BLAZON),
+                flag: resources.default_picture(renderer, resource_ids::RHID_RICHARD_FLAG),
+                close: resources.default_picture(renderer, resource_ids::RHID_CAMPAIGN_MAP_CLOSE),
+                tooltip_bg: resources
+                    .default_picture(renderer, resource_ids::RHID_SHORT_MISSION_DESCRIPTION),
+                lifetime: std::array::from_fn(|i| {
+                    resources.default_picture_sub(renderer, resource_ids::RHID_MISSION_LIFETIME, i)
+                }),
+                attacks: std::array::from_fn(|i| {
+                    let id = match i {
+                        0 => resource_ids::RHID_ATTACK_0,
+                        1 => resource_ids::RHID_ATTACK_1,
+                        2 => resource_ids::RHID_ATTACK_2,
+                        3 => resource_ids::RHID_ATTACK_3,
+                        4 => resource_ids::RHID_ATTACK_4,
+                        5 => resource_ids::RHID_ATTACK_5,
+                        6 => resource_ids::RHID_ATTACK_6,
+                        7 => resource_ids::RHID_ATTACK_7,
+                        8 => resource_ids::RHID_ATTACK_8,
+                        9 => resource_ids::RHID_ATTACK_9,
+                        _ => 0,
+                    };
+                    resources.default_picture(renderer, id)
+                }),
                 ..Self::default()
-            };
+            }
+        } else {
+            Self::default()
         };
-        Self {
-            scrollbar: resources.list_scrollbar,
-            background: resources.default_picture(renderer, resource_ids::RHID_CAMPAIGN_MAP),
-            locations: std::array::from_fn(|i| {
-                let id = LOCATION_RESOURCE_IDS[i];
-                (id != 0)
-                    .then(|| resources.default_picture(renderer, id))
-                    .flatten()
-            }),
-            mini_blazon: resources.default_picture(renderer, resource_ids::RHID_MINI_BLAZON),
-            maxi_blazon: resources.default_picture(renderer, resource_ids::RHID_MAXI_BLAZON),
-            flag: resources.default_picture(renderer, resource_ids::RHID_RICHARD_FLAG),
-            close: resources.default_picture(renderer, resource_ids::RHID_CAMPAIGN_MAP_CLOSE),
-            tooltip_bg: resources
-                .default_picture(renderer, resource_ids::RHID_SHORT_MISSION_DESCRIPTION),
-            lifetime: std::array::from_fn(|i| {
-                resources.default_picture_sub(renderer, resource_ids::RHID_MISSION_LIFETIME, i)
-            }),
-            attacks: std::array::from_fn(|i| {
-                let id = match i {
-                    0 => resource_ids::RHID_ATTACK_0,
-                    1 => resource_ids::RHID_ATTACK_1,
-                    2 => resource_ids::RHID_ATTACK_2,
-                    3 => resource_ids::RHID_ATTACK_3,
-                    4 => resource_ids::RHID_ATTACK_4,
-                    5 => resource_ids::RHID_ATTACK_5,
-                    6 => resource_ids::RHID_ATTACK_6,
-                    7 => resource_ids::RHID_ATTACK_7,
-                    8 => resource_ids::RHID_ATTACK_8,
-                    9 => resource_ids::RHID_ATTACK_9,
-                    _ => 0,
-                };
-                resources.default_picture(renderer, id)
-            }),
-            font: load_campaign_font(files),
-            progress_font: load_progress_font(files, "MenuButtonEnabled"),
-            progress_title_font: load_progress_font(files, "MissionTitle"),
-        }
+        let config = native_font::load_font_config(files)
+            .unwrap_or_else(|error| panic!("campaign font configuration unavailable: {error}"));
+        assets.font = match native_font::load_font_by_name_for_locale(&config, "Default", files) {
+            Ok(font) => Some(font),
+            Err(error) => {
+                tracing::warn!("Optional classic campaign font unavailable: {error}");
+                None
+            }
+        };
+        let required_font = |key| {
+            Some(
+                native_font::load_font_by_name_for_locale(&config, key, files)
+                    .unwrap_or_else(|error| panic!("campaign font {key} unavailable: {error}")),
+            )
+        };
+        assets.progress_font = required_font("MenuButtonEnabled");
+        assets.progress_title_font = required_font("MissionTitle");
+        assets
     }
 }
 
@@ -2819,20 +2831,6 @@ fn campaign_surface_for_resource(
                     .and_then(|idx| assets.attacks[idx])
             }),
     }
-}
-
-fn load_progress_font(files: &robin_engine::sbfile::SbFileSystem, key: &str) -> Option<Font> {
-    let config = native_font::load_font_config(files)
-        .unwrap_or_else(|error| panic!("campaign font configuration unavailable: {error}"));
-    Some(
-        native_font::load_font_by_name_for_locale(&config, key, files)
-            .unwrap_or_else(|error| panic!("campaign font {key} unavailable: {error}")),
-    )
-}
-
-fn load_campaign_font(files: &robin_engine::sbfile::SbFileSystem) -> Option<Font> {
-    let config = native_font::load_font_config(files).ok()?;
-    native_font::load_font_by_name_for_locale(&config, "Default", files).ok()
 }
 
 fn draw_marker(
