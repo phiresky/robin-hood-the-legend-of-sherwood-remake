@@ -14,6 +14,25 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::resources::IngameMenuResources;
 
+/// Return the borrowed prefix before the first grapheme that exceeds the budget.
+/// Measure complete prefixes so spacing is preserved. Callers choose whether to
+/// reserve space for a marker or bypass scanning when the whole string fits.
+pub(crate) fn fitting_grapheme_prefix_by(
+    text: &str,
+    max_width: i32,
+    measure: impl Fn(&str) -> i32,
+) -> &str {
+    let mut fit_end = 0;
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let end = index + grapheme.len();
+        if measure(&text[..end]) > max_width {
+            break;
+        }
+        fit_end = end;
+    }
+    &text[..fit_end]
+}
+
 /// Elide at grapheme boundaries, optionally marking text whose hidden
 /// continuation is outside this string. The complete candidate is measured so
 /// font spacing remains part of the width calculation.
@@ -1478,6 +1497,41 @@ pub fn draw_tooltip(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fitting_prefix_preserves_graphemes_and_borrows_input() {
+        let text = String::from("e\u{0301}👩‍💻ab");
+        for (width, expected) in [
+            (-1, ""),
+            (0, ""),
+            (1, ""),
+            (2, "e\u{0301}"),
+            (4, "e\u{0301}"),
+            (5, "e\u{0301}👩‍💻"),
+            (6, "e\u{0301}👩‍💻a"),
+            (7, text.as_str()),
+        ] {
+            let prefix = super::fitting_grapheme_prefix_by(&text, width, |value| {
+                value.chars().count() as i32
+            });
+            assert_eq!(prefix, expected);
+            assert_eq!(prefix.as_ptr(), text.as_ptr());
+        }
+        assert_eq!(
+            super::fitting_grapheme_prefix_by("", 0, |_| panic!("no grapheme to measure")),
+            ""
+        );
+    }
+
+    #[test]
+    fn fitting_prefix_measures_whole_candidates_and_stops_at_first_overflow() {
+        let prefix = super::fitting_grapheme_prefix_by("abc", 2, |candidate| match candidate {
+            "a" => 0,
+            "ab" => 3,
+            _ => panic!("must stop at the first overflowing prefix"),
+        });
+        assert_eq!(prefix, "a");
+        assert_eq!(super::fitting_grapheme_prefix_by("ab", 0, |_| 0), "ab");
+    }
 
     #[test]
     fn boxed_height_uses_rendered_insets_narrow_wrap_and_line_budget() {

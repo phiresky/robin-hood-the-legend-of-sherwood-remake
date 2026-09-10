@@ -15,11 +15,10 @@ use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
 use std::borrow::Cow;
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt_font,
+    enter_modal_gpu_phase, fitting_grapheme_prefix_by, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_MSG_REALLY_DELETE_SAVEGAME,
@@ -1065,16 +1064,8 @@ fn truncate_to_pixel_width_by(
     }
 
     let budget = max_w - ellipsis_w;
-    // Keep complete graphemes, including combining marks and emoji sequences.
-    let mut fit_end = 0;
-    for (index, grapheme) in text.grapheme_indices(true) {
-        let end = index + grapheme.len();
-        if measure(&text[..end]) > budget {
-            break;
-        }
-        fit_end = end;
-    }
-    Cow::Owned(format!("{}{}", &text[..fit_end], ellipsis))
+    let prefix = fitting_grapheme_prefix_by(text, budget, measure);
+    Cow::Owned(format!("{prefix}{ellipsis}"))
 }
 
 /// Resync the input-field widget to the current selection. In Save

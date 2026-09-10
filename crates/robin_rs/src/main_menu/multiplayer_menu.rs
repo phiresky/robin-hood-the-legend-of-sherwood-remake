@@ -7,7 +7,7 @@ use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt_font,
+    enter_modal_gpu_phase, fitting_grapheme_prefix_by, render_text_virt_font,
 };
 use crate::ingame_menu::resources::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -22,7 +22,6 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use unicode_segmentation::UnicodeSegmentation;
 
 const LIST_RECT: MenuRect = MenuRect {
     x: 28,
@@ -1520,15 +1519,7 @@ fn truncate_to_pixel_width<'a>(font: &Font, text: &'a str, max_w: i32) -> &'a st
     if font.text_width(text) <= max_w {
         return text;
     }
-    let mut fit_end = 0;
-    for (idx, grapheme) in text.grapheme_indices(true) {
-        let candidate_end = idx + grapheme.len();
-        if font.text_width(&text[..candidate_end]) > max_w {
-            return &text[..fit_end];
-        }
-        fit_end = candidate_end;
-    }
-    &text[..fit_end]
+    fitting_grapheme_prefix_by(text, max_w, |candidate| font.text_width(candidate))
 }
 
 fn draw_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
