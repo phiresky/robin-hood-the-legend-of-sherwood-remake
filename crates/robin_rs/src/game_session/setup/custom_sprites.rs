@@ -1,10 +1,12 @@
 //! Custom sprite decoding and disposable cache policy.
+mod shipping;
 use super::error::ResourcePreparationError;
 use super::localization::read_optional_json;
 use robin_assets::frame_holder as assets_frame_holder;
 use robin_engine::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize};
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::{campaign::Campaign, profiles as engine_profiles, sbfile as engine_sbfile};
+pub use shipping::encode_custom_sprite_dir;
 
 #[derive(Debug, serde::Deserialize)]
 struct HackableRhsManifest {
@@ -542,6 +544,15 @@ pub(super) fn prepare_custom_character_dirs(
                     .as_ref()
                     .is_some_and(|filenames| filenames.contains(filename))
             {
+                continue;
+            }
+            let shipping_path = path.join("sprites.vq.zst");
+            if shipping_path.is_file() {
+                let cache = shipping::read(&shipping_path).map_err(|error| {
+                    ResourcePreparationError::malformed(shipping_path.display(), error)
+                })?;
+                validate_cache_frames(filename, &cache)?;
+                batches.push((filename.to_owned(), cache));
                 continue;
             }
             let manifest_path = path.join("manifest.json");

@@ -4,6 +4,17 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **VQ sprite mod packages:** Custom `.rhs.d` directories can contain an
+  authored `sprites.vq.zst` instead of PNGs and a manifest. The
+  `encode_mod_sprites` example converts a mod using exact four-pixel RGB565
+  dictionaries and the shipping adaptive VQ codec, then verifies every frame
+  and animation field through the runtime reader. Transparency, shadow keys,
+  odd frame widths, and profile stats are preserved. Loading reconstructs the
+  existing runtime sprite representation. These packages require this engine
+  update; the source PNG mod remains separately editable.
+  Build with `cargo build -p robin_rs --example encode_mod_sprites`, then run
+  `target/debug/examples/encode_mod_sprites SOURCE_MOD DESTINATION_MOD`.
+
 - **Custom mission pane scrolling:** The mission list and wrapped mission details
   scroll independently under the pointer. Both show draggable scrollbars when
   their content overflows; selecting another mission resets its details to the top.

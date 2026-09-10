@@ -4,6 +4,7 @@
 //! bootstrap.
 
 mod custom_sprites;
+pub use custom_sprites::encode_custom_sprite_dir;
 mod error;
 mod localization;
 mod resources;
