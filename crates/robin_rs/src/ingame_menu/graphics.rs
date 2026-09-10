@@ -214,8 +214,11 @@ pub async fn show_graphics(
                         let row = ((vy - PRESET_LIST_Y) / PRESET_LIST_ROW_H) as usize;
                         let index = preset_scroll + row;
                         if let Some(preset) = retroarch_presets.get(index) {
-                            edit.working.shader_preset = preset.id.clone();
-                            parameter_status.clear();
+                            select_builtin_preset(
+                                &mut edit.working,
+                                &preset.id,
+                                &mut parameter_status,
+                            );
                             dirty = true;
                         }
                     }
@@ -293,7 +296,7 @@ pub async fn show_graphics(
                     if next != current
                         && let Some(preset) = retroarch_presets.get(next)
                     {
-                        edit.working.shader_preset = preset.id.clone();
+                        select_builtin_preset(&mut edit.working, &preset.id, &mut parameter_status);
                         preset_scroll = keep_visible(next, preset_scroll, retroarch_presets.len());
                         dirty = true;
                     }
@@ -591,6 +594,12 @@ fn option_position(index: usize, row_h: i32) -> (i32, i32) {
                 + (index - 7) as i32 * (row_h + OPTION_SPACING),
         )
     }
+}
+
+/// Selecting a bundled preset invalidates feedback about a previous import.
+fn select_builtin_preset(config: &mut GraphicConfig, preset_id: &str, status: &mut String) {
+    preset_id.clone_into(&mut config.shader_preset);
+    status.clear();
 }
 
 fn preset_index(
@@ -958,5 +967,21 @@ mod tests {
         assert_eq!(TextureEffect::ALL.len(), 3);
         assert_eq!(TextureEffect::ALL[0], TextureEffect::None);
         assert_ne!(TextureEffect::ALL[1], TextureEffect::ALL[2]);
+    }
+}
+
+#[test]
+fn selecting_builtin_presets_clears_stale_import_feedback() {
+    let mut config = GraphicConfig::default();
+    config.shader_preset = "/tmp/imported.slangp".into();
+    for message in [
+        "Imported preset validated",
+        "Import failed: invalid preset",
+        "",
+    ] {
+        let mut status = message.to_owned();
+        select_builtin_preset(&mut config, "bundled-preset", &mut status);
+        assert_eq!(config.shader_preset, "bundled-preset");
+        assert!(status.is_empty());
     }
 }
