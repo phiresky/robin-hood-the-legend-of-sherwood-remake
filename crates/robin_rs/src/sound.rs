@@ -2121,11 +2121,7 @@ impl SoundManager {
 
 /// Compute time elapsed between `start` and `now`, handling 32-bit wrap.
 fn time_elapsed(start: u32, now: u32) -> u32 {
-    if start > now {
-        (!start).wrapping_add(1).wrapping_add(now)
-    } else {
-        now - start
-    }
+    now.wrapping_sub(start)
 }
 
 /// Convert a raw `u8` to a [`Material`] enum, or `None` if out of range.

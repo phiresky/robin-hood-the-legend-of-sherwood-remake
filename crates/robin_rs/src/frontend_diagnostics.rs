@@ -41,10 +41,13 @@ impl FrontendDiagnostics {
 
     /// Call only at the live presentation boundary, never for screenshot draws.
     pub fn record_frame(&mut self, now: u32, pending_sounds: usize) {
-        let frame_ms = if self.last_tick_ms == 0 {
+        // Recorded intervals are always nonzero. Use the previous ring slot
+        // to distinguish initialization; zero is a valid wrapping timestamp.
+        let previous = (self.sample_cursor + FRAME_SAMPLES - 1) % FRAME_SAMPLES;
+        let frame_ms = if self.frame_samples[previous] == 0 {
             robin_engine::engine::FRAME_TIME_MS
         } else {
-            now.saturating_sub(self.last_tick_ms).max(1)
+            now.wrapping_sub(self.last_tick_ms).max(1)
         };
         self.last_tick_ms = now;
         self.frame_samples[self.sample_cursor] = frame_ms;
@@ -99,6 +102,26 @@ mod tests {
         }
         assert_eq!(diagnostics.average_frame_ms(), 16);
         assert_eq!(diagnostics.max_pending_sounds(), 3);
+    }
+
+    #[test]
+    fn sampling_preserves_intervals_across_timestamp_zero_and_wrap() {
+        for start in [0u32, u32::MAX - 15, u32::MAX - 7] {
+            let mut diagnostics = FrontendDiagnostics::default();
+            diagnostics.record_frame(start, 0);
+            assert_eq!(
+                diagnostics.frame_samples[0],
+                robin_engine::engine::FRAME_TIME_MS
+            );
+            for frame in 1..=FRAME_SAMPLES {
+                diagnostics.record_frame(start.wrapping_add(frame as u32 * 16), 0);
+            }
+            assert_eq!(diagnostics.frame_samples, [16; FRAME_SAMPLES]);
+            assert_eq!(diagnostics.average_frame_ms(), 16);
+            // An unchanged timestamp still produces the existing 1 ms floor.
+            diagnostics.record_frame(diagnostics.last_tick_ms, 0);
+            assert_eq!(diagnostics.frame_samples[diagnostics.sample_cursor - 1], 1);
+        }
     }
 
     #[test]
