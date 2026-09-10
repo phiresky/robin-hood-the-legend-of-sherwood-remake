@@ -245,12 +245,18 @@ fn collect_regular_files(root: &Path) -> Result<BTreeMap<String, PathBuf>, Strin
             {
                 return Err(format!("content path is not canonical: {}", path.display()));
             }
-            if let Some(previous) = files.insert(relative.clone(), path.clone()) {
-                return Err(format!(
-                    "content paths collide case-insensitively at {relative}: {} and {}",
-                    previous.display(),
-                    path.display()
-                ));
+            match files.entry(relative) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(path);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    return Err(format!(
+                        "content paths collide case-insensitively at {}: {} and {}",
+                        entry.key(),
+                        entry.get().display(),
+                        path.display()
+                    ));
+                }
             }
         }
     }
@@ -382,11 +388,39 @@ pub fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
 }
 
 pub fn hex_digest(bytes: [u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex::encode(bytes)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn digest_hex_preserves_two_lowercase_digits_for_every_byte() {
+        for base in (0..256).step_by(32) {
+            let bytes = std::array::from_fn(|index| (base + index) as u8);
+            let expected: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            assert_eq!(super::hex_digest(bytes), expected);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn content_paths_reject_case_collisions_without_losing_either_filename() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("Mission.dat");
+        let second = root.path().join("mission.dat");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        let error = super::collect_regular_files(root.path()).unwrap_err();
+        assert!(
+            error.contains("collide case-insensitively at mission.dat"),
+            "{error}"
+        );
+        assert!(error.contains("Mission.dat"), "{error}");
+        assert!(error.contains("mission.dat"), "{error}");
+        assert_eq!(std::fs::read(first).unwrap(), b"first");
+        assert_eq!(std::fs::read(second).unwrap(), b"second");
+    }
+
     #[test]
     fn streaming_digest_retries_interruptions_but_propagates_io_failures() {
         #[derive(serde::Serialize, serde::Deserialize)]
