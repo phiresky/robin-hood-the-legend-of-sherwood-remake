@@ -1162,6 +1162,29 @@ pub fn save_directory_for_profile(profile_id: u32) -> PathBuf {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn atomic_publication_collision_keeps_targets_and_removes_staging() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("save.json");
+        super::atomic_write_new(&destination, b"original").unwrap();
+        let error = super::atomic_write_new(&destination, b"replacement").unwrap_err();
+        assert!(error.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists)
+        }));
+        assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+
+        let occupied_directory = directory.path().join("occupied.json");
+        std::fs::create_dir(&occupied_directory).unwrap();
+        let sentinel = occupied_directory.join("keep");
+        std::fs::write(&sentinel, b"unrelated").unwrap();
+        assert!(super::atomic_write(&occupied_directory, b"replacement").is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"unrelated");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[test]
     fn atomic_copy_preserves_bytes_and_keeps_destination_on_missing_source() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.json");
