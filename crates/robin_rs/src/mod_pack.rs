@@ -464,9 +464,13 @@ fn rhm_basename(zip_entry: &str) -> String {
         .rsplit_once('/')
         .map(|(_, leaf)| leaf)
         .unwrap_or(zip_entry);
-    leaf.trim_end_matches(".rhm")
-        .trim_end_matches(".RHM")
-        .to_string()
+    strip_rhm_extension(leaf).unwrap_or(leaf).to_owned()
+}
+
+/// Strip exactly one mission extension, using the same ASCII case policy as discovery.
+fn strip_rhm_extension(name: &str) -> Option<&str> {
+    let (stem, extension) = name.rsplit_once('.')?;
+    extension.eq_ignore_ascii_case("rhm").then_some(stem)
 }
 
 fn mission_language_label(zip_entry: &str) -> Option<&str> {
@@ -499,7 +503,7 @@ pub fn list_rhm_in_zip(zip_path: &Path) -> Result<Vec<String>, String> {
 fn selectable_rhm_entries(entry_names: &[String]) -> Vec<String> {
     let mut out = entry_names
         .iter()
-        .filter(|name| name.to_ascii_lowercase().ends_with(".rhm"))
+        .filter(|name| strip_rhm_extension(name).is_some())
         .cloned()
         .collect::<Vec<_>>();
     out.sort();
@@ -1050,9 +1054,9 @@ mod tests {
         write_test_zip(
             &zip_path,
             &[
-                ("Data/Levels/C.rhm", &minimal_rhm("third")),
+                ("Data/Levels/C.RhM", &minimal_rhm("third")),
                 ("Data/Levels/A.rhm", b"broken"),
-                ("Data/Levels/B.rhm", &minimal_rhm("second")),
+                ("Data/Levels/B.rhm.rhm", &minimal_rhm("second")),
             ],
         );
         let details: ModDetails = serde_json::from_value(serde_json::json!({
@@ -1169,6 +1173,35 @@ mod tests {
             "CR02_Yrk_VL"
         );
         assert_eq!(rhm_basename("foo.RHM"), "foo");
+        assert_eq!(rhm_basename("English/Data/Levels/Été.RhM"), "Été");
+        assert_eq!(rhm_basename("foo.rhm.rhm"), "foo.rhm");
+        assert_eq!(rhm_basename("foo.RHM.rhm"), "foo.RHM");
+        assert_eq!(rhm_basename("foo"), "foo");
+    }
+
+    #[test]
+    fn mission_extension_discovery_and_basename_agree() {
+        let names: Vec<String> = [
+            "Data/Levels/Été.RhM",
+            "Data/Levels/foo.rhm.rhm",
+            "Data/Levels/upper.RHM",
+            "Data/Levels/lower.rhm",
+            "Data/Levels/not.rhm.bak",
+            "Data/Levels/no_extension",
+            "Data/Levels/rhm",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let selected = selectable_rhm_entries(&names);
+        let mut expected = names[..4].to_vec();
+        expected.sort();
+        assert_eq!(selected, expected);
+        for name in selected {
+            let leaf = name.rsplit('/').next().unwrap();
+            let basename = rhm_basename(&name);
+            assert!(format!("{basename}.rhm").eq_ignore_ascii_case(leaf));
+        }
     }
 
     #[test]
