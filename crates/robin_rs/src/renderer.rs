@@ -120,14 +120,7 @@ pub const TRANSPARENT_COLOR_KEY_15: u16 = 0x03E0;
 pub const OUTLINE_PAD: usize = 2;
 const OUTLINE_CACHE_TAG: u32 = 0x0001_0000;
 
-#[inline]
-pub fn rgb565_to_rgb8(px: u16) -> (u8, u8, u8) {
-    (
-        ((px >> 8) & 0xF8) as u8,
-        ((px >> 3) & 0xFC) as u8,
-        ((px << 3) & 0xF8) as u8,
-    )
-}
+pub use robin_util::color::rgb565_to_rgb8;
 
 // ---------------------------------------------------------------------
 // Sprite/texture caches — wgpu::Texture-backed.

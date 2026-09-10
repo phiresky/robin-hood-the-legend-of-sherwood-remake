@@ -7,6 +7,18 @@ pub const fn rgb565(r: u8, g: u8, b: u8) -> u16 {
     ((r as u16 & 0xF8) << 8) | ((g as u16 & 0xFC) << 3) | ((b as u16) >> 3)
 }
 
+/// Expand RGB565 channels by restoring their discarded low bits as zero.
+/// This intentionally truncates (white becomes 248, 252, 248), matching the
+/// original renderer and persisted thumbnail colors rather than bit replication.
+#[inline]
+pub const fn rgb565_to_rgb8(px: u16) -> (u8, u8, u8) {
+    (
+        ((px >> 8) & 0xF8) as u8,
+        ((px >> 3) & 0xFC) as u8,
+        ((px << 3) & 0xF8) as u8,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -26,6 +38,7 @@ mod tests {
             let r = ((packed >> 11) as u8) << 3;
             let g = (((packed >> 5) & 63) as u8) << 2;
             let b = ((packed & 31) as u8) << 3;
+            assert_eq!(rgb565_to_rgb8(packed), (r, g, b));
             assert_eq!(rgb565(r, g, b), packed);
             assert_eq!(rgb565(r | 7, g | 3, b | 7), packed);
         }

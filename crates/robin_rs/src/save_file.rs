@@ -427,17 +427,11 @@ impl Thumbnail {
     fn rgb888_pixels(&self) -> Vec<u8> {
         let mut rgb = Vec::with_capacity(self.pixels.len() * 3);
         for &pixel in &self.pixels {
-            rgb.extend_from_slice(&rgb565_to_rgb888(pixel));
+            let (r, g, b) = robin_util::color::rgb565_to_rgb8(pixel);
+            rgb.extend_from_slice(&[r, g, b]);
         }
         rgb
     }
-}
-
-/// Truncating 565→888 expansion — shared with the renderer so PNG
-/// thumbnails show the same colours as the live frame they capture.
-fn rgb565_to_rgb888(pixel: u16) -> [u8; 3] {
-    let (r, g, b) = crate::renderer::rgb565_to_rgb8(pixel);
-    [r, g, b]
 }
 
 // ─── Header ──────────────────────────────────────────────────────────
