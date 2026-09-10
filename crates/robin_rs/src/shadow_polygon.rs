@@ -539,6 +539,8 @@ fn render_darken_inside_gpu_spans(
     };
     let mut visible_spans: Vec<(i32, i32)> = Vec::new();
     let mut crossings: Vec<f32> = Vec::new();
+    let mut mask_spans = Vec::new();
+    let mut unmasked_spans = Vec::new();
     for y in y_start..y_end {
         let yf = y as f32 + 0.5;
         visible_spans.clear();
@@ -568,10 +570,12 @@ fn render_darken_inside_gpu_spans(
             continue;
         }
 
-        let mut mask_spans = mask_spans_for_row(masks, view_rect, zoom, inv_zoom, y, w);
+        mask_spans_for_row_into(masks, view_rect, zoom, inv_zoom, y, w, &mut mask_spans);
         if !mask_spans.is_empty() {
             mask_spans.sort_unstable_by_key(|s| s.0);
-            visible_spans = subtract_spans(&visible_spans, &merge_spans(&mask_spans));
+            merge_spans_in_place(&mut mask_spans);
+            subtract_spans_into(&visible_spans, &mask_spans, &mut unmasked_spans);
+            std::mem::swap(&mut visible_spans, &mut unmasked_spans);
         }
 
         for &(start, end) in &visible_spans {
@@ -595,15 +599,16 @@ fn render_darken_inside_gpu_spans(
     }
 }
 
-fn mask_spans_for_row(
+fn mask_spans_for_row_into(
     masks: &[&engine_mask::RuntimeMask],
     view_rect: &MapBBox,
     zoom: f32,
     inv_zoom: f32,
     sy: i32,
     screen_w: i32,
-) -> Vec<(i32, i32)> {
-    let mut spans = Vec::new();
+    spans: &mut Vec<(i32, i32)>,
+) {
+    spans.clear();
     let world_y = view_rect.y_min() + (sy as f32 + 0.5) * inv_zoom;
 
     for mask in masks {
@@ -649,16 +654,15 @@ fn mask_spans_for_row(
             spans.push((start, sx_to));
         }
     }
-
-    spans
 }
 
-fn subtract_spans(spans: &[(i32, i32)], cuts: &[(i32, i32)]) -> Vec<(i32, i32)> {
+fn subtract_spans_into(spans: &[(i32, i32)], cuts: &[(i32, i32)], out: &mut Vec<(i32, i32)>) {
+    out.clear();
     if cuts.is_empty() {
-        return spans.to_vec();
+        out.extend_from_slice(spans);
+        return;
     }
 
-    let mut out = Vec::with_capacity(spans.len());
     let mut cut_idx = 0;
     for &(span_start, span_end) in spans {
         let mut cursor = span_start;
@@ -681,7 +685,6 @@ fn subtract_spans(spans: &[(i32, i32)], cuts: &[(i32, i32)]) -> Vec<(i32, i32)> 
             out.push((cursor, span_end));
         }
     }
-    out
 }
 
 fn cone_alpha_at_screen(
@@ -862,6 +865,7 @@ fn merge_spans_in_place(spans: &mut Vec<(i32, i32)>) {
 }
 
 /// Merge overlapping or adjacent intervals. Input must be sorted by start.
+#[cfg(test)]
 fn merge_spans(spans: &[(i32, i32)]) -> Vec<(i32, i32)> {
     if spans.is_empty() {
         return Vec::new();
@@ -1402,5 +1406,35 @@ mod tests {
         let vis = compute_visibility_polygon(viewer, &params, &[&behind]);
         assert_eq!(vis.len(), 1);
         assert_eq!(cone.len(), vis[0].len());
+    }
+}
+
+#[test]
+fn span_subtraction_matches_pixel_difference_and_reuses_output() {
+    let spans_for_bits = |bits: u32| {
+        let mut spans = (0..6)
+            .filter(|x| bits & (1 << x) != 0)
+            .map(|x| (x, x + 1))
+            .collect::<Vec<_>>();
+        merge_spans_in_place(&mut spans);
+        spans
+    };
+    let mut output = Vec::with_capacity(12);
+    let pointer = output.as_ptr();
+    for visible in 0..64 {
+        for hidden in 0..64 {
+            output.push((-100, 100));
+            subtract_spans_into(
+                &spans_for_bits(visible),
+                &spans_for_bits(hidden),
+                &mut output,
+            );
+            assert_eq!(
+                output,
+                spans_for_bits(visible & !hidden),
+                "visible={visible}, hidden={hidden}"
+            );
+            assert_eq!(output.as_ptr(), pointer);
+        }
     }
 }
