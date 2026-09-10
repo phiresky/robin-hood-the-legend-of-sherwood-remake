@@ -280,7 +280,15 @@ fn clipped_dot_blit(
     };
 
     let map_pos = mm.real_to_map(world_pos, level_size)?;
+    let (src_box, dst_box) = clipped_dot_rectangles(map_pos, (dot_w, dot_h), widget_box)?;
+    Some((surface, src_box, dst_box))
+}
 
+fn clipped_dot_rectangles(
+    map_pos: engine_coordinates::ScreenPoint,
+    (dot_w, dot_h): (u16, u16),
+    widget_box: &engine_coordinates::ScreenBBox,
+) -> Option<(BBox, BBox)> {
     // Centre the sprite on the converted position.
     let top_left = engine_coordinates::ScreenPoint::new(
         map_pos.x - (dot_w as f32) * 0.5,
@@ -294,43 +302,17 @@ fn clipped_dot_blit(
         return None;
     }
 
-    // Clip the destination rect to the widget box before the final
-    // blit.
-    let mut dst_x_min = top_left.x;
-    let mut dst_y_min = top_left.y;
-    let mut dst_x_max = top_left.x + dot_w as f32;
-    let mut dst_y_max = top_left.y + dot_h as f32;
-
-    let mut src_x_min = 0.0f32;
-    let mut src_y_min = 0.0f32;
-
-    if dst_x_min < widget_box.top_left().x {
-        src_x_min += widget_box.top_left().x - dst_x_min;
-        dst_x_min = widget_box.top_left().x;
-    }
-    if dst_y_min < widget_box.top_left().y {
-        src_y_min += widget_box.top_left().y - dst_y_min;
-        dst_y_min = widget_box.top_left().y;
-    }
-    if dst_x_max > widget_box.bottom_right().x {
-        dst_x_max = widget_box.bottom_right().x;
-    }
-    if dst_y_max > widget_box.bottom_right().y {
-        dst_y_max = widget_box.bottom_right().y;
-    }
-
-    if dst_x_max <= dst_x_min || dst_y_max <= dst_y_min {
+    // The anchor check above already excludes left/top overflow.
+    let bottom_right = widget_box.bottom_right();
+    let right = (top_left.x + dot_w as f32).min(bottom_right.x);
+    let bottom = (top_left.y + dot_h as f32).min(bottom_right.y);
+    if right <= top_left.x || bottom <= top_left.y {
         return None;
     }
 
-    let src_box = BBox::from_coords(
-        src_x_min,
-        src_y_min,
-        src_x_min + (dst_x_max - dst_x_min),
-        src_y_min + (dst_y_max - dst_y_min),
-    );
-    let dst_box = BBox::from_coords(dst_x_min, dst_y_min, dst_x_max, dst_y_max);
-    Some((surface, src_box, dst_box))
+    let src_box = BBox::from_coords(0.0, 0.0, right - top_left.x, bottom - top_left.y);
+    let dst_box = BBox::from_coords(top_left.x, top_left.y, right, bottom);
+    Some((src_box, dst_box))
 }
 
 fn level_size_for(host: &HostDraw<'_>) -> engine_coordinates::MapSize {
@@ -368,4 +350,36 @@ fn render_minimap_fog(
         ],
         || super::build_vector_fog_mask_rgba(fog),
     );
+}
+
+#[test]
+fn minimap_dot_clipping_preserves_anchor_gate_and_source_origin() {
+    use engine_coordinates::{ScreenBBox, ScreenPoint};
+    let widget = ScreenBBox::from_coords(10.0, 20.0, 30.0, 40.0);
+    for (center, size, expected) in [
+        ((12.0, 22.0), (4, 4), Some((10.0, 20.0, 14.0, 24.0))),
+        ((29.0, 39.0), (4, 4), Some((27.0, 37.0, 30.0, 40.0))),
+        ((11.0, 22.0), (4, 4), None),
+        ((12.0, 21.0), (4, 4), None),
+        ((32.0, 22.0), (4, 4), None),
+        ((12.0, 42.0), (4, 4), None),
+        ((15.0, 25.0), (0, 4), None),
+        ((15.0, 25.0), (4, 0), None),
+    ] {
+        let actual = clipped_dot_rectangles(ScreenPoint::new(center.0, center.1), size, &widget);
+        match (actual, expected) {
+            (Some((src, dst)), Some((left, top, right, bottom))) => {
+                assert_eq!(
+                    (src.min.x, src.min.y, src.max.x, src.max.y),
+                    (0.0, 0.0, right - left, bottom - top)
+                );
+                assert_eq!(
+                    (dst.min.x, dst.min.y, dst.max.x, dst.max.y),
+                    (left, top, right, bottom)
+                );
+            }
+            (None, None) => {}
+            pair => panic!("unexpected clipping for {center:?}, {size:?}: {pair:?}"),
+        }
+    }
 }
