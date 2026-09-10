@@ -329,22 +329,19 @@ impl DrawManager {
         }
 
         // Convert world → screen coordinates
-        let screen_pts: Vec<[f32; 2]> = points
-            .iter()
-            .map(|p| {
-                let s = self.map_to_screen(*p);
-                [s.x, s.y]
-            })
-            .collect();
+        let screen_pts = points.iter().map(|p| {
+            let s = self.map_to_screen(*p);
+            [s.x, s.y]
+        });
 
-        // Build edge table
-        let edges = build_poly_edge_table(&screen_pts);
+        // Build edge table without retaining a second copy of the vertices.
+        let edges = build_poly_edge_table(screen_pts);
         if edges.is_empty() {
             return;
         }
 
         if renderer.is_gpu_phase() {
-            draw_alpha_polygon_gpu(renderer, &edges, color, alpha, self.zoom_factor);
+            draw_alpha_polygon_gpu(renderer, &edges, color, alpha);
             return;
         }
 
@@ -393,15 +390,17 @@ struct PolyEdge {
 }
 
 /// Build an edge table from screen-space polygon points.
-fn build_poly_edge_table(pts: &[[f32; 2]]) -> Vec<PolyEdge> {
+fn build_poly_edge_table(mut pts: impl ExactSizeIterator<Item = [f32; 2]>) -> Vec<PolyEdge> {
     let n = pts.len();
     if n < 3 {
         return Vec::new();
     }
     let mut edges = Vec::with_capacity(n);
-    for i in 0..n {
-        let a = pts[i];
-        let b = pts[(i + 1) % n];
+    let first = pts.next().expect("polygon has at least three vertices");
+    let mut previous = first;
+    for b in pts.chain(std::iter::once(first)) {
+        let a = previous;
+        previous = b;
         let dy = b[1] - a[1];
         if dy.abs() < 0.001 {
             continue;
@@ -431,14 +430,7 @@ fn build_poly_edge_table(pts: &[[f32; 2]]) -> Vec<PolyEdge> {
 /// filled scanline. The renderer snapshots the composited frame before
 /// these spans and uses the original-game RGB565 alpha shader, so patches
 /// already drawn on the GPU are included in the source pixels.
-#[allow(clippy::too_many_arguments)]
-fn draw_alpha_polygon_gpu(
-    renderer: &mut Renderer,
-    edges: &[PolyEdge],
-    color: u32,
-    alpha: u32,
-    _zoom: f32,
-) {
+fn draw_alpha_polygon_gpu(renderer: &mut Renderer, edges: &[PolyEdge], color: u32, alpha: u32) {
     // Degenerate polygons (all edges horizontal / off-screen) yield no edges.
     let Some(y_min) = edges.iter().map(|e| e.y_min as i32).min() else {
         return;
@@ -596,6 +588,36 @@ fn clip_map_line_to_box(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn polygon_edge_table_preserves_closure_order_and_horizontal_filtering() {
+        let points = [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]];
+        let edges = super::build_poly_edge_table(points.into_iter());
+        let values: Vec<_> = edges
+            .iter()
+            .map(|e| (e.y_min, e.y_max, e.x_start, e.dx_per_dy))
+            .collect();
+        assert_eq!(values, [(0.0, 3.0, 4.0, 0.0), (0.0, 3.0, 0.0, -0.0)]);
+        let reversed = super::build_poly_edge_table(points.into_iter().rev());
+        assert_eq!(reversed.len(), 2);
+        assert_eq!((reversed[0].x_start, reversed[1].x_start), (4.0, 0.0));
+        for count in 0..3 {
+            assert!(super::build_poly_edge_table(points[..count].iter().copied()).is_empty());
+        }
+        assert!(
+            super::build_poly_edge_table([[0.0, 0.0], [1.0, 0.0001], [2.0, 0.0002]].into_iter())
+                .is_empty()
+        );
+        let triangle =
+            super::build_poly_edge_table([[0.0, 0.0], [4.0, 2.0], [0.0, 4.0]].into_iter());
+        assert_eq!(
+            triangle
+                .iter()
+                .map(|edge| edge.dx_per_dy)
+                .collect::<Vec<_>>(),
+            [2.0, -2.0, -0.0]
+        );
+    }
+
     use super::*;
 
     #[test]
