@@ -3353,7 +3353,53 @@ mod bind_counter {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_loading_dissolve_pixels(gpu: GpuContext) {
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 3, 2, TextureScaleMode::Nearest);
+    let initial = [0xF800u16, 0x07E0, 0x001F, 0xFFFF, 0, 0xFFE0];
+    let final_pixels = [0x001Fu16, 0xFFFF, 0xF800, 0, 0x07E0, 0xF81F];
+    let mask = crate::loading_screen::HeightField {
+        data: vec![0, 1, 127, 128, 254, 255],
+        width: 3,
+        height: 2,
+    };
+    let textures = renderer
+        .create_loading_dissolve_textures(
+            3,
+            2,
+            initial.into_iter(),
+            final_pixels.into_iter(),
+            &mask,
+        )
+        .unwrap();
+    for threshold in [256, 255, 128, 0] {
+        renderer.begin_gpu_frame_clear();
+        renderer.render_loading_dissolve(&textures, threshold, Rect::new(0, 0, 3, 2));
+        let expected: Vec<u8> = mask
+            .data
+            .iter()
+            .enumerate()
+            .flat_map(|(index, &height)| {
+                let pixel = if u32::from(height) > threshold {
+                    final_pixels[index]
+                } else {
+                    initial[index]
+                };
+                let (r, g, b) = robin_util::color::rgb565_to_rgb8(pixel);
+                [r, g, b, 255]
+            })
+            .collect();
+        assert_eq!(
+            renderer.try_capture_frame_rgba().unwrap(),
+            (3, 2, expected),
+            "dissolve threshold {threshold}"
+        );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    verify_loading_dissolve_pixels(gpu.clone());
     verify_mask_atlas_pixels(gpu.clone());
     let mut other_renderer =
         Renderer::with_optional_surface(gpu.clone(), None, None, 3, 2, TextureScaleMode::Nearest);
