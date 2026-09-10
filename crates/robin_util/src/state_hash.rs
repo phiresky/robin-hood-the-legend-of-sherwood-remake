@@ -322,7 +322,8 @@ impl<T: StateHash> StateHash for std::collections::BTreeSet<T> {
 impl<K: StateHash + Ord, V: StateHash> StateHash for std::collections::HashMap<K, V> {
     fn state_hash<H: Hasher>(&self, state: &mut H) {
         let mut entries: Vec<(&K, &V)> = self.iter().collect();
-        entries.sort_by(|a, b| a.0.cmp(b.0));
+        // Keys are unique, so stable sorting adds no ordering guarantee.
+        entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
         state.write_u64(entries.len() as u64);
         for (k, v) in entries {
             k.state_hash(state);
@@ -334,7 +335,7 @@ impl<K: StateHash + Ord, V: StateHash> StateHash for std::collections::HashMap<K
 impl<T: StateHash + Ord> StateHash for std::collections::HashSet<T> {
     fn state_hash<H: Hasher>(&self, state: &mut H) {
         let mut items: Vec<&T> = self.iter().collect();
-        items.sort();
+        items.sort_unstable();
         state.write_u64(items.len() as u64);
         for item in items {
             item.state_hash(state);
@@ -545,6 +546,43 @@ mod tests {
         let a: Vec<u8> = vec![1, 23];
         let b: Vec<u8> = vec![12, 3];
         assert_ne!(compute(&a), compute(&b));
+    }
+
+    #[test]
+    fn unordered_container_hash_bytes_match_canonical_ordered_containers() {
+        use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+        #[derive(Default, serde::Serialize, serde::Deserialize)]
+        struct Bytes(Vec<u8>);
+        impl Hasher for Bytes {
+            fn write(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+            fn finish(&self) -> u64 {
+                panic!("byte-capture fixture does not compute a hash")
+            }
+        }
+        fn bytes(value: &impl StateHash) -> Vec<u8> {
+            let mut output = Bytes::default();
+            value.state_hash(&mut output);
+            output.0
+        }
+        for count in [0u32, 1, 8, 257] {
+            let entries: Vec<_> = (0..count)
+                .map(|i| ((i * 73) % 257, i as i64 - 128))
+                .collect();
+            let ordered: BTreeMap<_, _> = entries.iter().copied().collect();
+            let ordered_set: BTreeSet<_> = ordered.keys().copied().collect();
+            for reverse in [false, true] {
+                let mut input = entries.clone();
+                if reverse {
+                    input.reverse();
+                }
+                let map: HashMap<_, _> = input.iter().copied().collect();
+                let set: HashSet<_> = input.iter().map(|(key, _)| *key).collect();
+                assert_eq!(bytes(&map), bytes(&ordered));
+                assert_eq!(bytes(&set), bytes(&ordered_set));
+            }
+        }
     }
 
     #[test]
