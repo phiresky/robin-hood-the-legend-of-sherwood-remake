@@ -1067,15 +1067,16 @@ fn browser_key(save_directory: &str, suffix: &str) -> String {
 
 #[cfg(any(test, target_arch = "wasm32"))]
 fn encode_browser_blob<T: Serialize>(value: &T) -> Result<String> {
-    use base64::Engine as _;
     use sha2::{Digest, Sha256};
     let json = serde_json::to_vec(value).context("serializing browser autosave value")?;
-    let compressed = zstd::stream::encode_all(std::io::Cursor::new(&json), 3)
+    let mut encoded =
+        base64::write::EncoderStringWriter::new(&base64::engine::general_purpose::STANDARD);
+    zstd::stream::copy_encode(std::io::Cursor::new(&json), &mut encoded, 3)
         .context("compressing browser autosave value")?;
     let blob = BrowserBlob {
         version: 1,
         sha256: hex::encode(Sha256::digest(&json)),
-        compressed_base64: base64::engine::general_purpose::STANDARD.encode(compressed),
+        compressed_base64: encoded.into_inner(),
     };
     serde_json::to_string(&blob).context("serializing browser autosave envelope")
 }
@@ -1257,6 +1258,26 @@ fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) ->
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn streamed_browser_encoding_matches_materialized_compression() {
+        use base64::Engine as _;
+        use sha2::{Digest, Sha256};
+        for size in [0, 1, 8191, 8192, 8193, 131_072] {
+            let value: Vec<_> = (0..size).map(|index| (index % 251) as u8).collect();
+            let json = serde_json::to_vec(&value).unwrap();
+            let compressed = zstd::stream::encode_all(json.as_slice(), 3).unwrap();
+            let expected = BrowserBlob {
+                version: 1,
+                sha256: hex::encode(Sha256::digest(&json)),
+                compressed_base64: base64::engine::general_purpose::STANDARD.encode(compressed),
+            };
+            assert_eq!(
+                encode_browser_blob(&value).unwrap(),
+                serde_json::to_string(&expected).unwrap()
+            );
+        }
+    }
+
     #[test]
     fn autosave_metadata_preserves_payload_diagnostic_classification() {
         let mut assets = robin_engine::engine::LevelAssets::new();
