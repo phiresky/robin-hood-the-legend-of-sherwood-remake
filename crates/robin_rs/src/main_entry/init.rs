@@ -42,6 +42,9 @@ pub enum InitErrorCategory {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum InitError {
+    #[error("Game data selection cancelled")]
+    DataDirectoryCancelled,
+
     #[error("Unable to install datadir {path}: file error {status}")]
     DataDirectoryInstall { path: String, status: i32 },
 
@@ -128,9 +131,9 @@ pub enum InitError {
 impl InitError {
     pub const fn category(&self) -> InitErrorCategory {
         match self {
-            Self::DataDirectoryInstall { .. } | Self::DataDirectoryMissing { .. } => {
-                InitErrorCategory::DataDirectory
-            }
+            Self::DataDirectoryInstall { .. }
+            | Self::DataDirectoryMissing { .. }
+            | Self::DataDirectoryCancelled => InitErrorCategory::DataDirectory,
             #[cfg(target_os = "android")]
             Self::DataDirectoryChange { .. } | Self::DataDirectoryAndroidAssetsMissing { .. } => {
                 InitErrorCategory::DataDirectory
@@ -246,21 +249,47 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
         "Registered validated native core overlay datadir"
     );
 
-    if let Some(mods_dir) = resolve_install_resource_dir(MODS_DIR)
-        && let Ok(entries) = std::fs::read_dir(mods_dir)
-    {
-        // Sort for a deterministic overlay lookup order.
-        let mut mod_dirs: Vec<String> = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
-            .map(|entry| entry.path().to_string_lossy().into_owned())
-            .collect();
-        mod_dirs.sort();
-        for dir in mod_dirs {
-            match files.add_overlay_path(&dir) {
-                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay datadir: {dir}"),
+    let mut mod_roots = Vec::new();
+    if let Some(root) = resolve_install_resource_dir(MODS_DIR) {
+        mod_roots.push(root);
+    }
+    let configured_root = crate::mod_pack::default_mods_root();
+    if !mod_roots.contains(&configured_root) {
+        mod_roots.push(configured_root);
+    }
+    for mods_dir in mod_roots {
+        let entries = match std::fs::read_dir(&mods_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                tracing::warn!("Cannot scan mod directory {}: {error}", mods_dir.display());
+                continue;
+            }
+        };
+        let mut roots = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+                    if path.is_dir()
+                        || path
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+                    {
+                        roots.push(path);
+                    }
+                }
+                Err(error) => tracing::warn!("Cannot read mod directory entry: {error}"),
+            }
+        }
+        roots.sort();
+        for path in roots {
+            match crate::mod_pack::mount_mod_overlay(files, &path) {
+                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay: {}", path.display()),
                 SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-                err => tracing::warn!("Failed to register mod overlay datadir {dir}: {err}"),
+                error => {
+                    tracing::warn!("Failed to register mod overlay {}: {error}", path.display())
+                }
             }
         }
     }
@@ -273,7 +302,7 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
             continue;
         }
         let path = path.to_string_lossy().into_owned();
-        match files.add_overlay_path(&path) {
+        match crate::mod_pack::mount_mod_overlay(files, Path::new(&path)) {
             SBFILE_NO_ERROR => tracing::info!("Registered overlay datadir: {path}"),
             SBFILE_ERROR_PATH_ALREADY_PRESENT => {
                 tracing::debug!("Overlay datadir already registered: {path}")
@@ -386,11 +415,9 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(Path::to_path_buf));
-        // Fall back to the working directory when nothing was found or the
-        // player cancelled the picker; a loose unmarked `Data/` there keeps
-        // working, anything else hits the descriptive error below.
-        let chosen = crate::datadir_locator::resolve_datadir(exe_dir.as_deref())
-            .unwrap_or_else(|| PathBuf::from("."));
+        // Only non-interactive discovery may fall back to loose, unmarked Data/.
+        // Cancelling the picker must stop startup before installing any data.
+        let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
         tracing::info!("using primary datadir {}", chosen.display());
         let status = files.set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
@@ -421,6 +448,37 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
     add_overlay_data_dirs(files)?;
     add_language_folder_with_files(files)?;
     Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn startup_data_dir(
+    resolution: crate::datadir_locator::DataDirResolution,
+) -> Result<PathBuf, InitError> {
+    use crate::datadir_locator::DataDirResolution;
+    match resolution {
+        DataDirResolution::Selected(path) => Ok(path),
+        DataDirResolution::Unavailable => Ok(PathBuf::from(".")),
+        DataDirResolution::Cancelled => Err(InitError::DataDirectoryCancelled),
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
+#[test]
+fn datadir_cancellation_does_not_fall_back_to_working_directory() {
+    use crate::datadir_locator::DataDirResolution;
+    assert!(matches!(
+        startup_data_dir(DataDirResolution::Cancelled),
+        Err(InitError::DataDirectoryCancelled)
+    ));
+    assert_eq!(
+        startup_data_dir(DataDirResolution::Unavailable).unwrap(),
+        PathBuf::from(".")
+    );
+    let selected = PathBuf::from("/chosen/game");
+    assert_eq!(
+        startup_data_dir(DataDirResolution::Selected(selected.clone())).unwrap(),
+        selected
+    );
 }
 
 /// Android uses a pre-converted shipping datadir bundled as an APK
@@ -1142,6 +1200,56 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("no longer supported"), "{error}");
+    }
+
+    #[test]
+    fn json_profile_patches_compose_across_directory_and_zip_layers() {
+        use std::io::Write;
+        let patch_path = robin_engine::content_patch::PROFILE_PATCH_PATH;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(patch_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let patch = |template: &str, filename: &str| {
+            serde_json::to_vec(&serde_json::json!([
+                {"op":"copy", "from":format!("/soldiers/{template}"), "path":format!("/soldiers/{filename}")},
+                {"op":"replace", "path":format!("/soldiers/{filename}/filename"), "value":filename},
+                {"op":"replace", "path":format!("/soldiers/{filename}/display_name"), "value":filename}
+            ]))
+            .unwrap()
+        };
+        std::fs::write(path, patch("Knight03", "Knight00")).unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                format!("Wrapped/{patch_path}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(&patch("Knight00", "Knight01")).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.add_overlay_path(directory.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.add_overlay_zip_bytes_for_mission("patch", bytes.into(), None),
+            SBFILE_NO_ERROR
+        );
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(engine_profiles::SoldierProfile {
+            filename: "Knight03".into(),
+            ..Default::default()
+        });
+        let profiles = apply_profile_patches_with_files(profiles, &files).unwrap();
+        assert_eq!(
+            profiles
+                .soldiers
+                .iter()
+                .map(|soldier| soldier.filename.as_str())
+                .collect::<Vec<_>>(),
+            ["Knight03", "Knight00", "Knight01"]
+        );
     }
 
     #[test]

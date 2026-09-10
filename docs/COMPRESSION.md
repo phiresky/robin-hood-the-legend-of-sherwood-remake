@@ -4077,10 +4077,38 @@ target/debug/examples/encode_mod_sprites mods/fabri18-sprite-gallery OUTPUT
 The example also supports `--family OUTPUT INPUT_RHS_DIR...` for independent
 family jobs and `--map INPUT_PNG OUTPUT_MAP`. Its three-member family test
 passes, including exact reconstruction and preservation of other authored
-assets. The full client unit-test target remains blocked by the pre-existing
-`ui_task_state.rs` test initializer (`shortcut_scroll: 0` where an
-`Option<ScrollView>` is required). The native engine build passes.
+assets. The stale `ui_task_state.rs` test initializer was subsequently
+corrected to use `None`, allowing the client tests to compile.
 
 Local artifact: `.tmp/fabri18-sprite-gallery-vq-jxl.zip`; SHA-256
 `b615e8a9fa9867bb47ef1177082799e620a4e661b129fb2c2c536f0319b2c631`.
 The exact byte ledger is `.tmp/fabri18-vq-v2-report.json`.
+
+The regenerated archive `.tmp/fabri18-sprite-gallery-vq-jxl-flat.zip` places
+`details.json` and `Data/` directly at its root and includes direct-ZIP install
+instructions. It is **18,435,228 bytes** (17.58 MiB), with identical sprite and
+map payloads. SHA-256:
+`76c1c484d8c73e4d04639665c71a1d9a145cff352493fd8f7f12d813eb12375a`.
+ZIP overlay support now includes JSON mission discovery, profile patches, PNG
+characters, and both custom VQ encodings without extraction.
+
+The opt-in `fabri18_archive_matches_directory` client test takes
+`FABRI18_MOD_DIR` and `FABRI18_MOD_ZIP`, verifies nine families and 266,984
+frames, and compares decoded runtime sprite/profile digests for both storage
+forms. Synthetic regressions also exercise the shared runtime loader with
+flat and wrapped archives, mission-scoped selection, and missing PNG errors.
+
+The flat package also explicitly binds each soldier addition to the animation
+profile in its authored manifest. Previously the mod inherited that name from
+the retail stats template, which caused the green officer to request a missing
+RHS profile during the demo-data smoke run. Combat stats and sprite bytes are
+unchanged. Validation passed: 37 data-I/O tests, 1,906 client tests (16 opt-in
+tests ignored), and the full 266,984-frame directory/ZIP comparison.
+
+The gallery also uses retail enemy squads absent from the Leicester demo
+(e.g. `Officier B00.rhs`); full mission launch requires full-game data. ZIP-only
+loading was separately exercised using the native headless game.
+
+The isolated ZIP-only full-game headless smoke run loaded all 51 custom
+profiles, the JSON mission and JXL terrain, and advanced beyond 500 simulation
+ticks before being stopped intentionally. No archive extraction was used.

@@ -94,15 +94,14 @@ fn runtime_sprite(
 }
 
 pub(super) fn read(path: &Path) -> Result<Vec<(String, HackableRhsCache)>> {
-    read_selected(path, None)
+    read_selected_bytes(&std::fs::read(path)?, None)
 }
 
-pub(super) fn read_selected(
-    path: &Path,
+pub(super) fn read_selected_bytes(
+    compressed: &[u8],
     selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<(String, HackableRhsCache)>> {
-    let compressed = std::fs::read(path)?;
-    let bytes = zstd::stream::decode_all(compressed.as_slice())?;
+    let bytes = zstd::stream::decode_all(compressed)?;
     ensure!(
         bytes.starts_with(MAGIC),
         "unsupported custom VQ family format"

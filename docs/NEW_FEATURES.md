@@ -11,6 +11,16 @@ A list of which additional features we have added, which ones we might still wan
   mod patch formats have been removed. See [JSON Patch mods](JSON_PATCH_MODS.md)
   for filenames, examples, the profile-view exporter and current limits.
 
+- **ZIP mod overlays:** Put a mod ZIP directly in `mods/` or the configured
+  `ROBINHOOD_MODS_DIR`; `details.json` and `Data/` should be at the archive
+  root. A single wrapping folder is also accepted. JSON mission discovery,
+  soldier profile patches, PNG characters, standalone VQ characters, and
+  shipping VQ families use the same overlay reads as directory installs.
+  ZIP directories are enumerated without extraction; in-memory mission
+  archives use the same sprite loader. Disposable PNG caches remain optional
+  and are written only for directory installs. Install just one edition of
+  a mod when editions share mission and character identifiers.
+
 - **VQ sprite mod packages:** Custom `.rhs.d` directories can contain an
   authored `sprites.vq.zst` instead of PNGs and a manifest. The
   `encode_mod_sprites` example converts a mod using exact four-pixel RGB565

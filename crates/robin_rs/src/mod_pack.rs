@@ -51,7 +51,7 @@ pub struct ModDetails {
     pub versions: Vec<ModVersion>,
     /// Hackable JSON levels shipped as an
     /// always-mounted overlay datadir (see [`crate::main_entry`]'s
-    /// `MODS_DIR`) rather than a downloadable zip. Each value is the
+    /// `MODS_DIR`), stored as a directory or ZIP. Each value is the
     /// `<mission>` of a `Data/Levels/<mission>.level.json` descriptor.
     /// Such mods need no `versions` — the picker launches them through
     /// the hackable-level path instead of mounting a zip.
@@ -94,13 +94,27 @@ pub enum ModDetailsError {
 
 // ── Discovery ───────────────────────────────────────────────────
 
-/// A mod discovered on disk: its parsed `details.json` plus the
-/// directory it lives in (so the per-mod assets — zip files, locally
-/// cached preview images — can be located relative to it).
+/// A mod discovered on disk: its parsed `details.json` and containing root.
 #[derive(Debug, Clone)]
 pub struct DiscoveredMod {
     pub details: ModDetails,
+    /// Directory or standalone ZIP containing the mod root.
     pub mod_dir: PathBuf,
+}
+
+/// Mount a mod root with the same logical paths for directories and ZIPs.
+pub fn mount_mod_overlay(files: &SbFileSystem, path: &Path) -> i32 {
+    if path.is_dir() {
+        files.add_overlay_path(&path.to_string_lossy())
+    } else {
+        match fs::canonicalize(path) {
+            Ok(path) => files.add_overlay_zip(&path.to_string_lossy()),
+            Err(error) => {
+                tracing::warn!("Cannot open mod archive {}: {error}", path.display());
+                robin_engine::sbfile::SBFILE_ERROR_NO_FILE
+            }
+        }
+    }
 }
 
 impl DiscoveredMod {
@@ -120,7 +134,7 @@ impl DiscoveredMod {
     }
 }
 
-/// Scan `mods_root` for `<slug>/details.json` files, returning all
+/// Scan `mods_root` for directories and ZIPs containing `details.json`, returning all
 /// successfully-parsed mods.  Parse failures are logged at `warn` and
 /// skipped — a bad single `details.json` shouldn't make the entire
 /// picker unavailable.
@@ -135,20 +149,39 @@ pub fn scan_mods_dir(mods_root: &Path) -> Vec<DiscoveredMod> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        if !path.is_dir()
+            && !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+        {
             continue;
         }
-        let details_path = path.join("details.json");
-        if !details_path.is_file() {
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let status = mount_mod_overlay(&files, &path);
+        if status != SBFILE_NO_ERROR {
+            tracing::warn!("scan_mods_dir: cannot mount {}: {status}", path.display());
             continue;
         }
-        match ModDetails::load(&details_path) {
+        let source = files
+            .overlay_sources()
+            .into_iter()
+            .next()
+            .expect("successful mod mount");
+        let bytes = match files.read_overlay(&source, "details.json") {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!("scan_mods_dir: cannot read {source}/details.json: {error}");
+                continue;
+            }
+        };
+        match serde_json::from_slice(&bytes) {
             Ok(details) => out.push(DiscoveredMod {
                 details,
                 mod_dir: path,
             }),
             Err(e) => {
-                tracing::warn!("scan_mods_dir: skipping {}: {e}", details_path.display());
+                tracing::warn!("scan_mods_dir: skipping {source}/details.json: {e}");
             }
         }
     }
@@ -752,6 +785,48 @@ pub(crate) fn find_lib_zip(lib_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discover_and_enumerate_json_missions_from_directory_and_root_or_wrapped_zip() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        let details = serde_json::json!({"slug":"gallery", "title":"Gallery", "page_url":"", "author":"test", "map":"test", "uploaded":"", "hackable_missions":["Gallery"]});
+        let bytes = serde_json::to_vec(&details).unwrap();
+        let directory = root.path().join("directory");
+        fs::create_dir_all(directory.join("Data/Levels")).unwrap();
+        fs::write(directory.join("details.json"), &bytes).unwrap();
+        fs::write(directory.join("Data/Levels/Gallery.level.json"), b"{}").unwrap();
+        for (name, prefix) in [("flat.zip", ""), ("wrapped.zip", "Wrapper/")] {
+            let mut writer = zip::ZipWriter::new(fs::File::create(root.path().join(name)).unwrap());
+            for (path, contents) in [
+                ("details.json", bytes.as_slice()),
+                ("Data/Levels/Gallery.level.json", b"{}".as_slice()),
+            ] {
+                writer
+                    .start_file(
+                        format!("{prefix}{path}"),
+                        zip::write::SimpleFileOptions::default(),
+                    )
+                    .unwrap();
+                writer.write_all(contents).unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        let mods = scan_mods_dir(root.path());
+        assert_eq!(mods.len(), 3);
+        for discovered in mods {
+            let files =
+                SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+            assert_eq!(
+                mount_mod_overlay(&files, &discovered.mod_dir),
+                SBFILE_NO_ERROR
+            );
+            let entries = enumerate_missions(&[discovered], &files);
+            assert_eq!(entries.len(), 1);
+            assert!(entries[0].hackable);
+            assert!(matches!(entries[0].status, MissionStatus::Ok { .. }));
+        }
+    }
 
     #[test]
     fn bundled_demos_use_the_supplied_overlay_filesystem() {
