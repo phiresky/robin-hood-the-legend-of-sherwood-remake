@@ -6,6 +6,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn keyed_class_verification_allows_color_loss_but_rejects_class_loss() {
+        use robin_assets::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
+        let source = [TRANSPARENT_COLOR_16, SHADOW_KEY, 0xf800];
+        let mut picture = Picture {
+            width: 1,
+            height: 3,
+            pitch: 3,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: [TRANSPARENT_COLOR_16, SHADOW_KEY, 0xffff]
+                .into_iter()
+                .flat_map(|word| {
+                    let [lo, hi] = word.to_le_bytes();
+                    [lo, hi, 0xaa]
+                })
+                .collect(),
+            palette: None,
+        };
+        verify_decoded_picture_classes(&picture, &source).unwrap();
+        assert!(
+            verify_decoded_picture_classes(&picture, &source[..2])
+                .unwrap_err()
+                .to_string()
+                .contains("expected 2")
+        );
+        picture.data[3..5].copy_from_slice(&0xffff_u16.to_le_bytes());
+        assert!(
+            verify_decoded_picture_classes(&picture, &source)
+                .unwrap_err()
+                .to_string()
+                .contains("pixel 1 changed class")
+        );
+        picture.data.truncate(7);
+        assert!(verify_decoded_picture_classes(&picture, &source).is_err());
+    }
+
+    #[test]
     fn rgb565_conversions_skip_padding_and_share_validation() {
         let mut picture = Picture {
             width: 1,
@@ -182,19 +218,23 @@ pub(super) fn transcode_picture_to_jxl_rgba_keyed(
 /// paths), so a class that shifts is silent corruption — a blue cursor
 /// shadow, or a hole where art should be. Cheap next to the encode.
 pub(super) fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Result<()> {
-    use robin_assets::rle_jxl::class_of;
-
     let decoded =
         Picture::load_jxl_rgba565_keyed(encoded).context("decode keyed interface picture")?;
-    let round_trip = picture_rgb16_canvas(&decoded)?;
-    if round_trip.len() != source.len() {
+    verify_decoded_picture_classes(&decoded, source)
+}
+
+fn verify_decoded_picture_classes(decoded: &Picture, source: &[u16]) -> Result<()> {
+    use robin_assets::rle_jxl::class_of;
+    let round_trip = picture_rgb16_pixels(decoded)?;
+    let pixel_count = usize::from(decoded.width) * usize::from(decoded.height);
+    if pixel_count != source.len() {
         bail!(
             "keyed interface picture round-tripped {} pixels, expected {}",
-            round_trip.len(),
+            pixel_count,
             source.len()
         );
     }
-    for (index, (&want, &got)) in source.iter().zip(round_trip.iter()).enumerate() {
+    for (index, (&want, got)) in source.iter().zip(round_trip).enumerate() {
         if class_of(want) != class_of(got) {
             bail!(
                 "keyed interface picture pixel {index} changed class: source {want:#06x} \
