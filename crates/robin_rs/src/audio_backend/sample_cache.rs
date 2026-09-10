@@ -68,15 +68,6 @@ impl SampleCache {
             "native decoded audio cache residency"
         );
     }
-
-    pub(super) fn clear(&mut self) {
-        tracing::debug!(
-            released_bytes = self.resident_bytes,
-            "invalidating localized audio cache"
-        );
-        self.samples.clear();
-        self.resident_bytes = 0;
-    }
 }
 
 #[cfg(test)]
@@ -91,7 +82,7 @@ mod tests {
         }
     }
     #[test]
-    fn eviction_and_locale_clear_preserve_voice_owned_samples() {
+    fn eviction_and_cache_drop_preserve_voice_owned_samples() {
         let bytes = std::mem::size_of::<kira::Frame>();
         let mut cache = SampleCache::new(bytes * 2);
         cache.insert("a".into(), sample());
@@ -100,8 +91,8 @@ mod tests {
         cache.insert("c".into(), sample());
         assert!(cache.get("b").is_none());
         assert_eq!(cache.resident_bytes, bytes * 2);
-        cache.clear();
-        assert_eq!(cache.resident_bytes, 0);
+        drop(cache);
+        assert_eq!(std::sync::Arc::strong_count(&active.frames), 1);
         assert_eq!(active.frames.len(), 1);
     }
     #[test]

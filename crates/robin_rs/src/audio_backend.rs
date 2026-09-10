@@ -173,14 +173,6 @@ impl KiraAudioBackend {
         }
     }
 
-    /// Drop decoded localized samples after the locale lookup generation
-    /// changes. Native paths already make cache identities distinct; this is
-    /// still required for browser/Android VFS mounts whose logical path stays
-    /// constant while the mounted bytes change.
-    pub fn invalidate_localized_samples(&mut self) {
-        self.sample_cache.clear();
-    }
-
     fn find_free_channel(&self) -> Option<usize> {
         let channel = self
             .channels
@@ -725,8 +717,6 @@ impl KiraAudioBackend {
     pub fn new(_sound_dir: impl Into<PathBuf>, _num_channels: u32) -> Result<Self, String> {
         Err("audio feature disabled in this build".to_string())
     }
-
-    pub fn invalidate_localized_samples(&mut self) {}
 }
 
 #[cfg(not(feature = "audio"))]
@@ -1135,6 +1125,30 @@ mod tests {
         assert!(load_streaming_sound(&files, &path).is_err());
         assert!(load_static_sound(&files, Path::new("../sample.wav")).is_err());
         assert!(load_streaming_sound(&files, Path::new("../sample.wav")).is_err());
+    }
+
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    #[test]
+    fn audio_cache_identity_changes_with_mounts_but_frozen_readers_stay_pinned() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let path = Path::new("Data/Sounds/replaced.wav");
+        assets
+            .install_preloaded_asset(path, one_second_wav())
+            .unwrap();
+        let files = SbFileSystem::new(assets.clone());
+        let frozen = files.snapshot();
+        let old_key = sample_cache_key(&files, path);
+        let mut replacement = one_second_wav();
+        replacement[24..28].copy_from_slice(&22_050u32.to_le_bytes());
+        replacement[28..32].copy_from_slice(&88_200u32.to_le_bytes());
+        assets.install_preloaded_asset(path, replacement).unwrap();
+        assert_ne!(sample_cache_key(&files, path), old_key);
+        assert_eq!(sample_cache_key(&frozen, path), old_key);
+        assert_eq!(load_static_sound(&files, path).unwrap().sample_rate, 22_050);
+        assert_eq!(
+            load_static_sound(&frozen, path).unwrap().sample_rate,
+            44_100
+        );
     }
 
     fn one_second_wav() -> Vec<u8> {
