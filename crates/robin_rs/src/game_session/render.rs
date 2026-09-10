@@ -251,12 +251,13 @@ struct PatrolRouteOverlay<'a> {
     active_waypoint: usize,
 }
 
-fn authored_patrol_route(
+fn unseen_authored_patrol_route(
     path: Option<&PatrolPath>,
     detached: &DetachedPatrolPathStatus,
     has_patrol_path: bool,
     hiking_paths: &[robin_engine::level_data::RawHikingPath],
-) -> Option<(PathId, PatrolRouteOverlay<'static>)> {
+    shown_paths: &mut HashSet<PathId>,
+) -> Option<PatrolRouteOverlay<'static>> {
     if !has_patrol_path {
         return None;
     }
@@ -283,20 +284,22 @@ fn authored_patrol_route(
         raw_path.waypoints.len()
     );
 
-    Some((
-        path_id,
-        PatrolRouteOverlay {
-            points: raw_path
-                .waypoints
-                .iter()
-                .map(|waypoint| {
-                    engine_coordinates::MapPoint::new(f32::from(waypoint.x), f32::from(waypoint.y))
-                })
-                .collect::<Vec<_>>()
-                .into(),
-            active_waypoint: current_waypoint,
-        },
-    ))
+    // Validate each soldier's cursor before deduplication, but only project a
+    // shared authored path once. The first selected soldier supplies its marker.
+    if !shown_paths.insert(path_id) {
+        return None;
+    }
+    Some(PatrolRouteOverlay {
+        points: raw_path
+            .waypoints
+            .iter()
+            .map(|waypoint| {
+                engine_coordinates::MapPoint::new(f32::from(waypoint.x), f32::from(waypoint.y))
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        active_waypoint: current_waypoint,
+    })
 }
 
 fn selected_allied_patrol_routes<'a>(
@@ -324,13 +327,13 @@ fn selected_allied_patrol_routes<'a>(
             let ai = entity.ai_controller().unwrap_or_else(|| {
                 panic!("selected allied soldier {soldier_id:?} has no AI controller")
             });
-            let (path_id, route) = authored_patrol_route(
+            unseen_authored_patrol_route(
                 ai.patrol_path.as_ref(),
                 &ai.detached_patrol_path_status,
                 ai.has_patrol_path,
                 &assets.navigation.hiking_paths,
-            )?;
-            shown_authored_paths.insert(path_id).then_some(route)
+                &mut shown_authored_paths,
+            )
         })
 }
 
@@ -2491,15 +2494,28 @@ mod tests {
         let mut patrol = PatrolPath::new(path_id, &paths).unwrap();
         patrol.current_waypoint_index = 1;
 
-        let (resolved_id, route) = authored_patrol_route(
+        let mut shown = HashSet::new();
+        let route = unseen_authored_patrol_route(
             Some(&patrol),
             &DetachedPatrolPathStatus::default(),
             true,
             &paths,
+            &mut shown,
         )
         .unwrap();
 
-        assert_eq!(resolved_id, path_id);
+        assert!(shown.contains(&path_id));
+        assert!(
+            unseen_authored_patrol_route(
+                Some(&patrol),
+                &DetachedPatrolPathStatus::default(),
+                true,
+                &paths,
+                &mut shown
+            )
+            .is_none()
+        );
+        assert_eq!(shown.len(), 1);
         assert_eq!(route.active_waypoint, 1);
         assert!(matches!(route.points, std::borrow::Cow::Owned(_)));
         assert_eq!(
@@ -2528,7 +2544,9 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, route) = authored_patrol_route(None, &detached, true, &paths).unwrap();
+        let route =
+            unseen_authored_patrol_route(None, &detached, true, &paths, &mut HashSet::new())
+                .unwrap();
 
         assert_eq!(
             route.points[0],
