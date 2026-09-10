@@ -27,8 +27,7 @@ use std::sync::Arc;
 use robin_data_io::sbfile::{SB_FILE_READ, SbFile, SbFileSystem};
 use robin_engine::element_kinds::BonusItemType;
 use robin_engine::level_data::{
-    LoadedLevel, LoadedMission, LoadedProtoLevel, RawCivilian, RawPcRescue, RawSoldier,
-    WaypointCommand, load_level_with_files,
+    LoadedLevel, LoadedMission, LoadedProtoLevel, WaypointCommand, load_level_with_files,
 };
 use robin_engine::profiles::{CivilianType, ProfileManager};
 
@@ -539,7 +538,9 @@ fn push_civilians(mission: &LoadedMission, profiles: &ProfileManager, slots: &mu
             ActorSlotKind::Actor,
             pick_base_name(
                 civ.script_class.as_deref(),
-                profile_filename_civilian(civ, profiles),
+                profiles
+                    .get_civilian(civ.profile_number)
+                    .map(|p| p.filename.as_str()),
             ),
         );
     }
@@ -551,7 +552,9 @@ fn push_pcs_to_rescue(mission: &LoadedMission, profiles: &ProfileManager, slots:
             ActorSlotKind::Actor,
             pick_base_name(
                 pc.script_class.as_deref(),
-                profile_filename_character(pc, profiles),
+                profiles
+                    .get_character(pc.profile_index)
+                    .map(|p| p.filename.as_str()),
             ),
         );
     }
@@ -563,7 +566,9 @@ fn push_soldiers(mission: &LoadedMission, profiles: &ProfileManager, slots: &mut
             ActorSlotKind::Actor,
             pick_base_name(
                 s.script_class.as_deref(),
-                profile_filename_soldier(s, profiles),
+                profiles
+                    .get_soldier(s.profile_number)
+                    .map(|p| p.filename.as_str()),
             ),
         );
     }
@@ -597,32 +602,14 @@ fn push_scrolls(mission: &LoadedMission, slots: &mut Slots) {
     }
 }
 
-fn profile_filename_soldier(s: &RawSoldier, profiles: &ProfileManager) -> Option<String> {
-    profiles
-        .get_soldier(s.profile_number)
-        .map(|p| p.filename.clone())
-}
-
-fn profile_filename_civilian(c: &RawCivilian, profiles: &ProfileManager) -> Option<String> {
-    profiles
-        .get_civilian(c.profile_number)
-        .map(|p| p.filename.clone())
-}
-
-fn profile_filename_character(pc: &RawPcRescue, profiles: &ProfileManager) -> Option<String> {
-    profiles
-        .get_character(pc.profile_index)
-        .map(|p| p.filename.clone())
-}
-
 /// Pick the "base" name for a slot (pre-dedup): the script-class name
 /// if present, otherwise the profile filename. `Slots::push_with_name`
 /// handles suffixing (`_2`, `_3`, …) within each kind.
-fn pick_base_name(script_class: Option<&str>, fallback: Option<String>) -> Option<String> {
+fn pick_base_name(script_class: Option<&str>, fallback: Option<&str>) -> Option<String> {
     script_class
         .filter(|s| !s.is_empty())
         .map(sanitize_class_name)
-        .or_else(|| fallback.as_deref().map(sanitize_identifier))
+        .or_else(|| fallback.map(sanitize_identifier))
         .filter(|s| !s.is_empty())
 }
 
@@ -750,6 +737,20 @@ mod tests {
         assert_eq!(sanitize_class_name("Parchment_80000239"), "Parchment");
         assert_eq!(sanitize_class_name("PlainName"), "PlainName");
         assert_eq!(sanitize_class_name("Name_ghijklmn"), "Name_ghijklmn");
+    }
+
+    #[test]
+    fn base_name_selection_preserves_script_precedence_and_empty_names() {
+        for (script, fallback, expected) in [
+            (Some("Scroll_80000239"), Some("Guard A01"), Some("Scroll")),
+            (None, Some("Guard A01"), Some("Guard_A01")),
+            (Some(""), Some("Guard A01"), Some("Guard_A01")),
+            (Some("___"), Some("Guard A01"), None),
+            (None, Some("___"), None),
+            (None, None, None),
+        ] {
+            assert_eq!(pick_base_name(script, fallback).as_deref(), expected);
+        }
     }
 
     #[test]
