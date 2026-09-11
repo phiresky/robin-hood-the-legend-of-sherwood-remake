@@ -177,8 +177,8 @@ pub(crate) enum SaveLoadEvent {
     },
     /// A save payload was applied to the live engine, replacing its state.
     LoadApplied {
-        /// Decoded save before post-load fixups; absent for marker-only fixtures.
-        snapshot: Option<Vec<u8>>,
+        /// Required decoded save before post-load fixups, including marker-backed loads.
+        snapshot: Vec<u8>,
         /// Identity computed from the decoded payload before post-load fixups
         /// mutate the live engine.
         identity: crate::save_file::ReplaySaveIdentity,

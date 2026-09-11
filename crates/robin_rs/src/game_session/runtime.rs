@@ -1945,74 +1945,68 @@ impl TimelineRuntime {
                 is_continue,
             } => {
                 self.state_restored = true;
-                if let Some(bytes) = snapshot.as_ref() {
-                    match self.replay.restore_archive(bytes) {
-                        Ok(Some((ordinal, timeline, target))) => {
-                            self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
-                            let timeline = TimelineFrame::from_wire(timeline);
-                            self.reset_reconstruction_history(timeline, engine, assets);
-                            let recorder_state = frame.recorder_state;
-                            frame.reset_after_terminal_restore(robin_engine::replay::state_hash(
-                                engine,
-                            ));
-                            frame.recorder_state = recorder_state;
-                            frame.rebind_timeline_after_discontinuity(timeline);
-                            frame.recorder_hash = ordinal
-                                .is_multiple_of(25)
-                                .then(|| robin_engine::replay::state_hash(engine));
-                            if let Some(target) = target {
-                                self.replay.record_load_back(
-                                    self.replay_ordinal,
-                                    ReplayFrameOrdinal::from_wire(target),
-                                    is_continue,
-                                );
-                            } else {
-                                self.replay.record_load_snapshot(
-                                    self.replay_ordinal,
-                                    bytes.clone(),
-                                    timeline,
-                                    is_continue,
-                                );
-                            }
-                            self.replay.record_taints(
+                match self.replay.restore_archive(&snapshot) {
+                    Ok(Some((ordinal, timeline, target))) => {
+                        self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
+                        let timeline = TimelineFrame::from_wire(timeline);
+                        self.reset_reconstruction_history(timeline, engine, assets);
+                        let recorder_state = frame.recorder_state;
+                        frame
+                            .reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
+                        frame.recorder_state = recorder_state;
+                        frame.rebind_timeline_after_discontinuity(timeline);
+                        frame.recorder_hash = ordinal
+                            .is_multiple_of(25)
+                            .then(|| robin_engine::replay::state_hash(engine));
+                        if let Some(target) = target {
+                            self.replay.record_load_back(
                                 self.replay_ordinal,
-                                [robin_engine::replay_rankability::InputTaintKind::StateLoad],
+                                ReplayFrameOrdinal::from_wire(target),
+                                is_continue,
                             );
-                            match self.replay.commit_restore_boundary(
+                        } else {
+                            self.replay.record_load_snapshot(
+                                self.replay_ordinal,
+                                snapshot.clone(),
                                 timeline,
-                                robin_engine::replay::state_hash(engine),
-                                recording_index,
-                            ) {
-                                Ok(next) => {
-                                    self.replay_ordinal = ReplayFrameOrdinal::from_wire(next);
-                                    frame.recorder_hash = next
-                                        .is_multiple_of(25)
-                                        .then(|| robin_engine::replay::state_hash(engine));
-                                }
-                                Err(error) => {
-                                    self.replay.invalidate(format!(
-                                        "failed to persist replay restore: {error}"
-                                    ));
-                                    frame.recorder_state = RecorderFrameState::Inactive;
-                                    frame.recorder_hash = None;
-                                }
+                                is_continue,
+                            );
+                        }
+                        self.replay.record_taints(
+                            self.replay_ordinal,
+                            [robin_engine::replay_rankability::InputTaintKind::StateLoad],
+                        );
+                        match self.replay.commit_restore_boundary(
+                            timeline,
+                            robin_engine::replay::state_hash(engine),
+                            recording_index,
+                        ) {
+                            Ok(next) => {
+                                self.replay_ordinal = ReplayFrameOrdinal::from_wire(next);
+                                frame.recorder_hash = next
+                                    .is_multiple_of(25)
+                                    .then(|| robin_engine::replay::state_hash(engine));
                             }
-                            return;
+                            Err(error) => {
+                                self.replay.invalidate(format!(
+                                    "failed to persist replay restore: {error}"
+                                ));
+                                frame.recorder_state = RecorderFrameState::Inactive;
+                                frame.recorder_hash = None;
+                            }
                         }
-                        Ok(None) => {}
-                        Err(error) => {
-                            self.replay.invalidate(format!(
-                                "replay history unavailable after load: {error}"
-                            ));
-                            frame.recorder_state = RecorderFrameState::Inactive;
-                            frame.recorder_hash = None;
-                            return;
-                        }
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.replay
+                            .invalidate(format!("replay history unavailable after load: {error}"));
+                        frame.recorder_state = RecorderFrameState::Inactive;
+                        frame.recorder_hash = None;
+                        return;
                     }
                 }
-                let reopened =
-                    self.replay
-                        .reopen_after_restore(identity, snapshot.is_some(), recording_index);
+                let reopened = self.replay.reopen_after_restore(identity, recording_index);
                 if reopened {
                     self.replay_ordinal = ReplayFrameOrdinal::ZERO;
                     // The load replaced every effect admitted before it. Keep
@@ -2057,25 +2051,13 @@ impl TimelineRuntime {
                         "replay: load recorded as linear load-back"
                     );
                 } else {
-                    if let Some(snapshot) = snapshot {
-                        // TODO(replay): deduplicate repeated external-save payloads
-                        // within an attempt without losing their restore boundaries.
-                        self.replay.record_load_snapshot(
-                            replay_ordinal,
-                            snapshot,
-                            target,
-                            is_continue,
-                        );
-                        let recorder_state = frame.recorder_state;
-                        frame
-                            .reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
-                        frame.recorder_state = recorder_state;
-                    } else {
-                        self.replay
-                            .invalidate("replay unavailable: loaded save payload is missing");
-                        frame.recorder_state = RecorderFrameState::Inactive;
-                        frame.recorder_hash = None;
-                    }
+                    // TODO(replay): deduplicate repeated external-save payloads
+                    // within an attempt without losing their restore boundaries.
+                    self.replay
+                        .record_load_snapshot(replay_ordinal, snapshot, target, is_continue);
+                    let recorder_state = frame.recorder_state;
+                    frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
+                    frame.recorder_state = recorder_state;
                 }
             }
         }
@@ -2954,166 +2936,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_save_payload_retires_recording_until_bootstrap_restores_valid_export() {
-        let service = Arc::new(crate::replay_service::ReplayService::default());
-        let mut assets = LevelAssets::new();
-        let mut engine = Engine::new_for_test(
-            1024.0,
-            768.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .unwrap();
-        let mut host = Host::scratch(1024.0, 768.0);
-        let mut game = Game::default();
-        let pristine = engine.clone();
-        let checkpoint = crate::save_file::PreparedGameSave::capture_session_restart(
-            &engine,
-            &host,
-            &game,
-            crate::save_file::SaveHeader::new(
-                1,
-                test_mission_assets("foreign"),
-                "Restart".into(),
-                crate::save_file::SaveProvenance::new("Restart".into(), 0, "Player".into())
-                    .unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let bootstrap_identity = checkpoint.replay_identity().unwrap();
-        let mut timeline =
-            timeline_for_trace_test_with_control(FrameContract::Graphical, service.recording());
-        timeline.install_test_recorder(
-            ReplayRecorder::with_writer(
-                Box::new(service.recording().begin_recording()),
-                "foreign".into(),
-                test_mission_assets("foreign"),
-                0,
-                Default::default(),
-                engine.campaign(),
-            )
-            .unwrap(),
-        );
-        timeline.register_bootstrap_save(Some(BootstrapSaveBoundary::capture(
-            &engine,
-            &host,
-            &game,
-            Some(bootstrap_identity),
-        )));
-        engine
-            .advance_frame(
-                &assets,
-                robin_engine::engine::SimulationFrameInput::new(vec![
-                    PlayerCommand::SetFastForward.into(),
-                ])
-                .with_hourglass(false),
-            )
-            .unwrap();
-        let foreign = crate::save_file::PreparedGameSave::capture_session_restart(
-            &engine,
-            &host,
-            &game,
-            checkpoint.header.clone(),
-        )
-        .unwrap();
-        let identity = foreign.replay_identity().unwrap();
-        assert_ne!(identity, bootstrap_identity);
-        foreign
-            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
-            .unwrap();
-        let mut frame = MissionFrame::new(0);
-        frame.bind_timeline(timeline.current_frame());
-        timeline.begin_recording(&mut frame, true);
-        timeline.note_save_load_event(
-            &crate::mission_replays::RecordingIndex::disabled(),
-            crate::main_entry::SaveLoadEvent::LoadApplied {
-                snapshot: None,
-                identity,
-                is_continue: false,
-            },
-            &mut frame,
-            &engine,
-            &assets,
-        );
-        assert!(matches!(
-            timeline.replay.validity(),
-            RecordingValidity::Invalid { .. }
-        ));
-        assert!(!timeline.is_recording());
-        assert!(timeline.replay.saved_frame_count() == 0);
-        assert!(
-            service
-                .exports()
-                .snapshot_bytes()
-                .unwrap_err()
-                .contains("loaded save payload is missing")
-        );
-        // Invalidating a recorder during a host frame also retires the open
-        // recording transaction; its ordinary finalizer must not panic.
-        timeline.finish_recording(&mut frame);
-        let mut next = MissionFrame::new(1);
-        timeline.begin_recording(&mut next, true);
-        assert_eq!(next.recorder_state, RecorderFrameState::Inactive);
-
-        checkpoint
-            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
-            .unwrap();
-        next.bind_timeline(timeline.current_frame());
-        timeline.note_save_load_event(
-            &crate::mission_replays::RecordingIndex::disabled(),
-            crate::main_entry::SaveLoadEvent::LoadApplied {
-                snapshot: None,
-                identity: bootstrap_identity,
-                is_continue: false,
-            },
-            &mut next,
-            &engine,
-            &assets,
-        );
-        assert_eq!(timeline.replay.validity(), RecordingValidity::Linear);
-        assert!(timeline.is_recording());
-        assert!(!timeline.replay.has_sealed_header());
-        assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
-        assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
-        assert_eq!(
-            timeline.replay.saved_frame(bootstrap_identity),
-            Some((ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO)),
-        );
-        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
-        timeline.begin_recording(&mut next, true);
-        next.commit_timeline_after(timeline.advance_frame());
-        timeline.finish_recording(&mut next);
-        let restored_hash = robin_engine::replay::state_hash(&engine);
-        let replay = service.exports().snapshot().unwrap().parse_sync().unwrap();
-        assert_eq!(replay.frame_count(), 1);
-        assert_eq!(replay.load_back_for_frame(0).cloned().unwrap().to_frame, 0);
-        assert_eq!(
-            replay.save_marker_for_frame(0).unwrap().state_hash,
-            robin_engine::replay::state_hash(&pristine),
-        );
-        // Validate the new export's actual restore boundary, not merely that
-        // clearing the invalid flag made bytes available again.
-        let mut playback = timeline_for_trace_test(FrameContract::Headless);
-        playback
-            .replay
-            .install_test_player(ReplayPlayer::new(replay));
-        let mut manager = EngineManager::new(pristine);
-        playback
-            .apply_playback_timeline_events(
-                &mut Host::scratch(1024.0, 768.0),
-                &mut Game::default(),
-                &mut manager,
-                &assets,
-            )
-            .unwrap();
-        assert_eq!(
-            robin_engine::replay::state_hash(&manager.engine),
-            restored_hash
-        );
-    }
-
-    #[test]
     fn terminal_restart_exports_new_attempt_and_replays_its_restore_boundary() {
         let service = Arc::new(crate::replay_service::ReplayService::default());
         let mut assets = LevelAssets::new();
@@ -3198,7 +3020,7 @@ mod tests {
             timeline.note_save_load_event(
                 &crate::mission_replays::RecordingIndex::disabled(),
                 crate::main_entry::SaveLoadEvent::LoadApplied {
-                    snapshot: None,
+                    snapshot: serde_json::to_vec(&*checkpoint).unwrap(),
                     identity,
                     is_continue: false,
                 },
@@ -3316,8 +3138,8 @@ mod tests {
                     .contains("save-marker desync")
             );
         }
-        // A different post-terminal save cannot be reconstructed from the
-        // original header; fail the active export instead of advertising stale data.
+        // A different post-terminal save carries its own required snapshot.
+        // Reopen an unranked attempt without inventing a bootstrap marker.
         let foreign = crate::save_file::PreparedGameSave::capture_session_restart(
             &engine,
             &host,
@@ -3325,27 +3147,33 @@ mod tests {
             checkpoint.header.clone(),
         )
         .unwrap();
+        let snapshot = serde_json::to_vec(&*foreign).unwrap();
+        let identity = foreign.replay_identity().unwrap();
+        foreign
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(timeline.current_frame());
         timeline.note_save_load_event(
             &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
-                snapshot: None,
-                identity: foreign.replay_identity().unwrap(),
+                snapshot,
+                identity,
                 is_continue: false,
             },
             &mut frame,
             &engine,
             &assets,
         );
-        assert!(!timeline.is_recording());
-        assert!(
-            service
-                .exports()
-                .snapshot_bytes()
-                .unwrap_err()
-                .contains("without a save payload")
-        );
+        assert!(timeline.is_recording());
+        assert_eq!(timeline.replay.validity(), RecordingValidity::Linear);
+        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline.begin_recording(&mut frame, true);
+        frame.commit_timeline_after(timeline.advance_frame());
+        timeline.finish_recording(&mut frame);
+        let external = service.exports().snapshot().unwrap().parse_sync().unwrap();
+        assert!(external.load_back_for_frame(0).unwrap().snapshot.is_some());
+        assert!(external.save_marker_for_frame(0).is_none());
         assert_eq!(previous.parse_sync().unwrap().frame_count(), 1);
     }
 
@@ -3397,6 +3225,7 @@ mod tests {
             timeline.finish_recording(&mut frame);
         }
         engine.test_set_frame_counter(123);
+        let snapshot = serde_json::to_vec(&*checkpoint).unwrap();
         checkpoint
             .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
             .unwrap();
@@ -3405,7 +3234,7 @@ mod tests {
         timeline.note_save_load_event(
             &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
-                snapshot: None,
+                snapshot,
                 identity,
                 is_continue: false,
             },
@@ -3555,6 +3384,7 @@ mod tests {
             .expect("speech command admission");
         host.frontend.input.feedback.draw_hidden = false;
         game.persistent.campaign_map_displayed = false;
+        let snapshot = serde_json::to_vec(&save).unwrap();
         save.apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
             .expect("restore live save");
         game.apply_post_load_sync(true);
@@ -3567,7 +3397,7 @@ mod tests {
         live.note_save_load_event(
             &crate::mission_replays::RecordingIndex::disabled(),
             crate::main_entry::SaveLoadEvent::LoadApplied {
-                snapshot: None,
+                snapshot,
                 identity,
                 is_continue: true,
             },
@@ -3784,7 +3614,7 @@ mod tests {
             runtime.note_save_load_event(
                 &crate::mission_replays::RecordingIndex::disabled(),
                 crate::main_entry::SaveLoadEvent::LoadApplied {
-                    snapshot: Some(bytes),
+                    snapshot: bytes,
                     identity: save.replay_identity().unwrap(),
                     is_continue: false,
                 },
@@ -4161,7 +3991,7 @@ mod tests {
                 crate::main_entry::SaveLoadEvent::LoadApplied {
                     identity,
                     is_continue: true,
-                    snapshot: Some(payload.clone()),
+                    snapshot: payload.clone(),
                 },
                 &mut restored,
                 &engine,

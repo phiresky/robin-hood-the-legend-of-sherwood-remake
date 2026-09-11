@@ -121,7 +121,7 @@ impl AppliedLoad {
         };
         OperationOutcome {
             event: Some(SaveLoadEvent::LoadApplied {
-                snapshot: Some(self.snapshot),
+                snapshot: self.snapshot,
                 identity: self.identity,
                 is_continue,
             }),
@@ -209,7 +209,7 @@ mod tests {
         assert_eq!(engine.frame_counter(), 41);
         let outcome = applied.outcome(LoadCompletion::Quick);
         let super::SaveLoadEvent::LoadApplied {
-            snapshot: Some(snapshot),
+            snapshot,
             identity: recorded_identity,
             ..
         } = outcome.event.as_ref().expect("successful load receipt")
@@ -218,6 +218,22 @@ mod tests {
         };
         let embedded: crate::save_file::GameSaveFile = serde_json::from_slice(snapshot).unwrap();
         embedded.validate_current_schema().unwrap();
+        let event = outcome.event.as_ref().unwrap();
+        let encoded = serde_json::to_value(event).unwrap();
+        assert_eq!(
+            serde_json::from_value::<super::SaveLoadEvent>(encoded.clone()).unwrap(),
+            *event
+        );
+        for omit in [false, true] {
+            let mut invalid = encoded.clone();
+            let fields = invalid["LoadApplied"].as_object_mut().unwrap();
+            if omit {
+                fields.remove("snapshot");
+            } else {
+                fields.insert("snapshot".into(), serde_json::Value::Null);
+            }
+            assert!(serde_json::from_value::<super::SaveLoadEvent>(invalid).is_err());
+        }
         assert_eq!(embedded.header.mission_id, 17);
         assert_eq!(embedded.engine.frame_counter(), 41);
         assert_eq!(*recorded_identity, identity);
@@ -378,10 +394,7 @@ mod tests {
             assert_eq!(outcome.restore().unwrap().is_continue, continued);
             assert!(matches!(
                 &outcome.event,
-                Some(super::SaveLoadEvent::LoadApplied {
-                    snapshot: Some(_),
-                    ..
-                })
+                Some(super::SaveLoadEvent::LoadApplied { snapshot: _, .. })
             ));
             assert!(outcome.transition().is_none());
         }

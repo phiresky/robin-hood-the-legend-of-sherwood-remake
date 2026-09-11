@@ -409,20 +409,17 @@ impl ReplayLifecycle {
 
     /// Start a new attempt after a terminal record using a bootstrap marker
     /// or an embedded save captured before restoration.
+    /// The caller owns the required applied-load snapshot; a matching bootstrap
+    /// identity still lets the recorder use its marker instead of embedding bytes.
     pub(super) fn reopen_after_restore(
         &mut self,
         identity: ReplaySaveIdentity,
-        has_snapshot: bool,
         recording_index: &crate::mission_replays::RecordingIndex,
     ) -> bool {
         let Some(header) = self.recording.sealed_header() else {
             return false;
         };
         let bootstrap = self.bootstrap_save.filter(|(saved, _)| *saved == identity);
-        if bootstrap.is_none() && !has_snapshot {
-            self.invalidate("replay unavailable after post-terminal load without a save payload");
-            return false;
-        }
         match crate::game_session::replay_init::restart_recording(
             &self.control,
             recording_index,
@@ -573,7 +570,6 @@ mod tests {
         );
         assert!(!inactive.reopen_after_restore(
             ReplaySaveIdentity::SessionRestart(1),
-            false,
             &crate::mission_replays::RecordingIndex::disabled()
         ));
 
@@ -645,14 +641,17 @@ mod tests {
         assert!(lifecycle.saved_frames.is_empty());
         assert!(lifecycle.has_sealed_header());
         assert!(service.exports().snapshot().is_err());
-        assert!(!lifecycle.reopen_after_restore(
-            later,
-            false,
-            &crate::mission_replays::RecordingIndex::disabled()
-        ));
+        assert!(
+            lifecycle
+                .reopen_after_restore(later, &crate::mission_replays::RecordingIndex::disabled())
+        );
+        assert!(
+            lifecycle.saved_frames.is_empty(),
+            "external restore cannot recreate retired marker authority"
+        );
+        lifecycle.invalidate("injected subsequent recording failure");
         assert!(lifecycle.reopen_after_restore(
             bootstrap,
-            false,
             &crate::mission_replays::RecordingIndex::disabled()
         ));
         assert!(lifecycle.is_recording());
