@@ -72,7 +72,8 @@ pub fn load_menu_strings(resources: &mut ResourceManager) -> Result<Vec<String>>
     }
     (0..count)
         .map(|index| {
-            menu_text_string(resources, index).map(|value| value.map(|v| v.0).unwrap_or_default())
+            menu_text_string(resources, index)
+                .map(|value| value.expect("menu extent requires a source entry").0)
         })
         .collect()
 }
