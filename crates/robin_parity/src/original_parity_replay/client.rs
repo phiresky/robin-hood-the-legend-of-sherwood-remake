@@ -1,7 +1,7 @@
 //! Optional visual and HTTP adapters, excluded from CPU-only parity.
 use super::{
-    BBox, BTreeMap, BlendMode, Duration, Engine, EntityId, GpuImage, Host, LevelAssets, MapPoint,
-    Path, PathBuf, Renderer, RpcError, TextureScaleMode, draw_background, rgb565_to_rgb8,
+    BBox, BTreeMap, BlendMode, Engine, EntityId, GpuImage, Host, LevelAssets, MapPoint, Path,
+    PathBuf, Renderer, RpcError, TextureScaleMode, draw_background, rgb565_to_rgb8,
 };
 
 #[cfg(feature = "client")]
