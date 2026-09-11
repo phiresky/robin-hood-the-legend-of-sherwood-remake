@@ -2610,35 +2610,52 @@ impl Sequence {
         }
     }
 
-    /// Resolve the original game's next-element link inside one sequence.
+    /// Interpret the stored following link, without traversal policy.
     /// Runtime-authored sequences wire this pointer in append order. Loaded
     /// v48 elements retain its exact serialized target, including null and
-    /// non-adjacent links.
-    fn following_element_index(&self, elem_idx: usize) -> Option<usize> {
+    /// non-adjacent or cross-sequence links. Target validation, owner filtering,
+    /// and the runtime severed-link mirror belong to the named queries below.
+    fn raw_following_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
+        let element = self.elements.get(elem_idx)?;
+        if let Some(legacy) = &element.legacy_v48 {
+            legacy.next
+        } else {
+            self.elements
+                .get(elem_idx + 1)
+                .map(|_| SequenceElementRef::new(self.id, elem_idx + 1))
+        }
+    }
+
+    /// Following edge visible to live queries after Stop severs a link.
+    /// Runtime-authored elements remain physically adjacent after Halt; seeing
+    /// through that edge could suppress the selected actor's condolence callback.
+    fn unsevered_following_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
         let element = self.elements.get(elem_idx)?;
         if element.next_link_severed {
             return None;
         }
-        if let Some(legacy) = &element.legacy_v48 {
-            let next = legacy.next?;
-            // TODO(legacy-sequence-runtime): promote cascade effects from
-            // element indices to SequenceElementRef if a real save ever
-            // contains a following pointer outside its mummy sequence.
-            assert_eq!(
-                next.sequence_id, self.id,
-                "loaded v48 following pointer crosses sequences: {:?}/{elem_idx} -> {:?}/{}",
-                self.id, next.sequence_id, next.element_index
-            );
-            assert!(
-                next.element_index < self.elements.len(),
-                "loaded v48 following pointer targets missing element: {:?}/{elem_idx} -> {}",
-                self.id,
-                next.element_index
-            );
-            Some(next.element_index)
-        } else {
-            self.elements.get(elem_idx + 1).map(|_| elem_idx + 1)
-        }
+        self.raw_following_ref(elem_idx)
+    }
+
+    /// Cascades operate on local indices and must reject cross-sequence or
+    /// dangling imported edges rather than treating them as the end of a chain.
+    fn following_element_index(&self, elem_idx: usize) -> Option<usize> {
+        let next = self.unsevered_following_ref(elem_idx)?;
+        // TODO(legacy-sequence-runtime): promote cascade effects from
+        // element indices to SequenceElementRef if a real save ever
+        // contains a following pointer outside its mummy sequence.
+        assert_eq!(
+            next.sequence_id, self.id,
+            "loaded v48 following pointer crosses sequences: {:?}/{elem_idx} -> {:?}/{}",
+            self.id, next.sequence_id, next.element_index
+        );
+        assert!(
+            next.element_index < self.elements.len(),
+            "loaded v48 following pointer targets missing element: {:?}/{elem_idx} -> {}",
+            self.id,
+            next.element_index
+        );
+        Some(next.element_index)
     }
 
     /// Stop an element (and possibly its postponed chain) up to a given priority.
@@ -3406,9 +3423,36 @@ impl Default for SequenceManager {
 }
 
 impl SequenceManager {
-    /// Resolve the original game's exact next-sequence-element reference for an
-    /// element retained in the manager, including loaded v48 non-adjacent
-    /// and severed links.
+    /// Graph rewrites historically follow stored edges even when the runtime
+    /// severed-link mirror is set; owner filtering is performed at each visited
+    /// node. Keep that distinct from live movement and completion queries.
+    /// TODO(sequence-links): establish Original rewrite behavior for a retained
+    /// runtime-authored severed edge before changing this query's semantics.
+    fn rewrite_following_ref(
+        &self,
+        sequence_id: SequenceId,
+        element_index: usize,
+    ) -> Option<(SequenceId, usize)> {
+        let next = self
+            .get_sequence(sequence_id)?
+            .raw_following_ref(element_index)?;
+        Some((next.sequence_id, next.element_index))
+    }
+
+    fn unsevered_following_ref(
+        &self,
+        sequence_id: SequenceId,
+        element_index: usize,
+    ) -> Option<(SequenceId, usize)> {
+        let next = self
+            .get_sequence(sequence_id)?
+            .unsevered_following_ref(element_index)?;
+        Some((next.sequence_id, next.element_index))
+    }
+
+    /// Resolve a local cascade's following reference, preserving loaded v48
+    /// non-adjacent links and treating severed links as null. Cross-sequence
+    /// targets are rejected because cascade effects currently use local indices.
     pub(crate) fn following_element_ref(
         &self,
         sequence_id: SequenceId,
@@ -7260,16 +7304,7 @@ impl SequenceManager {
             if element.owner != owner {
                 continue;
             }
-            let following = if let Some(legacy) = &element.legacy_v48 {
-                legacy
-                    .next
-                    .map(|next| (next.sequence_id, next.element_index))
-            } else {
-                self.sequences
-                    .get(&sid)
-                    .and_then(|sequence| sequence.elements.get(idx + 1))
-                    .map(|_| (sid, idx + 1))
-            };
+            let following = self.rewrite_following_ref(sid, idx);
             let postponed = element
                 .cross_postponed
                 .or_else(|| element.postponed_element_index.map(|next| (sid, next)));
@@ -7338,19 +7373,7 @@ impl SequenceManager {
                 continue;
             }
 
-            // Loaded v48 elements retain the exact serialized following
-            // pointer. Runtime-authored sequences use their append order,
-            // which is how sequence insertion wires that reference.
-            let following = if let Some(legacy) = &element.legacy_v48 {
-                legacy
-                    .next
-                    .map(|next| (next.sequence_id, next.element_index))
-            } else {
-                self.sequences
-                    .get(&seq_id)
-                    .and_then(|sequence| sequence.elements.get(elem_idx + 1))
-                    .map(|_| (seq_id, elem_idx + 1))
-            };
+            let following = self.rewrite_following_ref(seq_id, elem_idx);
             let postponed = element
                 .cross_postponed
                 .or_else(|| element.postponed_element_index.map(|idx| (seq_id, idx)));
@@ -7605,15 +7628,7 @@ impl SequenceManager {
         elem_idx: usize,
     ) -> Option<(SequenceId, usize)> {
         let this = self.get_element(seq_id, elem_idx)?;
-        if this.next_link_severed {
-            return None;
-        }
-        let (next_seq, next_idx) = if let Some(legacy) = &this.legacy_v48 {
-            let next = legacy.next?;
-            (next.sequence_id, next.element_index)
-        } else {
-            (seq_id, elem_idx + 1)
-        };
+        let (next_seq, next_idx) = self.unsevered_following_ref(seq_id, elem_idx)?;
         let next = self.get_element(next_seq, next_idx)?;
         if this.owner == next.owner {
             Some((next_seq, next_idx))
@@ -7638,16 +7653,6 @@ impl SequenceManager {
             if this.postponed_element_index.is_some() || this.cross_postponed.is_some() {
                 return false;
             }
-            // Stop severs `mpsqeNextSequenceElement` after recursively
-            // interrupting that successor.
-            // Runtime-authored sequences remain physically adjacent in Rust,
-            // so honor the explicit null-pointer mirror before walking to the
-            // next vector element. Otherwise last-real-action testing can see through
-            // a Halt-severed edge into dead AssertPosition/Move elements and
-            // suppress the selected element's condolence stimulus.
-            if this.next_link_severed {
-                return true;
-            }
             // The last-real-action check follows the raw
             // next-element link without requiring the next element
             // to have the same owner. This differs deliberately from the
@@ -7656,13 +7661,8 @@ impl SequenceManager {
             // condolence callback when it follows in the same sequence.
             //
             // Preserve the original game's NPC sequence cleanup behavior.
-            let (next_seq, next_idx) = if let Some(legacy) = &this.legacy_v48 {
-                let Some(next) = legacy.next else {
-                    return true;
-                };
-                (next.sequence_id, next.element_index)
-            } else {
-                (cur.0, cur.1 + 1)
+            let Some((next_seq, next_idx)) = self.unsevered_following_ref(cur.0, cur.1) else {
+                return true;
             };
             let Some(next_elem) = self.get_element(next_seq, next_idx) else {
                 return true;

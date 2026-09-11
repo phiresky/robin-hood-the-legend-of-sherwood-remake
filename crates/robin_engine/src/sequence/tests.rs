@@ -2823,6 +2823,78 @@ fn is_next_movement_detects_same_owner_chain() {
 }
 
 #[test]
+fn following_queries_preserve_cross_sequence_and_owner_policies() {
+    let owner = EntityId::Pc(crate::entity_id::PcId(1));
+    let other = EntityId::Pc(crate::entity_id::PcId(2));
+    let mut mgr = SequenceManager::new();
+    let root = mgr.launch_element(movement_elem(owner, OrderType::RunningUpright));
+    let next = mgr.launch_element(movement_elem(owner, OrderType::RunningUpright));
+    mgr.get_element_mut(root, 0).unwrap().legacy_v48 =
+        Some(loaded_v48_state(Some(SequenceElementRef::new(next, 0))));
+
+    assert_eq!(mgr.next_element_in_chain(root, 0), Some((next, 0)));
+    assert!(!mgr.is_last_real_action(root, 0));
+    mgr.set_action_recursive(root, 0, OrderType::WalkingCrouched);
+    assert_eq!(
+        movement_action(mgr.get_element(next, 0).unwrap()),
+        OrderType::WalkingCrouched
+    );
+
+    mgr.get_element_mut(next, 0).unwrap().owner = Some(other);
+    assert_eq!(mgr.next_element_in_chain(root, 0), None);
+    assert!(!mgr.is_last_real_action(root, 0));
+    mgr.set_action_recursive(root, 0, OrderType::RunningUpright);
+    assert_eq!(
+        movement_action(mgr.get_element(next, 0).unwrap()),
+        OrderType::WalkingCrouched
+    );
+}
+
+#[test]
+fn graph_rewrites_preserve_stored_edges_hidden_from_live_queries() {
+    let owner = EntityId::Pc(crate::entity_id::PcId(1));
+    let mut sequence = Sequence::new();
+    sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
+    sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
+    let mut mgr = SequenceManager::new();
+    let id = mgr.launch_sequence(sequence);
+    mgr.get_element_mut(id, 0).unwrap().next_link_severed = true;
+
+    assert_eq!(mgr.following_element_ref(id, 0), None);
+    assert_eq!(mgr.next_element_in_chain(id, 0), None);
+    assert!(mgr.is_last_real_action(id, 0));
+    assert_eq!(mgr.rewrite_following_ref(id, 0), Some((id, 1)));
+    mgr.set_action_recursive(id, 0, OrderType::WalkingCrouched);
+    assert_eq!(
+        movement_action(mgr.get_element(id, 1).unwrap()),
+        OrderType::WalkingCrouched
+    );
+}
+
+#[test]
+#[should_panic(expected = "following pointer crosses sequences")]
+fn local_following_query_rejects_cross_sequence_link() {
+    let mut mgr = SequenceManager::new();
+    let root = mgr.launch_element(SequenceElement::new(1, Command::Wait, None));
+    let next = mgr.launch_element(SequenceElement::new(1, Command::Wait, None));
+    mgr.get_element_mut(root, 0).unwrap().legacy_v48 =
+        Some(loaded_v48_state(Some(SequenceElementRef::new(next, 0))));
+    mgr.following_element_ref(root, 0);
+}
+
+#[test]
+#[should_panic(expected = "following pointer targets missing element")]
+fn local_following_query_rejects_dangling_link() {
+    let mut sequence = Sequence::new();
+    sequence.append_element(SequenceElement::new(1, Command::Wait, None));
+    sequence.elements[0].legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
+        sequence.id,
+        7,
+    ))));
+    sequence.following_element_index(0);
+}
+
+#[test]
 fn loaded_v48_null_next_overrides_physical_adjacency() {
     let owner = EntityId::Pc(crate::entity_id::PcId(1));
     let mut mgr = SequenceManager::new();
