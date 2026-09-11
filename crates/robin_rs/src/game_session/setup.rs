@@ -45,7 +45,6 @@ use robin_engine::resource_ids;
 use robin_engine::sbfile as engine_sbfile;
 use robin_engine::script_manager as engine_script_manager;
 use robin_engine::sprite_script as engine_sprite_script;
-use robin_engine::titbit::SpriteRow;
 
 /// Wall-clock step timer for the mission setup phase.  Each [`step`] logs the
 /// time since the previous step at debug level (info when it crossed
@@ -753,62 +752,17 @@ pub(super) fn extract_minimap_widget_setup(
 pub(super) fn extract_ground_mark_sprite_data(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::GroundMarkSpriteData> {
-    if !cursor_res.has_picture_resource(resource_ids::RHID_GROUND_FOCUS) {
-        return None;
-    }
-    let pics = cursor_res
-        .get_picture_opacity_metadata(resource_ids::RHID_GROUND_FOCUS)
-        .unwrap_or_else(|error| panic!("ground marker engine picture metadata: {error:#}"));
-    let first_pic = pics.iter().flatten().next()?;
-    let frame_sizes: Vec<(u16, u16)> = pics
-        .iter()
-        .flatten()
-        .map(|pic| (pic.width, pic.height))
-        .collect();
-    // Fully transparent frames keep the historical raw-size / zero-offset rule.
-    let (cw, ch) = first_pic
-        .opaque_bounds
-        .map(|(_, _, width, height)| (width, height))
-        .unwrap_or((first_pic.width, first_pic.height));
-    let per_frame_offsets = pics
-        .iter()
-        .map(|pic| {
-            pic.as_ref()
-                .and_then(|pic| pic.opaque_bounds)
-                .map(|(x, y, _, _)| (x as i16, y as i16))
-                .unwrap_or((0, 0))
-        })
-        .collect();
-    Some(engine_api::GroundMarkSpriteData {
-        half_w: cw as f32 * 0.5,
-        half_h: ch as f32 * 0.5,
-        frame_sizes,
-        per_frame_offsets,
-    })
+    robin_assets::interface_metadata::ground_mark_sprite_data(cursor_res)
+        .unwrap_or_else(|error| panic!("ground marker engine picture metadata: {error:#}"))
 }
 
 /// Pre-compute titbit sprite-row frame counts from `cursor_res`.
-/// Indexed by `SpriteRow` discriminant.  Counts sub-pictures without
+/// Indexed by the engine's sprite-row discriminant.  Counts sub-pictures without
 /// decoding them — enough for `TitbitManager::num_frames_for_row` to
 /// drive animation.
 pub(super) fn extract_titbit_row_frame_counts(cursor_res: &mut ResourceManager) -> Vec<u16> {
-    use crate::titbit_renderer::titbit_sprite_row_resources;
-    let num_rows = SpriteRow::NumberOfRows as usize;
-    let mut counts = vec![0u16; num_rows];
-    for &(row, res_id) in titbit_sprite_row_resources() {
-        let n = cursor_res
-            .get_nonempty_picture_count(res_id)
-            .map(|count| count as u16)
-            .unwrap_or_else(|error| {
-                tracing::warn!("titbit resource {res_id}: frame count unavailable: {error:#}");
-                0
-            });
-        let idx = row as usize;
-        if idx < counts.len() {
-            counts[idx] = n;
-        }
-    }
-    counts
+    robin_assets::interface_metadata::titbit_row_frame_counts(cursor_res)
+        .unwrap_or_else(|error| panic!("titbit engine picture metadata: {error:#}"))
 }
 
 /// Register the generated Merry Men names before replay frame zero.

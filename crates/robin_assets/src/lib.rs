@@ -32,6 +32,8 @@ pub mod decompile;
 #[cfg(feature = "engine-adapters")]
 pub mod disasm;
 pub mod frame_holder;
+#[cfg(feature = "engine-adapters")]
+pub mod interface_metadata;
 pub mod late_sprites;
 #[cfg(feature = "engine-adapters")]
 pub mod original_text;

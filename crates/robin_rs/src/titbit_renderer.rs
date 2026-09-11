@@ -22,57 +22,11 @@ use robin_engine::engine::PresentationView;
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::profiles::Action;
-use robin_engine::resource_ids::*;
 use robin_engine::titbit::{SpriteRow, TitbitKind};
 
 const NUM_ROWS: usize = SpriteRow::NumberOfRows as usize;
 
-/// `(SpriteRow, resource_id)` mapping — the load order for titbit
-/// sprite rows.  Several rows intentionally reuse the same resource
-/// (a legacy quirk).  Exposed so the host can pre-count frames per
-/// row without actually loading the GPU textures (used by
-/// `game_session::extract_titbit_row_frame_counts`).
-pub fn titbit_sprite_row_resources() -> &'static [(SpriteRow, i32)] {
-    &[
-        (SpriteRow::Impact, RHID_ONE_STAR),
-        (SpriteRow::OneStar, RHID_ONE_STAR),
-        (SpriteRow::TwoStars, RHID_TWO_STARS),
-        (SpriteRow::ThreeStars, RHID_THREE_STARS),
-        (SpriteRow::FourStars, RHID_FOUR_STARS),
-        (SpriteRow::FiveStars, RHID_FIVE_STARS),
-        (SpriteRow::QuickActionTitbits, RHID_QUICKACTION_TITBITS),
-        (SpriteRow::Smoke, RHID_ONE_STAR),
-        (SpriteRow::Water, RHID_TITBIT_WATER),
-        (SpriteRow::Lock, RHID_TITBIT_WATER),
-        (SpriteRow::EmoticonGrowingQMark, RHID_EMOTICONS_WHAT1),
-        (SpriteRow::EmoticonQMark, RHID_EMOTICONS_WHAT2),
-        (SpriteRow::EmoticonXMark, RHID_EMOTICONS_ACH),
-        (SpriteRow::EmoticonZzz, RHIDEMOTICONS_ZZZ),
-        (SpriteRow::EmoticonThunderstorm, RHID_EMOTICONS_ANGRY),
-        (SpriteRow::EmoticonCloud, RHID_EMOTICONS_DISAPPOINTED),
-        (SpriteRow::EmoticonDrunken, RHID_EMOTICONS_DRUNKEN),
-        (SpriteRow::EmoticonSun, RHID_EMOTICONS_HAPPY),
-        (SpriteRow::EmoticonKo, RHID_EMOTICONS_KO),
-        (SpriteRow::Plouf, RHID_TITBIT_PLOUF),
-        (SpriteRow::Ghost, RHID_GHOST_LITTLE_JOHN_SHORT_LEGS),
-        (SpriteRow::AppleSmell, RHID_TITBIT_APPLE_SMELL),
-        (SpriteRow::Speak, RHID_TITBIT_SPEAK),
-        (SpriteRow::DangerPoint, RHID_TITBIT_DANGER_POINT),
-        (SpriteRow::Hidden, RHID_TITBIT_HIDDEN),
-        (SpriteRow::WorkIconArrows, RHWORKICON_ARROWS),
-        (SpriteRow::WorkIconPurses, RHWORKICON_PURSES),
-        (SpriteRow::WorkIconStones, RHWORKICON_STONES),
-        (SpriteRow::WorkIconApples, RHWORKICON_APPLES),
-        (SpriteRow::WorkIconBeer, RHWORKICON_BEER),
-        (SpriteRow::WorkIconLegs, RHWORKICON_LEGS),
-        (SpriteRow::WorkIconPlants, RHWORKICON_PLANTS),
-        (SpriteRow::WorkIconNets, RHWORKICON_NETS),
-        (SpriteRow::WorkIconWasps, RHWORKICON_WASPS),
-        (SpriteRow::WorkIconBowTraining, RHWORKICON_BOW_TRAINING),
-        (SpriteRow::WorkIconSwordTraining, RHWORKICON_SWORD_TRAINING),
-        (SpriteRow::WorkIconRegeneration, RHWORKICON_REGENERATE),
-    ]
-}
+pub use robin_assets::interface_metadata::titbit_sprite_row_resources;
 
 /// Default day-ambience night-shadow color (RGB (45, 45, 35) packed
 /// as RGB565).  Matches `markers::SelectionMarkRenderer`'s default and the

@@ -16,10 +16,8 @@ use robin_assets::resource_manager::ResourceManager;
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{Ambiance, GroundMarkSpriteData, LevelAssets, SimConfig};
 use robin_engine::profiles::ProfileManager;
-use robin_engine::resource_ids::*;
 use robin_engine::sbfile::SbFileSystem;
 use robin_engine::sprite_variant::SpriteVariant;
-use robin_engine::titbit::SpriteRow;
 use robin_run_protocol::SpeechTimingAuthorityV1;
 
 use crate::ranked_verifier::RankedVerifierLoadError;
@@ -54,8 +52,20 @@ pub(crate) fn load_raw_mission_inputs(
             path: "Data/Interface/DEFAULT.RES",
             message: error.to_string(),
         })?;
-    let ground_mark_sprite = extract_ground_mark_sprite_data(&mut interface);
-    let titbit_row_frame_counts = extract_titbit_row_frame_counts(&mut interface);
+    let ground_mark_sprite = robin_assets::interface_metadata::ground_mark_sprite_data(
+        &mut interface,
+    )
+    .map_err(|error| RankedVerifierLoadError::ResourceArchive {
+        path: "Data/Interface/DEFAULT.RES",
+        message: format!("{error:#}"),
+    })?;
+    let titbit_row_frame_counts = robin_assets::interface_metadata::titbit_row_frame_counts(
+        &mut interface,
+    )
+    .map_err(|error| RankedVerifierLoadError::ResourceArchive {
+        path: "Data/Interface/DEFAULT.RES",
+        message: format!("{error:#}"),
+    })?;
 
     let mut assets = LevelAssets::new();
     // Admission owns this confined resolver. Preparation and execution share
@@ -179,107 +189,6 @@ pub(crate) fn load_raw_mission_inputs(
         bg_pixel_dims,
         level_directory,
     })
-}
-
-fn extract_ground_mark_sprite_data(
-    resources: &mut ResourceManager,
-) -> Option<GroundMarkSpriteData> {
-    let pictures = resources.get_pictures(RHID_GROUND_FOCUS).ok()?;
-    let first = pictures.iter().find_map(Option::as_ref)?;
-    let frame_sizes = pictures
-        .iter()
-        .filter_map(|picture| {
-            picture
-                .as_ref()
-                .map(|picture| (picture.width, picture.height))
-        })
-        .collect::<Vec<_>>();
-    if frame_sizes.is_empty() {
-        return None;
-    }
-    let (width, height) = first
-        .opaque_bounds_16()
-        .map(|(_, _, width, height)| (width, height))
-        .unwrap_or(frame_sizes[0]);
-    let per_frame_offsets = pictures
-        .iter()
-        .map(|picture| {
-            picture
-                .as_ref()
-                .and_then(Picture::opaque_bounds_16)
-                .map(|(x, y, _, _)| (x as i16, y as i16))
-                .unwrap_or((0, 0))
-        })
-        .collect();
-    Some(GroundMarkSpriteData {
-        half_w: width as f32 * 0.5,
-        half_h: height as f32 * 0.5,
-        frame_sizes,
-        per_frame_offsets,
-    })
-}
-
-fn titbit_sprite_row_resources() -> &'static [(SpriteRow, i32)] {
-    &[
-        (SpriteRow::Impact, RHID_ONE_STAR),
-        (SpriteRow::OneStar, RHID_ONE_STAR),
-        (SpriteRow::TwoStars, RHID_TWO_STARS),
-        (SpriteRow::ThreeStars, RHID_THREE_STARS),
-        (SpriteRow::FourStars, RHID_FOUR_STARS),
-        (SpriteRow::FiveStars, RHID_FIVE_STARS),
-        (SpriteRow::QuickActionTitbits, RHID_QUICKACTION_TITBITS),
-        (SpriteRow::Smoke, RHID_ONE_STAR),
-        (SpriteRow::Water, RHID_TITBIT_WATER),
-        (SpriteRow::Lock, RHID_TITBIT_WATER),
-        (SpriteRow::EmoticonGrowingQMark, RHID_EMOTICONS_WHAT1),
-        (SpriteRow::EmoticonQMark, RHID_EMOTICONS_WHAT2),
-        (SpriteRow::EmoticonXMark, RHID_EMOTICONS_ACH),
-        (SpriteRow::EmoticonZzz, RHIDEMOTICONS_ZZZ),
-        (SpriteRow::EmoticonThunderstorm, RHID_EMOTICONS_ANGRY),
-        (SpriteRow::EmoticonCloud, RHID_EMOTICONS_DISAPPOINTED),
-        (SpriteRow::EmoticonDrunken, RHID_EMOTICONS_DRUNKEN),
-        (SpriteRow::EmoticonSun, RHID_EMOTICONS_HAPPY),
-        (SpriteRow::EmoticonKo, RHID_EMOTICONS_KO),
-        (SpriteRow::Plouf, RHID_TITBIT_PLOUF),
-        (SpriteRow::Ghost, RHID_GHOST_LITTLE_JOHN_SHORT_LEGS),
-        (SpriteRow::AppleSmell, RHID_TITBIT_APPLE_SMELL),
-        (SpriteRow::Speak, RHID_TITBIT_SPEAK),
-        (SpriteRow::DangerPoint, RHID_TITBIT_DANGER_POINT),
-        (SpriteRow::Hidden, RHID_TITBIT_HIDDEN),
-        (SpriteRow::WorkIconArrows, RHWORKICON_ARROWS),
-        (SpriteRow::WorkIconPurses, RHWORKICON_PURSES),
-        (SpriteRow::WorkIconStones, RHWORKICON_STONES),
-        (SpriteRow::WorkIconApples, RHWORKICON_APPLES),
-        (SpriteRow::WorkIconBeer, RHWORKICON_BEER),
-        (SpriteRow::WorkIconLegs, RHWORKICON_LEGS),
-        (SpriteRow::WorkIconPlants, RHWORKICON_PLANTS),
-        (SpriteRow::WorkIconNets, RHWORKICON_NETS),
-        (SpriteRow::WorkIconWasps, RHWORKICON_WASPS),
-        (SpriteRow::WorkIconBowTraining, RHWORKICON_BOW_TRAINING),
-        (SpriteRow::WorkIconSwordTraining, RHWORKICON_SWORD_TRAINING),
-        (SpriteRow::WorkIconRegeneration, RHWORKICON_REGENERATE),
-    ]
-}
-
-fn extract_titbit_row_frame_counts(resources: &mut ResourceManager) -> Vec<u16> {
-    let mut counts = vec![0; SpriteRow::NumberOfRows as usize];
-    for &(row, resource_id) in titbit_sprite_row_resources() {
-        let count = resources
-            .get_pictures(resource_id)
-            .map(|pictures| {
-                pictures
-                    .iter()
-                    .filter(|picture| {
-                        picture
-                            .as_ref()
-                            .is_some_and(|picture| picture.width > 0 && picture.height > 0)
-                    })
-                    .count() as u16
-            })
-            .unwrap_or(0);
-        counts[row as usize] = count;
-    }
-    counts
 }
 
 fn decode_background_map(
