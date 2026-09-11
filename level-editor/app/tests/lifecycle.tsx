@@ -1,4 +1,5 @@
 import { render } from "@solidjs/web";
+import { createSignal } from "solid-js";
 import * as THREE from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import Editor3D from "../src/Editor3D";
@@ -153,9 +154,19 @@ EventTarget.prototype.removeEventListener = function (type, callback, options) {
   return remove.call(this, type, callback, options);
 };
 
-async function fixtures() {
+function gate() {
+  let release!: () => void;
+  let enter!: () => void;
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  const entered = new Promise<void>((resolve) => (enter = resolve));
+  return { release, enter, blocked, entered };
+}
+
+async function fixtures(names = ["a", "b"]) {
   const files = new Map<string, File>();
-  for (const name of ["a", "b"]) {
+  let readGate: { name: string; gate: ReturnType<typeof gate> } | null = null;
+  let writeGate: ReturnType<typeof gate> | null = null;
+  for (const name of names) {
     const root = new THREE.Group();
     root.name = "map";
     const buildings = new THREE.Group();
@@ -226,6 +237,7 @@ async function fixtures() {
       new File([JSON.stringify(doc)], "level3d.json"),
     );
   }
+  const originalFiles = new Map(files);
   const directory = {
     name: "memory-fixture",
     kind: "directory",
@@ -236,13 +248,55 @@ async function fixtures() {
     async getFileHandle(name: string) {
       const file = files.get(name);
       if (!file) throw new DOMException(name, "NotFoundError");
-      return { getFile: async () => file };
+      return {
+        getFile: async () => {
+          if (readGate?.name === name) {
+            const pending = readGate.gate;
+            readGate = null;
+            pending.enter();
+            await pending.blocked;
+          }
+          return file;
+        },
+        createWritable: async () => {
+          let text = "";
+          return {
+            write: async (value: string) => {
+              text = value;
+              if (writeGate) {
+                const pending = writeGate;
+                writeGate = null;
+                pending.enter();
+                await pending.blocked;
+              }
+            },
+            close: async () => {
+              files.set(name, new File([text], name));
+            },
+            abort: async () => {},
+          };
+        },
+      };
     },
     async *entries() {
       for (const name of files.keys()) yield [name, { kind: "file" }];
     },
   } as unknown as FileSystemDirectoryHandle;
-  return { handle: directory };
+  return {
+    handle: directory,
+    delayRead: (name: string) => {
+      const pending = gate();
+      readGate = { name, gate: pending };
+      return pending;
+    },
+    delayWrite: () => {
+      writeGate = gate();
+      return writeGate;
+    },
+    resetFiles: () => {
+      for (const [name, file] of originalFiles) files.set(name, file);
+    },
+  };
 }
 function button(label: string) {
   const button = [...document.querySelectorAll("button")].find(
@@ -254,6 +308,8 @@ function button(label: string) {
 
 async function main() {
   const library = await fixtures();
+  const replacement = await fixtures(["c", "d"]);
+  const [activeLibrary, setActiveLibrary] = createSignal(library);
   const errors: string[] = [];
   const samples: unknown[] = [];
   const baselineListeners = listeners.size;
@@ -263,7 +319,7 @@ async function main() {
       () => (
         <Editor3D
           index={() => null}
-          library={() => library}
+          library={activeLibrary}
           onError={(e) => errors.push(e)}
           onStatus={(s) => (status = s)}
         />
@@ -275,6 +331,86 @@ async function main() {
         (b) => b.textContent === "a",
       ),
     );
+    if (mount === 0) {
+      const selectedMap = () =>
+        document.querySelector(".editor-bar button.selected")?.textContent;
+      const rows = () => document.querySelectorAll(".object-list li").length;
+      const pending = library.delayRead("a-volumes.scene.glb");
+      button("a");
+      await pending.entered;
+      button("b");
+      await until(() => selectedMap() === "b" && status === null);
+      pending.release();
+      await pause();
+      await pause();
+      assert(
+        selectedMap() === "b",
+        "stale map load replaced its successor scene",
+      );
+
+      (document.querySelector(".object-list li") as HTMLElement).click();
+      await pause();
+      button("Duplicate");
+      await until(() => rows() === 2);
+      button("Undo");
+      await until(() => rows() === 1);
+      button("Redo");
+      await until(() => rows() === 2);
+      // Undo removed the selected duplicate; redo restores its document node,
+      // not an obsolete selection binding. Select the restored row explicitly.
+      (document.querySelectorAll(".object-list li")[1] as HTMLElement).click();
+      await pause();
+      const saving = library.delayWrite();
+      button("Save *");
+      await saving.entered;
+      button("Duplicate");
+      await until(() => rows() === 3);
+      saving.release();
+      await until(() => status === "saved b.level3d.json");
+      assert(
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent?.trim() === "Save *" && !b.disabled,
+        ),
+        "save completion cleared newer edits",
+      );
+      button("Undo");
+      await until(() => rows() === 2);
+      assert(
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent?.trim() === "Save" && b.disabled,
+        ),
+        "undo did not return to the saved revision",
+      );
+      button("Redo");
+      await until(() => rows() === 3);
+
+      const oldLibrary = library.delayRead("a-volumes.scene.glb");
+      button("a");
+      await oldLibrary.entered;
+      setActiveLibrary(replacement);
+      await until(() =>
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent === "c",
+        ),
+      );
+      button("c");
+      await until(() => selectedMap() === "c" && status === null);
+      oldLibrary.release();
+      await pause();
+      await pause();
+      assert(
+        selectedMap() === "c",
+        "retired library published into the replacement viewport",
+      );
+      library.resetFiles();
+      setActiveLibrary(library);
+      await until(() =>
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent === "a",
+        ),
+      );
+      assert(errors.length === 0, errors.join("\n"));
+    }
     let stable: string | null = null;
     for (let cycle = 0; cycle < 8; cycle++) {
       button(cycle % 2 ? "b" : "a");
@@ -342,7 +478,15 @@ async function main() {
         frames: frames.size,
       });
     }
+    const unmountedLoad =
+      mount === 3 ? library.delayRead("a-volumes.scene.glb") : null;
+    if (unmountedLoad) {
+      button("a");
+      await unmountedLoad.entered;
+    }
     dispose();
+    unmountedLoad?.release();
+    await pause();
     await pause();
     assert(observers === 0, `ResizeObserver retained: ${observers}`);
     assert(frames.size === 0, `RAF retained: ${frames.size}`);
@@ -359,7 +503,7 @@ async function main() {
       `viewport context not released: ${contextLosses}`,
     );
   }
-  result.textContent = `PASS ${JSON.stringify({ mounts: 4, mapLoads: 32, samples, final: { gpu: gpuCounts(), listeners: listeners.size, observers, frames: frames.size } })}`;
+  result.textContent = `PASS ${JSON.stringify({ mounts: 4, mapLoads: 34, rejectedStaleLoads: 3, behavior: ["reverse-load", "library-replacement", "undo-redo", "save-during-edit", "unmount-during-load"], samples, final: { gpu: gpuCounts(), listeners: listeners.size, observers, frames: frames.size } })}`;
 }
 main().catch((error) => {
   result.textContent = `FAIL ${error.stack ?? error}`;

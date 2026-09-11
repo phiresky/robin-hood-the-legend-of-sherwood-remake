@@ -8,25 +8,16 @@
 // <map>.level3d.json next to the GLB; pipeline/src/bake.ts turns that back
 // into game files.
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+import type * as THREE from "three";
 import {
-  sceneToGame,
   IDENTITY_TRANSFORM,
-  gameToScene,
-  gameTransformMatrix,
-  groupCentroid,
   groupParts,
   isIdentity,
-  obstacleCentroid,
-  transformedObstacle,
   type GameTransform,
   type Level3D,
   type Level3DGroup,
   type Level3DObject,
   type ProtoLevel,
-  type Vec3,
 } from "@rle/shared";
 import {
   SessionPublication,
@@ -44,16 +35,6 @@ import { EditorViewport } from "./editor-viewport";
 import { disposeObjectResources } from "./resources";
 import { listFiles, subdir, writeText } from "./fs";
 import type { DatadirIndex } from "./datadir";
-
-/** Z-up scene frame -> glTF Y-up, as the GLB's root node applies it */
-const ZUP_TO_YUP = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
-
-/** a transformable thing in the viewport: a translation wrapper (the gizmo's target) around an affine node */
-interface View {
-  wrapper: THREE.Group;
-  rot: THREE.Group;
-  meshes: THREE.Mesh[];
-}
 
 export type { Selection } from "./document-commands";
 
@@ -81,12 +62,11 @@ export default function Editor3D(props: EditorProps) {
   const session = new SessionPublication<Level3D, FileSystemDirectoryHandle>(
     (snapshot, reason) => {
       setRevision(snapshot);
-      if (reason === "revision") syncViews(snapshot.document);
+      if (reason === "revision") viewport.syncViews(snapshot.document);
     },
   );
   let saving = false;
   let disposed = false;
-  const viewport = new EditorViewport();
   const [selected, setSelected] = createSignal<Selection>(null);
   const [filter, setFilter] = createSignal("");
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
@@ -99,402 +79,22 @@ export default function Editor3D(props: EditorProps) {
     Map<number, { delta: number; support: number }>
   >(new Map());
   const [info, setInfo] = createSignal<string | null>(null);
-
-  // ── three.js ──
-  let container!: HTMLDivElement;
-  let renderer: THREE.WebGLRenderer | null = null;
-  let camera: THREE.OrthographicCamera | null = null;
-  let frustum = 1500;
-  let orbit: OrbitControls | null = null;
-  let gizmo: TransformControls | null = null;
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1c1c1c);
-  /** the GLB's root ("map", Z-up -> Y-up) */
-  const mapRoot = new THREE.Group();
-  mapRoot.quaternion.copy(ZUP_TO_YUP);
-  scene.add(mapRoot);
-  /** editable objects live here (Z-up frame) */
-  const objectsRoot = new THREE.Group();
-  mapRoot.add(objectsRoot);
-  const overlayRoot = new THREE.Group();
-  mapRoot.add(overlayRoot);
-  const partViews = new Map<string, View>();
-  const groupViews = new Map<string, View>();
-  /** reconstruction nodes by name, kept out of the scene, cloned into views */
-  const sourceNodes = new Map<string, THREE.Object3D>();
-  const raycaster = new THREE.Raycaster();
-  const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffcc40);
-  selectionBox.visible = false;
-  scene.add(selectionBox);
-  let dragging = false;
-
-  function setup(el: HTMLDivElement) {
-    container = el;
-    renderer = viewport.renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    el.appendChild(renderer.domElement);
-    camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100000, 100000);
-    camera.position.set(0, 2000, 3000);
-    orbit = viewport.ownControl(new OrbitControls(camera, renderer.domElement));
-    orbit.enableDamping = true;
-    orbit.zoomToCursor = true;
-    // left drag pans (or moves the selection, handler below), right drag
-    // orbits around the point under the cursor (our own handler, OrbitControls
-    // ignores the button), wheel zooms to the cursor
-    orbit.mouseButtons = {
-      LEFT: THREE.MOUSE.PAN,
-      MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: null as unknown as THREE.MOUSE,
-    };
-    setupCursorOrbit(renderer.domElement);
-    gizmo = viewport.ownControl(
-      new TransformControls(camera, renderer.domElement),
-    );
-    gizmo.setMode("translate");
-    gizmo.showY = false;
-    scene.add(gizmo.getHelper());
-    gizmo.addEventListener("dragging-changed", (e) => {
-      dragging = !!(e as unknown as { value: boolean }).value;
-      if (orbit) orbit.enabled = !dragging;
-      if (!dragging) commitGizmo();
-    });
-    gizmo.addEventListener("objectChange", () => refreshSelectionBox());
-    const resize = () => {
-      const w = el.clientWidth;
-      const h = el.clientHeight;
-      if (!renderer || !camera || w === 0 || h === 0) return;
-      renderer.setSize(w, h, false);
-      renderer.setPixelRatio(window.devicePixelRatio);
-      applyFrustum();
-    };
-    viewport.observe(el, resize);
-    resize();
-    // click = pick (a click that did not orbit); alt-click picks a single part
-    let downAt: [number, number] | null = null;
-    renderer.domElement.addEventListener(
-      "pointerdown",
-      (e) => {
-        if (e.button === 0) downAt = [e.clientX, e.clientY];
-      },
-      { signal: viewport.listeners.signal },
-    );
-    renderer.domElement.addEventListener(
-      "pointerup",
-      (e) => {
-        if (!downAt || e.button !== 0) return;
-        const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
-        downAt = null;
-        if (moved > 4 || dragging) return;
-        pick(e, e.altKey);
-      },
-      { signal: viewport.listeners.signal },
-    );
-    viewport.animate(() => {
-      if (!renderer || !camera) return;
-      if (flight) stepFlight();
-      else orbit?.update();
-      renderer.render(scene, camera);
-    });
-  }
-
-  // ── camera flights: the view buttons glide instead of jumping ──
-  interface CameraState {
-    position: THREE.Vector3;
-    quaternion: THREE.Quaternion;
-    target: THREE.Vector3;
-    frustum: number;
-    zoom: number;
-  }
-  let flight: {
-    from: CameraState;
-    to: CameraState;
-    start: number;
-    ms: number;
-  } | null = null;
-  function currentState(): CameraState {
-    return {
-      position: camera!.position.clone(),
-      quaternion: camera!.quaternion.clone(),
-      target: orbit!.target.clone(),
-      frustum,
-      zoom: camera!.zoom,
-    };
-  }
-  function flyTo(to: CameraState, ms = 700) {
-    if (!camera || !orbit) return;
-    flight = { from: currentState(), to, start: performance.now(), ms };
-    orbit.enabled = false;
-  }
-  function stepFlight() {
-    if (!flight || !camera || !orbit) return;
-    const raw = Math.min(1, (performance.now() - flight.start) / flight.ms);
-    const t = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2; // ease in-out
-    const { from, to } = flight;
-    camera.position.lerpVectors(from.position, to.position, t);
-    camera.quaternion.slerpQuaternions(from.quaternion, to.quaternion, t);
-    orbit.target.lerpVectors(from.target, to.target, t);
-    frustum = from.frustum + (to.frustum - from.frustum) * t;
-    camera.zoom = from.zoom + (to.zoom - from.zoom) * t;
-    applyFrustum();
-    if (raw >= 1) {
-      flight = null;
-      camera.up.set(0, 1, 0);
-      orbit.enabled = true;
-      orbit.update();
-    }
-  }
-  /** the state OrbitControls would settle in for a camera at `position` looking at `target` */
-  function lookState(
-    position: THREE.Vector3,
-    target: THREE.Vector3,
-    frustumSize: number,
-  ): CameraState {
-    const probe = new THREE.OrthographicCamera();
-    probe.position.copy(position);
-    probe.up.set(0, 1, 0);
-    probe.lookAt(target);
-    return {
-      position: position.clone(),
-      quaternion: probe.quaternion.clone(),
-      target: target.clone(),
-      frustum: frustumSize,
-      zoom: 1,
-    };
-  }
-
-  /** the part view under a hit, if any */
-  function partOfHit(h: THREE.Intersection): Level3DObject | null {
-    let node: THREE.Object3D | null = h.object;
-    while (node && !partViews.has(node.name)) node = node.parent;
-    return node
-      ? (doc()?.objects.find((o) => o.id === node!.name) ?? null)
-      : null;
-  }
-
-  /**
-   * Left drag on the selected building or part slides it along the ground
-   * plane (elsewhere OrbitControls pans). Right drag orbits the camera
-   * around the point under the cursor, keeping the picture in place.
-   */
-  function setupCursorOrbit(el: HTMLCanvasElement) {
-    let active: {
-      pivot: THREE.Vector3;
-      startX: number;
-      startY: number;
-      position: THREE.Vector3;
-      quaternion: THREE.Quaternion;
-      target: THREE.Vector3;
-      right: THREE.Vector3;
-      polar: number;
-    } | null = null;
-    let moving: {
-      view: View;
-      plane: THREE.Plane;
-      start: THREE.Vector3;
-      startPos: THREE.Vector3;
-    } | null = null;
-    const up = new THREE.Vector3(0, 1, 0);
-    // the right button is ours now, so OrbitControls no longer swallows the context menu
-    el.addEventListener("contextmenu", (e) => e.preventDefault(), {
-      signal: viewport.listeners.signal,
-    });
-    const setRay = (e: PointerEvent) => {
-      const rect = el.getBoundingClientRect();
-      const ndc = new THREE.Vector2(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      raycaster.setFromCamera(ndc, camera!);
-    };
-    el.addEventListener(
-      "pointerdown",
-      (e) => {
-        // the gizmo takes precedence when the cursor is on one of its handles
-        if (
-          !camera ||
-          !orbit ||
-          gizmo?.axis ||
-          (e.button !== 0 && e.button !== 2)
-        )
-          return;
-        setRay(e);
-        const hits = raycaster.intersectObjects(
-          [objectsRoot, ...(viewport.groundNode ? [viewport.groundNode] : [])],
-          true,
-        );
-        if (e.button === 0) {
-          // a left drag that starts on the selection moves it along the ground plane
-          const s = selected();
-          const hitPart = hits[0] ? partOfHit(hits[0]) : null;
-          const view = selectedView();
-          if (
-            s &&
-            hitPart &&
-            view &&
-            (s.kind === "part" ? hitPart.id === s.id : hitPart.group === s.id)
-          ) {
-            const plane = new THREE.Plane(up, -hits[0]!.point.y);
-            moving = {
-              view,
-              plane,
-              start: hits[0]!.point.clone(),
-              startPos: view.wrapper.position.clone(),
-            };
-            orbit.enabled = false;
-            dragging = true;
-            el.setPointerCapture(e.pointerId);
-          }
-          return;
-        }
-        const pivot = hits[0]?.point.clone() ?? orbit.target.clone();
-        const offset = camera.position.clone().sub(orbit.target);
-        active = {
-          pivot,
-          startX: e.clientX,
-          startY: e.clientY,
-          position: camera.position.clone(),
-          quaternion: camera.quaternion.clone(),
-          target: orbit.target.clone(),
-          right: new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion),
-          polar: Math.acos(THREE.MathUtils.clamp(offset.normalize().y, -1, 1)),
-        };
-        orbit.enabled = false;
-        dragging = true;
-        el.setPointerCapture(e.pointerId);
-      },
-      { signal: viewport.listeners.signal },
-    );
-    el.addEventListener(
-      "pointermove",
-      (e) => {
-        if (moving && camera) {
-          setRay(e);
-          const point = new THREE.Vector3();
-          if (!raycaster.ray.intersectPlane(moving.plane, point)) return;
-          // the delta in the wrapper's parent frame (a group's local frame for parts)
-          const parent = moving.view.wrapper.parent!;
-          const delta = parent
-            .worldToLocal(point.clone())
-            .sub(parent.worldToLocal(moving.start.clone()));
-          moving.view.wrapper.position.copy(moving.startPos).add(delta);
-          refreshSelectionBox();
-          return;
-        }
-        if (!active || !camera || !orbit) return;
-        const rect = el.getBoundingClientRect();
-        const yaw = (-(e.clientX - active.startX) / rect.width) * Math.PI * 2;
-        let pitch = (-(e.clientY - active.startY) / rect.height) * Math.PI;
-        // keep the camera between straight down and just above the horizon
-        pitch =
-          THREE.MathUtils.clamp(
-            active.polar + pitch,
-            0.02,
-            Math.PI / 2 - 0.02,
-          ) - active.polar;
-        const q = new THREE.Quaternion()
-          .setFromAxisAngle(up, yaw)
-          .multiply(
-            new THREE.Quaternion().setFromAxisAngle(active.right, pitch),
-          );
-        camera.position
-          .copy(active.position)
-          .sub(active.pivot)
-          .applyQuaternion(q)
-          .add(active.pivot);
-        camera.quaternion.copy(q).multiply(active.quaternion);
-        camera.up.copy(up);
-        orbit.target
-          .copy(active.target)
-          .sub(active.pivot)
-          .applyQuaternion(q)
-          .add(active.pivot);
-      },
-      { signal: viewport.listeners.signal },
-    );
-    const end = (e: PointerEvent) => {
-      if (e.button === 0 && moving) {
-        moving = null;
-        commitGizmo();
-      } else if (e.button === 2 && active) active = null;
-      else return;
-      dragging = false;
-      if (orbit) {
-        orbit.enabled = true;
-        orbit.update();
+  const viewport = new EditorViewport({
+    document: doc,
+    selection: selected,
+    level,
+    showObstacles,
+    showElevation,
+    onSelection: (selection) => {
+      setSelected(selection);
+      if (selection?.kind === "part") {
+        const group = doc()?.objects.find((o) => o.id === selection.id)?.group;
+        if (group) setExpanded((current) => new Set(current).add(group));
       }
-    };
-    el.addEventListener("pointerup", end, {
-      signal: viewport.listeners.signal,
-    });
-    el.addEventListener("pointercancel", end, {
-      signal: viewport.listeners.signal,
-    });
-  }
-
-  function applyFrustum() {
-    if (!camera || !container) return;
-    const aspect = container.clientWidth / Math.max(1, container.clientHeight);
-    camera.left = -frustum * aspect;
-    camera.right = frustum * aspect;
-    camera.top = frustum;
-    camera.bottom = -frustum;
-    camera.updateProjectionMatrix();
-  }
-
-  function contentBox(): THREE.Box3 {
-    const box = new THREE.Box3();
-    if (viewport.groundNode) box.expandByObject(viewport.groundNode);
-    box.expandByObject(objectsRoot);
-    return box;
-  }
-
-  function frameContent(instant = false) {
-    if (!camera || !orbit) return;
-    const box = contentBox();
-    if (box.isEmpty()) return;
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3()).length();
-    const to = lookState(
-      center.clone().add(new THREE.Vector3(0, size * 0.5, size * 0.6)),
-      center,
-      size * 0.35,
-    );
-    if (instant) applyState(to);
-    else flyTo(to);
-  }
-
-  /** the original pre-render camera: elevation from the document, looking north, map fitted */
-  function gameCamera(instant = false) {
-    const d = doc();
-    if (!camera || !orbit) return;
-    const box = contentBox();
-    if (box.isEmpty()) return;
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3()).length();
-    const t = ((d?.camera.elevation_deg ?? 35) * Math.PI) / 180;
-    const forward = new THREE.Vector3(0, -Math.sin(t), -Math.cos(t));
-    const to = lookState(
-      center.clone().addScaledVector(forward, -size),
-      center,
-      d ? d.size[1] / 2 : size * 0.35,
-    );
-    if (instant) applyState(to);
-    else flyTo(to);
-  }
-
-  function applyState(st: CameraState) {
-    if (!camera || !orbit) return;
-    flight = null;
-    camera.position.copy(st.position);
-    camera.quaternion.copy(st.quaternion);
-    camera.up.set(0, 1, 0);
-    orbit.target.copy(st.target);
-    frustum = st.frustum;
-    camera.zoom = st.zoom;
-    applyFrustum();
-    orbit.enabled = true;
-    orbit.update();
-  }
+    },
+    commitTransform: setTransform,
+  });
+  const select = (selection: Selection) => viewport.select(selection);
 
   // ── scenes in the library ──
   createEffect(
@@ -591,22 +191,14 @@ export default function Editor3D(props: EditorProps) {
         return;
       }
       // All asynchronous reads and validation precede publication.
-      select(null);
-      viewport.retireMap(overlayRoot);
-      objectsRoot.clear();
-      overlayRoot.clear();
-      partViews.clear();
-      groupViews.clear();
-      sourceNodes.clear();
-      viewport.installMap(preparedAsset, nextGround, mapRoot);
+      viewport.replaceMap(preparedAsset, nextGround, nextSources);
       preparedAsset = null;
-      for (const [key, value] of nextSources) sourceNodes.set(key, value);
       session.publish(generation, name, d, dir, candidate.saved);
       setLevel(lvl);
       setSuspects(nextSuspects);
-      syncViews(d);
-      buildOverlays();
-      gameCamera(true);
+      viewport.syncViews(d);
+      viewport.buildOverlays();
+      viewport.gameCamera(true);
       setInfo(`${d.groups.length} buildings, ${d.objects.length} parts`);
       props.onStatus(null);
     } catch (e) {
@@ -618,280 +210,13 @@ export default function Editor3D(props: EditorProps) {
     }
   }
 
-  function makeView(name: string): View {
-    const wrapper = new THREE.Group();
-    wrapper.name = name;
-    const rot = new THREE.Group();
-    rot.matrixAutoUpdate = false;
-    wrapper.add(rot);
-    return { wrapper, rot, meshes: [] };
-  }
-
-  function setAffine(v: View, m: number[]) {
-    v.wrapper.position.set(m[12]!, m[13]!, m[14]!);
-    const rest = new THREE.Matrix4().fromArray(m);
-    rest.setPosition(0, 0, 0);
-    v.rot.matrix.copy(rest);
-    v.rot.matrixWorldNeedsUpdate = true;
-  }
-
-  /** make the three.js objects match the document */
-  function syncViews(d: Level3D) {
-    const aliveGroups = new Set<string>();
-    for (const g of d.groups) {
-      aliveGroups.add(g.id);
-      let v = groupViews.get(g.id);
-      if (!v) {
-        v = makeView(g.id);
-        objectsRoot.add(v.wrapper);
-        groupViews.set(g.id, v);
-      }
-      setAffine(
-        v,
-        gameTransformMatrix(
-          d.camera,
-          g.transform,
-          groupCentroid(groupParts(d, g.id)),
-        ),
-      );
-      v.wrapper.visible = !g.hidden;
-    }
-    for (const [id, v] of groupViews) {
-      if (aliveGroups.has(id)) continue;
-      objectsRoot.remove(v.wrapper);
-      groupViews.delete(id);
-    }
-    const aliveParts = new Set<string>();
-    for (const o of d.objects) {
-      aliveParts.add(o.id);
-      let v = partViews.get(o.id);
-      if (!v) {
-        const src = sourceNodes.get(o.node);
-        if (!src) throw new Error(`Missing source node ${o.node} for ${o.id}`);
-        v = makeView(o.id);
-        const node = src.clone(true);
-        node.traverse((c) => {
-          const m = c as THREE.Mesh;
-          if (m.isMesh) v!.meshes.push(m);
-        });
-        v.rot.add(node);
-        partViews.set(o.id, v);
-      }
-      const parent =
-        (o.group ? groupViews.get(o.group)?.rot : undefined) ?? objectsRoot;
-      if (v.wrapper.parent !== parent) parent.add(v.wrapper);
-      setAffine(
-        v,
-        gameTransformMatrix(
-          d.camera,
-          o.transform,
-          obstacleCentroid(o.obstacle.points),
-        ),
-      );
-      v.wrapper.visible = !o.hidden;
-    }
-    for (const [id, v] of partViews) {
-      if (aliveParts.has(id)) continue;
-      v.wrapper.parent?.remove(v.wrapper);
-      partViews.delete(id);
-    }
-    const s = selected();
-    if (s && !(s.kind === "group" ? aliveGroups : aliveParts).has(s.id))
-      select(null);
-    else refreshSelectionBox();
-    if (showObstacles()) buildOverlays();
-  }
-
-  function selectedView(): View | null {
-    const s = selected();
-    if (!s) return null;
-    return (s.kind === "group" ? groupViews : partViews).get(s.id) ?? null;
-  }
-
-  /** read the gizmo's translation back into the document */
-  function commitGizmo() {
-    const d = doc();
-    const v = selectedView();
-    const t = selectedTransform();
-    if (!d || !v || !t) return;
-    const g = selectedGroup();
-    const p = selectedPart();
-    const pivot = g
-      ? groupCentroid(groupParts(d, g.id))
-      : obstacleCentroid(p!.obstacle.points);
-    const base = gameTransformMatrix(
-      d.camera,
-      { ...t, dx: 0, dy: 0, dz: 0 },
-      pivot,
-    );
-    const pos = v.wrapper.position;
-    const [dx, dy, dz] = sceneToGame(d.camera, [
-      pos.x - base[12]!,
-      pos.y - base[13]!,
-      pos.z - base[14]!,
-    ]).map((v) => Math.round(v * 10) / 10) as Vec3;
-    if (dx === t.dx && dy === t.dy && dz === t.dz) return;
-    setTransform({ ...t, dx, dy, dz });
-  }
-
-  function pick(e: PointerEvent, partOnly: boolean) {
-    if (!camera || !renderer) return;
-    const rect = renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    raycaster.setFromCamera(ndc, camera);
-    const hits = raycaster.intersectObject(objectsRoot, true);
-    for (const h of hits) {
-      const part = partOfHit(h);
-      if (!part) continue;
-      // a click inside the selected building picks its part; alt always does
-      const s = selected();
-      if (
-        part.group &&
-        !partOnly &&
-        !(s?.kind === "group" && s.id === part.group)
-      )
-        select({ kind: "group", id: part.group });
-      else select({ kind: "part", id: part.id });
-      return;
-    }
-    select(null);
-  }
-
-  const tinted = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
-  function select(s: Selection) {
-    for (const [m, mat] of tinted) {
-      for (const owned of Array.isArray(m.material) ? m.material : [m.material])
-        owned.dispose();
-      m.material = mat;
-    }
-    tinted.clear();
-    setSelected(s);
-    const d = doc();
-    const v = s
-      ? (s.kind === "group" ? groupViews : partViews).get(s.id)
-      : null;
-    if (gizmo) {
-      if (v) gizmo.attach(v.wrapper);
-      else gizmo.detach();
-    }
-    if (s && d) {
-      const parts =
-        s.kind === "group"
-          ? groupParts(d, s.id)
-          : d.objects.filter((o) => o.id === s.id);
-      for (const p of parts) {
-        for (const m of partViews.get(p.id)?.meshes ?? []) {
-          tinted.set(m, m.material);
-          const tint = (original: THREE.Material) => {
-            const mat = original.clone() as THREE.MeshBasicMaterial;
-            if (mat.color) mat.color.set(0xffd27a);
-            return mat;
-          };
-          m.material = Array.isArray(m.material)
-            ? m.material.map(tint)
-            : tint(m.material);
-        }
-      }
-      if (s.kind === "part") {
-        const g = d.objects.find((o) => o.id === s.id)?.group;
-        if (g) setExpanded((x) => new Set(x).add(g));
-      }
-    }
-    refreshSelectionBox();
-  }
-
-  function refreshSelectionBox() {
-    const v = selectedView();
-    if (!v) {
-      selectionBox.visible = false;
-      return;
-    }
-    v.wrapper.updateWorldMatrix(true, true);
-    selectionBox.box.setFromObject(v.wrapper, true);
-    selectionBox.visible = true;
-  }
-
-  // ── overlays: obstacle outlines (document state) and elevation lines ──
-  function buildOverlays() {
-    disposeObjectResources([overlayRoot]);
-    overlayRoot.clear();
-    const d = doc();
-    if (!d) return;
-    if (showObstacles()) {
-      const pts: number[] = [];
-      const hiddenGroups = new Set(
-        d.groups.filter((g) => g.hidden).map((g) => g.id),
-      );
-      for (const o of d.objects) {
-        if (o.hidden || (o.group && hiddenGroups.has(o.group))) continue;
-        const ob = transformedObstacle(d, o);
-        const n = ob.points.length;
-        for (let i = 0; i < n; i++) {
-          const a = ob.points[i]!;
-          const b = ob.points[(i + 1) % n]!;
-          const segs: [Vec3, Vec3][] = [
-            [
-              gameToScene(d.camera, a.x, a.y, a.z_top),
-              gameToScene(d.camera, b.x, b.y, b.z_top),
-            ],
-            [
-              gameToScene(d.camera, a.x, a.y, a.z_bottom),
-              gameToScene(d.camera, a.x, a.y, a.z_top),
-            ],
-          ];
-          for (const [p, q] of segs)
-            pts.push(p[0], p[1], p[2], q[0], q[1], q[2]);
-        }
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-      overlayRoot.add(
-        new THREE.LineSegments(
-          geo,
-          new THREE.LineBasicMaterial({
-            color: 0x40e0ff,
-            depthTest: false,
-            transparent: true,
-            opacity: 0.6,
-          }),
-        ),
-      );
-    }
-    const lvl = level();
-    if (showElevation() && lvl) {
-      const pts: number[] = [];
-      for (const e of lvl.elevation_lines) {
-        const p = gameToScene(d.camera, e.point_a[0], e.point_a[1], 0);
-        const q = gameToScene(d.camera, e.point_b[0], e.point_b[1], 0);
-        pts.push(p[0], p[1], p[2] + 1, q[0], q[1], q[2] + 1);
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-      overlayRoot.add(
-        new THREE.LineSegments(
-          geo,
-          new THREE.LineBasicMaterial({
-            color: 0xff70d0,
-            depthTest: false,
-            transparent: true,
-            opacity: 0.8,
-          }),
-        ),
-      );
-    }
-  }
   createEffect(
     () => ({ obstacles: showObstacles(), elevation: showElevation() }),
-    () => buildOverlays(),
+    () => viewport.buildOverlays(),
   );
   createEffect(
     () => gizmoVertical(),
-    (v) => {
-      if (gizmo) gizmo.showY = v;
-    },
+    (v) => viewport.setGizmoVertical(v),
   );
 
   // ── actions ──
@@ -966,8 +291,8 @@ export default function Editor3D(props: EditorProps) {
     else if (e.key === "d" && !e.ctrlKey) duplicateSelected();
     else if (e.key === "q") rotateSelected(-15);
     else if (e.key === "e") rotateSelected(15);
-    else if (e.key === "g") gameCamera();
-    else if (e.key === "f") frameContent();
+    else if (e.key === "g") viewport.gameCamera();
+    else if (e.key === "f") viewport.frameContent();
     else if (e.key === "Escape") select(null);
   }
   window.addEventListener("keydown", onKey, {
@@ -976,8 +301,7 @@ export default function Editor3D(props: EditorProps) {
   onCleanup(() => {
     disposed = true;
     session.dispose();
-    viewport.dispose(overlayRoot, selectionBox, () => select(null));
-    renderer = null;
+    viewport.dispose();
   });
 
   // ── object list: buildings (expandable), then ungrouped parts and terraces ──
@@ -1085,10 +409,18 @@ export default function Editor3D(props: EditorProps) {
           </span>
         </Show>
         <span class="spacer" />
-        <button disabled={!doc()} onClick={() => gameCamera()} title="g">
+        <button
+          disabled={!doc()}
+          onClick={() => viewport.gameCamera()}
+          title="g"
+        >
           Game camera
         </button>
-        <button disabled={!doc()} onClick={() => frameContent()} title="f">
+        <button
+          disabled={!doc()}
+          onClick={() => viewport.frameContent()}
+          title="f"
+        >
           Frame
         </button>
         <label class="check inline">
@@ -1129,7 +461,7 @@ export default function Editor3D(props: EditorProps) {
         </Show>
       </div>
       <div class="editor-body">
-        <div class="editor-canvas" ref={setup} />
+        <div class="editor-canvas" ref={(element) => viewport.setup(element)} />
         <aside class="editor-panel">
           <Show
             when={selectedTransform()}
