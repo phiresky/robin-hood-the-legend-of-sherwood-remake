@@ -405,6 +405,18 @@ pub struct ResourceData {
     picture_opacity: HashMap<ResourceId, Vec<Option<PictureOpacityMetadata>>>,
 }
 
+impl ResourceData {
+    /// One ID denotes one resource, including all of its derived representations.
+    fn remove(&mut self, id: ResourceId) {
+        self.pictures.remove(&id);
+        self.encoded_pictures.remove(&id);
+        self.picture_opacity.remove(&id);
+        self.mouse_entries.remove(&id);
+        self.strings.remove(&id);
+        self.waves.remove(&id);
+    }
+}
+
 /// Legacy origin/reference metadata retained for exact serialized compatibility.
 /// These fields are deliberately isolated from the resident resource values.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -683,28 +695,34 @@ impl ResourceManager {
         match type_tag {
             b"PIC " => {
                 let pics = read_single_picture(reader, &context)?;
+                self.data.remove(id);
                 self.data.pictures.insert(id, pics);
             }
             b"PICC" => {
                 let pics = read_picture_collection(reader, &context)?;
+                self.data.remove(id);
                 self.data.pictures.insert(id, pics);
             }
             b"BTTN" | b"TOGL" | b"NPTF" | b"SLID" | b"RDO " => {
                 let count = flagged_picture_count(type_tag).expect("matched flagged picture tag");
                 let pics = read_flagged_pictures(reader, count, &context)?;
+                self.data.remove(id);
                 self.data.pictures.insert(id, pics);
             }
             b"CUR " => {
                 let (mouse, pics) = read_cursor(reader, &context)?;
+                self.data.remove(id);
                 self.data.pictures.insert(id, pics);
                 self.data.mouse_entries.insert(id, mouse);
             }
             b"TEXT" => {
                 let strs = read_string_table(reader, &context)?;
+                self.data.remove(id);
                 self.data.strings.insert(id, strs);
             }
             b"WAVE" => {
                 let w = read_wave_table(reader, &context)?;
+                self.data.remove(id);
                 self.data.waves.insert(id, w);
             }
             _ => bail!(
@@ -1465,12 +1483,21 @@ impl ResourceManager {
 
     fn merge_resources(&mut self, data: ResourceData, lifetime: ResourceLifetime) {
         self.invalidate_picture_cache();
-        // A new collection replaces every old representation, even when the
-        // source only carries encoded bytes or only carries decoded pixels.
-        for id in data.pictures.keys().chain(data.encoded_pictures.keys()) {
-            self.data.pictures.remove(id);
-            self.data.encoded_pictures.remove(id);
-            self.data.picture_opacity.remove(id);
+        // Clear the complete old resource, including its recovery origin.
+        // The wire maps remain unchanged; replacement policy lives here.
+        for &id in data
+            .pictures
+            .keys()
+            .chain(data.encoded_pictures.keys())
+            .chain(data.picture_opacity.keys())
+            .chain(data.mouse_entries.keys())
+            .chain(data.strings.keys())
+            .chain(data.waves.keys())
+            .chain(lifetime.file_entries.keys())
+        {
+            self.data.remove(id);
+            self.lifetime.references.remove(&id);
+            self.lifetime.file_entries.remove(&id);
         }
         self.data.pictures.extend(data.pictures);
         self.data.picture_opacity.extend(data.picture_opacity);
@@ -2109,6 +2136,59 @@ mod tests {
             "replacement.res"
         );
         assert_ne!(manager.cache_identity, identity);
+    }
+
+    #[test]
+    fn replacement_removes_incompatible_values_and_old_recovery_origins() {
+        for old_tag in [b"TEXT", b"WAVE", b"PICC"] {
+            for new_tag in [b"TEXT", b"WAVE", b"PICC"] {
+                let payload = |tag| {
+                    if tag == b"PICC" {
+                        &[0; 8][..]
+                    } else {
+                        &[0; 6][..]
+                    }
+                };
+                let old = resource_file(old_tag, 42, payload(old_tag));
+                let new = resource_file(new_tag, 42, payload(new_tag));
+                for same_archive in [false, true] {
+                    let mut manager = ResourceManager::new();
+                    if same_archive {
+                        let mut combined = old.clone();
+                        combined[8..12].copy_from_slice(&2u32.to_le_bytes());
+                        combined.extend_from_slice(&new[12..]);
+                        manager
+                            .attach_resource_bytes(&combined, "combined.res")
+                            .unwrap();
+                    } else {
+                        manager.attach_resource_bytes(&old, "old.res").unwrap();
+                        manager.attach_resource_bytes(&new, "new.res").unwrap();
+                    }
+                    assert_eq!(manager.data.strings.contains_key(&42), new_tag == b"TEXT");
+                    assert_eq!(manager.data.waves.contains_key(&42), new_tag == b"WAVE");
+                    assert_eq!(manager.data.pictures.contains_key(&42), new_tag == b"PICC");
+                    assert_eq!(&manager.lifetime.file_entries[&42].resource_type, new_tag);
+                }
+            }
+        }
+
+        let mut destination = ResourceManager::new();
+        destination
+            .attach_resource_bytes(&resource_file(b"TEXT", 42, &[0; 6]), "old.res")
+            .unwrap();
+        destination
+            .data
+            .strings
+            .insert(99, vec!["unrelated".into()]);
+        let mut shipping = ResourceManager::new();
+        shipping.data.waves.insert(42, vec!["new.wav".into()]);
+        destination.extend_from(&shipping);
+        assert!(destination.get_strings(42).is_err());
+        assert!(destination.strings_raw(42).is_none());
+        assert_eq!(destination.waves_raw(42).unwrap(), &["new.wav"]);
+        assert!(!destination.lifetime.file_entries.contains_key(&42));
+        assert!(!destination.lifetime.references.contains_key(&42));
+        assert_eq!(destination.strings_raw(99).unwrap(), &["unrelated"]);
     }
 
     #[test]
