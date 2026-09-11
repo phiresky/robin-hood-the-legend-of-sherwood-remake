@@ -5,10 +5,10 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { prepareMapCandidate } from "./map-candidate.ts";
 import { disposeObjectResources } from "./resources.ts";
 
-function fixture(saved: unknown = {}) {
+function fixture(saved: unknown = {}, map = "York") {
   const scene = {
     version: 1,
-    map: "York",
+    map,
     size: [100, 200],
     camera: { kind: "oblique-orthographic", elevation_deg: 35 },
     placements: [],
@@ -80,6 +80,22 @@ test("validated candidate retains ownership until accepted or rejected by its ca
   assert.equal(f.disposals(), 0);
   disposeObjectResources([candidate.asset]); // Same path used for a stale prepared load.
   assert.equal(f.disposals(), 1);
+});
+
+test("map source identity remains case-insensitive but never accepts a different map", async (t) => {
+  const f = fixture({}, "yOrK");
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({
+    scene: f.asset,
+  }));
+  const candidate = await prepareMapCandidate("York", f.directory, null);
+  assert.equal(candidate.document.map, "yOrK");
+  disposeObjectResources([candidate.asset]);
+  const wrong = fixture({}, "Lincoln");
+  await assert.rejects(
+    prepareMapCandidate("York", wrong.directory, null),
+    /source map is Lincoln/,
+  );
+  disposeObjectResources([wrong.asset]);
 });
 
 test("invalid saved document releases the parsed asset before rejecting", async (t) => {

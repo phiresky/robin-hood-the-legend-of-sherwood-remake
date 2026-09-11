@@ -125,15 +125,6 @@ export async function readJson<T>(
   }
 }
 
-export async function readImage(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-): Promise<ImageBitmap> {
-  const fh = await dir.getFileHandle(name);
-  const file = await fh.getFile();
-  return createImageBitmap(await file.arrayBuffer().then((b) => new Blob([b])));
-}
-
 export async function listFiles(
   dir: FileSystemDirectoryHandle,
 ): Promise<string[]> {
@@ -142,26 +133,4 @@ export async function listFiles(
     if (entry.kind === "file") names.push(name);
   }
   return names;
-}
-
-export async function listDirs(
-  dir: FileSystemDirectoryHandle,
-): Promise<string[]> {
-  const names: string[] = [];
-  for await (const [name, entry] of dir.entries()) {
-    if (entry.kind === "directory") names.push(name);
-  }
-  return names;
-}
-
-/** case-insensitive file lookup (map PNGs are lowercased inconsistently) */
-export async function findFileCI(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-): Promise<string | null> {
-  const lower = name.toLowerCase();
-  for await (const [entry, h] of dir.entries()) {
-    if (h.kind === "file" && entry.toLowerCase() === lower) return entry;
-  }
-  return null;
 }
