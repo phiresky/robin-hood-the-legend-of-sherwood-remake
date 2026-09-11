@@ -348,18 +348,28 @@ impl ReplayRecordingControl {
             .expect("capture recorder poisoned")
             .clone()
     }
-    pub(crate) fn capture_save(
+    /// Persist a fresh snapshot's save event at the recording owner's current
+    /// boundary, then attach its archive link before publication. Publication
+    /// failure intentionally leaves the event in the recording: history cannot
+    /// be rolled back, and a later save gets its own boundary.
+    ///
+    /// Already linked payloads are mirrors/restores, not new save events.
+    /// Without an archive the payload intentionally remains unlinked; the
+    /// timeline lifecycle records its runtime marker on `SaveWritten` instead.
+    pub(crate) fn attach_save_boundary(
         &self,
-        save: &crate::save_file::GameSaveFile,
-    ) -> anyhow::Result<Option<crate::replay_archive::SaveReplayLink>> {
-        match self.capture_recorder() {
-            Some(recorder) => {
-                let link = recorder.capture_save(save)?;
-                self.checkpoint_ranked_input();
-                Ok(link)
-            }
-            None => Ok(None),
+        save: &mut crate::save_file::GameSaveFile,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            save.header.replay.is_none(),
+            "save already has a replay boundary; publish the captured payload without recording it again"
+        );
+        save.validate_current_schema()?;
+        if let Some(recorder) = self.capture_recorder() {
+            save.header.replay = recorder.persist_save_boundary(save)?;
+            self.checkpoint_ranked_input();
         }
+        Ok(())
     }
 
     pub fn begin_recording(&self) -> ReplaySpoolWriter {

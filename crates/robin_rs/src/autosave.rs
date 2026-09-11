@@ -373,7 +373,7 @@ impl AutosaveCoordinator {
             .map_err(anyhow::Error::msg)
             .context("autosave requires an active player profile")?;
         let provenance = SaveProvenance::new(display_text.clone(), player_id, player_name)?;
-        let payload = GameSaveFile::capture_with_game(
+        let mut payload = GameSaveFile::capture_with_game(
             engine,
             host,
             game,
@@ -386,6 +386,9 @@ impl AutosaveCoordinator {
             bail!("autosave payload clock returned the invalid Unix timestamp zero");
         }
         let metadata = metadata_from_payload(&filename, &payload, profiles)?;
+        host.application_context()
+            .replay_recording()
+            .attach_save_boundary(&mut payload)?;
         let manifest_seed = AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
             saves: manager

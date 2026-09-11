@@ -75,6 +75,9 @@ impl RecordingState {
 pub(super) struct ReplayLifecycle {
     recording: RecordingState,
     bootstrap_save: Option<(ReplaySaveIdentity, ReplaySaveMarker)>,
+    // Runtime/session markers (including bootstrap), not the durable archive
+    // boundaries owned by SharedReplayRecorder. Keep these separate: a session
+    // restart identity cannot be reopened by a later process.
     saved_frames: BTreeMap<ReplaySaveIdentity, (ReplayFrameOrdinal, TimelineFrame)>,
     player: Option<ReplayPlayer>,
     pinned_saves: BTreeMap<u32, GameRuntimeSnapshot>,

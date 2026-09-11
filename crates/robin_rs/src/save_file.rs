@@ -883,14 +883,13 @@ impl PreparedGameSave {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_CHECKPOINT: AtomicU64 = AtomicU64::new(1);
         let snapshot = GameRuntimeSnapshot::capture(engine, host, game)?;
-        let mut payload = GameSaveFile {
+        let payload = GameSaveFile {
             header,
             engine: Engine::from_persisted_state(snapshot.engine),
             sound: snapshot.sound.into_runtime(),
             game_persistent: snapshot.game_persistent,
         };
         payload.validate_current_schema()?;
-        payload.header.replay = host.application_context().capture_save_replay(&payload)?;
         let identity = NEXT_CHECKPOINT
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
@@ -900,6 +899,16 @@ impl PreparedGameSave {
             payload,
             session_identity: Some(ReplaySaveIdentity::SessionRestart(identity)),
         })
+    }
+
+    /// Attach the restart's recording boundary without changing its immutable
+    /// runtime payload or process-local identity.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn record_replay_boundary(
+        &mut self,
+        recording: &crate::replay_service::ReplayRecordingControl,
+    ) -> Result<()> {
+        recording.attach_save_boundary(&mut self.payload)
     }
 }
 
@@ -1005,6 +1014,11 @@ impl GameSaveFile {
 
     /// Build a production save while snapshotting the required host-side
     /// `GamePersistentState`.
+    ///
+    /// This only constructs and validates the snapshot; it never writes to a
+    /// recorder. Save workflows must explicitly attach a replay boundary before
+    /// publishing. Mirroring a loaded or already captured save must reuse that
+    /// payload instead of capturing it again on the active recording timeline.
     pub fn capture_with_game(
         engine: &Engine,
         host: &Host,
@@ -1016,14 +1030,13 @@ impl GameSaveFile {
     ) -> Result<Self> {
         let mut game_persistent = game.persistent.clone();
         game_persistent.draw_hidden = host.frontend.input.feedback.draw_hidden;
-        let mut save = Self {
+        let save = Self {
             header: SaveHeader::new(mission_id, mission_assets, display_text, provenance)?,
             engine: engine.clone(),
             sound: host.audio.sound.clone(),
             game_persistent,
         };
         save.validate_current_schema()?;
-        save.header.replay = host.application_context().capture_save_replay(&save)?;
         Ok(save)
     }
 

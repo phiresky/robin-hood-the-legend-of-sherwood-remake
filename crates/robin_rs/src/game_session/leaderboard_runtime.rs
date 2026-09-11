@@ -1264,7 +1264,7 @@ mod tests {
             SaveProvenance::new("Mission".into(), 0, "Player".into()).unwrap(),
         )
         .unwrap();
-        save.header.replay = service.recording().capture_save(&save).unwrap();
+        service.recording().attach_save_boundary(&mut save).unwrap();
         let original: MissionEndSubmissionInput = serde_json::from_slice(
             &std::fs::read(directory.path().join("original/ranked.json")).unwrap(),
         )

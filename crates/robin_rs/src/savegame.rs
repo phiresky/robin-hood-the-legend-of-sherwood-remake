@@ -755,7 +755,7 @@ impl SaveGameManager {
                 )
             });
         let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-        let save = GameSaveFile::capture_with_game(
+        let mut save = GameSaveFile::capture_with_game(
             engine,
             host,
             game,
@@ -764,6 +764,9 @@ impl SaveGameManager {
             current.text.clone(),
             provenance,
         )?;
+        host.application_context()
+            .replay_recording()
+            .attach_save_boundary(&mut save)?;
         let payload = save_file::SerializedSave::new(&save)?;
         let bytes = payload.encode(&current.text)?;
         current.update_snapshot_metadata(
@@ -913,7 +916,7 @@ impl SaveGameManager {
             let display_text = self.catalog[idx].text.clone();
             let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
             // Capture (clone) on the main thread — fast.
-            let save = GameSaveFile::capture_with_game(
+            let mut save = GameSaveFile::capture_with_game(
                 engine,
                 host,
                 game,
@@ -922,6 +925,9 @@ impl SaveGameManager {
                 display_text,
                 provenance,
             )?;
+            host.application_context()
+                .replay_recording()
+                .attach_save_boundary(&mut save)?;
             self.queue_special_save(
                 idx,
                 save,
@@ -985,7 +991,8 @@ impl SaveGameManager {
             "Restart Point".into(),
             provenance,
         )?;
-        let save = PreparedGameSave::capture_session_restart(engine, host, game, header)?;
+        let mut save = PreparedGameSave::capture_session_restart(engine, host, game, header)?;
+        save.record_replay_boundary(&host.application_context().replay_recording())?;
         let mut slot = SaveGame::new(
             save_file::special_slots::RESTART.into(),
             "Restart Point".into(),
@@ -1548,6 +1555,9 @@ impl SaveGameManager {
         );
         metadata.validate_published_metadata()?;
         save.validate_current_schema()?;
+        host.application_context()
+            .replay_recording()
+            .attach_save_boundary(&mut save)?;
         let payload = save_file::SerializedSave::new(&save)?;
         let bytes = payload.encode(&metadata.text)?;
         let committed = self.commit_synchronous(index, metadata, &bytes, thumbnail)?;
@@ -3234,6 +3244,136 @@ mod tests {
         )
         .unwrap();
         game
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn snapshots_are_pure_and_recording_boundaries_are_explicit() {
+        use crate::replay_archive::MissionArchive;
+        use crate::replay_recording::SharedReplayRecorder;
+        use robin_engine::replay::ReplayRecorder;
+
+        let root = tempfile::tempdir().unwrap();
+        let (engine, _, profiles, host) = fresh_save_session("Explicit boundary");
+        let game = game_for_save(&profiles, 17);
+        let archive = MissionArchive::create(&root.path().join("replay")).unwrap();
+        let recorder = ReplayRecorder::with_writer(
+            archive.writer().unwrap(),
+            "Mission_17".into(),
+            game.mission_assets().unwrap().clone(),
+            0,
+            Default::default(),
+            engine.campaign(),
+        )
+        .unwrap();
+        let recorder = SharedReplayRecorder::archived(recorder, archive);
+        let recording = host.application_context().replay_recording();
+        recording.install_capture_recorder(Some(recorder.clone()));
+
+        let mut save = GameSaveFile::capture_with_game(
+            &engine,
+            &host,
+            &game,
+            17,
+            game.mission_assets().unwrap().clone(),
+            "snapshot".into(),
+            required_save_provenance(&host, &engine, 17, Some(&profiles)).unwrap(),
+        )
+        .unwrap();
+        let mut restart =
+            PreparedGameSave::capture_session_restart(&engine, &host, &game, save.header.clone())
+                .unwrap();
+        let restart_identity = restart.replay_identity().unwrap();
+        let payload_identity = save.replay_identity().unwrap();
+        assert_eq!(recorder.next_ordinal(), 0, "snapshot construction is pure");
+        assert!(save.header.replay.is_none());
+        assert!(restart.header.replay.is_none());
+
+        recording.attach_save_boundary(&mut save).unwrap();
+        assert_eq!(recorder.next_ordinal(), 1);
+        assert_eq!(save.replay_identity().unwrap(), payload_identity);
+        assert_eq!(recorder.captured_frame(payload_identity), Some((0, 0)));
+        let link = save.header.replay.clone().unwrap();
+        assert!(recording.attach_save_boundary(&mut save).is_err());
+        assert_eq!(
+            recorder.next_ordinal(),
+            1,
+            "relinking cannot append an event"
+        );
+        assert_eq!(save.header.replay, Some(link));
+
+        // A publication failure cannot undo an already durable replay event.
+        // Retrying publication of this exact payload needs no new event.
+        assert!(save.write_to(root.path()).is_err());
+        save.write_to(&root.path().join("save.json")).unwrap();
+        assert_eq!(recorder.next_ordinal(), 1);
+
+        restart.record_replay_boundary(&recording).unwrap();
+        assert_eq!(recorder.next_ordinal(), 2);
+        assert_eq!(restart.replay_identity().unwrap(), restart_identity);
+        assert!(restart.header.replay.is_some());
+        assert_ne!(restart_identity, payload_identity);
+        assert!(restart.record_replay_boundary(&recording).is_err());
+        assert_eq!(recorder.next_ordinal(), 2);
+
+        let reopened = MissionArchive::open(&root.path().join("replay")).unwrap();
+        let (_, replay, _) = reopened.assembled_replay().unwrap();
+        assert_eq!(replay.frame_count(), 2);
+        let persisted = GameSaveFile::read_from(&root.path().join("save.json")).unwrap();
+        let save_file::ReplaySaveIdentity::Payload(digest) = persisted.replay_identity().unwrap()
+        else {
+            panic!("published saves require a payload identity");
+        };
+        reopened
+            .validate_link(persisted.header.replay.as_ref().unwrap(), &replay, digest)
+            .unwrap();
+    }
+
+    #[test]
+    fn unarchived_save_boundary_keeps_the_runtime_marker_lane() {
+        use crate::replay_recording::SharedReplayRecorder;
+        use robin_engine::replay::ReplayRecorder;
+
+        let (engine, _, profiles, host) = fresh_save_session("Unarchived boundary");
+        let game = game_for_save(&profiles, 17);
+        let recording = host.application_context().replay_recording();
+        let mut save = GameSaveFile::capture_with_game(
+            &engine,
+            &host,
+            &game,
+            17,
+            game.mission_assets().unwrap().clone(),
+            "snapshot".into(),
+            required_save_provenance(&host, &engine, 17, Some(&profiles)).unwrap(),
+        )
+        .unwrap();
+        recording.attach_save_boundary(&mut save).unwrap();
+        assert!(save.header.replay.is_none(), "recording is optional");
+
+        let recorder = SharedReplayRecorder::from(
+            ReplayRecorder::with_writer(
+                Box::new(Vec::<u8>::new()),
+                "Mission_17".into(),
+                game.mission_assets().unwrap().clone(),
+                0,
+                Default::default(),
+                engine.campaign(),
+            )
+            .unwrap(),
+        );
+        recording.install_capture_recorder(Some(recorder.clone()));
+        recording.attach_save_boundary(&mut save).unwrap();
+        assert!(save.header.replay.is_none());
+        assert_eq!(recorder.next_ordinal(), 0);
+        assert_eq!(
+            recorder.captured_frame(save.replay_identity().unwrap()),
+            None
+        );
+
+        // Invalid metadata is rejected before touching either recording lane.
+        save.header.mission_id = 0;
+        assert!(recording.attach_save_boundary(&mut save).is_err());
+        assert_eq!(recorder.next_ordinal(), 0);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

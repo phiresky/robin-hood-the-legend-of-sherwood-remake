@@ -3737,7 +3737,7 @@ mod tests {
                 SaveProvenance::new("Mission".into(), 0, "Player".into()).unwrap(),
             )
             .unwrap();
-            save.header.replay = service.recording().capture_save(&save).unwrap();
+            service.recording().attach_save_boundary(&mut save).unwrap();
             assert!(save.header.replay.is_some());
             save
         }

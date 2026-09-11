@@ -94,7 +94,10 @@ impl SharedReplayRecorder {
 
     /// A save is an actual host event: record its boundary without advancing
     /// the engine or consuming commands still queued for the next transaction.
-    pub(crate) fn capture_save(&self, save: &GameSaveFile) -> Result<Option<SaveReplayLink>> {
+    pub(crate) fn persist_save_boundary(
+        &self,
+        save: &GameSaveFile,
+    ) -> Result<Option<SaveReplayLink>> {
         let mut recording = self.0.lock().expect("recording poisoned");
         if recording.archive.is_none() {
             return Ok(None);
