@@ -98,7 +98,7 @@ jobs:
             artifact: robin-linux-x86_64
     # Deliberately the oldest supported LTS image, not ubuntu-latest: the
     # Linux binary links the runner's glibc, so building on the older image
-    # keeps the shipped tarball/AppImage running on older distros.
+    # keeps the shipped AppImage running on older distros.
     runs-on: ubuntu-22.04
 
     steps:
@@ -215,7 +215,7 @@ jobs:
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build release binary
+      - name: Build release binaries
         shell: bash
         env:
           ROBIN_PACKAGE_VERSION: ${{ steps.version.outputs.version }}
@@ -224,6 +224,7 @@ jobs:
           # TODO: Bundle FFmpeg DLLs on Windows, then switch `release` to
           # `full` so packaged builds also include video and RetroArch presets.
           cargo build --locked --release --no-default-features --features release -p robin_rs --bin robin --target ${{ matrix.target }}
+          cargo build --locked --release -p robin_modding_tools --bins --features robin_rs/release --target ${{ matrix.target }}
 
       - name: Stage package input
         shell: bash
@@ -233,6 +234,13 @@ jobs:
             "target/${{ matrix.target }}/release/${{ matrix.executable }}" \
             "target/package-input/${{ matrix.pack_executable }}"
           cp README.md target/package-input/
+          mkdir -p target/package-input/docs
+          cp docs/MODDING_TOOLS.md docs/JSON_PATCH_MODS.md target/package-input/docs/
+          suffix=""
+          if [[ "${{ matrix.runtime }}" == win-x64 ]]; then suffix=".exe"; fi
+          for tool in cpf_to_json encode_mod_sprites disasm_scb dump_res; do
+            cp "target/${{ matrix.target }}/release/${tool}${suffix}" target/package-input/
+          done
           # Engine-shipped overlay datadirs, resolved relative to the
           # executable at runtime: the core overlay (bitmap fonts, UI
           # icons) is required; mods/ (e.g. hackable levels) ships when
@@ -242,15 +250,6 @@ jobs:
           if [ -d mods ]; then
             cp -R mods target/package-input/
           fi
-
-      - name: Create Windows standalone binary
-        if: matrix.runtime == 'win-x64'
-        run: |
-          (cd target/package-input && zip -r ../release-assets/robin-windows-x86_64.zip .)
-
-      - name: Create Linux standalone binary
-        if: matrix.runtime == 'linux-x64'
-        run: tar -C target/package-input -czf target/release-assets/robin-linux-x86_64.tar.gz .
 
       - name: Build Windows Velopack installers
         if: matrix.runtime == 'win-x64'
@@ -270,7 +269,6 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
             --outputDir target/velopack
-          cp target/velopack/* target/release-assets/
 
       - name: Build Linux Velopack AppImage
         if: matrix.runtime == 'linux-x64'
@@ -283,7 +281,14 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime linux-x64 \
             --outputDir target/velopack
-          cp target/velopack/* target/release-assets/
+
+      - name: Stage named release assets and update feed
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const channel = '${{ matrix.runtime }}' === 'win-x64' ? 'win' : 'linux';
+            await require('./scripts/release/publish_native_release.ts').stageReleaseAssets(
+              'target/velopack', 'target/release-assets', channel);
 
       - name: List release assets
         shell: bash

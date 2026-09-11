@@ -1,36 +1,36 @@
+use anyhow::Result;
 use std::path::PathBuf;
 
-use anyhow::{Context as _, Result, ensure};
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+#[command(about = "Author or validate release-admission inputs")]
+struct Args {
+    #[arg(value_enum)]
+    operation: Operation,
+    plan: PathBuf,
+    output: PathBuf,
+}
+
+#[derive(Clone, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+enum Operation {
+    Author,
+    Validate,
+}
 
 fn main() -> Result<()> {
-    let mut arguments = std::env::args_os().skip(1);
-    let operation = arguments
-        .next()
-        .context("usage: author_release_admission_inputs <author|validate> PLAN OUTPUT")?;
-    let plan = PathBuf::from(
-        arguments
-            .next()
-            .context("release-admission plan path is absent")?,
-    );
-    let output = PathBuf::from(
-        arguments
-            .next()
-            .context("release-admission output path is absent")?,
-    );
-    ensure!(arguments.next().is_none(), "unexpected trailing argument");
-
-    let authored = match operation.to_str() {
-        Some("author") => {
+    let Args {
+        operation,
+        plan,
+        output,
+    } = <Args as clap::Parser>::parse();
+    let authored = match operation {
+        Operation::Author => {
             robin_manifest_tool::release_admission_v1::author_release_admission_v1(&plan, &output)?
         }
-        Some("validate") => {
+        Operation::Validate => {
             robin_manifest_tool::release_admission_v1::validate_release_admission_v1(
                 &plan, &output,
             )?
         }
-        _ => anyhow::bail!(
-            "unknown operation; usage: author_release_admission_inputs <author|validate> PLAN OUTPUT"
-        ),
     };
     println!("index_sha256={}", authored.index_sha256);
     println!("rulesets={}", authored.index.rulesets.len());

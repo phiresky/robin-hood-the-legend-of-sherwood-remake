@@ -198,19 +198,16 @@ impl PickerModel {
     pub fn total_rows(&self) -> usize {
         self.slots.len() + usize::from(self.mode == SaveLoadMode::Save)
     }
+    /// Synchronize the shared view while retaining geometry-free selection policy.
+    pub fn set_viewport(&mut self, rows: usize, offset: usize) {
+        assert!(rows > 0);
+        self.viewport_rows = rows;
+        self.scroll_offset = offset.min(self.total_rows().saturating_sub(rows));
+    }
+
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
     }
-    pub fn scroll(&mut self, down: bool) {
-        self.scroll_offset = if down {
-            self.scroll_offset
-                .saturating_add(1)
-                .min(self.total_rows().saturating_sub(self.viewport_rows))
-        } else {
-            self.scroll_offset.saturating_sub(1)
-        };
-    }
-
     pub fn can_delete(&self) -> bool {
         let Some(name) = self.selected_slot() else {
             return false;
@@ -412,7 +409,7 @@ mod tests {
         assert_eq!(m.scroll_offset(), 1);
         m.finish_delete(vec![slot("Savegame_000", 0)], None);
         assert_eq!(m.scroll_offset(), 0);
-        m.scroll(true);
+        m.set_viewport(2, usize::MAX);
         assert_eq!(m.scroll_offset(), 0);
         m.navigate(false);
         assert_eq!(m.selected_row(), Some(ListRow::Existing(0)));

@@ -1,5 +1,5 @@
 //! Row-based scrolling for menu lists and wrapped text, independent of selection.
-use crate::gfx_types::GameEvent;
+use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::resources::MenuSurface;
 use crate::ingame_menu::{IngameMenuResources, layout::MenuTransform, widget_bridge};
 use crate::renderer::Renderer;
@@ -89,6 +89,21 @@ impl ScrollView {
         }
         .min(self.max_offset());
     }
+    /// Scroll-only navigation. Selectable lists may handle arrows themselves
+    /// and call `reveal` after changing selection.
+    pub fn navigate(&mut self, key: Keycode) -> bool {
+        match key {
+            Keycode::Up => self.scroll_by(-1),
+            Keycode::Down => self.scroll_by(1),
+            Keycode::PageUp => self.scroll_by(-(self.visible_count() as isize)),
+            Keycode::PageDown => self.scroll_by(self.visible_count() as isize),
+            Keycode::Home => self.reset(),
+            Keycode::End => self.set_offset(usize::MAX),
+            _ => return false,
+        }
+        true
+    }
+
     pub fn set_wheel_step(&mut self, step: isize) {
         assert!(step > 0);
         self.wheel_step = step;
@@ -181,13 +196,24 @@ impl ScrollView {
         let row = self.offset + ((self.axis(x, y) - self.origin()) / self.row_height) as usize;
         self.visible_range().contains(&row).then_some(row)
     }
-    fn drag_to(&mut self, axis_position: i32, grab: i32) {
-        let usable = (self.length() - 2) as u128;
-        let relative = i64::from(axis_position) - i64::from(self.origin()) - 1 - i64::from(grab);
-        // Preserve the integer ratio and half-up rounding without overflowing
-        // pointer differences or the product with a usize-sized content count.
-        let scaled = relative.max(0) as u128 * self.total as u128 + usable / 2;
-        self.offset = (scaled / usable).min(self.max_offset() as u128) as usize;
+    fn drag_to(&mut self, y: i32, grab: i32) {
+        if self.max_offset() == 0 {
+            return;
+        }
+        let (_, height) = widget_bridge::listbox_scrollbar_thumb(
+            self.length(),
+            self.offset,
+            self.visible_count(),
+            self.total,
+            self.min_thumb_height,
+        );
+        let travel = (self.length() - 2 - height).max(0) as usize;
+        if travel == 0 {
+            return;
+        }
+        let relative = i64::from(y) - i64::from(self.origin()) - 1 - i64::from(grab);
+        let scaled = relative.max(0) as u128 * self.max_offset() as u128 + travel as u128 / 2;
+        self.offset = (scaled / travel as u128).min(self.max_offset() as u128) as usize;
     }
     /// Returns true when scrolling consumed the event. Pass the current mouse
     /// position in virtual coordinates for wheel events, which carry no position.
@@ -223,7 +249,9 @@ impl ScrollView {
                     height / 2
                 };
                 self.drag_grab = Some(grab);
-                self.drag_to(self.axis(x, y), grab);
+                if !(top..top + height).contains(&relative) {
+                    self.drag_to(self.axis(x, y), grab);
+                }
                 true
             }
             GameEvent::MouseMove { x, y, .. } if self.drag_grab.is_some() => {
@@ -330,6 +358,24 @@ mod tests {
     }
 
     #[test]
+    fn minimum_thumb_stays_inside_track_and_reaches_last_row() {
+        let mut v = view();
+        v.set_total(10_000);
+        v.set_offset(usize::MAX);
+        let (top, height) = widget_bridge::listbox_scrollbar_thumb(
+            v.length(),
+            v.offset,
+            v.visible_count(),
+            v.total,
+            v.min_thumb_height,
+        );
+        assert_eq!(height, 16);
+        assert_eq!(top + height, v.length() - 1);
+        v.drag_to(v.origin() + top, 0);
+        assert_eq!(v.offset, 9995);
+    }
+
+    #[test]
     fn horizontal_view_uses_x_for_dragging_and_a_bottom_scrollbar() {
         let mut v = ScrollView::with_geometry([30, 40, 400, 100], 100, 16, 16, true);
         v.set_total(20);
@@ -429,7 +475,7 @@ mod tests {
         assert_eq!(v.visible_range(), 0..2);
     }
     #[test]
-    fn drag_scaling_preserves_legacy_rounding_for_ordinary_lists() {
+    fn drag_scaling_uses_actual_thumb_travel_for_ordinary_lists() {
         for horizontal in [false, true] {
             for total in [0, 1, 5, 6, 100, 10_000] {
                 let mut v = view();
@@ -437,12 +483,27 @@ mod tests {
                 v.set_total(total);
                 for grab in [0, 1, 8, 16] {
                     for position in -20..250 {
-                        let usable = (v.length() - 2) as usize;
-                        let expected = (((position - v.origin() - 1 - grab).max(0) as usize
-                            * total
-                            + usable / 2)
-                            / usable)
-                            .min(v.max_offset());
+                        let height = if total == 0 {
+                            v.length() - 2
+                        } else {
+                            widget_bridge::listbox_scrollbar_thumb(
+                                v.length(),
+                                v.offset(),
+                                v.visible_count(),
+                                total,
+                                v.min_thumb_height,
+                            )
+                            .1
+                        };
+                        let travel = (v.length() - 2 - height).max(0) as usize;
+                        let expected = if travel == 0 {
+                            v.offset()
+                        } else {
+                            (((position - v.origin() - 1 - grab).max(0) as usize * v.max_offset()
+                                + travel / 2)
+                                / travel)
+                                .min(v.max_offset())
+                        };
                         v.drag_to(position, grab);
                         assert_eq!(v.offset(), expected);
                     }
@@ -459,9 +520,9 @@ mod tests {
         assert_eq!(v.offset(), 0);
         v.drag_to(i32::MAX, 8);
         assert_eq!(v.offset(), v.max_offset());
-        // At one track pixel, round total / 101 to the nearest row.
+        // The minimum 16-pixel thumb leaves 85 pixels of travel.
         v.drag_to(v.origin() + 2, 0);
-        assert_eq!(v.offset(), ((usize::MAX as u128 + 50) / 101) as usize);
+        assert_eq!(v.offset(), ((v.max_offset() as u128 + 42) / 85) as usize);
 
         v.bounds[1] = i32::MIN;
         v.drag_to(i32::MAX, 0);

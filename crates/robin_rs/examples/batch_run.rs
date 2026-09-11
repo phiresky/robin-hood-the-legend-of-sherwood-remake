@@ -8,10 +8,16 @@ use robin_engine::interp::Vm;
 use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
 use robin_engine::vm::{self, Instruction};
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    #[arg(default_value = ".")]
+    dir: String,
+}
+
 fn main() {
     tracing_subscriber::fmt::init();
-    let args: Vec<String> = std::env::args().collect();
-    let dir = args.get(1).map(|s| s.as_str()).unwrap_or(".");
+    let args = <Args as clap::Parser>::parse();
+    let dir = &args.dir;
 
     let mut results: Vec<(String, &str, usize, usize)> = Vec::new();
 

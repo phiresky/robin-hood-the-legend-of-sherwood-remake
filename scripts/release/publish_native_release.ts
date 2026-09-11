@@ -5,7 +5,7 @@ import type * as actionsCore from '@actions/core';
 import type * as actionsGithub from '@actions/github';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { lstat, readdir, readFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 export type GitHubScriptContext = {
@@ -17,6 +17,39 @@ type GitHub = GitHubScriptContext['github'];
 type Repo = { owner: string; repo: string };
 type Release = Awaited<ReturnType<GitHub['rest']['repos']['getRelease']>>['data'];
 export type Assets = Map<string, { path: string; sha256: string; size: number }>;
+
+// Keep the installed application identity and update channels stable. Only the
+// published filenames change; package contents and their checksums stay intact.
+export async function stageReleaseAssets(input: string, output: string, channel: 'win' | 'linux') {
+  if (channel !== 'win' && channel !== 'linux') throw new Error(`unsupported release channel: ${channel}`);
+  const packageId = 'io.github.phiresky.robinhood';
+  const indexName = `releases.${channel}.json`;
+  const index = JSON.parse(await readFile(join(input, indexName), 'utf8'));
+  if (!Array.isArray(index?.Assets) || index.Assets.length === 0) {
+    throw new Error(`empty/invalid Velopack index: ${indexName}`);
+  }
+  await mkdir(output, { recursive: true });
+  for (const entry of index.Assets) {
+    const original = entry?.FileName;
+    if (typeof original !== 'string' || original !== basename(original) ||
+        original.includes('\\') || !original.startsWith(`${packageId}-`) ||
+        !/-(full|delta)\.nupkg$/.test(original)) {
+      throw new Error(`unexpected package filename: ${JSON.stringify(original)}`);
+    }
+    let name = original.replace(packageId, 'robinhood-remake');
+    if (channel === 'win') name = name.replace(/-(full|delta)\.nupkg$/, '-windows-$1.nupkg');
+    await copyFile(join(input, original), join(output, name));
+    entry.FileName = name;
+  }
+  const downloads = channel === 'win'
+    ? [
+      [`${packageId}-win-Setup.exe`, 'robinhood-remake-windows-Setup.exe'],
+      [`${packageId}-win-Portable.zip`, 'robinhood-remake-windows-Portable.zip'],
+    ]
+    : [[`${packageId}.AppImage`, 'robinhood-remake-linux.AppImage']];
+  for (const [original, name] of downloads) await copyFile(join(input, original!), join(output, name!));
+  await writeFile(join(output, indexName), JSON.stringify(index, null, 2) + '\n');
+}
 
 export async function inventory(root: string): Promise<Assets> {
   const assets: Assets = new Map();
@@ -37,7 +70,7 @@ export async function inventory(root: string): Promise<Assets> {
     }
   }
   await walk(root);
-  for (const name of ['robin-windows-x86_64.zip', 'robin-linux-x86_64.tar.gz']) {
+  for (const name of ['robinhood-remake-windows-Setup.exe', 'robinhood-remake-windows-Portable.zip', 'robinhood-remake-linux.AppImage']) {
     if (!assets.has(name)) throw new Error(`missing platform artifact: ${name}`);
   }
   for (const runtime of ['win', 'linux']) {
@@ -125,7 +158,14 @@ export async function publish(
     // Keep the creation response; the list may not yet contain the new draft.
     ({ data: release } = await github.rest.repos.createRelease({
       ...repo, tag_name: tag, target_commitish: commit, name: tag,
-      body: `Automatic build of ${commit}.`, draft: true, prerelease,
+      body: `Automatic build of ${commit}.\n\n` +
+        'Downloads:\n' +
+        '- If you’re on Windows, you likely want to get `robinhood-remake-windows-Setup.exe`.\n' +
+        '- Linux: download `robinhood-remake-linux.AppImage`, make it executable, and run it.\n\n' +
+        'The two `.nupkg` files are automatic-update payloads (Windows and Linux); ' +
+        'you do not need to download them manually. ' +
+        'The `releases.*.json` files are required update indexes.',
+      draft: true, prerelease,
     }));
   }
   if (release.target_commitish !== commit) throw new Error('release target differs from the requested commit');

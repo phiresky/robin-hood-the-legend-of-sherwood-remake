@@ -42,6 +42,9 @@ pub enum InitErrorCategory {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum InitError {
+    #[error("Game data selection cancelled")]
+    DataDirectoryCancelled,
+
     #[error("Unable to install datadir {path}: file error {status}")]
     DataDirectoryInstall { path: String, status: i32 },
 
@@ -90,8 +93,8 @@ pub enum InitError {
         source: robin_engine::legacy_io::LegacyIoError,
     },
 
-    #[error("Failed to apply soldier profile patch {path}: {message}")]
-    ContentSoldierProfilePatch { path: String, message: String },
+    #[error("Failed to apply profile patch {path}: {message}")]
+    ContentProfilePatch { path: String, message: String },
 
     #[error("core audio timing: {message}")]
     ContentAudioDurations { message: String },
@@ -128,9 +131,9 @@ pub enum InitError {
 impl InitError {
     pub const fn category(&self) -> InitErrorCategory {
         match self {
-            Self::DataDirectoryInstall { .. } | Self::DataDirectoryMissing { .. } => {
-                InitErrorCategory::DataDirectory
-            }
+            Self::DataDirectoryInstall { .. }
+            | Self::DataDirectoryMissing { .. }
+            | Self::DataDirectoryCancelled => InitErrorCategory::DataDirectory,
             #[cfg(target_os = "android")]
             Self::DataDirectoryChange { .. } | Self::DataDirectoryAndroidAssetsMissing { .. } => {
                 InitErrorCategory::DataDirectory
@@ -139,7 +142,7 @@ impl InitError {
             | Self::ContentProfilesJson { .. }
             | Self::ContentProfilesOpen { .. }
             | Self::ContentProfilesRead { .. }
-            | Self::ContentSoldierProfilePatch { .. }
+            | Self::ContentProfilePatch { .. }
             | Self::ContentAudioDurations { .. }
             | Self::ContentLocalization { .. } => InitErrorCategory::Content,
             Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
@@ -246,21 +249,47 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
         "Registered validated native core overlay datadir"
     );
 
-    if let Some(mods_dir) = resolve_install_resource_dir(MODS_DIR)
-        && let Ok(entries) = std::fs::read_dir(mods_dir)
-    {
-        // Sort for a deterministic overlay lookup order.
-        let mut mod_dirs: Vec<String> = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
-            .map(|entry| entry.path().to_string_lossy().into_owned())
-            .collect();
-        mod_dirs.sort();
-        for dir in mod_dirs {
-            match files.add_overlay_path(&dir) {
-                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay datadir: {dir}"),
+    let mut mod_roots = Vec::new();
+    if let Some(root) = resolve_install_resource_dir(MODS_DIR) {
+        mod_roots.push(root);
+    }
+    let configured_root = crate::mod_pack::default_mods_root();
+    if !mod_roots.contains(&configured_root) {
+        mod_roots.push(configured_root);
+    }
+    for mods_dir in mod_roots {
+        let entries = match std::fs::read_dir(&mods_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                tracing::warn!("Cannot scan mod directory {}: {error}", mods_dir.display());
+                continue;
+            }
+        };
+        let mut roots = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    let path = entry.path();
+                    if path.is_dir()
+                        || path
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+                    {
+                        roots.push(path);
+                    }
+                }
+                Err(error) => tracing::warn!("Cannot read mod directory entry: {error}"),
+            }
+        }
+        roots.sort();
+        for path in roots {
+            match crate::mod_pack::mount_mod_overlay(files, &path) {
+                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay: {}", path.display()),
                 SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-                err => tracing::warn!("Failed to register mod overlay datadir {dir}: {err}"),
+                error => {
+                    tracing::warn!("Failed to register mod overlay {}: {error}", path.display())
+                }
             }
         }
     }
@@ -273,7 +302,7 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
             continue;
         }
         let path = path.to_string_lossy().into_owned();
-        match files.add_overlay_path(&path) {
+        match crate::mod_pack::mount_mod_overlay(files, Path::new(&path)) {
             SBFILE_NO_ERROR => tracing::info!("Registered overlay datadir: {path}"),
             SBFILE_ERROR_PATH_ALREADY_PRESENT => {
                 tracing::debug!("Overlay datadir already registered: {path}")
@@ -386,11 +415,9 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(Path::to_path_buf));
-        // Fall back to the working directory when nothing was found or the
-        // player cancelled the picker; a loose unmarked `Data/` there keeps
-        // working, anything else hits the descriptive error below.
-        let chosen = crate::datadir_locator::resolve_datadir(exe_dir.as_deref())
-            .unwrap_or_else(|| PathBuf::from("."));
+        // Only non-interactive discovery may fall back to loose, unmarked Data/.
+        // Cancelling the picker must stop startup before installing any data.
+        let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
         tracing::info!("using primary datadir {}", chosen.display());
         let status = files.set_primary_path(&chosen.to_string_lossy());
         if status != SBFILE_NO_ERROR {
@@ -421,6 +448,37 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
     add_overlay_data_dirs(files)?;
     add_language_folder_with_files(files)?;
     Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
+fn startup_data_dir(
+    resolution: crate::datadir_locator::DataDirResolution,
+) -> Result<PathBuf, InitError> {
+    use crate::datadir_locator::DataDirResolution;
+    match resolution {
+        DataDirResolution::Selected(path) => Ok(path),
+        DataDirResolution::Unavailable => Ok(PathBuf::from(".")),
+        DataDirResolution::Cancelled => Err(InitError::DataDirectoryCancelled),
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
+#[test]
+fn datadir_cancellation_does_not_fall_back_to_working_directory() {
+    use crate::datadir_locator::DataDirResolution;
+    assert!(matches!(
+        startup_data_dir(DataDirResolution::Cancelled),
+        Err(InitError::DataDirectoryCancelled)
+    ));
+    assert_eq!(
+        startup_data_dir(DataDirResolution::Unavailable).unwrap(),
+        PathBuf::from(".")
+    );
+    let selected = PathBuf::from("/chosen/game");
+    assert_eq!(
+        startup_data_dir(DataDirResolution::Selected(selected.clone())).unwrap(),
+        selected
+    );
 }
 
 /// Android uses a pre-converted shipping datadir bundled as an APK
@@ -800,7 +858,7 @@ fn load_profiles_with_files(
         // `dd.profiles`), so the per-mission `number_of_beam_mes` /
         // `required_actions` fields are already populated — no
         // post-processing needed here.
-        return apply_soldier_profile_patches_with_files(p.clone(), files);
+        return apply_profile_patches_with_files(p.clone(), files);
     }
     // Both the JSON and legacy-CPF paths skip the beam-me post-processing
     // step, so without this call every mission profile ends up with
@@ -819,14 +877,16 @@ fn load_profiles_with_files(
         })?
     {
         tracing::info!("Profiles: loading JSON dump {json_path}");
-        let mut mgr = ProfileManager::load_json_with_files(json_path, files).map_err(|source| {
-            InitError::ContentProfilesJson {
-                path: json_path,
-                source,
-            }
-        })?;
+        let document =
+            ProfileManager::load_json_document_with_files(json_path, files).map_err(|source| {
+                InitError::ContentProfilesJson {
+                    path: json_path,
+                    source,
+                }
+            })?;
+        let mut mgr = apply_profile_document_with_files(document, files)?;
         mgr.import_beam_mes_with_files(level_dir, files);
-        return apply_soldier_profile_patches_with_files(mgr, files);
+        return Ok(mgr);
     }
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
@@ -842,269 +902,59 @@ fn load_profiles_with_files(
             path: cpf_path,
             source,
         })?;
+    let mut mgr = apply_profile_patches_with_files(mgr, files)?;
     mgr.import_beam_mes_with_files(level_dir, files);
-    apply_soldier_profile_patches_with_files(mgr, files)
+    Ok(mgr)
 }
 
-const SOLDIER_PROFILE_PATCH_PATH: &str = "Data/Configuration/soldier-profiles.patch.json";
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SoldierProfilePatch {
-    #[serde(default)]
-    soldiers: Vec<SoldierProfileAddition>,
-    #[serde(default)]
-    characters: Vec<CharacterProfileAddition>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CharacterProfileAddition {
-    template: String,
-    /// Retail soldier profile supplying the promoted NPC's combat statistics.
-    /// The character template still supplies player actions and ammunition.
-    #[serde(default)]
-    combat_profile: Option<String>,
-    filename: String,
-    profile_name: String,
-    display_name: String,
-    exclamation_profile: String,
-    /// Contextual actions inherited from the playable template that the NPC's
-    /// sprite set cannot actually perform.
-    #[serde(default)]
-    remove_contextual_actions: Vec<engine_profiles::Action>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SoldierProfileAddition {
-    template: String,
-    /// Optional preceding colour tier. When present, the new profile starts
-    /// from `template` and extrapolates one more step of the original combat
-    /// stat progression (`template + (template - progression_from)`).
-    #[serde(default)]
-    progression_from: Option<String>,
-    filename: String,
-    #[serde(default)]
-    profile_name: Option<String>,
-    display_name: String,
-    #[serde(default)]
-    hostile: Option<bool>,
-}
-
-fn resolve_soldier_profile_template(
-    profiles: &ProfileManager,
-    reference: &str,
-) -> Result<engine_profiles::SoldierProfile, String> {
-    let mut exact = profiles
-        .soldiers
-        .iter()
-        .filter(|profile| profile.filename == reference);
-    if let Some(profile) = exact.next()
-        && exact.next().is_none()
-    {
-        return Ok(profile.clone());
-    }
-
-    profiles.soldier_idx_by_identifier(reference).map(|index| {
-        profiles
-            .get_soldier(index)
-            .expect("resolved soldier profile index disappeared")
-            .clone()
-    })
-}
-
-fn extrapolate_progressive_stat(previous: u16, current: u16) -> u16 {
-    let next = i32::from(current) * 2 - i32::from(previous);
-    next.clamp(0, i32::from(u16::MAX)) as u16
-}
-
-fn extrapolate_capacity(previous: u16, current: u16) -> u16 {
-    extrapolate_progressive_stat(previous, current).min(100)
-}
-
-fn extrapolate_soldier_progression(
-    profile: &mut engine_profiles::SoldierProfile,
-    previous: &engine_profiles::SoldierProfile,
-) -> Result<(), String> {
-    if profile.rank != previous.rank
-        || profile.rider != previous.rider
-        || profile.heavy != previous.heavy
-        || profile.pathfinder_index != previous.pathfinder_index
-        || profile.hth_weapon_id != previous.hth_weapon_id
-        || profile.shooting_weapon_id != previous.shooting_weapon_id
-    {
-        return Err(format!(
-            "progression profiles {:?} and {:?} are different soldier archetypes",
-            previous.filename, profile.filename
-        ));
-    }
-
-    profile.life_point = extrapolate_progressive_stat(previous.life_point, profile.life_point);
-    // Original treats these as 0..=100 capacities. In particular,
-    // Enemy AI computes `100 - courage` and
-    // `100 - intelligence`; exceeding 100 would underflow its 16-bit arithmetic.
-    profile.intelligence = extrapolate_capacity(previous.intelligence, profile.intelligence);
-    profile.courage = extrapolate_capacity(previous.courage, profile.courage);
-    profile.initiative = extrapolate_capacity(previous.initiative, profile.initiative);
-    profile.pride = extrapolate_capacity(previous.pride, profile.pride);
-    profile.shooting = extrapolate_capacity(previous.shooting, profile.shooting);
-    profile.fighting = extrapolate_capacity(previous.fighting, profile.fighting);
-    profile.endurance = extrapolate_capacity(previous.endurance, profile.endurance);
-    Ok(())
-}
-
-fn apply_soldier_profile_patch(
-    profiles: &mut ProfileManager,
-    patch: SoldierProfilePatch,
-) -> Result<(), String> {
-    for addition in patch.characters {
-        if profiles
-            .characters
-            .iter()
-            .any(|profile| profile.filename == addition.filename)
-        {
-            return Err(format!(
-                "new character filename {:?} already exists",
-                addition.filename
-            ));
-        }
-        let mut exclamation_matches = profiles
-            .soldiers
-            .iter()
-            .map(|profile| (&profile.filename, profile.exclamation_id))
-            .chain(
-                profiles
-                    .civilians
-                    .iter()
-                    .map(|profile| (&profile.filename, profile.exclamation_id)),
-            )
-            .filter(|(filename, _)| filename.as_str() == addition.exclamation_profile);
-        let exclamation_id = exclamation_matches
-            .next()
-            .map(|(_, id)| id)
-            .ok_or_else(|| {
-                format!(
-                    "character exclamation profile {:?} does not exist",
-                    addition.exclamation_profile
-                )
-            })?;
-        if let Some((_, conflicting_id)) = exclamation_matches.find(|(_, id)| *id != exclamation_id)
-        {
-            return Err(format!(
-                "character exclamation profile {:?} has conflicting voice banks {exclamation_id} and {conflicting_id}",
-                addition.exclamation_profile,
-            ));
-        }
-        if exclamation_id == 0 {
-            return Err(format!(
-                "character exclamation profile {:?} has no voice bank",
-                addition.exclamation_profile
-            ));
-        }
-
-        let mut templates = profiles
-            .characters
-            .iter()
-            .filter(|profile| profile.filename == addition.template);
-        let mut profile = templates
-            .next()
-            .cloned()
-            .ok_or_else(|| format!("character template {:?} does not exist", addition.template))?;
-        if templates.next().is_some() {
-            return Err(format!(
-                "character template {:?} is ambiguous",
-                addition.template
-            ));
-        }
-        profile.index = profiles.characters.len() as u32;
-        profile.filename = addition.filename;
-        profile.profile_name = addition.profile_name;
-        profile.display_name = addition.display_name;
-        profile.exclamation_id = exclamation_id;
-        if let Some(combat_reference) = addition.combat_profile.as_deref() {
-            let combat = resolve_soldier_profile_template(profiles, combat_reference)
-                .map_err(|message| format!("combat_profile {combat_reference:?}: {message}"))?;
-            profile.shooting = combat.shooting;
-            profile.fighting = combat.fighting;
-            profile.endurance = combat.endurance;
-            profile.hth_weapon_id = combat.hth_weapon_id;
-            profile.shooting_weapon_id = combat.shooting_weapon_id;
-            profile.wake_up = combat.wake_up;
-            profile.weapon_material = combat.weapon_material;
-            profile.armor_material = combat.armor_material;
-        }
-        for action in addition.remove_contextual_actions {
-            let slot = profile
-                .contextual_actions
-                .iter_mut()
-                .find(|inherited| **inherited == action)
-                .ok_or_else(|| {
-                    format!(
-                        "character template {:?} does not have contextual action {action:?}",
-                        addition.template
-                    )
-                })?;
-            *slot = engine_profiles::Action::NoAction;
-        }
-        profile.alternative_profile_name.clear();
-        profile.valid_alternative_profile = false;
-        profiles.characters.push(profile);
-    }
-
-    for addition in patch.soldiers {
-        if profiles
-            .soldiers
-            .iter()
-            .any(|profile| profile.filename == addition.filename)
-        {
-            return Err(format!(
-                "new soldier filename {:?} already exists",
-                addition.filename
-            ));
-        }
-        let mut profile = resolve_soldier_profile_template(profiles, &addition.template)
-            .map_err(|message| format!("template {:?}: {message}", addition.template))?;
-        if let Some(previous_reference) = addition.progression_from.as_deref() {
-            let previous = resolve_soldier_profile_template(profiles, previous_reference)
-                .map_err(|message| format!("progression_from {previous_reference:?}: {message}"))?;
-            extrapolate_soldier_progression(&mut profile, &previous)?;
-        }
-        profile.filename = addition.filename;
-        if let Some(profile_name) = addition.profile_name {
-            profile.profile_name = profile_name;
-        }
-        profile.display_name = addition.display_name;
-        if let Some(hostile) = addition.hostile {
-            profile.hostile = hostile;
-        }
-        profiles.soldiers.push(profile);
-    }
-    Ok(())
-}
-
-fn apply_soldier_profile_patches_with_files(
-    mut profiles: ProfileManager,
+fn apply_profile_patches_with_files(
+    profiles: ProfileManager,
     files: &SbFileSystem,
 ) -> Result<ProfileManager, InitError> {
-    for root in files.overlay_paths() {
-        let path = Path::new(&root).join(SOLDIER_PROFILE_PATCH_PATH);
-        if !path.is_file() {
-            continue;
+    let document = robin_engine::content_patch::profile_document(&profiles).map_err(|message| {
+        InitError::ContentProfilePatch {
+            path: robin_engine::content_patch::PROFILE_PATCH_PATH.into(),
+            message,
         }
-        let result = std::fs::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
-            .and_then(|patch| apply_soldier_profile_patch(&mut profiles, patch));
-        if let Err(message) = result {
-            return Err(InitError::ContentSoldierProfilePatch {
-                path: path.display().to_string(),
-                message,
-            });
+    })?;
+    apply_profile_document_with_files(document, files)
+}
+
+fn apply_profile_document_with_files(
+    mut document: serde_json::Value,
+    files: &SbFileSystem,
+) -> Result<ProfileManager, InitError> {
+    robin_engine::content_patch::reject_legacy(
+        files,
+        "Data/Configuration/soldier-profiles.patch.json",
+        robin_engine::content_patch::PROFILE_PATCH_PATH,
+    )
+    .map_err(|message| InitError::ContentProfilePatch {
+        path: "Data/Configuration/soldier-profiles.patch.json".into(),
+        message,
+    })?;
+    let path = robin_engine::content_patch::PROFILE_PATCH_PATH;
+    let layers = robin_engine::content_patch::read_layers(files, path).map_err(|message| {
+        InitError::ContentProfilePatch {
+            path: path.into(),
+            message,
         }
-        tracing::info!("Applied soldier profile patch {}", path.display());
+    })?;
+    for (index, bytes) in layers.iter().enumerate() {
+        document = robin_engine::content_patch::apply_profile_document(&document, bytes).map_err(
+            |message| InitError::ContentProfilePatch {
+                path: path.into(),
+                message: format!("layer {index}: {message}"),
+            },
+        )?;
+        tracing::info!("Applied JSON profile patch {path}, layer {index}");
     }
-    Ok(profiles)
+    robin_engine::content_patch::profiles_from_document(document).map_err(|message| {
+        InitError::ContentProfilePatch {
+            path: path.into(),
+            message,
+        }
+    })
 }
 
 /// Load the player-profile service owned by [`ApplicationContext`].
@@ -1253,7 +1103,13 @@ mod tests {
         let invalid_vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
         let path = "Data/Configuration/profile.cpf.json";
         valid_vfs
-            .install_preloaded_asset(path, serde_json::to_vec(&ProfileManager::new()).unwrap())
+            .install_preloaded_asset(
+                path,
+                serde_json::to_vec(
+                    &robin_engine::content_patch::profile_document(&ProfileManager::new()).unwrap(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         invalid_vfs
             .install_preloaded_asset(path, b"not profile JSON".to_vec())
@@ -1339,186 +1195,135 @@ mod tests {
     }
 
     #[test]
-    fn soldier_profile_patch_appends_without_mutating_the_template() {
-        let mut profiles = ProfileManager::new();
-        profiles.soldiers.push(engine_profiles::SoldierProfile {
-            filename: "Knight03".to_owned(),
-            display_name: "Red Cavalier".to_owned(),
-            hostile: true,
-            ..Default::default()
-        });
-        let patch = SoldierProfilePatch {
-            characters: Vec::new(),
-            soldiers: vec![SoldierProfileAddition {
-                template: "Knight03".to_owned(),
-                progression_from: None,
-                filename: "Knight00".to_owned(),
-                profile_name: Some("Blue Cavalier".to_owned()),
-                display_name: "Blue Cavalier".to_owned(),
-                hostile: Some(false),
+    fn canonical_profile_loader_keeps_authored_keys_and_appends_unlisted_entries() {
+        let base = ProfileManager {
+            soldiers: vec![engine_profiles::SoldierProfile {
+                filename: "Guard".into(),
+                life_point: 40,
+                ..Default::default()
             }],
+            ..Default::default()
         };
-
-        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
-
-        assert_eq!(profiles.soldiers.len(), 2);
-        assert_eq!(profiles.soldiers[0].filename, "Knight03");
-        assert_eq!(profiles.soldiers[0].display_name, "Red Cavalier");
-        assert!(profiles.soldiers[0].hostile);
-        assert_eq!(profiles.soldiers[1].filename, "Knight00");
-        assert_eq!(profiles.soldiers[1].profile_name, "Blue Cavalier");
-        assert_eq!(profiles.soldiers[1].display_name, "Blue Cavalier");
-        assert!(!profiles.soldiers[1].hostile);
-    }
-
-    #[test]
-    fn soldier_profile_patch_keeps_character_rhs_key_separate_from_display_name() {
-        let mut profiles = ProfileManager::new();
-        profiles.characters.push(engine_profiles::CharacterProfile {
-            filename: "RobinHood".to_owned(),
-            profile_name: "Robin des Bois".to_owned(),
-            contextual_actions: [
-                engine_profiles::Action::Search,
-                engine_profiles::Action::Climb,
-                engine_profiles::Action::Jump,
-                engine_profiles::Action::NoAction,
-            ],
-            ..Default::default()
-        });
-        profiles.soldiers.push(engine_profiles::SoldierProfile {
-            filename: "Guisbourne".to_owned(),
-            exclamation_id: 0x4747_0016,
-            fighting: 100,
-            endurance: 80,
-            hth_weapon_id: 19,
-            weapon_material: engine_profiles::WeaponMaterial::Steel,
-            armor_material: engine_profiles::ArmorMaterial::Plate,
-            ..Default::default()
-        });
-        profiles.civilians.push(engine_profiles::CivilianProfile {
-            filename: "Guisbourne".to_owned(),
-            exclamation_id: 0x4747_0016,
-            ..Default::default()
-        });
-        let patch = SoldierProfilePatch {
-            characters: vec![CharacterProfileAddition {
-                template: "RobinHood".to_owned(),
-                combat_profile: Some("Guisbourne".to_owned()),
-                filename: "Guisbourne".to_owned(),
-                profile_name: "Guisbourne".to_owned(),
-                display_name: "Guy of Guisbourne".to_owned(),
-                exclamation_profile: "Guisbourne".to_owned(),
-                remove_contextual_actions: vec![engine_profiles::Action::Jump],
-            }],
-            soldiers: Vec::new(),
-        };
-
-        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
-
-        assert_eq!(profiles.characters.len(), 2);
-        assert_eq!(profiles.characters[0].profile_name, "Robin des Bois");
-        assert!(profiles.characters[0].display_name.is_empty());
-        assert_eq!(profiles.characters[1].filename, "Guisbourne");
-        assert_eq!(profiles.characters[1].profile_name, "Guisbourne");
-        assert_eq!(profiles.characters[1].display_name, "Guy of Guisbourne");
-        assert_eq!(profiles.characters[1].exclamation_id, 0x4747_0016);
-        assert_eq!(profiles.characters[1].fighting, 100);
-        assert_eq!(profiles.characters[1].endurance, 80);
-        assert_eq!(profiles.characters[1].hth_weapon_id, 19);
+        let mut document = robin_engine::content_patch::profile_document(&base).unwrap();
+        let guard = document["soldiers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("Guard")
+            .unwrap();
+        document["soldiers"]["template"] = guard;
+        document["soldier_order"][0] = serde_json::json!("template");
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset(
+            "Data/Configuration/profile.cpf.json",
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        vfs.install_preloaded_asset(
+            robin_engine::content_patch::PROFILE_PATCH_PATH,
+            br#"[
+                {"op":"copy","from":"/soldiers/template","path":"/soldiers/Zulu"},
+                {"op":"replace","path":"/soldiers/Zulu/life_point","value":70},
+                {"op":"copy","from":"/soldiers/template","path":"/soldiers/Alpha"},
+                {"op":"replace","path":"/soldiers/Alpha/life_point","value":60}
+            ]"#
+            .to_vec(),
+        )
+        .unwrap();
+        let files = SbFileSystem::new(vfs);
+        let profiles =
+            load_profiles_with_files(None, &engine_api::GlobalOptions::default(), &files).unwrap();
         assert_eq!(
-            profiles.characters[1].weapon_material,
-            engine_profiles::WeaponMaterial::Steel
+            profiles
+                .soldiers
+                .iter()
+                .map(|p| p.life_point)
+                .collect::<Vec<_>>(),
+            vec![40, 60, 70]
+        );
+    }
+
+    #[test]
+    fn profile_patch_loader_applies_actual_data_and_rejects_legacy_files() {
+        let profiles = ProfileManager {
+            soldiers: vec![engine_profiles::SoldierProfile {
+                filename: "Knight03".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset(
+            robin_engine::content_patch::PROFILE_PATCH_PATH,
+            br#"[{"op":"replace","path":"/soldiers/Knight03/life_point","value":150}]"#.to_vec(),
+        )
+        .unwrap();
+        let files = SbFileSystem::new(vfs.clone());
+        assert_eq!(
+            apply_profile_patches_with_files(profiles.clone(), &files)
+                .unwrap()
+                .soldiers[0]
+                .life_point,
+            150
+        );
+        vfs.install_preloaded_asset(
+            "Data/Configuration/soldier-profiles.patch.json",
+            b"{}".to_vec(),
+        )
+        .unwrap();
+        let error = apply_profile_patches_with_files(profiles, &files)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no longer supported"), "{error}");
+    }
+
+    #[test]
+    fn json_profile_patches_compose_across_directory_and_zip_layers() {
+        use std::io::Write;
+        let patch_path = robin_engine::content_patch::PROFILE_PATCH_PATH;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(patch_path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let patch = |template: &str, filename: &str| {
+            serde_json::to_vec(&serde_json::json!([
+                {"op":"copy", "from":format!("/soldiers/{template}"), "path":format!("/soldiers/{filename}")},
+                {"op":"replace", "path":format!("/soldiers/{filename}/filename"), "value":filename},
+                {"op":"replace", "path":format!("/soldiers/{filename}/display_name"), "value":filename}
+            ]))
+            .unwrap()
+        };
+        std::fs::write(path, patch("Knight03", "Knight00")).unwrap();
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                format!("Wrapped/{patch_path}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        writer.write_all(&patch("Knight00", "Knight01")).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.add_overlay_path(directory.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
         );
         assert_eq!(
-            profiles.characters[1].armor_material,
-            engine_profiles::ArmorMaterial::Plate
+            files.add_overlay_zip_bytes_for_mission("patch", bytes.into(), None),
+            SBFILE_NO_ERROR
         );
-        assert!(
-            !profiles.characters[1]
-                .contextual_actions
-                .contains(&engine_profiles::Action::Jump)
-        );
-    }
-
-    #[test]
-    fn soldier_profile_patch_extrapolates_an_elite_tier_from_original_progression() {
         let mut profiles = ProfileManager::new();
         profiles.soldiers.push(engine_profiles::SoldierProfile {
-            filename: "Soldier B03".to_owned(),
-            life_point: 135,
-            intelligence: 95,
-            courage: 95,
-            pride: 80,
-            fighting: 90,
-            endurance: 95,
-            rank: engine_profiles::ProfileRank::Knight,
-            hth_weapon_id: 17,
+            filename: "Knight03".into(),
             ..Default::default()
         });
-        profiles.soldiers.push(engine_profiles::SoldierProfile {
-            filename: "Soldier B04".to_owned(),
-            life_point: 145,
-            intelligence: 100,
-            courage: 100,
-            pride: 90,
-            fighting: 100,
-            endurance: 100,
-            rank: engine_profiles::ProfileRank::Knight,
-            hth_weapon_id: 17,
-            ..Default::default()
-        });
-        let patch = SoldierProfilePatch {
-            characters: Vec::new(),
-            soldiers: vec![SoldierProfileAddition {
-                template: "soldier_b04".to_owned(),
-                progression_from: Some("soldier_b03".to_owned()),
-                filename: "Fabri18 RoyalPurple Knight".to_owned(),
-                profile_name: None,
-                display_name: "Fabri18 Royal Purple Knight".to_owned(),
-                hostile: Some(false),
-            }],
-        };
-
-        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
-
-        let elite = &profiles.soldiers[2];
-        assert_eq!(elite.life_point, 155);
-        assert_eq!(elite.intelligence, 100);
-        assert_eq!(elite.courage, 100);
-        assert_eq!(elite.pride, 100);
-        assert_eq!(elite.fighting, 100);
-        assert_eq!(elite.endurance, 100);
-        assert!(!elite.hostile);
-    }
-
-    #[test]
-    fn soldier_profile_patch_accepts_an_explicit_duplicate_identifier() {
-        let mut profiles = ProfileManager::new();
-        profiles.soldiers.push(engine_profiles::SoldierProfile {
-            filename: "Knight02".to_owned(),
-            life_point: 105,
-            ..Default::default()
-        });
-        profiles.soldiers.push(engine_profiles::SoldierProfile {
-            filename: "Knight02".to_owned(),
-            life_point: 145,
-            ..Default::default()
-        });
-        let patch = SoldierProfilePatch {
-            characters: Vec::new(),
-            soldiers: vec![SoldierProfileAddition {
-                template: "knight02__1".to_owned(),
-                progression_from: None,
-                filename: "Fabri18 CavalryBlack Cavalryman".to_owned(),
-                profile_name: None,
-                display_name: "Fabri18 Cavalry Black Cavalryman".to_owned(),
-                hostile: Some(false),
-            }],
-        };
-
-        apply_soldier_profile_patch(&mut profiles, patch).unwrap();
-
-        assert_eq!(profiles.soldiers[2].life_point, 145);
+        let profiles = apply_profile_patches_with_files(profiles, &files).unwrap();
+        assert_eq!(
+            profiles
+                .soldiers
+                .iter()
+                .map(|soldier| soldier.filename.as_str())
+                .collect::<Vec<_>>(),
+            ["Knight03", "Knight00", "Knight01"]
+        );
     }
 
     #[test]

@@ -1,9 +1,14 @@
 //! Inventory the exact compressed costs and sprite/profile sharing of mission payloads.
-use anyhow::{Context, Result};
+use anyhow::Result;
 use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
 use std::{collections::BTreeSet, path::PathBuf};
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    root: PathBuf,
+}
+
 fn main() -> Result<()> {
-    let root = PathBuf::from(std::env::args().nth(1).context("Data directory required")?);
+    let root = <Args as clap::Parser>::parse().root;
     let dd = ShippingDatadir::from_compressed_bytes(&std::fs::read(root.join("datadir.bin"))?)?;
     let mut files = BTreeSet::new();
     for m in dd.missions.values() {

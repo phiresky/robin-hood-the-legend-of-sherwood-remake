@@ -83,7 +83,8 @@ rustflags = [
     # await points. Keep a practical guard margin above the 1 MiB wasm-ld
     # default even though the largest child futures are heap-boxed. The actual
     # wasm-dev mission/replay startup exceeds 4 MiB during sprite setup.
+    # Reserve 32 MiB, matching the native robin-game thread in window.rs.
     # TODO: Reduce remaining aggregate moves in frontend assembly so this
     # reserve can shrink without making debug browser playback overflow.
-    "-C", "link-arg=-zstack-size=16777216",
+    "-C", "link-arg=-zstack-size=33554432",
 ]

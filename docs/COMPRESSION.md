@@ -4023,3 +4023,116 @@ implementation remains in git history. Full input hashes, six samples, wait logs
 RPC measurements are retained under
 `/tmp/robin-startup-more/experimental-final-progress/`; the matched corpus is
 `/tmp/robin-startup-more/corpus-first-frame/Data`.
+
+## Fabri18 PNG mod: shipping VQ families and JXL map (2026-09-10)
+
+The first custom-mod encoder used the shipping entropy codec but restarted
+both its dictionary and model every 60,000 tiles, with no family or self
+references. Its complete Fabri18 gallery ZIP was **124,071,515 bytes**.
+This was not the full shipping compression recipe.
+
+The replacement keeps one exact, frequency-ranked four-pixel dictionary per
+character, selects two family hubs using sampled conditional entropy, and
+uses `sprite_groups::encode_vq_groups` with the production 1,048,576-tile
+budget. Standalone hubs derive temporal/adjacent-direction references from
+their RHS metadata; other members predict against the two hubs. Family files
+carry the production `ShippingSpriteBank` and decode through its existing
+dependency-aware materializer. Unlike a family-unified dictionary (the
+negative result above), each character retains its own alphabet. The custom
+PNG hub proxy supports 16-bit indices rather than requiring 12-bit indices.
+
+Fabri18's nine families contain 51 characters / **266,984 unique frames**.
+Their exact dictionaries contain about 4,000 entries each. These particular
+recolours are much more predictable than the independently rendered retail
+colour families: most non-hub streams require only 24–38 KB per character,
+and cavalry variants roughly 67 KB, including model restarts. These numbers
+must not be projected onto the retail corpus.
+
+The 2508×2508 OpenBattlefield PNG becomes an **883,998-byte JXL** using
+`cjxl -q 80 -e 7 --num_threads=4`, stored as `OpenBattlefield.map` so the
+ordinary terrain loader detects its JXL signature. The PNG override is omitted.
+The minimap, preview, mission descriptor, and soldier stats remain unchanged.
+
+| ZIP component (compressed entry bytes) | First version | Family VQ + JXL |
+|---|---:|---:|
+| Sprites | 112,102,948 | 17,368,395 |
+| Battlefield map | 11,774,190 | 884,142 |
+| **Complete ZIP, including metadata and ZIP overhead** | **124,071,515** | **18,435,980** |
+
+The new ZIP is **17.58 MiB**, **85.14% smaller**. The nine family files total
+17,378,750 bytes before ZIP. All decoded RGB565 sprite pixels, dimensions,
+and animation fields were checked against the original PNG import. The
+shipping terrain decoder verifies map dimensions and full decode; an
+independent `djxl` decode was visually compared with the source (RGB PSNR
+33.82 dB). Sprite conversion is lossless; JXL quality 80 terrain is lossy.
+ZIP CRCs and every extracted entry were also checked against the staged files.
+
+Build and reproduce with:
+
+```sh
+cargo build -p robin_modding_tools --bin encode_mod_sprites
+target/debug/encode_mod_sprites mods/fabri18-sprite-gallery OUTPUT
+```
+
+The example also supports `--family OUTPUT INPUT_RHS_DIR...` for independent
+family jobs and `--map INPUT_PNG OUTPUT_MAP`. Its three-member family test
+passes, including exact reconstruction and preservation of other authored
+assets. The stale `ui_task_state.rs` test initializer was subsequently
+corrected to use `None`, allowing the client tests to compile.
+
+Local artifact: `.tmp/fabri18-sprite-gallery-vq-jxl.zip`; SHA-256
+`b615e8a9fa9867bb47ef1177082799e620a4e661b129fb2c2c536f0319b2c631`.
+The exact byte ledger is `.tmp/fabri18-vq-v2-report.json`.
+
+The regenerated archive `.tmp/fabri18-sprite-gallery-vq-jxl-flat.zip` places
+`details.json` and `Data/` directly at its root and includes direct-ZIP install
+instructions. It is **18,435,228 bytes** (17.58 MiB), with identical sprite and
+map payloads. SHA-256:
+`76c1c484d8c73e4d04639665c71a1d9a145cff352493fd8f7f12d813eb12375a`.
+ZIP overlay support now includes JSON mission discovery, profile patches, PNG
+characters, and both custom VQ encodings without extraction.
+
+The opt-in `fabri18_archive_matches_directory` client test takes
+`FABRI18_MOD_DIR` and `FABRI18_MOD_ZIP`, verifies nine families and 266,984
+frames, and compares decoded runtime sprite/profile digests for both storage
+forms. Synthetic regressions also exercise the shared runtime loader with
+flat and wrapped archives, mission-scoped selection, and missing PNG errors.
+
+The flat package also explicitly binds each soldier addition to the animation
+profile in its authored manifest. Previously the mod inherited that name from
+the retail stats template, which caused the green officer to request a missing
+RHS profile during the demo-data smoke run. Combat stats and sprite bytes are
+unchanged. Validation passed: 37 data-I/O tests, 1,906 client tests (16 opt-in
+tests ignored), and the full 266,984-frame directory/ZIP comparison.
+
+The gallery also uses retail enemy squads absent from the Leicester demo
+(e.g. `Officier B00.rhs`); full mission launch requires full-game data. ZIP-only
+loading was separately exercised using the native headless game.
+
+The isolated ZIP-only full-game headless smoke run loaded all 51 custom
+profiles, the JSON mission and JXL terrain, and advanced beyond 500 simulation
+ticks before being stopped intentionally. No archive extraction was used.
+
+### RFC 6902 package update (2026-09-10)
+
+Following the JSON Patch merge (`12552c5f2`), the current package is
+`.tmp/fabri18-sprite-gallery-vq-jxl-json-patch.zip` (**18,437,937 bytes**,
+17.58 MiB). SHA-256:
+`5264903ab9fc9cc5bde62401536f515bc5f91c7707cab50cc22a2c607bb3fd4f`.
+It replaces the removed `soldier-profiles.patch.json` with 579 standard
+operations in `Data/Configuration/profiles.patch.json`, using the migrated
+source-mod patch plus explicit authored animation-profile names for all 51
+additions. The mission descriptor also explicitly marks the 51 Fabri18 allies
+with `command_interface: "tactical_orders"` and `mission_role: "tactical_ally"`;
+friendly allegiance alone does not enable tactical control. The 42 enemy
+soldiers, sprites, JXL map and other payloads are unchanged. The profile patch,
+mission descriptor and README differ from the previous flat archive.
+The archive remains flat and is installed directly into `mods/`.
+
+The current Rust `cpf_to_json --patch` loader accepted the patch
+against both GOG full-game and Leicester demo CPF catalogs. All 51 final
+profile objects exactly match the prior package, including progression stats
+and explicit animation names; existing soldier profiles remain unchanged.
+The rebuilt native game also applied this patch directly from the ZIP and
+advanced the gallery through 100 simulation ticks with full-game data; the
+smoke process was then stopped intentionally.

@@ -13,6 +13,25 @@
 
 use std::path::{Path, PathBuf};
 
+/// Keep an explicit user cancellation distinct from unavailable game data.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum DataDirResolution {
+    Selected(PathBuf),
+    Unavailable,
+    Cancelled,
+}
+
+impl DataDirResolution {
+    fn detected(candidate: Option<PathBuf>) -> Self {
+        candidate.map_or(Self::Unavailable, Self::Selected)
+    }
+
+    #[cfg(any(feature = "dialogs", test))]
+    fn picked(chosen: Option<PathBuf>) -> Self {
+        chosen.map_or(Self::Cancelled, Self::Selected)
+    }
+}
+
 /// Where to buy the game; shown in the picker dialog.
 pub const GOG_STORE_URL: &str = "https://www.gog.com/game/robin_hood_the_legend_of_sherwood";
 
@@ -196,6 +215,26 @@ fn normalize_selection(path: &Path) -> Option<PathBuf> {
         .map(Path::to_owned)
 }
 
+/// Invalid selections stay in the picker flow and never reach startup.
+#[cfg(any(feature = "dialogs", all(test, not(target_arch = "wasm32"))))]
+fn pick_valid_folder(
+    mut pick: impl FnMut() -> Option<PathBuf>,
+    mut report_invalid: impl FnMut(&Path),
+) -> Option<PathBuf> {
+    loop {
+        let picked = pick()?;
+        if let Some(install_dir) = normalize_selection(&picked) {
+            tracing::info!(
+                "Player selected game installation: {}",
+                install_dir.display()
+            );
+            return Some(install_dir);
+        }
+        tracing::warn!("Rejected game data folder: {}", picked.display());
+        report_invalid(&picked);
+    }
+}
+
 /// Whether a native dialog can appear at all. Prevents headless runs
 /// (CI, batch tools without a datadir) from hanging on an invisible
 /// prompt.
@@ -354,33 +393,32 @@ fn confirm_search() -> rfd::MessageDialogResult {
 /// Returns `None` when the player cancels the picker.
 #[cfg(feature = "dialogs")]
 fn pick_folder_loop() -> Option<PathBuf> {
-    loop {
-        let folder = pollster::block_on(
-            rfd::AsyncFileDialog::new()
-                .set_title("Select the Robin Hood installation folder")
-                .pick_folder(),
-        )?;
-        let picked = folder.path().to_path_buf();
-        if let Some(install_dir) = normalize_selection(&picked) {
-            tracing::info!(
-                "Player selected game installation: {}",
-                install_dir.display()
+    pick_valid_folder(
+        || {
+            pollster::block_on(
+                rfd::AsyncFileDialog::new()
+                    .set_title("Select the Robin Hood installation folder")
+                    .pick_folder(),
+            )
+            .map(|folder| folder.path().to_path_buf())
+        },
+        |picked| {
+            pollster::block_on(
+                rfd::AsyncMessageDialog::new()
+                    .set_level(rfd::MessageLevel::Error)
+                    .set_title("Not a Robin Hood installation")
+                    .set_description(format!(
+                        "{} does not contain the original game's data files.\n\n\
+                         Select the folder where Robin Hood: The Legend of Sherwood \
+                         is installed. The engine needs the original game's files to run.\n\n\
+                         Click OK to choose again, or cancel the folder picker to stop.",
+                        picked.display()
+                    ))
+                    .set_buttons(rfd::MessageButtons::Ok)
+                    .show(),
             );
-            return Some(install_dir);
-        }
-        pollster::block_on(
-            rfd::AsyncMessageDialog::new()
-                .set_level(rfd::MessageLevel::Error)
-                .set_title("Not a Robin Hood installation")
-                .set_description(format!(
-                    "{} does not contain Data/{MARKER_FILE}.\n\
-                     Please select the game's installation folder.",
-                    picked.display()
-                ))
-                .set_buttons(rfd::MessageButtons::Ok)
-                .show(),
-        );
-    }
+        },
+    )
 }
 
 /// Resolve the datadir when no explicit override or env var was given.
@@ -392,10 +430,10 @@ fn pick_folder_loop() -> Option<PathBuf> {
 /// Cancel opens the folder picker instead. The confirmed choice is
 /// remembered for future launches. Headless runs use the candidate
 /// without a dialog and without remembering it.
-pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
+pub fn resolve_datadir(exe_dir: Option<&Path>) -> DataDirResolution {
     if let Some(saved) = load_saved_datadir() {
         tracing::info!("Using remembered game datadir: {}", saved.display());
-        return Some(saved);
+        return DataDirResolution::Selected(saved);
     }
 
     let candidate = if is_valid_install_dir(Path::new(".")) {
@@ -407,7 +445,7 @@ pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
     };
 
     #[cfg(not(feature = "dialogs"))]
-    return candidate;
+    return DataDirResolution::detected(candidate);
 
     #[cfg(feature = "dialogs")]
     {
@@ -415,7 +453,7 @@ pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
             if candidate.is_none() {
                 tracing::warn!("No display available; skipping the datadir picker dialog");
             }
-            return candidate;
+            return DataDirResolution::detected(candidate);
         }
 
         let chosen = match candidate {
@@ -433,11 +471,13 @@ pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
                     None
                 }
             }
-        }?;
-        if let Err(error) = save_datadir(&chosen) {
-            tracing::warn!("Could not remember selected game datadir: {error}");
+        };
+        if let Some(chosen) = &chosen {
+            if let Err(error) = save_datadir(chosen) {
+                tracing::warn!("Could not remember selected game datadir: {error}");
+            }
         }
-        Some(chosen)
+        DataDirResolution::picked(chosen)
     }
 }
 
@@ -576,5 +616,81 @@ mod tests {
                 .kind(),
             std::io::ErrorKind::InvalidInput
         );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod picker_tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_is_distinct_from_no_automatic_candidate() {
+        assert_eq!(
+            DataDirResolution::picked(None),
+            DataDirResolution::Cancelled
+        );
+        assert_eq!(
+            DataDirResolution::detected(None),
+            DataDirResolution::Unavailable
+        );
+    }
+
+    #[test]
+    fn invalid_selections_keep_asking_until_a_valid_installation() {
+        let root = tempfile::tempdir().unwrap();
+        let invalid = root.path().join("random");
+        std::fs::create_dir(&invalid).unwrap();
+        // A marker outside Data must not cause its invalid parent to be accepted.
+        std::fs::write(invalid.join(MARKER_FILE), []).unwrap();
+        let fake = root.path().join("fake");
+        std::fs::create_dir_all(fake.join("Data").join(MARKER_FILE)).unwrap();
+        let valid = root.path().join("game");
+        std::fs::create_dir_all(valid.join("Data")).unwrap();
+        std::fs::write(valid.join("Data").join(MARKER_FILE), []).unwrap();
+        let mut choices = [
+            invalid.clone(),
+            fake.clone(),
+            invalid.clone(),
+            valid.clone(),
+        ]
+        .into_iter();
+        let mut rejected = Vec::new();
+        let selected = pick_valid_folder(
+            || Some(choices.next().expect("must accept the valid installation")),
+            |path| rejected.push(path.to_owned()),
+        );
+        assert_eq!(selected, Some(valid));
+        assert_eq!(rejected, [invalid.clone(), fake, invalid]);
+        assert!(choices.next().is_none());
+    }
+
+    #[test]
+    fn cancellation_after_invalid_selection_returns_no_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let mut choices = [Some(root.path().to_owned()), None].into_iter();
+        let mut rejected = Vec::new();
+        assert_eq!(
+            pick_valid_folder(
+                || choices.next().expect("must stop on cancellation"),
+                |path| rejected.push(path.to_owned()),
+            ),
+            None
+        );
+        assert_eq!(rejected, [root.path()]);
+    }
+
+    #[test]
+    fn accepts_original_and_converted_data_subfolders_case_insensitively() {
+        for marker in ["ROBINHOOD.BKS", "DATADIR.BIN"] {
+            let root = tempfile::tempdir().unwrap();
+            let data = root.path().join("dAtA");
+            std::fs::create_dir(&data).unwrap();
+            std::fs::write(data.join(marker), []).unwrap();
+            assert_eq!(
+                normalize_selection(root.path()),
+                Some(root.path().to_owned())
+            );
+            assert_eq!(normalize_selection(&data), Some(root.path().to_owned()));
+        }
     }
 }

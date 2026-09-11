@@ -1,9 +1,7 @@
 //! Authored mission text and localization overlays.
 use super::error::ResourcePreparationError;
-use crate::main_entry::current_mission_id;
 use robin_assets::{res_descr as assets_res_descr, resource_manager::ResourceManager};
 use robin_engine::{campaign::Campaign, profiles as engine_profiles, sbfile as engine_sbfile};
-use std::collections::BTreeMap;
 
 /// Only a missing optional file returns `None`; probing, reading and parsing
 /// failures retain their classification until startup chooses its policy.
@@ -25,64 +23,7 @@ pub(super) fn read_optional_json<T: serde::de::DeserializeOwned>(
         .map_err(|error| ResourcePreparationError::malformed(path, error))
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CustomMissionTextPatch {
-    #[serde(default)]
-    popup_texts: BTreeMap<usize, String>,
-    #[serde(default)]
-    short_briefings: BTreeMap<usize, String>,
-    #[serde(default)]
-    dialogues: BTreeMap<usize, Vec<String>>,
-}
-
-pub(super) fn descriptor_mission_id(
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    files: &engine_sbfile::SbFileSystem,
-) -> Result<u32, ResourcePreparationError> {
-    let current_id = current_mission_id(campaign, profiles);
-    let current_profile = campaign
-        .current_mission_idx
-        .and_then(|index| campaign.missions.get(index))
-        .map(|mission| mission.profile(profiles))
-        .expect("descriptor lookup requires a current campaign mission");
-    let patch_path = format!(
-        "Data/Levels/{}.characters.patch.json",
-        current_profile.mission_filename
-    );
-    let Some(patch) = read_optional_json::<serde_json::Value>(files, &patch_path)? else {
-        return Ok(current_id);
-    };
-    let alias = patch
-        .get("descriptor_mission")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            ResourcePreparationError::malformed(&patch_path, "missing descriptor_mission")
-        })?;
-    let mut matches = profiles
-        .missions
-        .iter()
-        .filter(|profile| profile.mission_filename == alias);
-    let id = matches
-        .next()
-        .ok_or_else(|| {
-            ResourcePreparationError::malformed(
-                &patch_path,
-                format!("descriptor mission {alias:?} does not exist"),
-            )
-        })?
-        .id;
-    if matches.next().is_some() {
-        return Err(ResourcePreparationError::malformed(
-            &patch_path,
-            format!("descriptor mission {alias:?} is ambiguous"),
-        ));
-    }
-    Ok(id)
-}
-
-pub(super) fn apply_custom_mission_text_patch(
+pub(super) fn apply_mission_descriptor_patch(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     descriptors: &mut assets_res_descr::LevelDescriptors,
@@ -93,72 +34,37 @@ pub(super) fn apply_custom_mission_text_patch(
         .and_then(|index| campaign.missions.get(index))
         .map(|mission| mission.profile(profiles).mission_filename.as_str())
         .expect("custom mission text lookup requires a current campaign mission");
-    let path = format!("Data/Levels/{mission_filename}.text.patch.json");
-    let Some(patch) = read_optional_json::<CustomMissionTextPatch>(files, &path)? else {
-        return Ok(());
-    };
-    install_text_patch(descriptors, patch, &path)?;
-    tracing::info!("Applied custom mission text patch {path}");
+    let path = format!("Data/Levels/{mission_filename}.descriptors.patch.json");
+    if let Some(patched) = robin_engine::content_patch::apply_with_files(descriptors, files, &path)
+        .map_err(|error| ResourcePreparationError::malformed(&path, error))?
+    {
+        validate_patched_descriptors(&patched, &path)?;
+        *descriptors = patched;
+    }
     Ok(())
 }
 
-fn install_text_patch(
-    descriptors: &mut assets_res_descr::LevelDescriptors,
-    patch: CustomMissionTextPatch,
+fn validate_patched_descriptors(
+    descriptors: &assets_res_descr::LevelDescriptors,
     path: &str,
 ) -> Result<(), ResourcePreparationError> {
-    // Validate before mutating any overlay. A later invalid dialogue must
-    // not leave popup/briefing edits installed on a failed preparation.
-    for (&index, sentences) in &patch.dialogues {
-        let expected = descriptors
-            .dialogues
-            .get(index)
-            .ok_or_else(|| {
-                ResourcePreparationError::malformed(
-                    path,
-                    format!("dialogue {index} has no base descriptor"),
-                )
-            })?
-            .portrait_ids
-            .len();
-        if sentences.len() != expected {
+    for (index, sentences) in descriptors.custom_dialogue_texts.iter().enumerate() {
+        let Some(sentences) = sentences else { continue };
+        let dialogue = descriptors.dialogues.get(index).ok_or_else(|| {
+            ResourcePreparationError::malformed(
+                path,
+                format!("dialogue {index} has no base descriptor"),
+            )
+        })?;
+        if sentences.len() != dialogue.portrait_ids.len() {
             return Err(ResourcePreparationError::malformed(
                 path,
-                format!("dialogue {index} requires {expected} sentences"),
+                format!(
+                    "dialogue {index} requires {} sentences",
+                    dialogue.portrait_ids.len()
+                ),
             ));
         }
-    }
-    for index in patch
-        .popup_texts
-        .keys()
-        .chain(patch.short_briefings.keys())
-        .chain(patch.dialogues.keys())
-    {
-        index
-            .checked_add(1)
-            .ok_or_else(|| ResourcePreparationError::malformed(path, "text index overflow"))?;
-    }
-    let install = |target: &mut Vec<Option<String>>, values: BTreeMap<usize, String>| {
-        if let Some(max_index) = values.keys().next_back().copied() {
-            target.resize(target.len().max(max_index + 1), None);
-        }
-        for (index, text) in values {
-            target[index] = Some(text);
-        }
-    };
-    install(&mut descriptors.custom_popup_texts, patch.popup_texts);
-    install(
-        &mut descriptors.custom_short_briefings,
-        patch.short_briefings,
-    );
-    if let Some(max_index) = patch.dialogues.keys().next_back().copied() {
-        descriptors.custom_dialogue_texts.resize(
-            descriptors.custom_dialogue_texts.len().max(max_index + 1),
-            None,
-        );
-    }
-    for (index, sentences) in patch.dialogues {
-        descriptors.custom_dialogue_texts[index] = Some(sentences);
     }
     Ok(())
 }
@@ -251,6 +157,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generic_descriptor_patch_loads_without_legacy_text_and_rejects_invalid_dialogue_atomically()
+    {
+        let campaign = Campaign {
+            current_mission_idx: Some(0),
+            missions: vec![robin_engine::mission::Mission {
+                profile_idx: Some(0),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let profiles = engine_profiles::ProfileManager {
+            missions: vec![engine_profiles::MissionProfile {
+                mission_filename: "DescriptorPatchTest".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        for (patch, succeeds) in [
+            (
+                r#"[{"op":"replace","path":"/custom_popup_texts","value":["new text"]}]"#,
+                true,
+            ),
+            (
+                r#"[
+                {"op":"replace","path":"/custom_popup_texts","value":["new text"]},
+                {"op":"replace","path":"/custom_dialogue_texts","value":[["missing dialogue"]]}
+            ]"#,
+                false,
+            ),
+        ] {
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            vfs.install_preloaded_asset(
+                "Data/Levels/DescriptorPatchTest.descriptors.patch.json",
+                patch.as_bytes().to_vec(),
+            )
+            .unwrap();
+            let files = engine_sbfile::SbFileSystem::new(vfs);
+            let mut descriptors = assets_res_descr::LevelDescriptors::default();
+            descriptors.custom_popup_texts = vec![Some("original".into())];
+            let result =
+                apply_mission_descriptor_patch(&campaign, &profiles, &mut descriptors, &files);
+            assert_eq!(result.is_ok(), succeeds);
+            assert_eq!(
+                descriptors.custom_popup_texts[0].as_deref(),
+                Some(if succeeds { "new text" } else { "original" })
+            );
+        }
+    }
+
+    #[test]
     fn optional_json_absence_and_malformed_authored_content_are_distinct() {
         let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
         vfs.install_preloaded_asset("bad.json", b"not json".to_vec())
@@ -265,25 +221,5 @@ mod tests {
             read_optional_json::<serde_json::Value>(&files, "bad.json"),
             Err(ResourcePreparationError::Malformed { .. })
         ));
-    }
-
-    #[test]
-    fn invalid_dialogue_patch_is_atomic() {
-        let mut descriptors = assets_res_descr::LevelDescriptors::default();
-        descriptors.custom_popup_texts = vec![Some("original".into())];
-        let patch = CustomMissionTextPatch {
-            popup_texts: BTreeMap::from([(0, "replacement".into())]),
-            short_briefings: BTreeMap::from([(0, "new briefing".into())]),
-            dialogues: BTreeMap::from([(99, vec!["missing dialogue".into()])]),
-        };
-        assert!(matches!(
-            install_text_patch(&mut descriptors, patch, "mission.text.patch.json"),
-            Err(ResourcePreparationError::Malformed { .. })
-        ));
-        assert_eq!(
-            descriptors.custom_popup_texts,
-            vec![Some("original".into())]
-        );
-        assert!(descriptors.custom_short_briefings.is_empty());
     }
 }

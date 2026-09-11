@@ -4,13 +4,62 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Bundled modding tools.** Native release packages include `cpf_to_json`,
+  `encode_mod_sprites`, `disasm_scb`, and `dump_res` from the new
+  `robin_modding_tools` crate. Rust command-line tools use Clap derive for
+  consistent help and argument validation. See [Modding tools](MODDING_TOOLS.md).
+
+- **Generic JSON Patch mods.** RFC 6902 operations edit decoded profiles,
+  levels and resource descriptors. Profile filenames provide named keys while
+  existing numeric slots are preserved. Patches compose across directory and
+  ZIP overlays, with atomic installation and typed error reporting. Legacy
+  mod patch formats have been removed. See [JSON Patch mods](JSON_PATCH_MODS.md)
+  for filenames, examples, the profile exporter and current limits.
+  Profile patches now target the on-disk canonical profile.cpf.json directly;
+  named maps and explicit order lists preserve numeric IDs without a separate
+  patch view. Regenerate older hackable profile JSON with the CPF exporter.
+
+- **ZIP mod overlays:** Put a mod ZIP directly in `mods/` or the configured
+  `ROBINHOOD_MODS_DIR`; `details.json` and `Data/` should be at the archive
+  root. A single wrapping folder is also accepted. JSON mission discovery,
+  soldier profile patches, PNG characters, standalone VQ characters, and
+  shipping VQ families use the same overlay reads as directory installs.
+  ZIP directories are enumerated without extraction; in-memory mission
+  archives use the same sprite loader. Disposable PNG caches remain optional
+  and are written only for directory installs. Install just one edition of
+  a mod when editions share mission and character identifiers.
+
+- **VQ sprite mod packages:** Custom `.rhs.d` directories can contain an
+  authored `sprites.vq.zst` instead of PNGs and a manifest. The
+  `encode_mod_sprites` binary converts a mod using exact four-pixel RGB565
+  dictionaries and the shipping adaptive VQ codec, then verifies every frame
+  and animation field through the runtime reader. Transparency, shadow keys,
+  odd frame widths, and profile stats are preserved. Loading reconstructs the
+  existing runtime sprite representation. These packages require this engine
+  update; the source PNG mod remains separately editable.
+  Build with `cargo build -p robin_modding_tools --bin encode_mod_sprites`, then run
+  `target/debug/encode_mod_sprites SOURCE_MOD DESTINATION_MOD`.
+  Whole-mod conversion now groups identical animation layouts into
+  `Data/Characters/*.sprites.vq.zst` families: one frequency-ranked dictionary
+  per character, entropy-selected two-hub colour prediction, temporal/direction
+  references for standalone hubs, and the production 1,048,576-tile groups.
+  Family files use the shipping bank, grouped encoder, and dependency-aware
+  materializer directly. The converter also replaces `.map.png` terrain with
+  JXL quality 80 `.map` files through `cjxl` and verifies runtime decoding.
+
 - **Custom mission pane scrolling:** The mission list and wrapped mission details
   scroll independently under the pointer. Both show draggable scrollbars when
   their content overflows; selecting another mission resets its details to the top.
   A shared scroll view also powers Campaign Manager’s Hall of Deeds, Achievements,
   mission details, and Previous Plays, with a horizontal scrollbar for Campaign.
   Scrolling preserves selection; keyboard navigation reveals the selected mission.
+  The same component handles multiplayer mission browsing, save/load lists,
+  shortcut bindings, and debriefing text, including the in-mission UI paths.
   All scrollbars reuse the original menu artwork.
+
+- **Save mission time:** In-mission save info includes elapsed simulation time
+  as minutes and seconds, including autosaves. Sherwood saves omit it; older
+  catalog entries without a recorded timer remain readable.
 
 - **Language-independent audio timing.** The required core-datadir
   `Data/AudioDurations.json` supplies English speech variants and sample
@@ -508,9 +557,9 @@ A list of which additional features we have added, which ones we might still wan
   Guisbourne, Longchamp, Prince John, Scathlock, and the Sheriff use portraits
   cropped from the Original's dialogue resources, while ordinary and mixed
   groups retain the helmet portrait.
-  Legacy roster mods can preserve compiled-script actor indices while
+  Level JSON patches can preserve compiled-script actor indices while
   overriding beam-me, rescue-PC, and tied-prisoner visuals. A per-mission
-  `.text.patch.json` can override popup, short-briefing, and dialogue strings
+  `.descriptors.patch.json` can override popup, short-briefing, and dialogue strings
   while retaining the base mission's descriptor pictures and timing.
   Mod-added character profiles keep their visible name and NPC exclamation
   bank separate from the internal RHS profile key, so promoted villains retain
@@ -912,10 +961,10 @@ A list of which additional features we have added, which ones we might still wan
 ### Additive hackable sprite mods
 
 - Overlay mods can append soldier profiles through
-  `Data/Configuration/soldier-profiles.patch.json` without replacing the
+  `Data/Configuration/profiles.patch.json` without replacing the
   retail CPF profile table.
-- Added profiles may specify `progression_from` alongside their `template` to
-  extrapolate one additional combat-stat tier from two adjacent retail tiers.
+- The sprite authoring tool can extrapolate one additional combat-stat tier
+  from two adjacent retail tiers and emit concrete JSON Patch operations.
   This supports elite variants beyond the original black-guard ceiling while
   retaining each unit role's established progression.
 - Readable soldier identifiers use normalized CPF filenames. When the retail

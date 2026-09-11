@@ -74,24 +74,19 @@ fn hash_resources(
     Ok(count)
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    root: PathBuf,
+    mission: String,
+    #[arg(default_value_t = 3)]
+    repeats: usize,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    ensure!(
-        (2..=3).contains(&args.len()),
-        "usage: asset_decode_bench <Data dir> <mission> [repeats]"
-    );
-    let root = PathBuf::from(&args[0]);
-    let mission = args[1].to_str().context("mission is not UTF-8")?;
-    let repeats: usize = args
-        .get(2)
-        .map(|s| {
-            s.to_str()
-                .context("repeats is not UTF-8")?
-                .parse()
-                .context("invalid repeats")
-        })
-        .transpose()?
-        .unwrap_or(3);
+    let args = <Args as clap::Parser>::parse();
+    let root = &args.root;
+    let mission = args.mission.as_str();
+    let repeats = args.repeats;
     ensure!(repeats > 0, "repeats must be positive");
     let boot = std::fs::read(root.join("datadir.bin"))?;
     let manifest = ShippingDatadir::from_compressed_bytes(&boot)?;

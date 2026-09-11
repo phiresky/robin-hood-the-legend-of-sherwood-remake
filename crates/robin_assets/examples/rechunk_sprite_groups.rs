@@ -32,23 +32,28 @@ fn copy_tree(source: &Path, target: &Path) -> Result<()> {
     }
     Ok(())
 }
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    source: std::path::PathBuf,
+    target: std::path::PathBuf,
+    mission: String,
+    max_tiles: usize,
+    max_blobs: usize,
+}
+
 fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    ensure!(
-        args.len() == 5,
-        "usage: rechunk_sprite_groups <input Data> <new output Data> <mission> <max tiles> <max JXL blobs>"
-    );
-    let source = Path::new(&args[0]);
-    let target = Path::new(&args[1]);
-    let max_tiles: usize = args[3].parse()?;
-    let max_blobs: usize = args[4].parse()?;
+    let args = <Args as clap::Parser>::parse();
+    let source = args.source.as_path();
+    let target = args.target.as_path();
+    let max_tiles = args.max_tiles;
+    let max_blobs = args.max_blobs;
     ensure!(
         !target.exists(),
         "output already exists: {}",
         target.display()
     );
     let dd = ShippingDatadir::from_compressed_bytes(&std::fs::read(source.join("datadir.bin"))?)?;
-    let mission = dd.missions.get(&args[2]).context("mission absent")?;
+    let mission = dd.missions.get(&args.mission).context("mission absent")?;
     let mut inputs = BTreeMap::new();
     let mut merged = ShippingMission::default();
     for name in &mission.files {
@@ -191,7 +196,7 @@ fn main() -> Result<()> {
     }
     println!(
         "{}",
-        serde_json::json!({"mission":args[2],"max_tiles":max_tiles,"max_blobs":max_blobs,"before_part_bytes":before_bytes,"after_part_bytes":after_bytes,"before_vq_bytes":before_vq,"after_vq_bytes":after_vq,"vq_groups":vq_groups,"rle_groups":rle_groups})
+        serde_json::json!({"mission":args.mission,"max_tiles":max_tiles,"max_blobs":max_blobs,"before_part_bytes":before_bytes,"after_part_bytes":after_bytes,"before_vq_bytes":before_vq,"after_vq_bytes":after_vq,"vq_groups":vq_groups,"rle_groups":rle_groups})
     );
     Ok(())
 }

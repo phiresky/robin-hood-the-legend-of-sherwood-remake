@@ -60,8 +60,11 @@ and will be installed automatically by rustup.
 ### Native release packages
 
 GitHub Releases provides x86-64 Windows and Linux builds, with stable releases
-for version tags and rolling nightly prereleases. Windows downloads include ZIP
-and `Setup.exe`; Linux downloads include a tarball and AppImage.
+for version tags and rolling nightly prereleases. Windows downloads include
+`robinhood-remake-windows-Setup.exe` and `robinhood-remake-windows-Portable.zip`;
+Linux uses `robinhood-remake-linux.AppImage`.
+The two `.nupkg` assets are automatic-update payloads: `-windows-full.nupkg` is
+Windows, and `-linux-full.nupkg` is Linux. Neither needs to be downloaded manually.
 Installed packages should update automatically within their release channel.
 
 Release automation stages a draft candidate, verifies uploaded artifact hashes,
@@ -326,11 +329,12 @@ Logging verbosity is controlled by `RUST_LOG` (`info`, `debug`,
 
 ### Developer tools
 
-Notable examples, built on demand with `cargo run --example <name>`:
+The native release packages include four command-line [modding tools](docs/MODDING_TOOLS.md)
+alongside the game executable: `cpf_to_json`, `encode_mod_sprites`, `disasm_scb`,
+and `dump_res`. Build them with `cargo build -p robin_modding_tools --bins`.
 
-    cpf_to_json       — dump a character-profile .cpf file as JSON
-    dump_res          — inspect a .res resource archive
-    disasm_scb        — disassemble a compiled .scb mission script
+Other examples, built on demand with `cargo run --example <name>`:
+
     run_script        — run a mission script headlessly
     count_quads       — render diagnostics
     render_mission_map — render a mission's full map at a chosen frame to PNG

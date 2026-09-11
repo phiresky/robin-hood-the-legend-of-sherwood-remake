@@ -34,7 +34,7 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `parity` | `robin_parity` | Runner unit/contract tests; does not replay licensed corpora |
 | `client` | `robin_rs`, default features | Client tests, then a separate `robin` binary build |
 | `client-release` | `robin_rs`, `release` features | Client library tests and binary build with desktop/audio/Lua/multiplayer/updates; audio example check |
-| `tools` | `robin_rs`, `tools` and `projection-export` | Explicit converter/dump tests; minimal export example tests; check tool binaries and examples |
+| `tools` | `robin_modding_tools`; `robin_rs`, `tools` and `projection-export` | Modding CLI and encoder tests; explicit converter/dump tests; minimal export example tests; check tool binaries and examples |
 | `wasm` | `robin_replay_admission_wasm`, `robin_rs`, `robin_identity_signer` | Target checks for `wasm32-unknown-unknown` using `wasm-dev` |
 | `browser-audio` | `robin_rs`, WASM `audio,multiplayer` | Audio and multiplayer target checks, linked module, real Chrome audio ownership/residency, shared protocol and identity tests |
 | `native-lifecycle` | Provisioned prebuilt native `robin` and Leicester demo | Ordinary live/export plus save/load-back, each replayed headlessly and graphically to EOF |

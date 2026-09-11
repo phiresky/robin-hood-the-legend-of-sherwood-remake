@@ -418,15 +418,10 @@ fn required_mission_exclamation_ids(
         add_character(&mut ids, index)?;
     }
     for soldier in &loaded.mission.soldiers {
+        let index = soldier.profile_index(profiles)?;
         let profile = profiles
-            .soldiers
-            .get(soldier.profile_number as usize)
-            .ok_or_else(|| {
-                format!(
-                    "mission soldier references missing speech profile {}",
-                    soldier.profile_number
-                )
-            })?;
+            .get_soldier(index)
+            .expect("resolved soldier profile");
         if profile.exclamation_id != 0 {
             ids.insert(profile.exclamation_id);
         }

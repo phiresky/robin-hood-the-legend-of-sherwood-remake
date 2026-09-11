@@ -12,8 +12,8 @@
 # Editor / IDE
 *.swp
 *~
-.idea/
-.vscode/
+.idea
+.vscode
 *.orig
 /compile_commands.json
 
@@ -52,6 +52,8 @@
 /.zprofile
 /.zshrc
 /tmp/
+/.tmp
+/.cache
 /.codex-tmp/
 /.agent-debug/
 /.codex-target/

@@ -4844,100 +4844,73 @@ fn register_language_data_paths_for_tool() {
     crate::register_language_data_paths();
 }
 
-fn parse_options() -> Options {
-    const USAGE: &str = "usage: original_parity_replay [--inspect-capabilities] [--scan-all] [--no-auto-dump] [--visual] \
-        [--frame-zero-screenshot-dir DIR] \
-        [--frame-zero-screenshot-only] \
-        [--http-server PORT [--start-paused]] \
-        [--dump-jsonl PATH [--dump-from FRAME] [--dump-through FRAME] \
-        [--dump-entity KIND:INDEX]...] [--bench-encodings] [--convert] \
-        [--reblock [--reblock-records N] [--reblock-window-log N]] \
-        [--validate-native] TRACE.jsonl[.zst]";
+#[derive(clap::Parser, Serialize, Deserialize)]
+#[command(about = "Replay or inspect an Original parity trace")]
+struct CliOptions {
+    #[arg(long, group = "mode")]
+    inspect_capabilities: bool,
+    #[arg(long)]
+    scan_all: bool,
+    #[arg(long)]
+    no_auto_dump: bool,
+    #[arg(long)]
+    visual: bool,
+    trace_path: PathBuf,
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    http_server: Option<u16>,
+    #[arg(long, requires = "http_server")]
+    start_paused: bool,
+    #[arg(long)]
+    frame_zero_screenshot_dir: Option<PathBuf>,
+    #[arg(long, requires = "frame_zero_screenshot_dir")]
+    frame_zero_screenshot_only: bool,
+    #[arg(long, group = "mode")]
+    bench_encodings: bool,
+    #[arg(long, group = "mode")]
+    convert: bool,
+    #[arg(long, group = "mode")]
+    reblock: bool,
+    #[arg(long, requires = "reblock")]
+    reblock_records: Option<usize>,
+    #[arg(long, requires = "reblock")]
+    reblock_window_log: Option<u32>,
+    #[arg(long, group = "mode")]
+    validate_native: bool,
+    #[arg(long = "dump-jsonl")]
+    dump_path: Option<PathBuf>,
+    #[arg(long, default_value_t = 0)]
+    dump_from: u64,
+    #[arg(long, default_value_t = u64::MAX)]
+    dump_through: u64,
+    #[arg(long = "dump-entity", value_parser = parse_dump_entity)]
+    dump_entities: Vec<TraceEntityId>,
+}
 
-    let mut args = std::env::args_os().skip(1);
-    let mut bench_encodings = false;
-    let mut convert = false;
-    let mut reblock = false;
-    let mut reblock_records = TRACE_NATIVE_BLOCK_RECORDS;
-    let mut reblock_window_log = TRACE_NATIVE_WINDOW_LOG;
-    let mut reblock_policy_requested = false;
-    let mut validate_native = false;
-    let mut inspect_capabilities = false;
-    let mut scan_all = false;
-    let mut no_auto_dump = false;
-    let mut visual = false;
-    let mut trace_path = None;
-    let mut dump_path = None;
-    let mut dump_from = 0;
-    let mut dump_through = u64::MAX;
-    let mut dump_entities = Vec::new();
-    let mut http_server = None;
-    let mut start_paused = false;
-    let mut frame_zero_screenshot_dir = None;
-    let mut frame_zero_screenshot_only = false;
-    while let Some(arg) = args.next() {
-        match arg.to_str() {
-            Some("--inspect-capabilities") => inspect_capabilities = true,
-            Some("--scan-all") => scan_all = true,
-            Some("--bench-encodings") => bench_encodings = true,
-            Some("--convert") => convert = true,
-            Some("--reblock") => reblock = true,
-            Some("--reblock-records") => {
-                reblock_policy_requested = true;
-                reblock_records =
-                    usize::try_from(parse_u64_option(args.next(), "--reblock-records"))
-                        .expect("--reblock-records exceeds usize");
-            }
-            Some("--reblock-window-log") => {
-                reblock_policy_requested = true;
-                reblock_window_log =
-                    u32::try_from(parse_u64_option(args.next(), "--reblock-window-log"))
-                        .expect("--reblock-window-log exceeds u32");
-            }
-            Some("--validate-native") => validate_native = true,
-            Some("--no-auto-dump") => no_auto_dump = true,
-            Some("--visual") => visual = true,
-            Some("--frame-zero-screenshot-dir") => {
-                let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
-                assert!(
-                    frame_zero_screenshot_dir
-                        .replace(PathBuf::from(value))
-                        .is_none(),
-                    "{USAGE}"
-                );
-            }
-            Some("--frame-zero-screenshot-only") => frame_zero_screenshot_only = true,
-            Some("--http-server") => {
-                let port = parse_u64_option(args.next(), "--http-server");
-                let port = u16::try_from(port).expect("--http-server port exceeds 65535");
-                assert_ne!(
-                    port, 0,
-                    "--http-server 0 cannot serve parity replay controls"
-                );
-                assert!(http_server.replace(port).is_none(), "{USAGE}");
-            }
-            Some("--start-paused") => start_paused = true,
-            Some("--dump-jsonl") => {
-                let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
-                assert!(dump_path.replace(PathBuf::from(value)).is_none(), "{USAGE}");
-            }
-            Some("--dump-from") => {
-                dump_from = parse_u64_option(args.next(), "--dump-from");
-            }
-            Some("--dump-through") => {
-                dump_through = parse_u64_option(args.next(), "--dump-through");
-            }
-            Some("--dump-entity") => {
-                let value = args.next().unwrap_or_else(|| panic!("{USAGE}"));
-                dump_entities.push(parse_dump_entity(&value.to_string_lossy()));
-            }
-            Some(value) if value.starts_with('-') => panic!("unknown option {value:?}\n{USAGE}"),
-            _ => {
-                assert!(trace_path.replace(PathBuf::from(arg)).is_none(), "{USAGE}");
-            }
-        }
-    }
-    let trace_path = trace_path.unwrap_or_else(|| panic!("{USAGE}"));
+fn parse_options() -> Options {
+    let CliOptions {
+        inspect_capabilities,
+        scan_all,
+        no_auto_dump,
+        visual,
+        trace_path,
+        http_server,
+        start_paused,
+        frame_zero_screenshot_dir,
+        frame_zero_screenshot_only,
+        bench_encodings,
+        convert,
+        reblock,
+        reblock_records,
+        reblock_window_log,
+        validate_native,
+        dump_path,
+        dump_from,
+        dump_through,
+        dump_entities,
+    } = <CliOptions as clap::Parser>::parse();
+    let reblock_policy_requested = reblock_records.is_some() || reblock_window_log.is_some();
+    let reblock_records = reblock_records.unwrap_or(TRACE_NATIVE_BLOCK_RECORDS);
+    let reblock_window_log = reblock_window_log.unwrap_or(TRACE_NATIVE_WINDOW_LOG);
     assert!(
         dump_from <= dump_through,
         "--dump-from exceeds --dump-through"
@@ -5141,18 +5114,10 @@ fn serve_halted_http(
     }
 }
 
-fn parse_u64_option(value: Option<std::ffi::OsString>, option: &str) -> u64 {
-    value
-        .unwrap_or_else(|| panic!("{option} requires a value"))
-        .to_string_lossy()
-        .parse()
-        .unwrap_or_else(|_| panic!("{option} must be an unsigned frame number"))
-}
-
-fn parse_dump_entity(value: &str) -> TraceEntityId {
+fn parse_dump_entity(value: &str) -> Result<TraceEntityId, String> {
     let (kind, index) = value
         .split_once(':')
-        .unwrap_or_else(|| panic!("--dump-entity must be KIND:INDEX, got {value:?}"));
+        .ok_or_else(|| format!("--dump-entity must be KIND:INDEX, got {value:?}"))?;
     let kind = match kind {
         "pc" => TraceEntityKind::Pc,
         "soldier" => TraceEntityKind::Soldier,
@@ -5163,14 +5128,14 @@ fn parse_dump_entity(value: &str) -> TraceEntityId {
         "scroll" => TraceEntityKind::Scroll,
         "projectile" => TraceEntityKind::Projectile,
         "net" => TraceEntityKind::Net,
-        _ => panic!("unknown --dump-entity kind {kind:?}"),
+        _ => return Err(format!("unknown --dump-entity kind {kind:?}")),
     };
-    TraceEntityId {
+    Ok(TraceEntityId {
         kind,
         index: index
             .parse()
-            .unwrap_or_else(|_| panic!("invalid --dump-entity index in {value:?}")),
-    }
+            .map_err(|_| format!("invalid --dump-entity index in {value:?}"))?,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6614,6 +6579,35 @@ impl std::fmt::Debug for EntityLabel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cli_checks_modes_values_and_repeated_entity_filters() {
+        use clap::Parser;
+        let args = super::CliOptions::try_parse_from([
+            "parity",
+            "--dump-jsonl",
+            "dump.jsonl",
+            "--dump-from",
+            "3",
+            "--dump-entity",
+            "pc:1",
+            "--dump-entity",
+            "soldier:2",
+            "trace.jsonl",
+        ])
+        .unwrap();
+        assert_eq!(args.dump_from, 3);
+        assert_eq!(args.dump_entities.len(), 2);
+        for arguments in [
+            vec!["parity", "--convert", "--reblock", "trace.jsonl"],
+            vec!["parity", "--reblock-records", "32", "trace.jsonl"],
+            vec!["parity", "--http-server", "0", "trace.jsonl"],
+            vec!["parity", "--start-paused", "trace.jsonl"],
+            vec!["parity", "--dump-entity", "bad:1", "trace.jsonl"],
+            vec!["parity", "--dump-entity", "pc:no", "trace.jsonl"],
+        ] {
+            assert!(super::CliOptions::try_parse_from(arguments).is_err());
+        }
+    }
     use super::*;
     use bitcode_parity as bitcode;
 

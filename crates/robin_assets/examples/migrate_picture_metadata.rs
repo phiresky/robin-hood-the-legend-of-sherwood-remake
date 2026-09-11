@@ -15,7 +15,6 @@ use robin_engine::profiles::ProfileManager;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
-use std::path::Path;
 
 #[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct OldFileEntry {
@@ -165,14 +164,16 @@ impl OldDatadir {
     }
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    input: std::path::PathBuf,
+    output: std::path::PathBuf,
+}
+
 fn main() -> Result<()> {
-    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
-    ensure!(
-        arguments.len() == 2,
-        "usage: migrate_picture_metadata OLD_DATADIR_BIN NEW_DATADIR_BIN"
-    );
-    let input = Path::new(&arguments[0]);
-    let output = Path::new(&arguments[1]);
+    let args = <Args as clap::Parser>::parse();
+    let input = args.input.as_path();
+    let output = args.output.as_path();
     ensure!(
         !output.exists(),
         "output must not already exist (the source remains untouched)"

@@ -14,12 +14,15 @@ fn time_it<T>(f: impl FnOnce() -> T) -> (T, Duration) {
 }
 
 #[cfg(feature = "audio")]
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    #[arg(required = true)]
+    paths: Vec<PathBuf>,
+}
+
+#[cfg(feature = "audio")]
 fn main() {
-    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    if paths.is_empty() {
-        eprintln!("usage: cargo run --example audio_decode_bench -- <audio-file>...");
-        std::process::exit(2);
-    }
+    let paths = <Args as clap::Parser>::parse().paths;
 
     for path in paths {
         println!("== {} ==", path.display());

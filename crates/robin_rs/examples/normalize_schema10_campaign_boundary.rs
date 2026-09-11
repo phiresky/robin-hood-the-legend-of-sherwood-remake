@@ -16,14 +16,14 @@ use std::path::PathBuf;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::profiles::ProfileManager;
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    input: PathBuf,
+    output: PathBuf,
+}
+
 fn main() {
-    let mut args = std::env::args_os().skip(1);
-    let input = PathBuf::from(
-        args.next()
-            .expect("usage: normalize_schema10_campaign_boundary INPUT OUTPUT"),
-    );
-    let output = PathBuf::from(args.next().expect("missing OUTPUT"));
-    assert!(args.next().is_none(), "unexpected extra argument");
+    let Args { input, output } = <Args as clap::Parser>::parse();
     let input = input.canonicalize().expect("canonicalize input trace");
     let output = if output.is_absolute() {
         output

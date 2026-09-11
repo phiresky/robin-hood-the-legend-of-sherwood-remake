@@ -181,6 +181,15 @@ struct ZipOverlay {
     archive: Mutex<ZipArchiveReader>,
     /// Lower-cased + slash-normalized datadir path → zip entry index.
     index: HashMap<String, usize>,
+    /// Original spelling of indexed logical paths, for directory enumeration.
+    names: HashMap<String, String>,
+}
+
+/// One immediate child of an overlay directory, independent of storage.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OverlayEntry {
+    pub name: String,
+    pub is_dir: bool,
 }
 
 enum ZipArchiveReader {
@@ -215,11 +224,7 @@ fn collect_zip_entry_names<R: Read + Seek>(
         let entry = archive
             .by_index_raw(index)
             .map_err(|_| SBFILE_ERROR_BAD_ARCHIVE)?;
-        if entry.is_dir() {
-            entry_names.push(String::new());
-        } else {
-            entry_names.push(entry.name().replace('\\', "/"));
-        }
+        entry_names.push(entry.name().replace('\\', "/"));
     }
     Ok(entry_names)
 }
@@ -307,6 +312,7 @@ impl ZipOverlay {
         );
 
         let mut index = HashMap::new();
+        let mut names = HashMap::new();
         for (i, name) in entry_names.iter().enumerate() {
             if name.is_empty() {
                 continue;
@@ -325,27 +331,40 @@ impl ZipOverlay {
             let mut key = String::with_capacity(prepend.len() + rest.len());
             key.push_str(&prepend);
             key.push_str(rest);
+            let spelling = key.clone();
             let key = key.to_ascii_lowercase();
             // First entry wins on duplicate keys; zip should not have
             // duplicates but be defensive.
-            index.entry(key).or_insert(i);
+            names.entry(key.clone()).or_insert(spelling);
+            if !name.ends_with('/') {
+                index.entry(key).or_insert(i);
+            }
         }
 
         Ok(Self {
             display_path,
             archive: Mutex::new(archive),
             index,
+            names,
         })
     }
 
+    #[cfg(test)]
     fn try_read(&self, path: &str) -> Option<Vec<u8>> {
+        self.read_checked(path).ok().flatten()
+    }
+
+    fn read_checked(&self, path: &str) -> Result<Option<Vec<u8>>, i32> {
         let key = path.replace('\\', "/").to_ascii_lowercase();
-        let idx = *self.index.get(&key)?;
+        let Some(&idx) = self.index.get(&key) else {
+            return Ok(None);
+        };
         let mut archive = self.archive.lock().unwrap();
         archive
             .read_entry(idx)
             .inspect_err(|error| tracing::warn!("ZipOverlay::try_read: {error}"))
-            .ok()
+            .map(Some)
+            .map_err(|_| SBFILE_ERROR_READ)
     }
 
     fn exists(&self, path: &str) -> bool {
@@ -587,6 +606,104 @@ pub fn resolve_data_path(path: &str) -> Option<PathBuf> {
 }
 
 impl SbFileSystem {
+    /// Overlay mount identities in application order, including archives.
+    /// Use these with `read_overlay` and `list_overlay_dir`, never as OS paths.
+    pub fn overlay_sources(&self) -> Vec<String> {
+        self.overlay_paths
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|root| root.display_path().into_owned())
+            .collect()
+    }
+
+    /// Optional physical directory, solely for disposable cache persistence.
+    pub fn overlay_directory(&self, source: &str) -> Option<PathBuf> {
+        self.overlay_paths
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|root| match root {
+                OverlayRoot::Directory(path) if root.display_path() == source => Some(path.clone()),
+                _ => None,
+            })
+    }
+
+    pub fn read_overlay(&self, source: &str, path: &str) -> Result<Option<Vec<u8>>, i32> {
+        let path = checked_overlay_relative(path)?;
+        let roots = self.overlay_paths.lock().unwrap();
+        let root = roots
+            .iter()
+            .find(|root| root.display_path() == source)
+            .ok_or(SBFILE_ERROR_PATH_NOT_IN_SET)?;
+        read_from_overlay(self, root, &path).map(|bytes| bytes.map(AssetBytes::into_vec))
+    }
+
+    /// Enumerate immediate children, including implicit ZIP directories.
+    /// Missing optional directories are empty; damaged sources are errors.
+    pub fn list_overlay_dir(&self, source: &str, path: &str) -> Result<Vec<OverlayEntry>, i32> {
+        let path = checked_overlay_relative(path)?;
+        let roots = self.overlay_paths.lock().unwrap();
+        let root = roots
+            .iter()
+            .find(|root| root.display_path() == source)
+            .ok_or(SBFILE_ERROR_PATH_NOT_IN_SET)?;
+        let mut entries = std::collections::BTreeMap::<String, OverlayEntry>::new();
+        match root {
+            OverlayRoot::Directory(directory) => {
+                let Some(resolved) = resolve_case_insensitive(&directory.join(&path)) else {
+                    return Ok(Vec::new());
+                };
+                let resolved = fs::canonicalize(resolved).map_err(|_| SBFILE_ERROR_READ)?;
+                if !resolved.starts_with(directory) {
+                    return Err(SBFILE_ERROR_READ);
+                }
+                for entry in fs::read_dir(resolved).map_err(|_| SBFILE_ERROR_READ)? {
+                    let entry = entry.map_err(|_| SBFILE_ERROR_READ)?;
+                    let name = entry
+                        .file_name()
+                        .into_string()
+                        .map_err(|_| SBFILE_ERROR_READ)?;
+                    let metadata = entry.metadata().map_err(|_| SBFILE_ERROR_READ)?;
+                    entries.insert(
+                        name.to_ascii_lowercase(),
+                        OverlayEntry {
+                            name,
+                            is_dir: metadata.is_dir(),
+                        },
+                    );
+                }
+            }
+            OverlayRoot::Zip(zip) => {
+                let prefix = format!("{}/", path.trim_end_matches('/').to_ascii_lowercase());
+                for (key, spelling) in &zip.names {
+                    if key.starts_with(&prefix) {
+                        let rest = &spelling[prefix.len()..];
+                        let (name, is_dir) = rest
+                            .split_once('/')
+                            .map_or((rest, false), |(name, _)| (name, true));
+                        if !name.is_empty() {
+                            let value = OverlayEntry {
+                                name: name.to_owned(),
+                                is_dir,
+                            };
+                            entries
+                                .entry(name.to_ascii_lowercase())
+                                .and_modify(|existing| {
+                                    existing.is_dir |= is_dir;
+                                    if name < existing.name.as_str() {
+                                        existing.name = name.to_owned();
+                                    }
+                                })
+                                .or_insert(value);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(entries.into_values().collect())
+    }
+
     pub fn resolve_data_dir_layers(&self, rel_dir: &str) -> Vec<PathBuf> {
         let normalised = rel_dir.replace('\\', "/");
         if let Some(root) = self.ranked_verifier_primary_path.lock().unwrap().clone() {
@@ -1012,6 +1129,35 @@ impl SbFileSystem {
     /// retaining shared backing storage for memory-mounted files.
     pub fn read_shared(&self, path: &str) -> Result<AssetBytes, i32> {
         Ok(self.open(path, SB_FILE_READ)?.into_shared_bytes())
+    }
+
+    /// Read a patch from the base lookup and then every overlay in mount order.
+    /// Unlike `read_all`, patches compose instead of shadowing. A confined
+    /// verifier still reads exclusively from its pinned root.
+    pub fn read_all_layers(&self, path: &str) -> Result<Vec<Vec<u8>>, i32> {
+        let normalised = path.replace('\\', "/");
+        if Path::new(&normalised).is_absolute()
+            || Path::new(&normalised)
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(SBFILE_ERROR_READ);
+        }
+        let base = self.snapshot();
+        base.overlay_paths.lock().unwrap().clear();
+        let mut layers = Vec::new();
+        if base.try_exists(&normalised)? {
+            layers.push(base.read_all(&normalised)?);
+        }
+        if self.ranked_verifier_primary_path.lock().unwrap().is_some() {
+            return Ok(layers);
+        }
+        for overlay in self.overlay_paths.lock().unwrap().iter() {
+            if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
+                layers.push(bytes.to_vec());
+            }
+        }
+        Ok(layers)
     }
 
     pub fn read_all(&self, path: &str) -> Result<Vec<u8>, i32> {
@@ -2135,8 +2281,28 @@ fn read_from_overlay(
             }
             try_read(file_system, &resolved.to_string_lossy())
         }
-        OverlayRoot::Zip(z) => Ok(z.try_read(normalised).map(AssetBytes::from)),
+        OverlayRoot::Zip(z) => z
+            .read_checked(normalised)
+            .map(|bytes| bytes.map(AssetBytes::from)),
     }
+}
+
+fn checked_overlay_relative(path: &str) -> Result<String, i32> {
+    let path = path.replace('\\', "/");
+    if path.is_empty()
+        || Path::new(&path).is_absolute()
+        || path
+            .split('/')
+            .any(|part| part == ".." || part.contains(':'))
+    {
+        tracing::warn!("invalid relative overlay path {path:?}");
+        return Err(SBFILE_ERROR_READ);
+    }
+    Ok(path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -2144,6 +2310,70 @@ fn read_from_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_layers_compose_base_and_zip_overlays_in_mount_order() {
+        let path = "Data/Levels/PatchLayers.level.patch.json";
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset(path, b"base".to_vec()).unwrap();
+        let files = SbFileSystem::new(vfs);
+        for (id, bytes) in [
+            ("memory://first.zip", b"first".as_slice()),
+            ("memory://second.zip", b"second".as_slice()),
+        ] {
+            assert_eq!(
+                files.add_overlay_zip_bytes_for_mission(
+                    id,
+                    in_memory_zip(&[(path, bytes), ("Data/Levels/PatchLayers.rhm", b"mission")]),
+                    Some("Data/Levels/PatchLayers.rhm"),
+                ),
+                SBFILE_NO_ERROR
+            );
+        }
+        assert_eq!(
+            files.read_all_layers(path).unwrap(),
+            vec![b"base".to_vec(), b"first".to_vec(), b"second".to_vec()]
+        );
+        assert_eq!(files.read_all(path).unwrap(), b"second");
+        assert!(
+            files
+                .read_all_layers("Data/Levels/missing.patch.json")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(files.read_all_layers("../escape.patch.json").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn patch_layers_respect_directory_order_and_verifier_confinement() {
+        let base = tempfile::tempdir().unwrap();
+        let overlay = tempfile::tempdir().unwrap();
+        std::fs::write(base.path().join("patch.json"), b"base").unwrap();
+        std::fs::write(overlay.path().join("patch.json"), b"overlay").unwrap();
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.set_primary_path(base.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.add_overlay_path(overlay.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.read_all_layers("patch.json").unwrap(),
+            vec![b"base".to_vec(), b"overlay".to_vec()]
+        );
+        let confined = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            confined.lock_ranked_verifier_primary_path(base.path()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            confined.read_all_layers("patch.json").unwrap(),
+            vec![b"base".to_vec()]
+        );
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
@@ -3137,6 +3367,102 @@ mod tests {
             w.write_all(bytes).unwrap();
         }
         w.finish().unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn overlay_enumeration_and_reads_match_directory_disk_zip_and_memory_zip() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("directory");
+        let entries: &[(&str, &[u8])] = &[
+            ("details.json", b"{}"),
+            ("Data/Characters/Knight.rhs.d/manifest.json", b"manifest"),
+            ("Data/Characters/Knight.rhs.d/Frame.PNG", b"pixels"),
+            ("Data/Characters/Guard.sprites.vq.zst", b"vq"),
+        ];
+        for (name, bytes) in entries {
+            let path = directory.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+        let archive = temp.path().join("mod.zip");
+        let wrapped: Vec<_> = entries
+            .iter()
+            .map(|(name, bytes)| (format!("Wrapper/{name}"), *bytes))
+            .collect();
+        let wrapped: Vec<_> = wrapped
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), *bytes))
+            .collect();
+        write_test_zip(&archive, &wrapped);
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.add_overlay_path(directory.to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.add_overlay_zip(archive.to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.add_overlay_zip_bytes_for_mission("memory", in_memory_zip(&wrapped), None),
+            SBFILE_NO_ERROR
+        );
+        let sources = files.overlay_sources();
+        assert_eq!(sources.len(), 3);
+        for source in &sources {
+            assert_eq!(
+                files.list_overlay_dir(source, "data/CHARACTERS").unwrap(),
+                vec![
+                    OverlayEntry {
+                        name: "Guard.sprites.vq.zst".into(),
+                        is_dir: false
+                    },
+                    OverlayEntry {
+                        name: "Knight.rhs.d".into(),
+                        is_dir: true
+                    },
+                ]
+            );
+            for (name, bytes) in entries {
+                assert_eq!(
+                    files
+                        .read_overlay(source, &name.to_ascii_lowercase())
+                        .unwrap()
+                        .as_deref(),
+                    Some(*bytes)
+                );
+            }
+            assert!(
+                files
+                    .list_overlay_dir(source, "Data/Missing")
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(files.read_overlay(source, "Data/Missing").unwrap(), None);
+            assert!(files.read_overlay(source, "../details.json").is_err());
+            assert!(files.list_overlay_dir(source, "/Data").is_err());
+        }
+        assert!(files.read_overlay("unmounted", "details.json").is_err());
+    }
+
+    #[test]
+    fn corrupt_zip_asset_reports_read_error_instead_of_falling_through() {
+        let mut bytes = in_memory_zip(&[("Data/Characters/bank", b"pixels")]).to_vec();
+        let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let offset = archive.by_index_raw(0).unwrap().data_start().unwrap() as usize;
+        drop(archive);
+        bytes[offset] ^= 0xff;
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.add_overlay_zip_bytes_for_mission("corrupt", bytes.into(), None),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            files.read_overlay("corrupt", "Data/Characters/bank"),
+            Err(SBFILE_ERROR_READ)
+        );
+        assert!(files.read_all("Data/Characters/bank").is_err());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

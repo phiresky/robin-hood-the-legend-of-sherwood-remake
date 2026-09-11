@@ -119,6 +119,10 @@ pub struct SaveGame {
     pub player_name: String,
     /// Campaign progression percentage at time of save.
     pub campaign_progress: Option<u32>,
+    /// Elapsed simulation seconds; absent for Sherwood and older catalog entries.
+    // TODO: Backfill older catalogs from payloads without blocking the save picker.
+    #[serde(default)]
+    pub mission_elapsed_seconds: Option<u32>,
     /// Number of completed missions at time of save.
     pub missions_done: Option<usize>,
     /// Total missions known to the campaign at time of save.
@@ -191,6 +195,7 @@ impl SaveGame {
             player_profile_id: None,
             player_name: String::new(),
             campaign_progress: None,
+            mission_elapsed_seconds: None,
             missions_done: None,
             missions_total: None,
             gang_size: None,
@@ -247,6 +252,20 @@ impl SaveGame {
         self.mission_name = header.provenance.mission_name.clone();
         self.player_profile_id = Some(header.provenance.player_profile_id);
         self.player_name = header.provenance.player_name.clone();
+        self.update_campaign_metadata(campaign, profiles);
+    }
+
+    fn update_campaign_metadata(
+        &mut self,
+        campaign: &engine_campaign::Campaign,
+        profiles: &ProfileManager,
+    ) {
+        let mission = campaign
+            .get_mission(self.mission_id, profiles)
+            .expect("saved mission must exist in the campaign");
+        self.mission_elapsed_seconds = (mission.profile(profiles).location
+            != robin_engine::profiles::MissionLocation::Sherwood)
+            .then(|| campaign.get_value(CampaignValue::MissionLength).max(0) as u32);
         self.missions_done = Some(campaign.get_number_of_missions_done());
         self.missions_total = Some(campaign.missions.len());
         self.gang_size = Some(campaign.gang_indices.len());
@@ -3124,6 +3143,42 @@ mod tests {
         .expect("complete test application context");
         let host = Host::new(application_context.try_into().unwrap(), 800.0, 600.0).unwrap();
         (engine, assets, profiles, host)
+    }
+
+    #[test]
+    fn mission_clock_metadata_excludes_sherwood_and_survives_catalog_roundtrip() {
+        let (engine, _, mut profiles, _) = fresh_save_session("clock-metadata");
+        let mut campaign = engine.campaign().clone();
+        campaign.set_value(CampaignValue::MissionLength, 3903);
+        profiles.missions[0].location = robin_engine::profiles::MissionLocation::Nottingham;
+        let mut slot = SaveGame::new("Savegame_000".into(), "Mission".into(), 1);
+        slot.update_campaign_metadata(&campaign, &profiles);
+        assert_eq!(slot.mission_elapsed_seconds, Some(3903));
+        let encoded = serde_json::to_value(&slot).unwrap();
+        assert_eq!(
+            serde_json::from_value::<SaveGame>(encoded.clone()).unwrap(),
+            slot
+        );
+        let mut legacy = encoded;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("mission_elapsed_seconds");
+        assert_eq!(
+            serde_json::from_value::<SaveGame>(legacy)
+                .unwrap()
+                .mission_elapsed_seconds,
+            None
+        );
+        campaign.set_value(CampaignValue::MissionLength, 0);
+        slot.update_campaign_metadata(&campaign, &profiles);
+        assert_eq!(slot.mission_elapsed_seconds, Some(0));
+        profiles.missions[0].location = robin_engine::profiles::MissionLocation::Sherwood;
+        slot.update_campaign_metadata(&campaign, &profiles);
+        assert_eq!(
+            slot.mission_elapsed_seconds, None,
+            "ordinary Sherwood saves omit the clock too"
+        );
     }
 
     fn game_for_save(profiles: &ProfileManager, mission_id: u32) -> Game {

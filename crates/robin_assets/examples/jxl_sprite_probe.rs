@@ -105,52 +105,33 @@ mod probe {
         "Animations/Day/sherwood.rhs",
     ];
 
+    #[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
     struct Args {
+        #[arg(long, default_value = "datadirs/fullgame_linux")]
         data_dir: String,
+        #[arg(long, default_value = "tmp/jxl_sprite_probe")]
         out: PathBuf,
+        #[arg(long)]
         rhs: Vec<String>,
+        #[arg(long, default_value_t = 20)]
         min_dim: u16,
+        #[arg(long, default_value = "cjxl")]
         cjxl: String,
+        #[arg(long, default_value_t = 0)]
         limit: usize,
+        #[arg(long)]
         keep_pngs: bool,
+        #[arg(long)]
         rle: bool,
+        #[arg(long)]
         pak: bool,
+        #[arg(long = "pak-file")]
         pak_files: Vec<String>,
     }
 
     fn parse_args() -> Result<Args> {
-        let mut args = Args {
-            data_dir: "datadirs/fullgame_linux".to_owned(),
-            out: PathBuf::from("tmp/jxl_sprite_probe"),
-            rhs: Vec::new(),
-            min_dim: 20,
-            cjxl: "cjxl".to_owned(),
-            limit: 0,
-            keep_pngs: false,
-            rle: false,
-            pak: false,
-            pak_files: Vec::new(),
-        };
-        let mut it = std::env::args().skip(1);
-        while let Some(a) = it.next() {
-            let mut val = |name: &str| it.next().ok_or_else(|| anyhow!("missing value for {name}"));
-            match a.as_str() {
-                "--data-dir" => args.data_dir = val("--data-dir")?,
-                "--out" => args.out = PathBuf::from(val("--out")?),
-                "--rhs" => args.rhs.push(val("--rhs")?),
-                "--min-dim" => args.min_dim = val("--min-dim")?.parse()?,
-                "--cjxl" => args.cjxl = val("--cjxl")?,
-                "--limit" => args.limit = val("--limit")?.parse()?,
-                "--keep-pngs" => args.keep_pngs = true,
-                "--rle" => args.rle = true,
-                "--pak" => args.pak = true,
-                "--pak-file" => {
-                    args.pak = true;
-                    args.pak_files.push(val("--pak-file")?);
-                }
-                other => bail!("unknown argument {other}"),
-            }
-        }
+        let mut args = <Args as clap::Parser>::parse();
+        args.pak |= !args.pak_files.is_empty();
         if args.rhs.is_empty() {
             args.rhs = DEFAULT_RHS.iter().map(|s| (*s).to_owned()).collect();
         }

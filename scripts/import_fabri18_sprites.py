@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["Pillow>=10"]
+# ///
 """Import Fabri18's numbered sprite-bank replacements as an additive mod."""
 
 from __future__ import annotations
@@ -14,12 +18,15 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from profile_patch_tools import load_catalog, soldier_copy_patch
+
 
 @dataclass(frozen=True)
 class Unit:
     label: str
     rhs: str
     template: str
+    profile_name: str
 
 
 @dataclass(frozen=True)
@@ -31,15 +38,15 @@ class Archive:
 
 
 UNITS = {
-    "Archer": Unit("Archer", "Archer03", "Archer03"),
-    "Cavalryman": Unit("Cavalryman", "Knight03", "Knight03"),
-    "Crossbowman": Unit("Crossbowman", "Crossbowman03", "Crossbowman03"),
-    "Halberdier": Unit("Halberdier", "Guard A03", "Guard A03"),
-    "Knight": Unit("Knight", "Soldier B03", "Soldier B03"),
-    "Lancer": Unit("Lancer", "Guard B03", "Guard B03"),
-    "Officer": Unit("Officer", "Officier B03", "Officier B03"),
-    "OfficerCape": Unit("Officer Cape", "Officer03", "Officer03"),
-    "Swordsman": Unit("Swordsman", "Soldier A03", "Soldier A03"),
+    "Archer": Unit("Archer", "Archer03", "Archer03", "Archer"),
+    "Cavalryman": Unit("Cavalryman", "Knight03", "Knight03", "Knight"),
+    "Crossbowman": Unit("Crossbowman", "Crossbowman03", "Crossbowman03", "Arbaletrier"),
+    "Halberdier": Unit("Halberdier", "Guard A03", "Guard A03", "Garde A"),
+    "Knight": Unit("Knight", "Soldier B03", "Soldier B03", "Soldat B"),
+    "Lancer": Unit("Lancer", "Guard B03", "Guard B03", "Garde B"),
+    "Officer": Unit("Officer", "Officier B03", "Officier B03", "OfficierB"),
+    "OfficerCape": Unit("Officer Cape", "Officer03", "Officer03", "Officier"),
+    "Swordsman": Unit("Swordsman", "Soldier A03", "Soldier A03", "Soldat A"),
 }
 
 ALL_UNITS = tuple(UNITS)
@@ -147,6 +154,8 @@ def profile_addition(archive: Archive, unit_key: str) -> dict:
         progression_from = None
     addition = {
         "template": template,
+        # Animation layout belongs to the authored RHS, not its stats template.
+        "profile_name": unit.profile_name,
         "filename": filename,
         "display_name": f"Fabri18 {archive.label} {unit.label}",
         "hostile": False,
@@ -296,14 +305,14 @@ def write_preview(destination: Path, preview_frames: list[tuple[str, Path]]) -> 
     sheet.save(destination / "preview.png", optimize=True)
 
 
-def write_gallery(destination: Path, additions: list[dict], preview_frames: list[tuple[str, Path]]) -> None:
+def write_gallery(destination: Path, additions: list[dict], preview_frames: list[tuple[str, Path]], catalog: dict) -> None:
     config = destination / "Data/Configuration"
     levels = destination / "Data/Levels"
     config.mkdir(parents=True)
     levels.mkdir(parents=True)
     (destination / "Data/Characters/mission-scoped.json").write_text("{}\n")
-    (config / "soldier-profiles.patch.json").write_text(
-        json.dumps({"soldiers": additions}, indent=2) + "\n"
+    (config / "profiles.patch.json").write_text(
+        json.dumps([op for addition in additions for op in soldier_copy_patch(catalog, **addition)], indent=2) + "\n"
     )
 
     soldiers = []
@@ -319,6 +328,8 @@ def write_gallery(destination: Path, additions: list[dict], preview_frames: list
                 ],
                 "profile": addition["filename"].lower().replace(" ", "_"),
                 "allegiance": 0,
+                "command_interface": "tactical_orders",
+                "mission_role": "tactical_ally",
                 "direction": (index * 3) % 16,
             }
         )
@@ -386,6 +397,8 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path, default=Path("mods/fabri18-sprite-gallery"))
     parser.add_argument("--preview-only", action="store_true")
+    parser.add_argument("--profile-catalog", type=Path, default=Path("target/profile.cpf.json"),
+                        help="canonical profile.cpf.json catalog exported by cpf_to_json")
     parser.add_argument(
         "--profiles-only",
         action="store_true",
@@ -393,16 +406,16 @@ def main() -> int:
     )
     args = parser.parse_args()
     if args.profiles_only:
-        patch = args.output / "Data/Configuration/soldier-profiles.patch.json"
-        if not patch.is_file():
-            raise RuntimeError(f"missing generated profile patch: {patch}")
-        patch.write_text(json.dumps({"soldiers": all_profile_additions()}, indent=2) + "\n")
+        patch = args.output / "Data/Configuration/profiles.patch.json"
+        if not patch.parent.is_dir():
+            raise RuntimeError(f"missing generated profile directory: {patch.parent}")
+        catalog = load_catalog(args.profile_catalog)
+        operations = [op for addition in all_profile_additions() for op in soldier_copy_patch(catalog, **addition)]
+        patch.write_text(json.dumps(operations, indent=2) + "\n")
         print(f"Refreshed profile stats for {len(all_profile_additions())} profiles")
         return 0
     if args.preview_only:
-        additions = json.loads(
-            (args.output / "Data/Configuration/soldier-profiles.patch.json").read_text()
-        )["soldiers"]
+        additions = all_profile_additions()
         previews = []
         for addition in additions:
             rhs = args.output / "Data/Characters" / f"{addition['filename']}.rhs.d"
@@ -451,7 +464,7 @@ def main() -> int:
                 )
                 additions.append(profile_addition(archive, unit_key))
                 previews.append((label, preview))
-    write_gallery(args.output, additions, previews)
+    write_gallery(args.output, additions, previews, load_catalog(args.profile_catalog))
     print(f"Imported {len(additions)} new soldier profiles into {args.output}")
     return 0
 

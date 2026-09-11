@@ -35,17 +35,15 @@ fn inventory(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    core: PathBuf,
+    #[arg(required = true)]
+    roots: Vec<PathBuf>,
+}
+
 fn main() -> Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let core = PathBuf::from(
-        args.next()
-            .context("expected core-datadir output directory, then English Sounds roots")?,
-    );
-    let roots = args.map(PathBuf::from).collect::<Vec<_>>();
-    ensure!(
-        !roots.is_empty(),
-        "at least one explicitly English Sounds root is required"
-    );
+    let Args { core, roots } = <Args as clap::Parser>::parse();
     let mut table = AudioDurations {
         version: AUDIO_DURATIONS_VERSION,
         locale: "en-US".into(),

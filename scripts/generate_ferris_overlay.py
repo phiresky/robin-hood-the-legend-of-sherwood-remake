@@ -393,41 +393,38 @@ def crop_png(src: Path, dst: Path, bbox: tuple[int, int, int, int]) -> None:
 
 def write_profile(base_profile_path: Path, output_path: Path) -> None:
     profile = json.loads(base_profile_path.read_text())
-    characters = [
-        character for character in profile["characters"] if character["filename"] != "Ferris"
-    ]
-    characters.append(
-        {
-            "index": 10,
-            "filename": "Ferris",
-            "profile_name": PROFILE_NAME,
-            "alternative_profile_name": "",
-            "valid_alternative_profile": False,
-            "vip": False,
-            "shooting": 0,
-            "fighting": 1,
-            "endurance": 20,
-            "exclamation_id": 1129136976,
-            "hth_weapon_id": 10,
-            "shooting_weapon_id": 0,
-            "actions": ["NoAction", "NoAction", "NoAction"],
-            "action_max_ammo": [0, 0, 0],
-            "contextual_actions": ["NoAction", "NoAction", "NoAction", "NoAction"],
-            "pathfinder_index": 0,
-            "box_move": {
-                "min": {"x": -4.0, "y": -3.0},
-                "max": {"x": 4.0, "y": 3.0},
-            },
-            "center": {"x": 150.0, "y": 150.0},
-            "priority": 1,
-            "wake_up": 64,
-            "detection_speed_in_city": 100,
-            "detection_speed_in_forest": 100,
-            "weapon_material": "Wood",
-            "armor_material": "Leather",
-        }
-    )
-    profile["characters"] = characters
+    characters = profile["characters"]
+    if not isinstance(characters, dict):
+        raise ValueError("base profile must use canonical named JSON; re-export the original CPF")
+    characters["Ferris"] = {
+        "filename": "Ferris",
+        "profile_name": PROFILE_NAME,
+        "alternative_profile_name": "",
+        "valid_alternative_profile": False,
+        "vip": False,
+        "shooting": 0,
+        "fighting": 1,
+        "endurance": 20,
+        "exclamation_id": 1129136976,
+        "hth_weapon_id": 10,
+        "shooting_weapon_id": 0,
+        "actions": ["NoAction", "NoAction", "NoAction"],
+        "action_max_ammo": [0, 0, 0],
+        "contextual_actions": ["NoAction", "NoAction", "NoAction", "NoAction"],
+        "pathfinder_index": 0,
+        "box_move": {
+            "min": {"x": -4.0, "y": -3.0},
+            "max": {"x": 4.0, "y": 3.0},
+        },
+        "center": {"x": 150.0, "y": 150.0},
+        "priority": 1,
+        "wake_up": 64,
+        "detection_speed_in_city": 100,
+        "detection_speed_in_forest": 100,
+        "weapon_material": "Wood",
+        "armor_material": "Leather",
+    }
+    # Unlisted characters append after the existing numeric slots.
     output_path.write_text(json.dumps(profile, indent=2) + "\n")
 
 

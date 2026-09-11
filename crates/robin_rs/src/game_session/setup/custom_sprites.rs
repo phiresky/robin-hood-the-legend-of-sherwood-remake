@@ -1,10 +1,14 @@
 //! Custom sprite decoding and disposable cache policy.
+mod family;
+mod shipping;
 use super::error::ResourcePreparationError;
 use super::localization::read_optional_json;
+pub use family::encode_custom_sprite_family;
 use robin_assets::frame_holder as assets_frame_holder;
 use robin_engine::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize};
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::{campaign::Campaign, profiles as engine_profiles, sbfile as engine_sbfile};
+pub use shipping::encode_custom_sprite_dir;
 
 #[derive(Debug, serde::Deserialize)]
 struct HackableRhsManifest {
@@ -78,14 +82,6 @@ struct HackableRhsCacheSource {
 struct HackableRhsCacheProfile {
     name: String,
     info: SpriteInfo,
-}
-
-fn overlay_roots(files: &engine_sbfile::SbFileSystem) -> Vec<std::path::PathBuf> {
-    files
-        .overlay_paths()
-        .into_iter()
-        .map(std::path::PathBuf::from)
-        .collect()
 }
 
 fn decode_png_rgba(
@@ -220,7 +216,8 @@ fn hackable_source_stamp(
     root: &std::path::Path,
     relative_path: &str,
 ) -> Result<HackableRhsCacheSource, String> {
-    let path = root.join(relative_path);
+    let requested = root.join(relative_path);
+    let path = engine_sbfile::resolve_case_insensitive(&requested).unwrap_or(requested);
     let metadata = std::fs::metadata(&path)
         .map_err(|error| format!("stat hackable sprite {}: {error}", path.display()))?;
     let modified = metadata
@@ -376,6 +373,42 @@ fn build_hackable_cache(
     manifest_hash: [u8; 32],
     manifest: HackableRhsManifest,
 ) -> Result<HackableRhsCache, ResourcePreparationError> {
+    build_hackable_cache_with_reader(
+        manifest_hash,
+        manifest,
+        |relative_path, legacy_color_keys| {
+            let frame_path = root.join(relative_path);
+            let (width, height, rgba) = decode_png_rgba(&frame_path)?;
+            let source = hackable_source_stamp(root, relative_path).map_err(|error| {
+                ResourcePreparationError::unavailable(frame_path.display(), error)
+            })?;
+            Ok((
+                assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                    width,
+                    height,
+                    &rgba,
+                    legacy_color_keys,
+                ),
+                Some(source),
+            ))
+        },
+    )
+}
+
+fn build_hackable_cache_with_reader(
+    manifest_hash: [u8; 32],
+    manifest: HackableRhsManifest,
+    mut read_frame: impl FnMut(
+        &str,
+        bool,
+    ) -> Result<
+        (
+            assets_frame_holder::RuntimeSprite,
+            Option<HackableRhsCacheSource>,
+        ),
+        ResourcePreparationError,
+    >,
+) -> Result<HackableRhsCache, ResourcePreparationError> {
     let mut frames = Vec::new();
     let mut sources = Vec::new();
     let mut local_frames = std::collections::HashMap::<String, u32>::new();
@@ -403,19 +436,10 @@ fn build_hackable_cache(
                 let local_id = if let Some(local_id) = local_frames.get(&relative_path) {
                     *local_id
                 } else {
-                    let frame_path = root.join(&relative_path);
-                    let (width, height, rgba) = decode_png_rgba(&frame_path)?;
-                    let source = hackable_source_stamp(root, &relative_path).map_err(|error| {
-                        ResourcePreparationError::unavailable(frame_path.display(), error)
-                    })?;
+                    let (sprite, source) = read_frame(&relative_path, legacy_color_keys)?;
                     let local_id = frames.len() as u32;
-                    frames.push(assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
-                        width,
-                        height,
-                        &rgba,
-                        legacy_color_keys,
-                    ));
-                    sources.push(source);
+                    frames.push(sprite);
+                    sources.extend(source);
                     local_frames.insert(relative_path, local_id);
                     local_id
                 };
@@ -517,44 +541,78 @@ pub(super) fn prepare_custom_character_dirs(
     files: &engine_sbfile::SbFileSystem,
 ) -> Result<PreparedCustomSprites, ResourcePreparationError> {
     let mission_filenames = current_hackable_character_filenames(campaign, profiles, files)?;
+    prepare_overlay_characters(files, mission_filenames.as_ref())
+}
+
+fn overlay_bytes(
+    files: &engine_sbfile::SbFileSystem,
+    source: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>, ResourcePreparationError> {
+    files
+        .read_overlay(source, path)
+        .map_err(|error| ResourcePreparationError::unavailable(format!("{source}/{path}"), error))
+}
+
+fn required_overlay_bytes(
+    files: &engine_sbfile::SbFileSystem,
+    source: &str,
+    path: &str,
+) -> Result<Vec<u8>, ResourcePreparationError> {
+    overlay_bytes(files, source, path)?.ok_or_else(|| {
+        ResourcePreparationError::unavailable(format!("{source}/{path}"), "required file missing")
+    })
+}
+
+fn prepare_overlay_characters(
+    files: &engine_sbfile::SbFileSystem,
+    mission_filenames: Option<&std::collections::HashSet<String>>,
+) -> Result<PreparedCustomSprites, ResourcePreparationError> {
     let mut batches = Vec::new();
-    for root in overlay_roots(files) {
-        let chars = root.join("Data/Characters");
-        let mission_scoped = chars.join("mission-scoped.json").is_file();
-        let entries = match std::fs::read_dir(&chars) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(ResourcePreparationError::unavailable(
-                    chars.display(),
-                    error,
-                ));
-            }
-        };
+    for source in files.overlay_sources() {
+        let chars = "Data/Characters";
+        let mission_scoped =
+            overlay_bytes(files, &source, &format!("{chars}/mission-scoped.json"))?.is_some();
+        let entries = files.list_overlay_dir(&source, chars).map_err(|error| {
+            ResourcePreparationError::unavailable(format!("{source}/{chars}"), error)
+        })?;
         for entry in entries {
-            let entry = entry
-                .map_err(|error| ResourcePreparationError::unavailable(chars.display(), error))?;
-            let path = entry.path();
-            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            let Some(filename) = name.strip_suffix(".rhs.d") else {
-                continue;
-            };
-            if mission_scoped
-                && !mission_filenames
-                    .as_ref()
-                    .is_some_and(|filenames| filenames.contains(filename))
-            {
+            let name = entry.name;
+            let path = format!("{chars}/{name}");
+            if !entry.is_dir && name.ends_with(".sprites.vq.zst") {
+                let empty = std::collections::HashSet::new();
+                let selected = mission_scoped.then(|| mission_filenames.unwrap_or(&empty));
+                let bytes = required_overlay_bytes(files, &source, &path)?;
+                batches.extend(
+                    family::read_selected_bytes(&bytes, selected)
+                        .map_err(|error| ResourcePreparationError::malformed(&path, error))?,
+                );
                 continue;
             }
-            let manifest_path = path.join("manifest.json");
-            // A discovered authored sprite directory must contain its manifest.
-            let manifest_bytes = std::fs::read(&manifest_path).map_err(|error| {
-                ResourcePreparationError::unavailable(manifest_path.display(), error)
-            })?;
+            let Some(filename) = name.strip_suffix(".rhs.d").filter(|_| entry.is_dir) else {
+                continue;
+            };
+            if mission_scoped && !mission_filenames.is_some_and(|names| names.contains(filename)) {
+                continue;
+            }
+            let shipping_path = format!("{path}/sprites.vq.zst");
+            if let Some(bytes) = overlay_bytes(files, &source, &shipping_path)? {
+                let cache = shipping::read_bytes(&bytes, &shipping_path)
+                    .map_err(|error| ResourcePreparationError::malformed(&shipping_path, error))?;
+                validate_cache_frames(filename, &cache)?;
+                batches.push((filename.to_owned(), cache));
+                continue;
+            }
+            let manifest_path = format!("{path}/manifest.json");
+            let manifest_bytes = required_overlay_bytes(files, &source, &manifest_path)?;
             let manifest_hash = hackable_manifest_hash(&manifest_bytes);
-            if let Some(cache) = read_hackable_cache(&path, manifest_hash) {
+            let cache_root = files
+                .overlay_directory(&source)
+                .and_then(|root| engine_sbfile::resolve_case_insensitive(&root.join(&path)));
+            if let Some(cache) = cache_root
+                .as_ref()
+                .and_then(|root| read_hackable_cache(root, manifest_hash))
+            {
                 match validate_cache_frames(filename, &cache) {
                     Ok(()) => {
                         batches.push((filename.to_owned(), cache));
@@ -565,13 +623,31 @@ pub(super) fn prepare_custom_character_dirs(
                     }
                 }
             }
-            let manifest: HackableRhsManifest =
-                serde_json::from_slice(&manifest_bytes).map_err(|error| {
-                    ResourcePreparationError::malformed(manifest_path.display(), error)
+            let manifest: HackableRhsManifest = serde_json::from_slice(&manifest_bytes)
+                .map_err(|error| ResourcePreparationError::malformed(&manifest_path, error))?;
+            let cache =
+                build_hackable_cache_with_reader(manifest_hash, manifest, |relative, legacy| {
+                    let frame_path = format!("{path}/{relative}");
+                    let bytes = required_overlay_bytes(files, &source, &frame_path)?;
+                    let (width, height, rgba) = decode_png_rgba_bytes(&bytes, &frame_path)
+                        .map_err(|error| ResourcePreparationError::malformed(&frame_path, error))?;
+                    let stamp = cache_root
+                        .as_ref()
+                        .map(|root| hackable_source_stamp(root, relative))
+                        .transpose()
+                        .map_err(|error| {
+                            ResourcePreparationError::unavailable(&frame_path, error)
+                        })?;
+                    Ok((
+                        assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                            width, height, &rgba, legacy,
+                        ),
+                        stamp,
+                    ))
                 })?;
-            let cache = build_hackable_cache(&path, manifest_hash, manifest)?;
-            // Persistence is an optimization; decoded authored content remains valid.
-            if let Err(error) = write_hackable_cache(&path, &cache) {
+            if let Some(root) = cache_root
+                && let Err(error) = write_hackable_cache(&root, &cache)
+            {
                 tracing::warn!("Failed to cache hackable sprites for {filename}: {error}");
             }
             batches.push((filename.to_owned(), cache));
@@ -583,6 +659,205 @@ pub(super) fn prepare_custom_character_dirs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn isolated_files() -> engine_sbfile::SbFileSystem {
+        engine_sbfile::SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()))
+    }
+
+    fn archive_directory(root: &std::path::Path, prefix: &str) -> Vec<u8> {
+        use std::io::Write;
+        fn append(
+            root: &std::path::Path,
+            path: &std::path::Path,
+            prefix: &str,
+            writer: &mut zip::ZipWriter<std::io::Cursor<Vec<u8>>>,
+        ) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    append(root, &path, prefix, writer);
+                } else {
+                    writer
+                        .start_file(
+                            format!("{prefix}{}", path.strip_prefix(root).unwrap().display()),
+                            zip::write::SimpleFileOptions::default(),
+                        )
+                        .unwrap();
+                    writer.write_all(&std::fs::read(path).unwrap()).unwrap();
+                }
+            }
+        }
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        append(root, root, prefix, &mut writer);
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn decoded_digest(mut prepared: PreparedCustomSprites) -> [u8; 32] {
+        use sha2::Digest as _;
+        let mut hash = sha2::Sha256::new();
+        prepared.batches.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, mut cache) in prepared.batches {
+            // Timestamps and source paths belong only to disposable disk caches.
+            cache.sources.clear();
+            hash.update(&bitcode::encode(&(name, cache)));
+        }
+        hash.finalize().into()
+    }
+
+    #[test]
+    fn png_and_both_vq_formats_load_identically_from_directories_and_archives() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("png");
+        let character = source.join("Data/Characters/Knight.rhs.d");
+        std::fs::create_dir_all(&character).unwrap();
+        let manifest = serde_json::json!({"pixel_format":"legacy_color_keys", "profiles":[{
+            "name":"test", "width":4.0,"height":1.0,"center_x":0.0,"center_y":0.0,
+            "rows":[{"action_id":3,"action_done":0,"average_speed":0.0,"hotspot_x":0.0,"hotspot_y":0.0,"path":".",
+            "frames":[{"file":"Frame.PNG","delay":1,"distance":0,"offset_x":0.0,"offset_y":0.0,"sound_id":0}]}]}]});
+        std::fs::write(
+            character.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let mut png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png, 5, 1);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&[0, 248, 0, 0, 0, 255, 255, 0, 0, 0, 248, 0, 255, 255, 255])
+                .unwrap();
+        }
+        std::fs::write(character.join("Frame.PNG"), png).unwrap();
+        let v1 = temp.path().join("v1");
+        let v1_character = v1.join("Data/Characters/Knight.rhs.d");
+        std::fs::create_dir_all(&v1_character).unwrap();
+        shipping::encode_custom_sprite_dir(&character, &v1_character.join("sprites.vq.zst"))
+            .unwrap();
+        let family = temp.path().join("family");
+        std::fs::create_dir_all(family.join("Data/Characters")).unwrap();
+        family::encode_custom_sprite_family(
+            &[character.clone()],
+            &family.join("Data/Characters/knights.sprites.vq.zst"),
+        )
+        .unwrap();
+        let mut expected = None;
+        for root in [&source, &v1, &family] {
+            let files = isolated_files();
+            assert_eq!(
+                files.add_overlay_path(root.to_str().unwrap()),
+                engine_sbfile::SBFILE_NO_ERROR
+            );
+            let digest = decoded_digest(prepare_overlay_characters(&files, None).unwrap());
+            if let Some(expected) = expected {
+                assert_eq!(digest, expected);
+            }
+            expected = Some(digest);
+            for prefix in ["", "Wrapped/"] {
+                let archive = isolated_files();
+                assert_eq!(
+                    archive.add_overlay_zip_bytes_for_mission(
+                        "test",
+                        archive_directory(root, prefix).into(),
+                        None
+                    ),
+                    engine_sbfile::SBFILE_NO_ERROR
+                );
+                assert_eq!(
+                    decoded_digest(prepare_overlay_characters(&archive, None).unwrap()),
+                    digest
+                );
+            }
+        }
+        std::fs::write(source.join("Data/Characters/mission-scoped.json"), b"{}").unwrap();
+        let files = isolated_files();
+        assert_eq!(
+            files.add_overlay_zip_bytes_for_mission(
+                "scoped",
+                archive_directory(&source, "").into(),
+                None
+            ),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
+        assert!(
+            prepare_overlay_characters(&files, None)
+                .unwrap()
+                .batches
+                .is_empty()
+        );
+        let selected = std::collections::HashSet::from(["Knight".to_owned()]);
+        assert_eq!(
+            prepare_overlay_characters(&files, Some(&selected))
+                .unwrap()
+                .batches
+                .len(),
+            1
+        );
+        std::fs::remove_file(character.join("Frame.PNG")).unwrap();
+        let files = isolated_files();
+        assert_eq!(
+            files.add_overlay_zip_bytes_for_mission(
+                "missing",
+                archive_directory(&source, "").into(),
+                None
+            ),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
+        assert!(prepare_overlay_characters(&files, Some(&selected)).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires FABRI18_MOD_DIR and FABRI18_MOD_ZIP fixtures"]
+    fn fabri18_archive_matches_directory() {
+        let directory = std::env::var("FABRI18_MOD_DIR").expect("FABRI18_MOD_DIR");
+        let zip = std::env::var("FABRI18_MOD_ZIP").expect("FABRI18_MOD_ZIP");
+        let disk = isolated_files();
+        let archive = isolated_files();
+        assert_eq!(
+            disk.add_overlay_path(&directory),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            archive.add_overlay_zip(&zip),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
+        // Each family is loaded independently to bound fixture memory.
+        let mut family_count = 0;
+        let mut frame_count = 0;
+        for source in disk.overlay_sources() {
+            for entry in disk.list_overlay_dir(&source, "Data/Characters").unwrap() {
+                if !entry.name.ends_with(".sprites.vq.zst") {
+                    continue;
+                }
+                let path = format!("Data/Characters/{}", entry.name);
+                let disk_bytes = disk.read_all(&path).unwrap();
+                let zip_bytes = archive.read_all(&path).unwrap();
+                assert_eq!(disk_bytes, zip_bytes);
+                let batches = family::read_selected_bytes(&disk_bytes, None).unwrap();
+                family_count += 1;
+                frame_count += batches
+                    .iter()
+                    .map(|(_, cache)| cache.frames.len())
+                    .sum::<usize>();
+                let expected = decoded_digest(PreparedCustomSprites { batches });
+                let actual = decoded_digest(PreparedCustomSprites {
+                    batches: family::read_selected_bytes(&zip_bytes, None).unwrap(),
+                });
+                assert_eq!(expected, actual, "{}", entry.name);
+            }
+        }
+        assert_eq!(family_count, 9);
+        assert_eq!(frame_count, 266_984);
+        for path in ["details.json", "Data/Levels/Day/OpenBattlefield.map"] {
+            assert_eq!(
+                disk.read_all(path).unwrap(),
+                archive.read_all(path).unwrap()
+            );
+        }
+    }
+
     #[test]
     fn authored_sprite_io_and_decode_failures_are_distinct() {
         let dir = tempfile::tempdir().unwrap();

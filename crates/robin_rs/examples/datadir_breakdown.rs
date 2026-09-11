@@ -11,16 +11,18 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use robin_assets::shipping_datadir::{
     ShippingDatadir, decode_mission_compressed, encode_native, zstd_max_compress,
 };
 
+#[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    path: PathBuf,
+}
+
 fn main() -> Result<()> {
-    let path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("usage: datadir_breakdown <datadir.bin>"))?;
+    let path = <Args as clap::Parser>::parse().path;
 
     let on_disk = std::fs::metadata(&path)
         .with_context(|| format!("stat {}", path.display()))?

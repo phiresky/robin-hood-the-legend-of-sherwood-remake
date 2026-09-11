@@ -1315,17 +1315,21 @@ mod tests {
     #[test]
     fn autosave_metadata_preserves_payload_diagnostic_classification() {
         let mut assets = robin_engine::engine::LevelAssets::new();
-        let engine = Engine::new_for_test(
-            1280.0,
-            720.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .unwrap();
+        let mut campaign = robin_engine::campaign::Campaign::default();
+        campaign.missions.push(robin_engine::mission::Mission {
+            profile_idx: Some(0),
+            ..Default::default()
+        });
+        let engine = Engine::new_for_test(1280.0, 720.0, campaign, &mut assets).unwrap();
         let host = Host::scratch(1280.0, 720.0);
         let mut payload = GameSaveFile::capture(&engine, &host, 1, "Mission".into());
         let mut profiles = ProfileManager::default();
-        profiles.missions.push(Default::default());
+        profiles
+            .missions
+            .push(robin_engine::profiles::MissionProfile {
+                id: 1,
+                ..Default::default()
+            });
         for diagnostic in [true, false] {
             payload.header.multiplayer_diagnostic = diagnostic;
             let metadata = metadata_from_payload("Autosave_123_0000", &payload, &profiles).unwrap();
