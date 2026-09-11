@@ -1733,6 +1733,7 @@ fn collect_breakdown_references(
             .to_str()
             .with_context(|| format!("non-UTF-8 RHS path {}", path.display()))?;
         let (_, profiles) = SpriteScriptor::load_all_profiles_legacy(path_text)
+            .map_err(anyhow::Error::msg)
             .with_context(|| format!("load RHS for exhaustive breakdown {}", path.display()))?;
         for (_, info) in &profiles {
             for script in info.scripts.iter() {
