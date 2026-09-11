@@ -3316,6 +3316,8 @@ mod tests {
         assert!(restart.record_replay_boundary(&recording).is_err());
         assert_eq!(recorder.next_ordinal(), 2);
 
+        recording.install_capture_recorder(None);
+        drop(recorder);
         let reopened = MissionArchive::open(&root.path().join("replay")).unwrap();
         let (_, replay, _) = reopened.assembled_replay().unwrap();
         assert_eq!(replay.frame_count(), 2);
