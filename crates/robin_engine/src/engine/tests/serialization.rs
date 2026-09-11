@@ -49,29 +49,23 @@ fn serde_roundtrip_stays_in_sync() {
 }
 
 #[test]
-fn camera_write_only_presentation_scratch_is_not_serialized_or_hashed() {
+fn camera_snapshot_preserves_director_pose_without_host_interpolation_history() {
     let mut engine = EngineInner::new();
-    engine.feedback.cutscene_camera.old_view_position =
-        crate::coordinates::MapPoint::new(11.0, 22.0);
-    engine.feedback.cutscene_camera.old_zoom_factor = 0.5;
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(11.0, 22.0);
+    engine.feedback.cutscene_camera.zoom_factor = 0.5;
 
     let baseline_hash = crate::replay::state_hash(&engine);
     let json = serde_json::to_string(&engine).expect("serialize engine");
     assert!(!json.contains("old_view_position"));
     assert!(!json.contains("old_zoom_factor"));
 
-    let mut changed = engine.clone();
-    changed.feedback.cutscene_camera.old_view_position =
-        crate::coordinates::MapPoint::new(99.0, 100.0);
-    changed.feedback.cutscene_camera.old_zoom_factor = 2.0;
-    assert_eq!(baseline_hash, crate::replay::state_hash(&changed));
-
     let restored: EngineInner = serde_json::from_str(&json).expect("deserialize engine");
+    assert_eq!(baseline_hash, crate::replay::state_hash(&restored));
     assert_eq!(
-        restored.feedback.cutscene_camera.old_view_position,
-        crate::coordinates::MapPoint::new(0.0, 0.0)
+        restored.feedback.cutscene_camera.view_position,
+        engine.feedback.cutscene_camera.view_position
     );
-    assert_eq!(restored.feedback.cutscene_camera.old_zoom_factor, 1.0);
+    assert_eq!(restored.feedback.cutscene_camera.zoom_factor, 0.5);
 }
 
 #[test]
