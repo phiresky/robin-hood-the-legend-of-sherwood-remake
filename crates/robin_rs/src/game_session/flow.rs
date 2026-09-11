@@ -4,9 +4,8 @@
 //! mission. This extraction is intentionally mechanical so later focused
 //! phase methods cannot disturb the established frame ordering.
 
-use super::frame_prepare::{
-    FramePreparation, FramePresentationState, InteractiveFramePreparation, PreparedFrame,
-};
+use super::frame_prepare::{FramePreparation, InteractiveFramePreparation, PreparedFrame};
+use super::frame_simulate::FramePresentationHandoff;
 use super::runtime::FrameContractStage;
 use super::*;
 
@@ -243,7 +242,7 @@ impl InteractiveMission {
     async fn finish_interactive_frame(
         &mut self,
         services: &mut MissionServices<'_>,
-        state: FramePresentationState,
+        state: FramePresentationHandoff,
     ) {
         InteractiveFrameFinish {
             mission: self,
@@ -261,7 +260,7 @@ impl InteractiveMission {
 struct InteractiveFrameFinish<'mission, 'services, 'app> {
     mission: &'mission mut InteractiveMission,
     services: &'services mut MissionServices<'app>,
-    state: FramePresentationState,
+    state: FramePresentationHandoff,
 }
 
 impl InteractiveFrameFinish<'_, '_, '_> {
@@ -273,7 +272,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         } = self;
         let callbacks = &mut *services.callbacks;
         let args = services.args;
-        let FramePresentationState {
+        let FramePresentationHandoff {
             mut frame,
             rewind_active,
             consumed_buffered,
@@ -717,18 +716,7 @@ impl InteractiveMission {
         let control = match outcome {
             FrameSimulationOutcome::Control(control) => control,
             FrameSimulationOutcome::Present(handoff) => {
-                self.finish_interactive_frame(
-                    services,
-                    FramePresentationState {
-                        frame: handoff.frame,
-                        rewind_active: handoff.rewind_active,
-                        consumed_buffered: handoff.consumed_buffered,
-                        shift_held: handoff.shift_held,
-                        modal_rendered: handoff.modal_rendered,
-                        history_commit_pending: handoff.history_commit_pending,
-                    },
-                )
-                .await;
+                self.finish_interactive_frame(services, handoff).await;
                 if let Some(timer) = startup_timer.as_mut() {
                     timer.step("presentation and pacing");
                 }
