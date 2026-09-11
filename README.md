@@ -30,7 +30,7 @@ integrations are opt-in: `multiplayer` (iroh/DHT matchmaking), `video`
 (Spellforge custom missions). Packaged desktop builds additionally enable
 `auto-update` (Velopack). Enable every runtime integration with:
 
-    cargo build -p robin_rs --bin robin --features full
+    bash scripts/build-native.sh --features robin_rs/full
 
 The native packaging workflow uses `--features release`, which includes the
 desktop, Lua, multiplayer, and auto-update features. It will switch to `full`
@@ -38,7 +38,7 @@ once FFmpeg libraries can be bundled consistently on every release target.
 
 At the workspace root, bare `cargo build` and `cargo test` intentionally cover
 only the small utility/proc-macro smoke set. Build the minimal client with
-`cargo build -p robin_rs --bin robin`, select any suite with `-p <crate>`, or
+`bash scripts/build-native.sh`, select any suite with `-p <crate>`, or
 use `--workspace` for everything. Conversion/inspection bins require
 `--features tools` and therefore stay out of bare builds.
 
@@ -54,8 +54,19 @@ The toolchain (nightly Rust + cranelift
 codegen backend) is pinned via [rust-toolchain.toml](rust-toolchain.toml)
 and will be installed automatically by rustup.
 
-    cargo build -p robin_rs --bin robin          # debug
-    cargo build -p robin_rs --bin robin --release
+    bash scripts/build-native.sh               # debug
+    bash scripts/build-native.sh --release
+
+Native compact replay loading requires the matching `robin-replay-admission`
+helper beside the game executable (`.exe` on Windows). The build script builds
+both in the same target/profile, and release packages ship both. Cargo test and
+example executables also discover the helper in their profile directory.
+Building only `robin` does not build dependency binaries: build the helper with
+`cargo build -p robin_replay_format --features native-admission --bin robin-replay-admission`
+using the same profile/target. Missing or incompatible helpers produce an error;
+there is no PATH search or uncontained fallback. Native admission retains its
+384 MiB ceiling and currently requires Unix containment; unsupported platforms
+continue to reject public compact admission.
 
 ### Native release packages
 

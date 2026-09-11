@@ -81,7 +81,18 @@ class QualitySuitesTests(unittest.TestCase):
 
     def test_client_build_is_a_separate_command(self):
         self.run_suite("client")
-        self.assertEqual([call[0] for call in self.calls()], ["test", "build"])
+        self.assertEqual([call[0] for call in self.calls()], ["build", "test", "build"])
+        self.assertIn("robin-replay-admission", self.calls()[0])
+
+    def test_native_admission_is_built_for_both_client_suites_and_exercised_as_a_protocol(self):
+        for suite in ("client", "client-release", "protocols"):
+            self.run_suite(suite)
+        helper_calls = [call for call in self.calls() if "native-admission" in call]
+        self.assertEqual([call[0] for call in helper_calls], ["build", "build", "test"])
+        for package in ("robin_rs", "wgpu", "winit", "kira", "cpal", "ffmpeg-next"):
+            with self.assertRaisesRegex(RuntimeError, "contains"):
+                assert_boundary("robin_replay_format v0.0.0\n" + package + " v1.0.0",
+                                "robin_replay_format", {package})
 
     def test_content_boundary_rejects_engine_and_empty_graph(self):
         with self.assertRaisesRegex(RuntimeError, "contains"):

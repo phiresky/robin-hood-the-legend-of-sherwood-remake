@@ -29,10 +29,10 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `scripting-llvm` | `robin_spellforge`, `robin_lua` | Explicit poison recovery and native-session unwind tests with LLVM package overrides |
 | `engine` | `robin_engine` | Deterministic simulation tests |
 | `assets` | `robin_content`, `robin_assets`, `robin_data_io` | Content with/without simulation codecs; assets with/without engine adapters; fixture resolver tests; resolved pure-content dependency boundary |
-| `protocols` | `robin_run_protocol`, `robin_replay_format`, `robin_official_content`, `robin_ranked_verification`, `robin_identity_signer` | Wire, content, admission and isolated signer tests |
+| `protocols` | `robin_run_protocol`, `robin_replay_format`, `robin_official_content`, `robin_ranked_verification`, `robin_identity_signer` | Wire, content, native helper discovery/containment/protocol, admission and isolated signer tests |
 | `services` | `robin_highscores`, `robin_manifest_tool`, `robin_replay_verifier` | Server, manifest and verifier tests |
 | `parity` | `robin_parity` | Runner unit/contract tests; does not replay licensed corpora |
-| `client` | `robin_rs`, default features | Client tests, then a separate `robin` binary build |
+| `client` | `robin_rs`, default features | Build native admission helper, client tests, then a separate `robin` binary build |
 | `client-release` | `robin_rs`, `release` features | Client library tests and binary build with desktop/audio/Lua/multiplayer/updates; audio example check |
 | `tools` | `robin_modding_tools`; `robin_rs`, `tools` and `projection-export` | Modding CLI and encoder tests; explicit converter/dump tests; minimal export example tests; check tool binaries and examples |
 | `wasm` | `robin_replay_admission_wasm`, `robin_rs`, `robin_identity_signer` | Target checks for `wasm32-unknown-unknown` using `wasm-dev` |

@@ -81,6 +81,7 @@ unicode-segmentation.workspace = true
 # Native-only runtime integrations (Lua, filesystem/process services, and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+robin_replay_format = { workspace = true, features = ["native-admission"] }
 # OS data directories are standard for every native build.
 dirs = "7"
 robin_official_content = { workspace = true, optional = true }

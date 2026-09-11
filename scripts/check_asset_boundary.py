@@ -16,14 +16,16 @@ def assert_boundary(output, package, forbidden):
 
 
 def main():
-    for package, forbidden in (
-        ("robin_assets", {"robin_engine"}),
-        ("robin_content", {"robin_engine", "robin_util", "robin_state_hash_derive", "bitcode"}),
-        ("robin_modding_tools", {"robin_rs"}),
+    for package, forbidden, features in (
+        ("robin_assets", {"robin_engine"}, []),
+        ("robin_content", {"robin_engine", "robin_util", "robin_state_hash_derive", "bitcode"}, []),
+        ("robin_modding_tools", {"robin_rs"}, []),
+        ("robin_replay_format", {"robin_rs", "robin_assets", "wgpu", "winit", "kira", "cpal", "ffmpeg-next"},
+         ["--features", "native-admission"]),
     ):
         command = ["cargo", "tree", "--locked", "-p", package,
                    "--no-default-features", "--edges", "normal,build",
-                   "--target", "all", "--prefix", "none", "--format", "{p}"]
+                   "--target", "all", "--prefix", "none", "--format", "{p}", *features]
         result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, text=True)
         print(result.stdout, end="", flush=True)  # Preserve complete Cargo output.
         result.check_returncode()

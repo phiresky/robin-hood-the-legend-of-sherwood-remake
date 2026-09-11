@@ -23,6 +23,8 @@
 //! wasm instance is not an allocation boundary.
 
 use base64::Engine as _;
+#[cfg(all(feature = "native-admission", not(target_arch = "wasm32")))]
+pub mod native_admission;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use robin_engine::campaign::Campaign;
 use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile, ReplayFrame};

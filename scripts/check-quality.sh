@@ -40,6 +40,7 @@ case "$1" in
         ;;
     protocols)
         cargo test --locked -p robin_run_protocol -p robin_replay_format -p robin_official_content -p robin_ranked_verification -p robin_identity_signer
+        cargo test --locked -p robin_replay_format --features native-admission
         ;;
     services)
         # Prove the production API lacks raw fixture access before opting in.
@@ -49,10 +50,12 @@ case "$1" in
         ;;
     parity) cargo test --locked -p robin_parity ;;
     client)
+        cargo build --locked -p robin_replay_format --features native-admission --bin robin-replay-admission
         cargo test --locked -p robin_rs
         cargo build --locked -p robin_rs --bin robin
         ;;
     client-release)
+        cargo build --locked -p robin_replay_format --features native-admission --bin robin-replay-admission
         cargo test --locked -p robin_rs --lib --no-default-features --features release
         cargo build --locked -p robin_rs --bin robin --no-default-features --features release
         cargo check --locked -p robin_rs --example audio_decode_bench --no-default-features --features release

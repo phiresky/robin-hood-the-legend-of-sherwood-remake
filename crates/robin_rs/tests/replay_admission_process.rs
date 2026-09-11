@@ -39,8 +39,11 @@ fn empty_current_replay() -> ReplayData {
 }
 
 fn run_cold_worker(input: &[u8]) -> serde_json::Value {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_robin"))
-        .arg("--internal-replay-admission-worker")
+    let helper = robin_replay_format::native_admission::helper_next_to(std::path::Path::new(env!(
+        "CARGO_BIN_EXE_robin"
+    )))
+    .expect("build the native admission helper alongside the client");
+    let mut child = Command::new(helper)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -11,8 +11,6 @@ pub use robin_replay_format::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::run_native_admission_worker;
 
 /// Exact source commit used by multiplayer artifact selection.
 pub const ENGINE_SOURCE_COMMIT: &str = env!("ROBIN_GIT_COMMIT");

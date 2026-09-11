@@ -224,6 +224,7 @@ jobs:
           # TODO: Bundle FFmpeg DLLs on Windows, then switch `release` to
           # `full` so packaged builds also include video and RetroArch presets.
           cargo build --locked --release --no-default-features --features release -p robin_rs --bin robin --target ${{ matrix.target }}
+          cargo build --locked --release -p robin_replay_format --features native-admission --bin robin-replay-admission --target ${{ matrix.target }}
           cargo build --locked --release -p robin_modding_tools --bins --features robin_rs/release --target ${{ matrix.target }}
 
       - name: Stage package input
@@ -238,6 +239,7 @@ jobs:
           cp docs/MODDING_TOOLS.md docs/JSON_PATCH_MODS.md target/package-input/docs/
           suffix=""
           if [[ "${{ matrix.runtime }}" == win-x64 ]]; then suffix=".exe"; fi
+          cp "target/${{ matrix.target }}/release/robin-replay-admission${suffix}" target/package-input/
           for tool in cpf_to_json encode_mod_sprites disasm_scb dump_res; do
             cp "target/${{ matrix.target }}/release/${tool}${suffix}" target/package-input/
           done
