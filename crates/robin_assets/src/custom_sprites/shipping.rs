@@ -157,7 +157,7 @@ pub fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
     ensure!(bytes.starts_with(MAGIC), "unsupported custom VQ format");
     let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..])?;
     ensure!(
-        bundle.metadata.version == HACKABLE_RHS_CACHE_VERSION,
+        matches!(bundle.metadata.version, 2 | HACKABLE_RHS_CACHE_VERSION),
         "unsupported VQ profile metadata version"
     );
     ensure!(
@@ -167,6 +167,7 @@ pub fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
     for group in bundle.groups {
         bundle.metadata.frames.extend(decode_group(group)?);
     }
+    bundle.metadata.version = HACKABLE_RHS_CACHE_VERSION;
     validate_cache_frames(source, &bundle.metadata).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(bundle.metadata)
 }
@@ -280,6 +281,17 @@ mod tests {
             loaded.frames[0].packed_data,
             [1, 4, 0x001f, 0xf800, TRANSPARENT_COLOR_16, 0xffff]
         );
+        // The version bump invalidates disposable PNG caches, not authored
+        // portable bundles: their direction order is already part of the file.
+        let compressed = std::fs::read(&output).unwrap();
+        let bytes = zstd::stream::decode_all(compressed.as_slice()).unwrap();
+        let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..]).unwrap();
+        bundle.metadata.version = 2;
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend(bitcode::encode(&bundle));
+        let version_two = zstd::stream::encode_all(bytes.as_slice(), 1).unwrap();
+        let decoded = read_bytes(&version_two, "version two bundle").unwrap();
+        assert_eq!(bitcode::encode(&decoded), bitcode::encode(&loaded));
     }
 
     #[test]

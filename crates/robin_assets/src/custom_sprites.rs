@@ -37,8 +37,10 @@ pub struct HackableRhsRow {
     pub action_id: u16,
     pub action_done: u16,
     pub average_speed: f32,
-    #[serde(default, rename = "direction")]
-    pub _direction: u16,
+    /// Omitted directions retain per-action encounter order. Explicit directions
+    /// must cover a contiguous range starting at zero; manifest order is immaterial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<u16>,
     pub hotspot_x: f32,
     pub hotspot_y: f32,
     pub path: String,
@@ -55,7 +57,7 @@ pub struct HackableRhsFrame {
     pub sound_id: u16,
 }
 
-pub const HACKABLE_RHS_CACHE_VERSION: u32 = 2;
+pub const HACKABLE_RHS_CACHE_VERSION: u32 = 3;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct HackableRhsCache {
@@ -198,24 +200,29 @@ pub fn build_hackable_cache(
     manifest_hash: [u8; 32],
     manifest: HackableRhsManifest,
 ) -> anyhow::Result<HackableRhsCache> {
-    build_hackable_cache_with_reader(manifest_hash, manifest, |relative, legacy| {
-        use anyhow::Context as _;
-        let path = root.join(relative);
-        let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
-        let (width, height, rgba) = decode_png_rgba_bytes(&bytes, &path.display().to_string())
-            .map_err(anyhow::Error::msg)?;
-        let source = hackable_source_stamp(root, relative).map_err(anyhow::Error::msg)?;
-        Ok((
-            assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
-                width, height, &rgba, legacy,
-            ),
-            Some(source),
-        ))
-    })
+    build_hackable_cache_with_reader(
+        manifest_hash,
+        manifest,
+        |relative, legacy| {
+            use anyhow::Context as _;
+            let path = root.join(relative);
+            let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
+            let (width, height, rgba) = decode_png_rgba_bytes(&bytes, &path.display().to_string())
+                .map_err(anyhow::Error::msg)?;
+            let source = hackable_source_stamp(root, relative).map_err(anyhow::Error::msg)?;
+            Ok((
+                assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                    width, height, &rgba, legacy,
+                ),
+                Some(source),
+            ))
+        },
+        anyhow::Error::msg,
+    )
 }
 pub fn build_hackable_cache_with_reader<E>(
     manifest_hash: [u8; 32],
-    manifest: HackableRhsManifest,
+    mut manifest: HackableRhsManifest,
     mut read_frame: impl FnMut(
         &str,
         bool,
@@ -226,7 +233,9 @@ pub fn build_hackable_cache_with_reader<E>(
         ),
         E,
     >,
+    invalid: impl Fn(String) -> E,
 ) -> Result<HackableRhsCache, E> {
+    normalize_manifest_rows(&mut manifest).map_err(&invalid)?;
     let mut frames = Vec::new();
     let mut sources = Vec::new();
     let mut local_frames = std::collections::HashMap::<String, u32>::new();
@@ -284,20 +293,140 @@ pub fn build_hackable_cache_with_reader<E>(
         });
     }
 
-    Ok(HackableRhsCache {
+    let cache = HackableRhsCache {
         version: HACKABLE_RHS_CACHE_VERSION,
         manifest_hash,
         sources,
         frames,
         profiles,
-    })
+    };
+    validate_cache_frames("custom sprites", &cache).map_err(invalid)?;
+    Ok(cache)
+}
+
+fn normalize_manifest_rows(manifest: &mut HackableRhsManifest) -> Result<(), String> {
+    // TODO: declare directional coverage explicitly in the authored format.
+    // Single-row actions are supported content, and original exports can have
+    // 32 rows for one action; neither should silently acquire invented frames.
+    for profile in &mut manifest.profiles {
+        let mut order = std::collections::HashMap::new();
+        let mut counts = std::collections::HashMap::<u16, u16>::new();
+        for row in &mut profile.rows {
+            let next_order = order.len();
+            order.entry(row.action_id).or_insert(next_order);
+            let count = counts.entry(row.action_id).or_default();
+            row.direction.get_or_insert(*count);
+            *count = count
+                .checked_add(1)
+                .ok_or_else(|| format!("{}: too many direction rows", profile.name))?;
+        }
+        profile
+            .rows
+            .sort_by_key(|row| (order[&row.action_id], row.direction));
+        counts.clear();
+        for row in &profile.rows {
+            let expected = counts.entry(row.action_id).or_default();
+            if row.direction != Some(*expected) {
+                return Err(format!(
+                    "{}: action {} has duplicate or missing direction: expected {}, got {:?}",
+                    profile.name, row.action_id, expected, row.direction
+                ));
+            }
+            *expected += 1;
+        }
+        for (action_id, count) in counts {
+            if count < 16 {
+                tracing::warn!(profile = %profile.name, action_id, authored_directions = count,
+                    "Custom action has partial directional coverage; callers must restrict directions to its authored rows");
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_cache_frames(filename: &str, cache: &HackableRhsCache) -> Result<(), String> {
+    for (index, frame) in cache.frames.iter().enumerate() {
+        frame
+            .validate()
+            .map_err(|error| format!("{filename}: frame {index}: {error}"))?;
+    }
+    validate_cache_metadata(filename, cache, cache.frames.len())
+}
+
+// VQ families need the same metadata check before remapping local IDs and
+// using action layouts to decode pixel groups. Their frames are still packed.
+fn validate_cache_metadata(
+    filename: &str,
+    cache: &HackableRhsCache,
+    frame_count: usize,
+) -> Result<(), String> {
+    if !matches!(cache.version, 2 | HACKABLE_RHS_CACHE_VERSION) {
+        return Err(format!(
+            "{filename}: unsupported custom sprite metadata version {}",
+            cache.version
+        ));
+    }
+    let mut names = std::collections::HashSet::new();
     for profile in &cache.profiles {
+        let fail = |detail: &str| format!("{filename}: sprite profile {}: {detail}", profile.name);
+        if profile.name.is_empty() || !names.insert(&profile.name) {
+            return Err(fail("empty or duplicate profile name"));
+        }
+        let info = &profile.info;
+        if ![info.size.x, info.size.y, info.center.x, info.center.y]
+            .iter()
+            .all(|value| value.is_finite())
+            || info.size.x <= 0.0
+            || info.size.y <= 0.0
+        {
+            return Err(fail("invalid profile geometry"));
+        }
+        if info.scripts.len() > usize::from(UNMAPPED) {
+            return Err(fail("too many animation rows"));
+        }
+        if info.conversion.as_ref() != &hackable_animation_conversion(&info.scripts) {
+            return Err(fail("invalid animation conversion table"));
+        }
+        let mut actions = std::collections::HashSet::new();
+        let mut previous = None;
         for script in profile.info.scripts.iter() {
+            if usize::from(script.action_id) >= NONANIMATION_END {
+                return Err(fail("invalid action ID"));
+            }
+            if previous != Some(script.action_id) && !actions.insert(script.action_id) {
+                return Err(fail("direction rows for an action must be contiguous"));
+            }
+            previous = Some(script.action_id);
+            // This is the loose/custom import contract, NOT SpriteScript's
+            // general invariant: original paged rows can have extra frame IDs.
+            let count = script.frame_ids.len();
+            if count == 0
+                || count > usize::from(u16::MAX)
+                || [
+                    script.delays.len(),
+                    script.distances.len(),
+                    script.offsets.len(),
+                    script.sound_ids.len(),
+                ]
+                .iter()
+                .any(|&len| len != count)
+            {
+                return Err(fail(
+                    "empty animation or inconsistent frame metadata lengths",
+                ));
+            }
+            if ![script.average_speed, script.hotspot.x, script.hotspot.y]
+                .iter()
+                .all(|value| value.is_finite())
+                || script
+                    .offsets
+                    .iter()
+                    .any(|offset| !offset.x.is_finite() || !offset.y.is_finite())
+            {
+                return Err(fail("non-finite animation geometry"));
+            }
             for frame_id in &script.frame_ids {
-                if *frame_id as usize >= cache.frames.len() {
+                if *frame_id as usize >= frame_count {
                     return Err(format!(
                         "{filename}: sprite profile {} references missing local frame {frame_id}",
                         profile.name
@@ -312,6 +441,156 @@ pub fn validate_cache_frames(filename: &str, cache: &HackableRhsCache) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn manifest(directions: &[Option<u16>]) -> HackableRhsManifest {
+        serde_json::from_value(serde_json::json!({
+            "pixel_format": "rgba", "profiles": [{
+                "name": "test", "width": 1.0, "height": 1.0, "center_x": 0.0, "center_y": 0.0,
+                "rows": directions.iter().enumerate().map(|(index, direction)| serde_json::json!({
+                    "action_id": 3, "action_done": 0, "average_speed": 0.0,
+                    "direction": direction, "hotspot_x": 0.0, "hotspot_y": 0.0, "path": ".",
+                    "frames": [{"file": format!("{index}.png"), "delay": index + 1,
+                        "distance": 0, "offset_x": 0.0, "offset_y": 0.0, "sound_id": 0}]
+                })).collect::<Vec<_>>()
+            }]
+        }))
+        .unwrap()
+    }
+
+    fn build_test_cache(manifest: HackableRhsManifest) -> Result<HackableRhsCache, String> {
+        build_hackable_cache_with_reader(
+            [0; 32],
+            manifest,
+            |_, _| {
+                Ok((
+                    assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                        1,
+                        1,
+                        &[1, 2, 3, 255],
+                        false,
+                    ),
+                    None,
+                ))
+            },
+            |error| error,
+        )
+    }
+
+    #[test]
+    fn authored_directions_are_ordered_and_missing_directions_keep_encounter_order() {
+        let cache = build_test_cache(manifest(&[Some(1), Some(0)])).unwrap();
+        assert_eq!(cache.profiles[0].info.scripts[0].delays, [2]);
+        assert_eq!(cache.profiles[0].info.scripts[1].delays, [1]);
+        let cache = build_test_cache(manifest(&[None, None])).unwrap();
+        assert_eq!(cache.profiles[0].info.scripts[0].delays, [1]);
+        assert_eq!(cache.profiles[0].info.scripts[1].delays, [2]);
+        let encoded = bitcode::encode(&cache);
+        let decoded: HackableRhsCache = bitcode::decode(&encoded).unwrap();
+        validate_cache_frames("round trip", &decoded).unwrap();
+        assert_eq!(bitcode::encode(&decoded), encoded);
+    }
+
+    #[test]
+    fn duplicate_gapped_and_ambiguous_mixed_directions_fail_before_reading_images() {
+        for directions in [&[Some(0), Some(0)][..], &[Some(1)], &[Some(1), None]] {
+            let result = build_hackable_cache_with_reader(
+                [0; 32],
+                manifest(directions),
+                |_, _| -> Result<_, String> {
+                    panic!("invalid direction layout must fail before image reads")
+                },
+                |error| error,
+            );
+            assert!(
+                result
+                    .unwrap_err()
+                    .contains("duplicate or missing direction")
+            );
+        }
+    }
+
+    #[test]
+    fn interleaved_actions_are_grouped_without_changing_first_action_order() {
+        let mut manifest = manifest(&[None, None, None]);
+        manifest.profiles[0].rows[1].action_id = 6;
+        let cache = build_test_cache(manifest).unwrap();
+        assert_eq!(
+            cache.profiles[0]
+                .info
+                .scripts
+                .iter()
+                .map(|row| row.action_id)
+                .collect::<Vec<_>>(),
+            [3, 3, 6]
+        );
+        assert_eq!(cache.profiles[0].info.conversion[6], 2);
+    }
+
+    #[test]
+    fn partial_direction_sets_and_original_double_sets_do_not_invent_frames() {
+        for count in [1, 2, 16, 32] {
+            let directions: Vec<_> = (0..count).map(Some).collect();
+            let cache = build_test_cache(manifest(&directions)).unwrap();
+            assert_eq!(cache.profiles[0].info.scripts.len(), usize::from(count));
+            assert_eq!(cache.frames.len(), usize::from(count));
+            // Only offsets 0..count are authored. The importer does not claim
+            // that a caller requesting another direction has a valid row.
+            assert!(
+                cache.profiles[0]
+                    .info
+                    .scripts
+                    .get(usize::from(count))
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_cached_payloads_and_metadata_are_rejected() {
+        let valid = bitcode::encode(&build_test_cache(manifest(&[None])).unwrap());
+        let corruptions: &[fn(&mut HackableRhsCache)] = &[
+            |cache| {
+                cache.frames[0]
+                    .rgba_data
+                    .as_mut()
+                    .unwrap()
+                    .pop()
+                    .map(|_| ())
+                    .unwrap()
+            },
+            |cache| {
+                cache.frames[0].packed_data.pop();
+            },
+            |cache| cache.frames[0].packed_data.push(0),
+            |cache| cache.frames[0].width = 0,
+            |cache| cache.profiles[0].info.size.x = f32::NAN,
+            |cache| {
+                std::sync::Arc::make_mut(&mut cache.profiles[0].info.scripts)[0].offsets[0].x =
+                    f32::INFINITY
+            },
+            |cache| {
+                std::sync::Arc::make_mut(&mut cache.profiles[0].info.scripts)[0]
+                    .delays
+                    .clear();
+            },
+            |cache| {
+                std::sync::Arc::make_mut(&mut cache.profiles[0].info.scripts)[0].frame_ids[0] = 99
+            },
+            |cache| std::sync::Arc::make_mut(&mut cache.profiles[0].info.conversion)[3] = 99,
+            |cache| {
+                std::sync::Arc::make_mut(&mut cache.profiles[0].info.scripts)[0].action_id =
+                    u16::MAX
+            },
+        ];
+        for (index, corrupt) in corruptions.iter().enumerate() {
+            let mut cache = bitcode::decode(&valid).unwrap();
+            corrupt(&mut cache);
+            assert!(
+                validate_cache_frames("corrupt", &cache).is_err(),
+                "corruption {index}"
+            );
+        }
+    }
     #[test]
     fn png_decoder_rejects_oversized_headers_before_pixel_decoding() {
         for (width, height, expected) in [

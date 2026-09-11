@@ -121,11 +121,13 @@ pub fn read_selected_bytes(
             .checked_add(u32::try_from(character.widths.len())?)
             .context("frame count overflow")?;
         ensure!(
-            character.metadata.version == HACKABLE_RHS_CACHE_VERSION
+            matches!(character.metadata.version, 2 | HACKABLE_RHS_CACHE_VERSION)
                 && character.metadata.frames.is_empty()
                 && character.metadata.sources.is_empty(),
             "invalid family metadata"
         );
+        validate_cache_metadata(&character.name, &character.metadata, character.widths.len())
+            .map_err(anyhow::Error::msg)?;
         ensure!(
             rhs_files
                 .insert(character.name.clone(), rhs(character))
@@ -142,6 +144,7 @@ pub fn read_selected_bytes(
     family.bank.materialize_vq_chunks(&rhs_files)?;
     let mut result = Vec::new();
     for mut character in family.characters {
+        character.metadata.version = HACKABLE_RHS_CACHE_VERSION;
         if selected.is_some_and(|names| !names.contains(&character.name)) {
             continue;
         }
@@ -459,4 +462,88 @@ pub fn encode_custom_sprite_family(sources: &[PathBuf], destination: &Path) -> R
         std::fs::metadata(destination)?.len()
     );
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn family(version: u32, frame_id: u32) -> Family {
+        let script = SpriteScript {
+            action_id: 3,
+            frame_ids: vec![frame_id],
+            delays: vec![1],
+            distances: vec![0],
+            sound_ids: vec![0],
+            offsets: vec![SpriteFrameOffset::new(0.0, 0.0)],
+            ..Default::default()
+        };
+        Family {
+            characters: vec![Character {
+                name: "test".into(),
+                first: 0,
+                widths: vec![1],
+                metadata: HackableRhsCache {
+                    version,
+                    manifest_hash: [0; 32],
+                    sources: vec![],
+                    frames: vec![],
+                    profiles: vec![HackableRhsCacheProfile {
+                        name: "test".into(),
+                        info: SpriteInfo {
+                            conversion: Arc::new(hackable_animation_conversion(
+                                std::slice::from_ref(&script),
+                            )),
+                            scripts: Arc::new(vec![script]),
+                            size: SpriteSize::new(1.0, 1.0),
+                            center: SpriteAnchor::new(0.0, 0.0),
+                        },
+                    }],
+                },
+            }],
+            bank: ShippingSpriteBank {
+                signature: 0,
+                sprite_count: 1,
+                dictionaries: vec![FrameDictionary::from_raw(1, vec![0; 4])],
+                sprites: vec![(
+                    0,
+                    ShippingSprite {
+                        width: 4,
+                        height: 1,
+                        dictionary_index: 0,
+                        packed_data: Arc::new(vec![0]),
+                        raster: None,
+                    },
+                )],
+                vq_chunks: vec![],
+                rle_jxl_chunks: vec![],
+            },
+        }
+    }
+
+    fn encoded(family: &Family) -> Vec<u8> {
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend(bitcode::encode(family));
+        zstd::stream::encode_all(bytes.as_slice(), 1).unwrap()
+    }
+
+    #[test]
+    fn persistent_v2_and_current_families_preserve_authored_rows() {
+        for version in [2, HACKABLE_RHS_CACHE_VERSION] {
+            let result = read_selected_bytes(&encoded(&family(version, 0)), None).unwrap();
+            assert_eq!(result[0].1.version, HACKABLE_RHS_CACHE_VERSION);
+            assert_eq!(result[0].1.frames[0].packed_data, [0, 0, 0]);
+            assert_eq!(result[0].1.profiles[0].info.scripts[0].frame_ids, [0]);
+        }
+    }
+
+    #[test]
+    fn invalid_local_ids_are_rejected_before_family_remapping_and_decoding() {
+        let error = read_selected_bytes(
+            &encoded(&family(HACKABLE_RHS_CACHE_VERSION, u32::MAX)),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("missing local frame"), "{error}");
+    }
 }

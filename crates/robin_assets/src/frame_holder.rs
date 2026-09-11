@@ -192,6 +192,31 @@ pub struct RuntimeSprite {
     pub rgba_data: Option<Vec<u8>>,
 }
 
+impl RuntimeSprite {
+    /// Validate owned custom payloads before publishing them to a live bank.
+    /// Unlike original bank spans, these have no padding/trailing RLE words.
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(self.width > 0 && self.height > 0, "empty runtime sprite");
+        let pixels = crate::packed_sprite::pixel_count(self.width.into(), self.height.into())?;
+        let consumed = crate::packed_sprite::validate_rle(
+            &self.packed_data,
+            self.width.into(),
+            self.height.into(),
+        )?;
+        anyhow::ensure!(
+            consumed == self.packed_data.len(),
+            "trailing runtime RLE words"
+        );
+        if let Some(rgba) = &self.rgba_data {
+            anyhow::ensure!(
+                rgba.len() == pixels * 4,
+                "runtime RGBA length does not match dimensions"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Sentinel: no dictionary (run-length encoded sprite).
 pub const UNMAPPED_DICT: u16 = 0xFFFF;
 

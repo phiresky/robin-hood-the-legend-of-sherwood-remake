@@ -5,8 +5,8 @@ use super::localization::read_optional_json;
 use robin_assets::custom_sprites::HackableRhsCacheProfile;
 use robin_assets::custom_sprites::{
     HACKABLE_RHS_CACHE_VERSION, HackableRhsCache, HackableRhsManifest,
-    build_hackable_cache_with_reader, decode_png_rgba_bytes, family, hackable_animation_conversion,
-    hackable_manifest_hash, hackable_source_stamp, shipping,
+    build_hackable_cache_with_reader, decode_png_rgba_bytes, family, hackable_manifest_hash,
+    hackable_source_stamp, shipping,
 };
 use robin_assets::frame_holder as assets_frame_holder;
 #[cfg(test)]
@@ -149,7 +149,7 @@ fn read_hackable_cache(
             return None;
         }
     };
-    let mut cache: HackableRhsCache = match bitcode::decode(&encoded) {
+    let cache: HackableRhsCache = match bitcode::decode(&encoded) {
         Ok(cache) => cache,
         Err(error) => {
             tracing::warn!("Failed to decode {}: {error}", cache_path.display());
@@ -161,22 +161,8 @@ fn read_hackable_cache(
     }
     match cache.version {
         HACKABLE_RHS_CACHE_VERSION => Some(cache),
-        1 => {
-            // Version 1 eagerly installed walking fallbacks while reading
-            // rows. A later explicit RunningUpright row therefore could not
-            // replace the fallback and resolved to WalkingUpright. Rebuild
-            // only the small action tables; packed pixels remain valid.
-            for profile in &mut cache.profiles {
-                profile.info.conversion = std::sync::Arc::new(hackable_animation_conversion(
-                    profile.info.scripts.as_ref(),
-                ));
-            }
-            cache.version = HACKABLE_RHS_CACHE_VERSION;
-            if let Err(error) = write_hackable_cache(root, &cache) {
-                tracing::warn!("Failed to upgrade {}: {error}", cache_path.display());
-            }
-            Some(cache)
-        }
+        // Earlier caches discarded authored directions. Rebuild from the
+        // manifest: the cached row order cannot recover that information.
         version => {
             tracing::warn!(
                 "Ignoring {} with unsupported cache version {version}",
@@ -365,8 +351,10 @@ fn prepare_overlay_characters(
             }
             let manifest: HackableRhsManifest = serde_json::from_slice(&manifest_bytes)
                 .map_err(|error| ResourcePreparationError::malformed(&manifest_path, error))?;
-            let cache =
-                build_hackable_cache_with_reader(manifest_hash, manifest, |relative, legacy| {
+            let cache = build_hackable_cache_with_reader(
+                manifest_hash,
+                manifest,
+                |relative, legacy| {
                     let frame_path = format!("{path}/{relative}");
                     let bytes = required_overlay_bytes(files, &source, &frame_path)?;
                     let (width, height, rgba) = decode_png_rgba_bytes(&bytes, &frame_path)
@@ -384,7 +372,9 @@ fn prepare_overlay_characters(
                         ),
                         stamp,
                     ))
-                })?;
+                },
+                |error| ResourcePreparationError::malformed(&manifest_path, error),
+            )?;
             if let Some(root) = cache_root
                 && let Err(error) = write_hackable_cache(&root, &cache)
             {
@@ -624,7 +614,24 @@ mod tests {
             }],
         };
         let prepared = PreparedCustomSprites {
-            batches: vec![("invalid.rhs.d".into(), cache)],
+            batches: vec![
+                (
+                    "valid.rhs.d".into(),
+                    HackableRhsCache {
+                        version: HACKABLE_RHS_CACHE_VERSION,
+                        manifest_hash: [0; 32],
+                        sources: vec![],
+                        profiles: vec![],
+                        frames: vec![assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                            1,
+                            1,
+                            &[0, 0, 0, 255],
+                            false,
+                        )],
+                    },
+                ),
+                ("invalid.rhs.d".into(), cache),
+            ],
         };
         let mut holder = assets_frame_holder::FrameHolder::new();
         let mut scriptor = robin_engine::sprite_script::SpriteScriptor::new();
@@ -728,6 +735,61 @@ mod tests {
     }
 
     #[test]
+    fn malformed_disposable_payload_rebuilds_and_malformed_handoff_is_atomic() {
+        let directory = tempfile::tempdir().unwrap();
+        let character = directory.path().join("Data/Characters/Knight.rhs.d");
+        std::fs::create_dir_all(&character).unwrap();
+        let manifest = br#"{"pixel_format":"rgba","profiles":[]}"#;
+        std::fs::write(character.join("manifest.json"), manifest).unwrap();
+        let make_cache = |corrupt| {
+            let mut frame = assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
+                1,
+                1,
+                &[0, 0, 0, 255],
+                false,
+            );
+            if corrupt {
+                frame.rgba_data.as_mut().unwrap().pop();
+            }
+            HackableRhsCache {
+                version: HACKABLE_RHS_CACHE_VERSION,
+                manifest_hash: hackable_manifest_hash(manifest),
+                sources: vec![],
+                profiles: vec![],
+                frames: vec![frame],
+            }
+        };
+        write_hackable_cache(&character, &make_cache(true)).unwrap();
+        let files = isolated_files();
+        assert_eq!(
+            files.add_overlay_path(directory.path().to_str().unwrap()),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
+        let prepared = prepare_overlay_characters(&files, None).unwrap();
+        assert!(
+            prepared.batches[0].1.frames.is_empty(),
+            "invalid cached frame must be rebuilt from empty source manifest"
+        );
+        assert!(
+            read_hackable_cache(&character, hackable_manifest_hash(manifest))
+                .unwrap()
+                .frames
+                .is_empty()
+        );
+
+        let prepared = PreparedCustomSprites {
+            batches: vec![
+                ("valid".into(), make_cache(false)),
+                ("invalid".into(), make_cache(true)),
+            ],
+        };
+        let mut frames = assets_frame_holder::FrameHolder::new();
+        let mut scriptor = robin_engine::sprite_script::SpriteScriptor::new();
+        assert!(prepared.install(&mut frames, &mut scriptor).is_err());
+        assert_eq!(frames.num_sprites(), 0);
+    }
+
+    #[test]
     fn hackable_sprite_cache_round_trips_and_invalidates_changed_sources() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("frame.png"), b"source").unwrap();
@@ -756,7 +818,7 @@ mod tests {
     }
 
     #[test]
-    fn version_one_hackable_cache_repairs_walking_over_run_alias() {
+    fn earlier_hackable_cache_versions_require_rebuilding_authored_directions() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("frame.png"), b"source").unwrap();
         let manifest_hash = hackable_manifest_hash(b"manifest");
@@ -790,9 +852,10 @@ mod tests {
         };
         write_hackable_cache(directory.path(), &cache).unwrap();
 
-        let upgraded = read_hackable_cache(directory.path(), manifest_hash).unwrap();
-        assert_eq!(upgraded.version, HACKABLE_RHS_CACHE_VERSION);
-        assert_eq!(upgraded.profiles[0].info.conversion[6], 0);
-        assert_eq!(upgraded.profiles[0].info.conversion[10], 1);
+        assert!(read_hackable_cache(directory.path(), manifest_hash).is_none());
+        let mut cache = cache;
+        cache.version = 2;
+        write_hackable_cache(directory.path(), &cache).unwrap();
+        assert!(read_hackable_cache(directory.path(), manifest_hash).is_none());
     }
 }
