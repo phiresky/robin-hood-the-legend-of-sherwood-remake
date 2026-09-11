@@ -1701,5 +1701,158 @@ mod tests {
         assert_eq!(decoded.affects_soldiers, point.affects_soldiers);
         assert_eq!(decoded.affects_civilians, point.affects_civilians);
         assert_eq!(decoded.affects_animals, point.affects_animals);
+
+        // Continue the decoded non-finite point through the real object preflight:
+        // dormant metadata must neither reject the import nor enter its snapshot.
+        use crate::legacy_save::payload_base::*;
+        let p2 = LegacyPoint2 { x: 0.0, y: 0.0 };
+        let p3 = LegacyPoint3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let bounds = LegacyBoundingBox2 {
+            top_left: p2,
+            bottom_right: p2,
+            bounds_are_set: false,
+        };
+        let mut saved = LegacyObjectPayload {
+            abi_profile: crate::legacy_save::LegacySaveAbiProfile::PortLinuxI386V48,
+            start_offset: 0,
+            terminate: false,
+            register_number: 0,
+            quantity: 1,
+            animation: OrderType::WaitingUpright as u32,
+            object_type: 3, // Original Ale ordinal.
+            associated_action: Action::NoAction as u32,
+            repulsive_point: decoded,
+            belongs_to_beggar: false,
+            taken: false,
+            element: LegacyElementPayloadBase {
+                creation_order: 17,
+                outline_colors: [0; 5],
+                current_outline: 0,
+                outline_width: 0,
+                custom_minimap_dot: 0,
+                active: true,
+                position_map_delayed: false,
+                position_delayed: false,
+                class: crate::legacy_save::elements::LegacyElementClass::Ale,
+                delayed_map_position: p2,
+                delayed_position: p3,
+                in_honolulu: false,
+                index_in_elements_list: 0,
+                blipped: false,
+                unreachable: false,
+                sprite: LegacySpritePayload {
+                    current_row: 0,
+                    current_frame: 0,
+                    frame_count: 1,
+                    current_height: 0,
+                    current_width: 0,
+                    last_action: Action::NoAction as u32,
+                    already_decompressed: false,
+                    alternate_profile: false,
+                    masked: false,
+                    display_order: 0.0,
+                    legacy_display_order_dummy: 0,
+                    behind_display_order_reference: false,
+                    display_order_reference: LegacyElementRef(None),
+                    action_done_frame: 0,
+                    action_done_counter: 0,
+                    frame_count_down: 0,
+                    last_sound_id: 0,
+                    last_processed_order_id: 0,
+                    bounding_box: bounds,
+                    animation_replacements: Vec::new(),
+                    position: LegacyPositionPayload {
+                        computed_position: 0,
+                        computed_increment: 0,
+                        material: 0,
+                        posture: 0,
+                        old_posture: 0,
+                        direction: 0,
+                        direction_goal: 0,
+                        slow_turn_count: 0,
+                        layer: 0,
+                        layer_goal: 0,
+                        tolerance: 0.0,
+                        directional_tolerance: false,
+                        accumulate_movement_map: false,
+                        anti_collision_on: true,
+                        goal_next_valid: false,
+                        deviated: false,
+                        direction_count: 1,
+                        door_direction: false,
+                        reversed_movement: false,
+                        blocked_count: 0,
+                        radius: 5.0,
+                        use_emergency_lying_box: false,
+                        sector: LegacySectorRef(None),
+                        sector_goal: LegacySectorRef(None),
+                        door: LegacySignedIndexRef(None),
+                        obstacle: LegacySignedIndexRef(None),
+                        target_element: LegacyElementRef(None),
+                        position: p3,
+                        map: p2,
+                        sprite: p2,
+                        old_position: p3,
+                        old_map: p2,
+                        old_sprite: p2,
+                        goal_map: p2,
+                        goal_next_map: p2,
+                        goal: p3,
+                        increment: p3,
+                        increment_map: p2,
+                        accumulated_movement_map: p2,
+                        forecasted_movement: p3,
+                        move_box_map: bounds,
+                        blocked_box: bounds,
+                    },
+                },
+            },
+            end_offset: expected_len,
+        };
+        let fixups = LegacyEntityFixups {
+            by_creation_order: Default::default(),
+            by_saved_slot: Vec::new(),
+            creation_order_by_entity: Default::default(),
+            mobile_by_creation_order: Default::default(),
+            mobile_owner_by_creation_order: Default::default(),
+        };
+        let mut baseline = ObjectData::default();
+        apply_object(
+            &mut baseline,
+            preflight_object(&saved, 17, &fixups).unwrap(),
+        );
+        saved.repulsive_point.id = 123;
+        saved.repulsive_point.concave = !saved.repulsive_point.concave;
+        saved.repulsive_point.affects_pcs = !saved.repulsive_point.affects_pcs;
+        saved.repulsive_point.affects_soldiers = !saved.repulsive_point.affects_soldiers;
+        saved.repulsive_point.affects_civilians = !saved.repulsive_point.affects_civilians;
+        saved.repulsive_point.affects_animals = !saved.repulsive_point.affects_animals;
+        saved.repulsive_point.radius = f32::from_bits(0xffc0_5678);
+        let mut varied = ObjectData::default();
+        apply_object(&mut varied, preflight_object(&saved, 17, &fixups).unwrap());
+        assert_eq!(bitcode::encode(&baseline), bitcode::encode(&varied));
+        for object in [baseline, varied] {
+            let mut entity = Entity::Bonus(crate::element::ElementBonus {
+                element: crate::element::ElementData::default(),
+                object,
+            });
+            let live_position = crate::coordinates::MapPoint::new(12.0, 34.0);
+            entity.element_data_mut().set_position_map(live_position);
+            assert_eq!(
+                crate::engine::anti_collision::entity_repulsive_point(
+                    &entity,
+                    &ProfileManager::default()
+                ),
+                Some(crate::repulsive::RepulsivePoint::new(
+                    live_position,
+                    5.0,
+                    10.0
+                ))
+            );
+        }
     }
 }
