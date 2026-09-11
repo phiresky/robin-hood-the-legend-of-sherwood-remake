@@ -1255,7 +1255,7 @@ impl EnemyAi {
         // then appends unconditionally. The shipped release can therefore
         // retain a second Friend entry when alertable-soldier collection
         // already registered this officer.
-        self.base.outbox.actor.append_detectables.push((
+        self.base.outbox.actor.append_detectable((
             crate::element::EntityId::Soldier(crate::entity_id::SoldierId(officer_handle)),
             crate::element::DetectableType::Friend,
         ));
@@ -1304,8 +1304,7 @@ impl EnemyAi {
         self.base
             .outbox
             .actor
-            .delete_detectables
-            .push(crate::element::DetectableType::Friend);
+            .delete_detectable_type(crate::element::DetectableType::Friend);
         // Remember the alert point; clear body unless this is a
         // body-alert.
         self.base.alert_soldiers_point = position;
@@ -1346,7 +1345,7 @@ impl EnemyAi {
             })
         });
         if let Some(h) = patrol_head {
-            self.base.outbox.actor.add_detectables.push((
+            self.base.outbox.actor.add_detectable((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
                 crate::element::DetectableType::Friend,
             ));
@@ -1370,7 +1369,7 @@ impl EnemyAi {
             if !allowed {
                 continue;
             }
-            self.base.outbox.actor.add_detectables.push((
+            self.base.outbox.actor.add_detectable((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(cs.handle)),
                 crate::element::DetectableType::Friend,
             ));

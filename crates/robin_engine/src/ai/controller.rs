@@ -1680,23 +1680,17 @@ impl AiController {
     ///   second delete (belt-and-braces).
     ///
     /// Detectable effects are drained after the synchronous AI call returns.
-    /// Every invocation therefore removes an earlier queued MissedFriend add:
-    /// Original executes each clear/add pair immediately, so consecutive calls
+    /// The ordered mutation list retains each clear/add pair, so consecutive calls
     /// have last-call-wins semantics (`A -> null` leaves none, `A -> B` leaves
     /// only B).
     pub fn set_checkpoint_charly(&mut self, target: Option<AiEntityHandle>) {
         use crate::element::DetectableType;
         self.outbox
             .actor
-            .add_detectables
-            .retain(|(_, kind)| *kind != DetectableType::MissedFriend);
-        self.outbox
-            .actor
-            .delete_detectables
-            .push(DetectableType::MissedFriend);
+            .delete_detectable_type(DetectableType::MissedFriend);
         self.checkpoint_charly = target;
         if let Some(target) = target {
-            self.outbox.actor.add_detectables.push((
+            self.outbox.actor.add_detectable((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target.get())),
                 DetectableType::MissedFriend,
             ));
@@ -1704,8 +1698,7 @@ impl AiController {
             self.sorrow_level = 0;
             self.outbox
                 .actor
-                .delete_detectables
-                .push(DetectableType::MissedFriend);
+                .delete_detectable_type(DetectableType::MissedFriend);
         }
     }
 
@@ -1783,8 +1776,7 @@ impl AiController {
                     });
                 self.outbox
                     .actor
-                    .delete_detectable_entity
-                    .push((body_id, DetectableType::Body));
+                    .delete_detectable_entity((body_id, DetectableType::Body));
                 if debug {
                     let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
                     eprintln!(
@@ -1806,10 +1798,10 @@ impl AiController {
         if debug {
             let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
             eprintln!(
-                "CONSIDERREPORT {{\"stage\":\"merge_end\",\"frame\":{frame},\"owner\":{},\"known_after\":{:?},\"queued_deletes\":{:?}}}",
+                "CONSIDERREPORT {{\"stage\":\"merge_end\",\"frame\":{frame},\"owner\":{},\"known_after\":{:?},\"queued_mutations\":{:?}}}",
                 self.me,
                 self.my_reconnaissance_report.seen_bodies,
-                self.outbox.actor.delete_detectable_entity,
+                self.outbox.actor.detectable_mutations,
             );
         }
 
@@ -1820,7 +1812,7 @@ impl AiController {
         {
             self.my_reconnaissance_report.charly = other.charly;
             let charly = charly.get();
-            self.outbox.actor.append_detectables.push((
+            self.outbox.actor.append_detectable((
                 EntityId::Soldier(crate::entity_id::SoldierId(charly)),
                 DetectableType::MissedFriend,
             ));
@@ -6095,17 +6087,36 @@ mod tests {
         let mut cleared = AiController::new(17);
         cleared.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
         cleared.set_checkpoint_charly(None);
-        assert!(cleared.outbox.actor.add_detectables.is_empty());
+        assert_eq!(
+            cleared.outbox.actor.detectable_mutations,
+            vec![
+                DetectableMutation::DeleteType(DetectableType::MissedFriend),
+                DetectableMutation::Add(
+                    EntityId::Soldier(SoldierId(10)),
+                    DetectableType::MissedFriend
+                ),
+                DetectableMutation::DeleteType(DetectableType::MissedFriend),
+                DetectableMutation::DeleteType(DetectableType::MissedFriend),
+            ]
+        );
 
         let mut replaced = AiController::new(17);
         replaced.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
         replaced.set_checkpoint_charly(Some(AiEntityHandle::new(11)));
         assert_eq!(
-            replaced.outbox.actor.add_detectables,
-            vec![(
-                EntityId::Soldier(SoldierId(11)),
-                DetectableType::MissedFriend,
-            )]
+            replaced.outbox.actor.detectable_mutations,
+            vec![
+                DetectableMutation::DeleteType(DetectableType::MissedFriend),
+                DetectableMutation::Add(
+                    EntityId::Soldier(SoldierId(10)),
+                    DetectableType::MissedFriend
+                ),
+                DetectableMutation::DeleteType(DetectableType::MissedFriend),
+                DetectableMutation::Add(
+                    EntityId::Soldier(SoldierId(11)),
+                    DetectableType::MissedFriend
+                ),
+            ]
         );
     }
 
@@ -6126,9 +6137,9 @@ mod tests {
             &crate::ai_entity_view::AiEntityViewMap::new(),
         );
 
-        assert!(ai.outbox.actor.add_detectables.is_empty());
+        assert!(ai.outbox.actor.added_detectables().is_empty());
         assert_eq!(
-            ai.outbox.actor.append_detectables,
+            ai.outbox.actor.appended_detectables(),
             vec![(
                 EntityId::Soldier(SoldierId(91)),
                 DetectableType::MissedFriend,

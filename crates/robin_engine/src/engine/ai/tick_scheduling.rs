@@ -1261,22 +1261,19 @@ impl EngineInner {
             self.delete_beggar_detectable_for_all_npc(beggar_id);
         }
 
-        // Process pending detectable modifications.
-        if !effects.add_detectables.is_empty()
-            || !effects.append_detectables.is_empty()
-            || !effects.delete_detectables.is_empty()
-            || !effects.delete_detectable_entities.is_empty()
-        {
-            let debug_consider_report = crate::ai::consider_report_debug_matches(
-                self.control.frame_counter,
-                npc_id.index(),
-            );
-            if debug_consider_report {
+        // Apply detectable mutations in statement order without introducing a
+        // new owner/reentrant barrier. Classification is read before borrowing
+        // the owner mutably; these operations only modify its detectable lists.
+        if !effects.detectable_mutations.is_empty() {
+            use crate::ai::DetectableMutation;
+            use crate::element::DetectableType;
+            if crate::ai::consider_report_debug_matches(self.control.frame_counter, npc_id.index())
+            {
                 eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_entity_deletes\":{:?}}}",
+                    "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_mutations\":{:?}}}",
                     self.control.frame_counter,
                     npc_id.index(),
-                    effects.delete_detectable_entities,
+                    effects.detectable_mutations,
                 );
             }
             let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
@@ -1302,13 +1299,11 @@ impl EngineInner {
                     .iter()
                     .flatten()
                     .filter_map(|detectable| detectable.element)
-                    .chain(effects.add_detectables.iter().map(|(target, _)| *target))
-                    .chain(effects.append_detectables.iter().map(|(target, _)| *target))
                     .chain(
                         effects
-                            .delete_detectable_entities
+                            .detectable_mutations
                             .iter()
-                            .map(|(target, _)| *target),
+                            .filter_map(|mutation| mutation.target()),
                     )
                     .collect::<std::collections::BTreeSet<_>>();
                 target_ids
@@ -1319,46 +1314,40 @@ impl EngineInner {
                         ) {
                             return None;
                         }
-                        let target_creation_order = self.original_static_creation_order(target_id);
+                        let creation_order = self.original_static_creation_order(target_id);
                         detection::detectable_mutation_debug_target_matches(
                             target_id.index(),
-                            target_creation_order,
+                            creation_order,
                         )
-                        .then_some((target_id, target_creation_order))
+                        .then_some((target_id, creation_order))
                     })
                     .collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
-            // Resolve target classification for each ENEMY-arm push
-            // so the `add_detectable` filter can run.  Resolved
-            // up-front to avoid borrowing `self.world.entities` mutably
-            // while we read target metadata from it.
-            use crate::element::DetectableType;
-            let enemy_target_info: Vec<Option<(bool, bool, crate::element_kinds::Camp, bool)>> =
-                effects
-                    .add_detectables
-                    .iter()
-                    .map(|(eid, dt)| {
-                        if *dt != DetectableType::Enemy {
-                            return None;
-                        }
-                        let target = self.get_entity(*eid).unwrap_or_else(|| {
-                            panic!(
-                                "pending-drain owner {} detectable target {} disappeared",
-                                npc_id.index(),
-                                eid.index()
-                            )
-                        });
-                        Some((
-                            target.is_pc(),
-                            target.is_soldier(),
-                            target.camp(),
-                            target.is_human(),
-                        ))
-                    })
-                    .collect();
-
+            let enemy_target_info = effects
+                .detectable_mutations
+                .iter()
+                .map(|mutation| {
+                    let DetectableMutation::Add(target_id, DetectableType::Enemy) = *mutation
+                    else {
+                        return None;
+                    };
+                    let target = self.get_entity(target_id).unwrap_or_else(|| {
+                        panic!(
+                            "pending-drain owner {} detectable target {} disappeared",
+                            npc_id.index(),
+                            target_id.index()
+                        )
+                    });
+                    Some((
+                        target.is_pc(),
+                        target.is_soldier(),
+                        target.camp(),
+                        target.is_human(),
+                    ))
+                })
+                .collect::<Vec<_>>();
             let (npc_camp, npc_uses_enemy_combat_ai) = {
                 let owner = self.world.entities.get(npc_id).unwrap_or_else(|| {
                     panic!("pending-drain owner {} disappeared", npc_id.index())
@@ -1373,93 +1362,83 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!("pending-drain owner {} lost AI actor data", npc_id.index())
                 });
-            // Delete all detectables of specified types.
-            for det_type in &effects.delete_detectables {
-                let idx = *det_type as usize;
+            for (mutation, target_info) in
+                effects.detectable_mutations.iter().zip(enemy_target_info)
+            {
+                let kind = mutation.detectable_type();
+                let idx = kind as usize;
                 assert!(
                     idx < npc.detectable_lists.len(),
                     "pending-drain owner {} has no {:?} detectable list",
                     npc_id.index(),
-                    det_type
+                    kind
                 );
-                let (mutation_length_before, presence_before) = if mutation_targets.is_empty() {
-                    (0, Vec::new())
-                } else {
-                    (
-                        npc.detectable_lists[idx].len(),
-                        mutation_targets
-                            .iter()
-                            .map(|(target_id, target_creation_order)| {
-                                (
-                                    *target_id,
-                                    *target_creation_order,
-                                    npc.detectable_lists[idx]
-                                        .iter()
-                                        .any(|detectable| detectable.element == Some(*target_id)),
-                                )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                };
-                npc.detectable_lists[idx].clear();
-                for (target_id, target_creation_order, present_before) in presence_before {
-                    if present_before {
-                        detection::debug_detectable_mutation_event(
-                            "delete_all",
-                            "pending_effects.delete_detectables",
-                            self.control.frame_counter,
-                            npc_id.index(),
-                            mutation_owner_creation_order,
-                            idx,
-                            target_id.index(),
-                            target_creation_order,
-                            true,
-                            false,
-                            mutation_length_before,
-                            0,
-                        );
+                if matches!(mutation, DetectableMutation::Add(_, DetectableType::Enemy)) {
+                    let (pc, soldier, camp, human) = target_info
+                        .expect("Enemy add target was classified before borrowing the owner");
+                    if !human
+                        || !crate::ai_detectable_filter::should_add_enemy_detectable_with(
+                            &self.mission_domain.diplomacy,
+                            npc_camp,
+                            npc_uses_enemy_combat_ai,
+                            pc,
+                            soldier,
+                            camp,
+                        )
+                    {
+                        continue;
                     }
                 }
-            }
-            // Per-entity deletes: `delete_detectable(entity, type)`
-            // drops a single (element, type) entry, leaving
-            // siblings of the same type alone.
-            for (entity_id, det_type) in &effects.delete_detectable_entities {
-                let idx = *det_type as usize;
-                assert!(
-                    idx < npc.detectable_lists.len(),
-                    "pending-drain owner {} has no {:?} detectable list",
-                    npc_id.index(),
-                    det_type
-                );
-                let mutation_target_creation_order = mutation_targets
+                let before = npc.detectable_lists[idx].len();
+                let tracked = mutation_targets
                     .iter()
-                    .find(|(target_id, _)| target_id == entity_id)
-                    .map(|(_, target_creation_order)| *target_creation_order);
-                let mutation_before = mutation_target_creation_order.map(|_| {
-                    (
-                        npc.detectable_lists[idx].len(),
-                        npc.detectable_lists[idx]
-                            .iter()
-                            .any(|detectable| detectable.element == Some(*entity_id)),
-                    )
-                });
-                npc.delete_detectable(*entity_id, *det_type);
-                if let (Some(target_creation_order), Some((before, present_before))) =
-                    (mutation_target_creation_order, mutation_before)
-                {
+                    .filter(|(target, _)| {
+                        mutation.target().is_none_or(|selected| selected == *target)
+                    })
+                    .map(|(target, creation_order)| {
+                        (
+                            *target,
+                            *creation_order,
+                            npc.detectable_lists[idx]
+                                .iter()
+                                .any(|entry| entry.element == Some(*target)),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let (event, source) = match *mutation {
+                    DetectableMutation::Add(target, _) => {
+                        append_detectable(&mut npc.detectable_lists[idx], target, kind, false);
+                        ("add", "pending_effects.add_detectables")
+                    }
+                    DetectableMutation::Append(target, _) => {
+                        append_detectable(&mut npc.detectable_lists[idx], target, kind, true);
+                        ("append", "pending_effects.append_detectables")
+                    }
+                    DetectableMutation::DeleteType(_) => {
+                        npc.detectable_lists[idx].clear();
+                        ("delete_all", "pending_effects.delete_detectables")
+                    }
+                    DetectableMutation::DeleteEntity(target, _) => {
+                        npc.delete_detectable(target, kind);
+                        ("delete", "pending_effects.delete_detectable_entities")
+                    }
+                };
+                for (target, creation_order, present_before) in tracked {
+                    if matches!(mutation, DetectableMutation::DeleteType(_)) && !present_before {
+                        continue;
+                    }
                     let present_after = npc.detectable_lists[idx]
                         .iter()
-                        .any(|detectable| detectable.element == Some(*entity_id));
+                        .any(|entry| entry.element == Some(target));
                     detection::debug_detectable_mutation_event(
-                        "delete",
-                        "pending_effects.delete_detectable_entities",
+                        event,
+                        source,
                         self.control.frame_counter,
                         npc_id.index(),
                         mutation_owner_creation_order,
                         idx,
-                        entity_id.index(),
-                        target_creation_order,
+                        target.index(),
+                        creation_order,
                         present_before,
                         present_after,
                         before,
@@ -1467,130 +1446,18 @@ impl EngineInner {
                     );
                 }
             }
-            if debug_consider_report {
+            if crate::ai::consider_report_debug_matches(self.control.frame_counter, npc_id.index())
+            {
                 let body_ids = npc.detectable_lists[DetectableType::Body as usize]
                     .iter()
                     .map(|detectable| detectable.element.map(EntityId::index))
                     .collect::<Vec<_>>();
                 eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"drain_after_delete\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
+                    "CONSIDERREPORT {{\"stage\":\"drain_end\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
                     self.control.frame_counter,
                     npc_id.index(),
-                    body_ids,
+                    body_ids
                 );
-            }
-            // Add new detectables.
-            for ((entity_id, det_type), tgt) in
-                effects.add_detectables.iter().zip(enemy_target_info.iter())
-            {
-                let idx = *det_type as usize;
-                assert!(
-                    idx < npc.detectable_lists.len(),
-                    "pending-drain owner {} has no {:?} detectable list",
-                    npc_id.index(),
-                    det_type
-                );
-                // ENEMY-arm filter — drop pushes that fail the
-                // per-NPC camp/rank arm so a Royalist soldier
-                // never tracks a PC and a Lacklandist civilian
-                // never tracks a Royalist soldier.
-                if *det_type == DetectableType::Enemy {
-                    let Some((tgt_pc, tgt_soldier, tgt_camp, tgt_human)) = *tgt else {
-                        continue;
-                    };
-                    if !tgt_human {
-                        continue;
-                    }
-                    if !crate::ai_detectable_filter::should_add_enemy_detectable_with(
-                        &self.mission_domain.diplomacy,
-                        npc_camp,
-                        npc_uses_enemy_combat_ai,
-                        tgt_pc,
-                        tgt_soldier,
-                        tgt_camp,
-                    ) {
-                        continue;
-                    }
-                }
-                let mutation_target_creation_order = mutation_targets
-                    .iter()
-                    .find(|(target_id, _)| target_id == entity_id)
-                    .map(|(_, target_creation_order)| *target_creation_order);
-                let mutation_before = mutation_target_creation_order.map(|_| {
-                    (
-                        npc.detectable_lists[idx].len(),
-                        npc.detectable_lists[idx]
-                            .iter()
-                            .any(|detectable| detectable.element == Some(*entity_id)),
-                    )
-                });
-                append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, false);
-                if let (Some(target_creation_order), Some((before, present_before))) =
-                    (mutation_target_creation_order, mutation_before)
-                {
-                    let present_after = npc.detectable_lists[idx]
-                        .iter()
-                        .any(|detectable| detectable.element == Some(*entity_id));
-                    detection::debug_detectable_mutation_event(
-                        "add",
-                        "pending_effects.add_detectables",
-                        self.control.frame_counter,
-                        npc_id.index(),
-                        mutation_owner_creation_order,
-                        idx,
-                        entity_id.index(),
-                        target_creation_order,
-                        present_before,
-                        present_after,
-                        before,
-                        npc.detectable_lists[idx].len(),
-                    );
-                }
-            }
-            // Preserve the shipped game's selected direct detectable additions:
-            // append even when the entry is already present.
-            for (entity_id, det_type) in &effects.append_detectables {
-                let idx = *det_type as usize;
-                assert!(
-                    idx < npc.detectable_lists.len(),
-                    "pending-drain owner {} has no {:?} detectable list",
-                    npc_id.index(),
-                    det_type
-                );
-                let mutation_target_creation_order = mutation_targets
-                    .iter()
-                    .find(|(target_id, _)| target_id == entity_id)
-                    .map(|(_, target_creation_order)| *target_creation_order);
-                let mutation_before = mutation_target_creation_order.map(|_| {
-                    (
-                        npc.detectable_lists[idx].len(),
-                        npc.detectable_lists[idx]
-                            .iter()
-                            .any(|detectable| detectable.element == Some(*entity_id)),
-                    )
-                });
-                append_detectable(&mut npc.detectable_lists[idx], *entity_id, *det_type, true);
-                if let (Some(target_creation_order), Some((before, present_before))) =
-                    (mutation_target_creation_order, mutation_before)
-                {
-                    let present_after = npc.detectable_lists[idx]
-                        .iter()
-                        .any(|detectable| detectable.element == Some(*entity_id));
-                    detection::debug_detectable_mutation_event(
-                        "append",
-                        "pending_effects.append_detectables",
-                        self.control.frame_counter,
-                        npc_id.index(),
-                        mutation_owner_creation_order,
-                        idx,
-                        entity_id.index(),
-                        target_creation_order,
-                        present_before,
-                        present_after,
-                        before,
-                        npc.detectable_lists[idx].len(),
-                    );
-                }
             }
         }
 

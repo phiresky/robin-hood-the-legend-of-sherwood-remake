@@ -3444,8 +3444,7 @@ impl EnemyAi {
             self.base
                 .outbox
                 .actor
-                .delete_detectables
-                .push(crate::element::DetectableType::Beggar);
+                .delete_detectable_type(crate::element::DetectableType::Beggar);
             self.beggar_to_examine = None;
         }
 
@@ -4469,20 +4468,11 @@ impl EnemyAi {
         // Removing all beggar detectables is synchronous in
         // original game. In particular, selecting the next seek point can return to duty after
         // Area search queued beggars earlier in the same borrowed AI dispatch;
-        // erase those earlier additions before queuing the bucket scrub so
-        // the later outbox drain cannot replay them after the delete.
+        // The ordered mutation list applies those additions before this scrub.
         self.base
             .outbox
             .actor
-            .add_detectables
-            .retain(|(_, detectable_type)| {
-                *detectable_type != crate::element::DetectableType::Beggar
-            });
-        self.base
-            .outbox
-            .actor
-            .delete_detectables
-            .push(crate::element::DetectableType::Beggar);
+            .delete_detectable_type(crate::element::DetectableType::Beggar);
         self.beggar_to_examine = None;
         self.beggar_is_npc = false;
         self.clear_swordstrike_experiences();
@@ -6861,13 +6851,11 @@ mod tests {
         ai.base
             .outbox
             .actor
-            .add_detectables
-            .push((target, DetectableType::Beggar));
+            .add_detectable((target, DetectableType::Beggar));
         ai.base
             .outbox
             .actor
-            .add_detectables
-            .push((target, DetectableType::Enemy));
+            .add_detectable((target, DetectableType::Enemy));
 
         ai.return_to_duty(
             &sim,
@@ -6877,14 +6865,18 @@ mod tests {
         );
 
         assert_eq!(
-            ai.base.outbox.actor.add_detectables,
-            vec![(target, DetectableType::Enemy)]
+            &ai.base.outbox.actor.detectable_mutations[..3],
+            &[
+                crate::ai::DetectableMutation::Add(target, DetectableType::Beggar),
+                crate::ai::DetectableMutation::Add(target, DetectableType::Enemy),
+                crate::ai::DetectableMutation::DeleteType(DetectableType::Beggar),
+            ]
         );
         assert!(
             ai.base
                 .outbox
                 .actor
-                .delete_detectables
+                .deleted_detectable_types()
                 .contains(&DetectableType::Beggar)
         );
     }

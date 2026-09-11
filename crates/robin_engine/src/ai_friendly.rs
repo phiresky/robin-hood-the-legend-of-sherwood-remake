@@ -531,8 +531,7 @@ impl FriendlyAi {
             self.base
                 .outbox
                 .actor
-                .delete_detectables
-                .push(crate::element::DetectableType::Friend);
+                .delete_detectable_type(crate::element::DetectableType::Friend);
         }
         self.set_state(
             AiState::Seeking,
@@ -1346,8 +1345,7 @@ impl FriendlyAi {
                     self.base
                         .outbox
                         .actor
-                        .delete_detectables
-                        .push(crate::element::DetectableType::Friend);
+                        .delete_detectable_type(crate::element::DetectableType::Friend);
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::RequestAlert {
                             target: soldier_handle.get(),
@@ -1963,28 +1961,13 @@ impl FriendlyAi {
     /// Every one of those deletes runs *after* the loop's inline
     /// adding the soldier as a friend detectable
     /// before route validation, so a failed alert always leaves the
-    /// FRIEND bucket empty. Rust defers both halves onto the effect outbox,
-    /// and the drain applies `delete_detectables` (`engine/ai/mod.rs:9045`)
-    /// *before* `append_detectables` (`engine/ai/mod.rs:9221`) — which would
-    /// let this call's own adds outlive the delete that is supposed to wipe
-    /// them. Dropping the still-pending FRIEND appends as the delete is
-    /// recorded reproduces the original game's order exactly: the bucket ends empty
-    /// whether an entry had already been applied or was still queued.
-    ///
-    /// TODO: the general fix is one order-preserving detectable-mutation log
-    /// instead of the four independent add/append/delete vectors; until then
-    /// each add-then-delete call site has to sequence itself like this.
+    /// FRIEND bucket empty. The actor outbox preserves that append/delete order,
+    /// including entries not yet applied at the existing drain boundary.
     fn delete_all_friend_detectables(&mut self) {
         self.base
             .outbox
             .actor
-            .append_detectables
-            .retain(|(_, det_type)| *det_type != crate::element::DetectableType::Friend);
-        self.base
-            .outbox
-            .actor
-            .delete_detectables
-            .push(crate::element::DetectableType::Friend);
+            .delete_detectable_type(crate::element::DetectableType::Friend);
     }
 
     pub(crate) fn alert_soldier(
@@ -2162,11 +2145,11 @@ impl FriendlyAi {
         // present. Keep these calls on the duplicate-preserving lane.
         // Done here (not inline) so the early-return above doesn't
         // add detectables we're about to drop.
-        self.base
-            .outbox
-            .actor
-            .append_detectables
-            .extend(detectables_to_append);
+        self.base.outbox.actor.detectable_mutations.extend(
+            detectables_to_append
+                .into_iter()
+                .map(|(target, kind)| crate::ai::DetectableMutation::Append(target, kind)),
+        );
 
         let Some((target_handle, _, target_pos)) = best else {
             // No candidate found — clear friend list and give up.
@@ -3946,7 +3929,7 @@ mod tests {
                 .as_ref()
                 .expect("friend detectables must precede the Friendly state callback");
             let friends: Vec<_> = effects
-                .append_detectables
+                .appended_detectables()
                 .iter()
                 .filter(|(_, t)| *t == DetectableType::Friend)
                 .map(|(entity, _)| entity.index())
@@ -3989,6 +3972,45 @@ mod tests {
     }
 
     #[test]
+    fn detectable_fifo_stays_inside_existing_state_change_boundaries() {
+        use crate::ai::DetectableMutation::{Append, DeleteType};
+        use crate::element::DetectableType::Friend;
+        let target = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(20));
+        let mut ai = FriendlyAi::new(1);
+        ai.base.outbox.actor.append_detectable((target, Friend));
+        ai.delete_all_friend_detectables();
+        assert!(
+            ai.base.outbox.reentrant.owner_work.is_empty(),
+            "mutation queueing must not introduce owner fixed points"
+        );
+        ai.set_state(AiState::Default, Substate::DefaultOnPost);
+        ai.base.outbox.actor.append_detectable((target, Friend));
+        let [AiOwnerWork::StateChange(change)] = ai.base.outbox.reentrant.owner_work.as_slice()
+        else {
+            panic!("expected only the preexisting state-change boundary");
+        };
+        assert_eq!(
+            change
+                .actor_effects_before_callback
+                .as_ref()
+                .unwrap()
+                .detectable_mutations,
+            vec![Append(target, Friend), DeleteType(Friend)]
+        );
+        assert_eq!(
+            ai.base.outbox.actor.detectable_mutations,
+            vec![Append(target, Friend)],
+            "callback tail must not leak into the prefix"
+        );
+        let restored: FriendlyAi =
+            serde_json::from_str(&serde_json::to_string(&ai).unwrap()).unwrap();
+        assert_eq!(
+            robin_util::state_hash::compute(&restored),
+            robin_util::state_hash::compute(&ai)
+        );
+    }
+
+    #[test]
     fn alert_soldier_second_route_failure_runs_each_caller_tail_once() {
         let sim = crate::sim_rng::test_context();
         for failure in [
@@ -4013,7 +4035,7 @@ mod tests {
                 .base
                 .outbox
                 .actor
-                .delete_detectables
+                .deleted_detectable_types()
                 .iter()
                 .filter(|&&kind| kind == crate::element::DetectableType::Friend)
                 .count();
@@ -4029,8 +4051,8 @@ mod tests {
                     }
                     _ => None,
                 })
-                .flat_map(|effects| effects.delete_detectables.iter())
-                .filter(|&&kind| kind == crate::element::DetectableType::Friend)
+                .flat_map(|effects| effects.deleted_detectable_types().into_iter())
+                .filter(|&kind| kind == crate::element::DetectableType::Friend)
                 .count();
             assert_eq!(live_deletes + callback_prefix_deletes, 1);
             match failure {

@@ -244,13 +244,7 @@ impl EnemyAi {
             self.base
                 .outbox
                 .actor
-                .add_detectables
-                .retain(|(_, detectable_type)| *detectable_type != DetectableType::Beggar);
-            self.base
-                .outbox
-                .actor
-                .delete_detectables
-                .push(DetectableType::Beggar);
+                .delete_detectable_type(DetectableType::Beggar);
             let mut beggars: Vec<_> = ctx
                 .entity_views
                 .iter()
@@ -270,11 +264,13 @@ impl EnemyAi {
                 })
                 .collect();
             beggars.sort_unstable_by_key(|&(creation_order, handle, _)| (creation_order, handle));
-            self.base.outbox.actor.add_detectables.extend(
-                beggars
-                    .into_iter()
-                    .map(|(_, _, entity_id)| (entity_id, DetectableType::Beggar)),
-            );
+            self.base
+                .outbox
+                .actor
+                .detectable_mutations
+                .extend(beggars.into_iter().map(|(_, _, entity_id)| {
+                    crate::ai::DetectableMutation::Add(entity_id, DetectableType::Beggar)
+                }));
             self.beggar_to_examine = None;
         }
 

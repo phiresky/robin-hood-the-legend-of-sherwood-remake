@@ -2988,7 +2988,7 @@ impl EnemyAi {
                 // body as dead/tied and starts a local body search.
                 if !self.examine_other_bodies(ctx, tick) {
                     if view.is_unconscious || view.is_dead {
-                        self.base.outbox.actor.add_detectables.push((
+                        self.base.outbox.actor.add_detectable((
                             ctx.entity_id(body_handle).unwrap_or_else(|| {
                                 panic!("SeekingBody target {body_handle} has no typed entity id")
                             }),
@@ -4045,7 +4045,7 @@ impl EnemyAi {
                 // Add the body to our detection list so we don't
                 // re-react when detecting it later.
                 if let Some(body_handle) = body_handle {
-                    self.base.outbox.actor.add_detectables.push((
+                    self.base.outbox.actor.add_detectable((
                         ctx.entity_id(body_handle).unwrap_or_else(|| {
                             panic!("CallYourTalk2 body {body_handle} has no typed live entity view")
                         }),
@@ -4762,8 +4762,7 @@ impl EnemyAi {
                         self.base
                             .outbox
                             .actor
-                            .delete_detectables
-                            .push(crate::element::DetectableType::Friend);
+                            .delete_detectable_type(crate::element::DetectableType::Friend);
                         self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
                         // Original recursively calls
                         // Think(EVENT_REACHPOINT) here.  Keep that

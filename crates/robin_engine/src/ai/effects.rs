@@ -531,6 +531,48 @@ impl AttentiveModeEffect {
     }
 }
 
+/// One detectable-list operation, applied in statement order at the existing
+/// actor-effect drain boundary. Variant order is part of the native/hash schema.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum DetectableMutation {
+    Add(EntityId, crate::element::DetectableType),
+    /// Retain duplicates present in the original game's direct additions.
+    Append(EntityId, crate::element::DetectableType),
+    DeleteType(crate::element::DetectableType),
+    DeleteEntity(EntityId, crate::element::DetectableType),
+}
+
+impl DetectableMutation {
+    pub(crate) fn target(self) -> Option<EntityId> {
+        match self {
+            Self::Add(target, _) | Self::Append(target, _) | Self::DeleteEntity(target, _) => {
+                Some(target)
+            }
+            Self::DeleteType(_) => None,
+        }
+    }
+
+    pub(crate) fn detectable_type(self) -> crate::element::DetectableType {
+        match self {
+            Self::Add(_, kind)
+            | Self::Append(_, kind)
+            | Self::DeleteEntity(_, kind)
+            | Self::DeleteType(kind) => kind,
+        }
+    }
+}
+
 /// Effects consumed by `EngineInner::drain_pending_for_npc`.
 ///
 /// Fields remain separated where the engine deliberately re-enters AI between
@@ -579,13 +621,7 @@ pub struct AiActorOutbox {
     pub additional_halts: u8,
     pub blink_all_enemies: bool,
     pub enemy_in_house_alert: bool,
-    pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
-    /// Detectable additions that retain an already-present entry.
-    /// Recorded original-game traces can contain these duplicates.
-    #[serde(default)]
-    pub append_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
-    pub delete_detectables: Vec<crate::element::DetectableType>,
-    pub delete_detectable_entity: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub detectable_mutations: Vec<DetectableMutation>,
     pub delete_beggar_for_all_npc: Vec<crate::element::EntityId>,
     pub enter_swordfight: Option<EnterSwordfightRequest>,
     pub enter_swordfight_jump_line: Option<u32>,
@@ -642,6 +678,35 @@ pub struct AiActorOutbox {
 }
 
 impl AiActorOutbox {
+    pub(crate) fn add_detectable(
+        &mut self,
+        (target, kind): (EntityId, crate::element::DetectableType),
+    ) {
+        self.detectable_mutations
+            .push(DetectableMutation::Add(target, kind));
+    }
+
+    pub(crate) fn append_detectable(
+        &mut self,
+        (target, kind): (EntityId, crate::element::DetectableType),
+    ) {
+        self.detectable_mutations
+            .push(DetectableMutation::Append(target, kind));
+    }
+
+    pub(crate) fn delete_detectable_type(&mut self, kind: crate::element::DetectableType) {
+        self.detectable_mutations
+            .push(DetectableMutation::DeleteType(kind));
+    }
+
+    pub(crate) fn delete_detectable_entity(
+        &mut self,
+        (target, kind): (EntityId, crate::element::DetectableType),
+    ) {
+        self.detectable_mutations
+            .push(DetectableMutation::DeleteEntity(target, kind));
+    }
+
     pub(crate) fn queue_unalert_near_charly_seekers(
         &mut self,
         target: CharlySeekerTarget,
@@ -775,10 +840,7 @@ pub(crate) struct AiActorCoreEffects {
     pub refresh_shield: bool,
     pub raise_shield_immediately: bool,
     pub look_sidewards: Option<LookDirection>,
-    pub add_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
-    pub append_detectables: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
-    pub delete_detectables: Vec<crate::element::DetectableType>,
-    pub delete_detectable_entities: Vec<(crate::element::EntityId, crate::element::DetectableType)>,
+    pub detectable_mutations: Vec<DetectableMutation>,
     pub slowly_open_eyes: bool,
     pub posture: Option<crate::element::Posture>,
 }
@@ -802,10 +864,7 @@ impl AiActorOutbox {
             || self.halt
             || self.blink_all_enemies
             || self.enemy_in_house_alert
-            || !self.add_detectables.is_empty()
-            || !self.append_detectables.is_empty()
-            || !self.delete_detectables.is_empty()
-            || !self.delete_detectable_entity.is_empty()
+            || !self.detectable_mutations.is_empty()
             || !self.delete_beggar_for_all_npc.is_empty()
             || self.enter_swordfight.is_some()
             || self.enter_swordfight_jump_line.is_some()
@@ -896,10 +955,7 @@ impl AiActorOutbox {
             refresh_shield: std::mem::take(&mut self.refresh_shield),
             raise_shield_immediately: std::mem::take(&mut self.raise_shield_immediately),
             look_sidewards: self.look_sidewards.take(),
-            add_detectables: std::mem::take(&mut self.add_detectables),
-            append_detectables: std::mem::take(&mut self.append_detectables),
-            delete_detectables: std::mem::take(&mut self.delete_detectables),
-            delete_detectable_entities: std::mem::take(&mut self.delete_detectable_entity),
+            detectable_mutations: std::mem::take(&mut self.detectable_mutations),
             slowly_open_eyes: std::mem::take(&mut self.slowly_open_eyes),
             posture: self.posture.take(),
         }
@@ -909,6 +965,50 @@ impl AiActorOutbox {
     /// after bow-ammo refill and before the Charly-seeker broadcast barrier.
     pub(crate) fn take_archery_reservation_release(&mut self) -> ArcheryReservationRelease {
         std::mem::take(&mut self.archery_reservation_release)
+    }
+}
+
+#[cfg(test)]
+impl AiActorOutbox {
+    // Read-only projections for tests concerned with one kind of issued call.
+    // Ordering and final-state regressions inspect the full mutation list.
+    pub(crate) fn added_detectables(&self) -> Vec<(EntityId, crate::element::DetectableType)> {
+        self.detectable_mutations
+            .iter()
+            .filter_map(|mutation| match *mutation {
+                DetectableMutation::Add(target, kind) => Some((target, kind)),
+                _ => None,
+            })
+            .collect()
+    }
+    pub(crate) fn appended_detectables(&self) -> Vec<(EntityId, crate::element::DetectableType)> {
+        self.detectable_mutations
+            .iter()
+            .filter_map(|mutation| match *mutation {
+                DetectableMutation::Append(target, kind) => Some((target, kind)),
+                _ => None,
+            })
+            .collect()
+    }
+    pub(crate) fn deleted_detectable_types(&self) -> Vec<crate::element::DetectableType> {
+        self.detectable_mutations
+            .iter()
+            .filter_map(|mutation| match *mutation {
+                DetectableMutation::DeleteType(kind) => Some(kind),
+                _ => None,
+            })
+            .collect()
+    }
+    pub(crate) fn deleted_detectable_entities(
+        &self,
+    ) -> Vec<(EntityId, crate::element::DetectableType)> {
+        self.detectable_mutations
+            .iter()
+            .filter_map(|mutation| match *mutation {
+                DetectableMutation::DeleteEntity(target, kind) => Some((target, kind)),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -991,14 +1091,49 @@ mod tests {
         let officer = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(97));
         let expected = (officer, crate::element::DetectableType::Friend);
         let mut outbox = AiActorOutbox::default();
-        outbox.append_detectables.push(expected);
+        outbox.append_detectable(expected);
 
         let json = serde_json::to_string(&outbox).expect("serialize AI actor outbox");
         let mut restored: AiActorOutbox =
             serde_json::from_str(&json).expect("deserialize AI actor outbox");
         let core = restored.take_core();
 
-        assert_eq!(core.append_detectables, vec![expected]);
-        assert!(restored.append_detectables.is_empty());
+        assert_eq!(
+            core.detectable_mutations,
+            vec![DetectableMutation::Append(expected.0, expected.1)]
+        );
+        assert!(restored.detectable_mutations.is_empty());
+    }
+
+    #[test]
+    fn mixed_detectable_order_survives_native_serde_and_hashes() {
+        use crate::element::DetectableType::Friend;
+        let target = EntityId::Soldier(crate::entity_id::SoldierId(0));
+        let mut original = AiActorOutbox::default();
+        original.add_detectable((target, Friend));
+        original.delete_detectable_type(Friend);
+        original.append_detectable((target, Friend));
+        original.delete_detectable_entity((target, Friend));
+        let json: AiActorOutbox =
+            serde_json::from_str(&serde_json::to_string(&original).unwrap()).unwrap();
+        let native: AiActorOutbox = bitcode::decode(&bitcode::encode(&original)).unwrap();
+        for mut restored in [json, native] {
+            assert_eq!(restored.detectable_mutations, original.detectable_mutations);
+            assert_eq!(
+                robin_util::state_hash::compute(&restored),
+                robin_util::state_hash::compute(&original)
+            );
+            assert_eq!(
+                restored.take_core().detectable_mutations,
+                original.detectable_mutations
+            );
+            assert!(!restored.has_boundary_work());
+        }
+        let mut reordered = original.clone();
+        reordered.detectable_mutations.swap(0, 1);
+        assert_ne!(
+            robin_util::state_hash::compute(&reordered),
+            robin_util::state_hash::compute(&original)
+        );
     }
 }

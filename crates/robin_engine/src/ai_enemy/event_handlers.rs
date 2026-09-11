@@ -815,8 +815,7 @@ impl EnemyAi {
                             self.base
                                 .outbox
                                 .actor
-                                .delete_detectables
-                                .push(crate::element::DetectableType::Friend);
+                                .delete_detectable_type(crate::element::DetectableType::Friend);
                         }
                     }
                     ProfileRank::Knight | ProfileRank::None => {

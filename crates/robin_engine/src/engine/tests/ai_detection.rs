@@ -2161,7 +2161,7 @@ fn civilian_macro_break_drains_missed_friend_detectables_immediately() {
         .get_entity(civilian_id)
         .and_then(Entity::ai_controller)
         .expect("macro civilian retains AI");
-    assert!(ai.outbox.actor.delete_detectables.is_empty());
+    assert!(ai.outbox.actor.deleted_detectable_types().is_empty());
 }
 
 #[test]

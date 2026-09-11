@@ -2394,11 +2394,11 @@ fn officer_body_reaction_uses_stretched_max_norm_to_delegate() {
         crate::element::DetectableType::Friend,
     );
     assert!(
-        ai.base.outbox.actor.add_detectables.contains(&friend)
+        ai.base.outbox.actor.added_detectables().contains(&friend)
             || ai.base.outbox.reentrant.owner_work.iter().any(|work| {
                 matches!(work, AiOwnerWork::StateChange(change)
                 if change.actor_effects_before_callback.as_ref().is_some_and(
-                    |effects| effects.add_detectables.contains(&friend)
+                    |effects| effects.added_detectables().contains(&friend)
                 ))
             })
     );
@@ -2461,7 +2461,7 @@ fn officer_body_reaction_examines_body_within_stretched_threshold() {
             .iter()
             .any(|order| { order.order_type == crate::order::OrderType::RunningUpright })
     );
-    assert!(ai.base.outbox.actor.add_detectables.is_empty());
+    assert!(ai.base.outbox.actor.added_detectables().is_empty());
 }
 
 fn run_approaching_sleeping_enemy(target_live: Position) -> EnemyAi {
@@ -2760,15 +2760,15 @@ fn instructed_soldier_adds_officers_selected_body_after_speech() {
             ..
         })
     ));
-    let mut added_detectables = ai.base.outbox.actor.add_detectables.clone();
+    let mut added_detectables = ai.base.outbox.actor.added_detectables().clone();
     for work in &ai.base.outbox.reentrant.owner_work {
         match work {
             AiOwnerWork::ActorEffects(effects) => {
-                added_detectables.extend(effects.add_detectables.iter().copied());
+                added_detectables.extend(effects.added_detectables().iter().copied());
             }
             AiOwnerWork::StateChange(change) => {
                 if let Some(effects) = &change.actor_effects_before_callback {
-                    added_detectables.extend(effects.add_detectables.iter().copied());
+                    added_detectables.extend(effects.added_detectables().iter().copied());
                 }
             }
             _ => {}
@@ -2826,15 +2826,15 @@ fn seeking_body_reach_rejects_a_body_outside_the_live_sixty_unit_gate() {
         ai.base.current_substate,
         Substate::SeekingBodyLookingDeadBody
     );
-    let mut added_detectables = ai.base.outbox.actor.add_detectables.clone();
+    let mut added_detectables = ai.base.outbox.actor.added_detectables().clone();
     for work in &ai.base.outbox.reentrant.owner_work {
         match work {
             AiOwnerWork::ActorEffects(effects) => {
-                added_detectables.extend(effects.add_detectables.iter().copied());
+                added_detectables.extend(effects.added_detectables().iter().copied());
             }
             AiOwnerWork::StateChange(change) => {
                 if let Some(effects) = &change.actor_effects_before_callback {
-                    added_detectables.extend(effects.add_detectables.iter().copied());
+                    added_detectables.extend(effects.added_detectables().iter().copied());
                 }
             }
             _ => {}

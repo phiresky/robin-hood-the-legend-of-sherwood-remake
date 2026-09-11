@@ -3087,9 +3087,9 @@ fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order()
     ai.owner_entity_id = Some(civilian_id);
     // This is the exact duplicate-preserving path used by soldier alerting's
     // direct retail detectable additions.
-    ai.outbox.actor.append_detectables.extend([
-        (first_friend, DetectableType::Friend),
-        (second_friend, DetectableType::Friend),
+    ai.outbox.actor.detectable_mutations.extend([
+        crate::ai::DetectableMutation::Append(first_friend, DetectableType::Friend),
+        crate::ai::DetectableMutation::Append(second_friend, DetectableType::Friend),
     ]);
 
     engine.drain_pending_for_npc(&sim, civilian_id, &LevelAssets::default());
@@ -3140,6 +3140,218 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     engine.remove_entity(second);
     assert_eq!(engine.world.pc_ids, vec![first]);
     assert_eq!(engine.world.original_pc_registry_ids, vec![first]);
+}
+
+#[test]
+fn detectable_mutations_preserve_statement_order_through_snapshot_and_drain() {
+    use crate::ai::DetectableMutation::{Add, Append, DeleteEntity, DeleteType};
+    use crate::element::DetectableType::Friend;
+    let sim = crate::sim_rng::test_context();
+    let mut base = EngineInner::new();
+    let owner = base.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = base.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let sibling = base.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let cases = [
+        (vec![Add(target, Friend), DeleteType(Friend)], vec![]),
+        (vec![DeleteType(Friend), Add(target, Friend)], vec![target]),
+        (vec![Append(target, Friend), DeleteType(Friend)], vec![]),
+        (
+            vec![DeleteType(Friend), Append(target, Friend)],
+            vec![target],
+        ),
+        (
+            vec![Add(target, Friend), DeleteEntity(target, Friend)],
+            vec![],
+        ),
+        (
+            vec![DeleteEntity(target, Friend), Add(target, Friend)],
+            vec![target],
+        ),
+        (
+            vec![Append(target, Friend), DeleteEntity(target, Friend)],
+            vec![],
+        ),
+        (
+            vec![DeleteEntity(target, Friend), Append(target, Friend)],
+            vec![target],
+        ),
+        (vec![Add(target, Friend), Add(target, Friend)], vec![target]),
+        (
+            vec![Add(target, Friend), Append(target, Friend)],
+            vec![target, target],
+        ),
+        (
+            vec![Append(target, Friend), Add(target, Friend)],
+            vec![target],
+        ),
+        (
+            vec![
+                Append(target, Friend),
+                Append(target, Friend),
+                DeleteEntity(target, Friend),
+            ],
+            vec![target],
+        ),
+        (
+            vec![Append(target, Friend), Append(target, Friend)],
+            vec![target, target],
+        ),
+        (
+            vec![
+                Add(target, Friend),
+                Add(sibling, Friend),
+                DeleteEntity(target, Friend),
+            ],
+            vec![sibling],
+        ),
+    ];
+    for (operations, expected) in cases {
+        base.get_entity_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .outbox
+            .actor
+            .detectable_mutations = operations.clone();
+        // Construct one state at a time: keeping an array of three full engine
+        // values needlessly exhausts the default test-thread stack.
+        for restore in 0..3 {
+            let mut engine = match restore {
+                0 => base.clone(),
+                1 => serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap(),
+                2 => super::super::snapshot::decode_native_engine_inner(
+                    &super::super::snapshot::encode_native_engine_inner(&base),
+                )
+                .unwrap(),
+                _ => unreachable!("three snapshot paths"),
+            };
+            assert_eq!(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .ai_controller()
+                    .unwrap()
+                    .outbox
+                    .actor
+                    .detectable_mutations,
+                operations
+            );
+            engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+            let actor = engine.get_entity(owner).unwrap().ai_actor_data().unwrap();
+            let actual = actor.detectable_lists[Friend as usize]
+                .iter()
+                .map(|entry| entry.element.expect("test detectable has a target"))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "operations: {operations:?}");
+        }
+    }
+}
+
+#[test]
+fn repeated_checkpoint_charly_drains_only_the_last_target() {
+    use crate::ai::AiEntityHandle;
+    use crate::element::DetectableType::MissedFriend;
+    let sim = crate::sim_rng::test_context();
+    for clear in [false, true] {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let first = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+        let second = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+        let ai = engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap();
+        ai.set_checkpoint_charly(Some(AiEntityHandle::new(first.index())));
+        ai.set_checkpoint_charly((!clear).then_some(AiEntityHandle::new(second.index())));
+        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+        let actual = engine
+            .get_entity(owner)
+            .unwrap()
+            .ai_actor_data()
+            .unwrap()
+            .detectable_lists[MissedFriend as usize]
+            .iter()
+            .map(|entry| entry.element)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, if clear { vec![] } else { vec![Some(second)] });
+    }
+}
+
+#[test]
+fn detectable_enemy_add_filters_targets_but_append_preserves_direct_calls() {
+    use crate::ai::DetectableMutation::{Add, Append};
+    use crate::element::{
+        Camp, DetectableType::Enemy, ElementBonus, ElementData, ElementKind, ObjectData, Posture,
+    };
+    let sim = crate::sim_rng::test_context();
+    for (camp, target_entity, accepted) in [
+        (
+            Camp::Lacklandists,
+            make_test_soldier(Posture::Upright),
+            false,
+        ),
+        (Camp::Royalists, make_test_soldier(Posture::Upright), true),
+        (Camp::Royalists, make_test_pc(Posture::Upright), false),
+        (Camp::Lacklandists, make_test_pc(Posture::Upright), true),
+        (
+            Camp::Lacklandists,
+            Entity::Bonus(ElementBonus {
+                element: {
+                    let mut element = ElementData::default();
+                    element.kind = ElementKind::ObjectBonus;
+                    element
+                },
+                object: ObjectData::default(),
+            }),
+            false,
+        ),
+    ] {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_test_ai_soldier(camp));
+        let target = engine.add_entity(target_entity);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .outbox
+            .actor
+            .detectable_mutations = vec![Add(target, Enemy), Append(target, Enemy)];
+        engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
+        let entries = &engine
+            .get_entity(owner)
+            .unwrap()
+            .ai_actor_data()
+            .unwrap()
+            .detectable_lists[Enemy as usize];
+        assert_eq!(
+            entries.len(),
+            if accepted { 2 } else { 1 },
+            "owner {camp:?}, target {target:?}"
+        );
+        assert!(entries.iter().all(|entry| entry.element == Some(target)));
+    }
+}
+
+#[test]
+#[should_panic(expected = "detectable target 999 disappeared")]
+fn detectable_enemy_add_requires_a_live_target() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .outbox
+        .actor
+        .add_detectable((
+            EntityId::Soldier(crate::entity_id::SoldierId(999)),
+            crate::element::DetectableType::Enemy,
+        ));
+    engine.drain_pending_for_npc(&sim, owner, &LevelAssets::default());
 }
 
 /// Give the default (empty) test grid a real map bounding box.
@@ -8174,7 +8386,14 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
             soldier.npc.detectable_lists[DetectableType::MissedFriend as usize].is_empty(),
             "clearing the checkpoint friend must synchronously clear the recipient's missed-friend list"
         );
-        assert!(enemy.base.outbox.actor.delete_detectables.is_empty());
+        assert!(
+            enemy
+                .base
+                .outbox
+                .actor
+                .deleted_detectable_types()
+                .is_empty()
+        );
     }
     assert_eq!(
         engine

@@ -775,7 +775,7 @@ fn consider_report_preserves_pc_body_kind_in_detectable_effect() {
     ai.consider_report_merged(&report, 0, &views);
 
     assert_eq!(
-        ai.outbox.actor.delete_detectable_entity,
+        ai.outbox.actor.deleted_detectable_entities(),
         vec![(
             crate::element::EntityId::Pc(crate::entity_id::PcId(17)),
             crate::element::DetectableType::Body,
