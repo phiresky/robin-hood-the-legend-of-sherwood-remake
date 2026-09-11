@@ -113,6 +113,18 @@ impl<'a> LegacyReader<'a> {
             .map_err(|code| self.error_at(offset, field, LegacyIoErrorKind::SbFile { code }))
     }
 
+    /// Move relative to the current position, reporting failed seeks with the
+    /// same path/offset/field context as reads.
+    pub fn skip(&mut self, distance: i64, field: impl fmt::Display) -> LegacyResult<()> {
+        let offset = self.offset();
+        let code = self.file.skip(distance, 1);
+        if code < 0 {
+            Err(self.error_at(offset, field, LegacyIoErrorKind::SbFile { code }))
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn read_u8(&mut self, field: impl fmt::Display) -> LegacyResult<u8> {
         Ok(self.read_array::<1>(field)?[0])
     }
@@ -460,6 +472,19 @@ mod tests {
 
     use super::*;
     use crate::sbfile::SB_FILE_READ;
+
+    #[test]
+    fn failed_seek_retains_position_and_reports_context() {
+        let mut file = SbFile::from_owned_bytes(vec![7, 8], "seek.rhs");
+        let mut reader = LegacyReader::new(&mut file);
+        assert_eq!(reader.read_u8("first").unwrap(), 7);
+        let error = reader.skip(-2, "rewind header").unwrap_err();
+        assert_eq!(error.path, "seek.rhs");
+        assert_eq!(error.offset, 1);
+        assert_eq!(error.field, "rewind header");
+        assert_eq!(reader.offset(), 1);
+        assert_eq!(reader.read_u8("second").unwrap(), 8);
+    }
 
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
         let mut fixture = tempfile::NamedTempFile::new().unwrap();

@@ -11,6 +11,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::human_control::{CombatStance, CommandInterface, DecisionPolicy, MissionRole};
+use crate::legacy_io::{LegacyIoError, LegacyReader};
 use crate::sbfile::{SB_FILE_READ, SbFile};
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LevelError {
+    #[error(transparent)]
+    Legacy(#[from] LegacyIoError),
     #[error("chunk tag mismatch: expected '{expected}', found '{found}'")]
     ChunkTagMismatch { expected: String, found: String },
 
@@ -558,13 +561,11 @@ impl ChunkReader {
         expected_version: u32,
     ) -> Result<(), LevelError> {
         let mut tag = [0u8; 4];
-        self.file.serialize_bytes(&mut tag)?;
+        LegacyReader::new(&mut self.file).read_bytes("chunk tag", &mut tag)?;
 
-        let mut size = 0u32;
-        self.file.serialize_u32(&mut size)?;
+        let size = LegacyReader::new(&mut self.file).read_u32("chunk size")?;
 
-        let mut version = 0u32;
-        self.file.serialize_u32(&mut version)?;
+        let version = LegacyReader::new(&mut self.file).read_u32("chunk version")?;
 
         if tag != *expected_tag {
             return Err(LevelError::ChunkTagMismatch {
@@ -615,8 +616,8 @@ impl ChunkReader {
     /// Peek at the next chunk's 4-byte tag without consuming it.
     pub fn peek_next_chunk(&mut self) -> Result<[u8; 4], LevelError> {
         let mut tag = [0u8; 4];
-        self.file.serialize_bytes(&mut tag)?;
-        self.file.skip(-4, 1); // seek back to before the tag
+        LegacyReader::new(&mut self.file).read_bytes("chunk tag", &mut tag)?;
+        LegacyReader::new(&mut self.file).skip(-4, "rewind peeked tag")?;
         Ok(tag)
     }
 
@@ -624,10 +625,9 @@ impl ChunkReader {
     ///
     /// File pointer must be at the start of the tag (e.g. after `peek_next_chunk`).
     pub fn skip_chunk(&mut self) -> Result<(), LevelError> {
-        self.file.skip(4, 1); // skip past the 4-byte tag
-        let mut size = 0u32;
-        self.file.serialize_u32(&mut size)?; // read the size field
-        self.file.skip(size as i64, 1); // skip version + payload
+        LegacyReader::new(&mut self.file).skip(4, "skip chunk tag")?;
+        let size = LegacyReader::new(&mut self.file).read_u32("chunk size")?;
+        LegacyReader::new(&mut self.file).skip(size as i64, "skip chunk payload")?;
         Ok(())
     }
 
@@ -657,56 +657,40 @@ impl ChunkReader {
     // ── Typed binary readers ───────────────────────────────────
 
     pub fn read_u8(&mut self) -> Result<u8, LevelError> {
-        let mut v = 0u8;
-        self.file.serialize_u8(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_u8("chunk payload u8")?)
     }
 
     pub fn read_i16(&mut self) -> Result<i16, LevelError> {
-        let mut v = 0i16;
-        self.file.serialize_i16(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_i16("chunk payload i16")?)
     }
 
     pub fn read_u16(&mut self) -> Result<u16, LevelError> {
-        let mut v = 0u16;
-        self.file.serialize_u16(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_u16("chunk payload u16")?)
     }
 
     pub fn read_u32(&mut self) -> Result<u32, LevelError> {
-        let mut v = 0u32;
-        self.file.serialize_u32(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_u32("chunk payload u32")?)
     }
 
     pub fn read_bool(&mut self) -> Result<bool, LevelError> {
-        let mut v = false;
-        self.file.serialize_bool(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_bool("chunk payload bool")?)
     }
 
     pub fn read_i32(&mut self) -> Result<i32, LevelError> {
-        let mut v = 0i32;
-        self.file.serialize_i32(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_i32("chunk payload i32")?)
     }
 
     pub fn read_f32(&mut self) -> Result<f32, LevelError> {
-        let mut v = 0f32;
-        self.file.serialize_f32(&mut v)?;
-        Ok(v)
+        Ok(LegacyReader::new(&mut self.file).read_f32("chunk payload f32")?)
     }
 
     pub fn read_string(&mut self) -> Result<String, LevelError> {
-        let mut s = String::new();
-        self.file.serialize_string(&mut s)?;
-        Ok(s)
+        Ok(LegacyReader::new(&mut self.file).read_string("chunk payload string")?)
     }
 
     pub fn read_bytes(&mut self, count: usize) -> Result<Vec<u8>, LevelError> {
         let mut buf = vec![0u8; count];
-        self.file.serialize_bytes(&mut buf)?;
+        LegacyReader::new(&mut self.file).read_bytes("chunk payload bytes", &mut buf)?;
         Ok(buf)
     }
 
@@ -5390,6 +5374,27 @@ mod tests {
         let val = reader.read_u32().unwrap();
         assert_eq!(val, 42);
         reader.chunk_end().unwrap();
+    }
+
+    #[test]
+    fn truncated_chunks_preserve_typed_path_offset_and_field_errors() {
+        for (bytes, expected_offset, expected_field) in [
+            (b"TE".to_vec(), 0, "chunk tag"),
+            (b"TEST".to_vec(), 4, "chunk size"),
+            (
+                [b"TEST".as_slice(), &4u32.to_le_bytes()].concat(),
+                8,
+                "chunk version",
+            ),
+        ] {
+            let mut reader = ChunkReader::new(SbFile::from_owned_bytes(bytes, "broken.rhm"));
+            let LevelError::Legacy(error) = reader.chunk_start(b"TEST", 1).unwrap_err() else {
+                panic!("expected contextual legacy reader error");
+            };
+            assert_eq!(error.path, "broken.rhm");
+            assert_eq!(error.offset, expected_offset);
+            assert_eq!(error.field, expected_field);
+        }
     }
 
     #[test]

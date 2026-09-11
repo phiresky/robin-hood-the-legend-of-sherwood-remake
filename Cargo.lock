@@ -5955,6 +5955,7 @@ dependencies = [
  "robin_util",
  "serde",
  "tempfile",
+ "thiserror 2.0.20",
  "tracing",
  "zip",
 ]

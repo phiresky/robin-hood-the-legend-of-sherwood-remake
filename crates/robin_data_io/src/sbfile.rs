@@ -513,7 +513,6 @@ pub struct SbFile {
     size: u64,
     position: u64,
     last_error: i32,
-    version: u32,
     /// Logical path requested by the caller. Typed legacy readers surface it
     /// in field-level parse errors even when bytes came from an overlay.
     path: String,
@@ -1184,7 +1183,6 @@ impl SbFile {
             size,
             position: 0,
             last_error: SBFILE_NO_ERROR,
-            version: 0,
             path,
         }
     }
@@ -1256,14 +1254,10 @@ impl SbFile {
     pub fn is_eof(&self) -> bool {
         self.position >= self.size
     }
-    pub fn get_version(&self) -> u32 {
-        self.version
-    }
 
     // ── Binary readers ───────────────────────────────────────────
 
-    // TODO(legacy-io): once level and sprite authored-data consumers use
-    // LegacyReader, make these mutate-in-place/status-code methods private.
+    // Scalar and authored-format parsing live in legacy_io::LegacyReader.
 
     pub fn serialize_bytes(&mut self, buf: &mut [u8]) -> Result<(), i32> {
         if self.read(buf) < 0 {
@@ -1272,73 +1266,6 @@ impl SbFile {
             Ok(())
         }
     }
-    pub fn serialize_u8(&mut self, val: &mut u8) -> Result<(), i32> {
-        let mut b = [0u8; 1];
-        self.serialize_bytes(&mut b)?;
-        *val = b[0];
-        Ok(())
-    }
-    pub fn serialize_u16(&mut self, val: &mut u16) -> Result<(), i32> {
-        let mut b = [0u8; 2];
-        self.serialize_bytes(&mut b)?;
-        *val = u16::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_i16(&mut self, val: &mut i16) -> Result<(), i32> {
-        let mut b = [0u8; 2];
-        self.serialize_bytes(&mut b)?;
-        *val = i16::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_u32(&mut self, val: &mut u32) -> Result<(), i32> {
-        let mut b = [0u8; 4];
-        self.serialize_bytes(&mut b)?;
-        *val = u32::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_i32(&mut self, val: &mut i32) -> Result<(), i32> {
-        let mut b = [0u8; 4];
-        self.serialize_bytes(&mut b)?;
-        *val = i32::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_f32(&mut self, val: &mut f32) -> Result<(), i32> {
-        let mut b = [0u8; 4];
-        self.serialize_bytes(&mut b)?;
-        *val = f32::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_bool(&mut self, val: &mut bool) -> Result<(), i32> {
-        let mut b = 0u8;
-        self.serialize_u8(&mut b)?;
-        *val = b != 0;
-        Ok(())
-    }
-    pub fn serialize_version(&mut self) -> Result<(), i32> {
-        let mut v = 0u32;
-        self.serialize_u32(&mut v)?;
-        self.version = v;
-        Ok(())
-    }
-    pub fn serialize_string(&mut self, s: &mut String) -> Result<(), i32> {
-        let mut len = 0u16;
-        self.serialize_u16(&mut len)?;
-        let mut bytes = vec![0u8; len as usize];
-        self.serialize_bytes(&mut bytes)?;
-        *s = String::from_utf8_lossy(&bytes).into_owned();
-        Ok(())
-    }
-
-    pub fn checkpoint(&mut self) -> Result<(), i32> {
-        let mut m = 0u16;
-        self.serialize_u16(&mut m)?;
-        if m != 0x7777 {
-            tracing::warn!("CHECKPOINT: shifted (0x{:04x})", m);
-            return Err(SBFILE_ERROR_READ);
-        }
-        Ok(())
-    }
-
     pub fn exists(path: &str) -> bool {
         match global_file_system().try_exists(path) {
             Ok(exists) => exists,
@@ -2543,8 +2470,9 @@ mod tests {
         let path = dir.join("u32.bin");
         fs::write(&path, [0xEF, 0xBE, 0xAD, 0xDE]).unwrap();
         let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
-        let mut v = 0u32;
-        f.serialize_u32(&mut v).unwrap();
+        let v = crate::legacy_io::LegacyReader::new(&mut f)
+            .read_u32("value")
+            .unwrap();
         assert_eq!(v, 0xDEADBEEF);
         let _ = fs::remove_file(&path);
     }
@@ -2556,8 +2484,9 @@ mod tests {
         let path = dir.join("str.bin");
         fs::write(&path, [0x05, 0x00, b'h', b'e', b'l', b'l', b'o']).unwrap();
         let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
-        let mut s = String::new();
-        f.serialize_string(&mut s).unwrap();
+        let s = crate::legacy_io::LegacyReader::new(&mut f)
+            .read_string("value")
+            .unwrap();
         assert_eq!(s, "hello");
         let _ = fs::remove_file(&path);
     }
@@ -2569,7 +2498,9 @@ mod tests {
         let path = dir.join("chk.bin");
         fs::write(&path, [0x77, 0x77]).unwrap();
         let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
-        f.checkpoint().unwrap();
+        crate::legacy_io::LegacyReader::new(&mut f)
+            .read_checkpoint("checkpoint")
+            .unwrap();
         let _ = fs::remove_file(&path);
     }
 

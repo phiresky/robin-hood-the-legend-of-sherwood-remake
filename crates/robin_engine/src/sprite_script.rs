@@ -8,6 +8,7 @@
 //! and sound data.  A conversion table maps action IDs ([`OrderType`]
 //! discriminants) to row indices.
 
+use crate::legacy_io::LegacyReader;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -394,7 +395,8 @@ impl ProfileHeader {
 
     fn read(file: &mut SbFile) -> Result<Self, String> {
         let mut name_buf = [0u8; 32];
-        file.serialize_bytes(&mut name_buf)
+        LegacyReader::new(file)
+            .read_bytes("ProfileHeader.name", &mut name_buf)
             .map_err(|e| format!("ProfileHeader: failed to read name: {e}"))?;
         // Truncate at first null byte — buffer may have garbage after the
         // terminator.
@@ -402,22 +404,21 @@ impl ProfileHeader {
             .map(|cs| cs.to_string_lossy().into_owned())
             .unwrap_or_default();
 
-        let mut num_rows = 0u16;
-        let mut width = 0u16;
-        let mut height = 0u16;
-        let mut rotation_x = 0i32;
-        let mut rotation_y = 0i32;
-
-        file.serialize_u16(&mut num_rows)
-            .map_err(|e| format!("ProfileHeader: num_rows: {e}"))?;
-        file.serialize_u16(&mut width)
-            .map_err(|e| format!("ProfileHeader: width: {e}"))?;
-        file.serialize_u16(&mut height)
-            .map_err(|e| format!("ProfileHeader: height: {e}"))?;
-        file.serialize_i32(&mut rotation_x)
-            .map_err(|e| format!("ProfileHeader: rotation_x: {e}"))?;
-        file.serialize_i32(&mut rotation_y)
-            .map_err(|e| format!("ProfileHeader: rotation_y: {e}"))?;
+        let num_rows = LegacyReader::new(file)
+            .read_u16("ProfileHeader.num_rows")
+            .map_err(|error| error.to_string())?;
+        let width = LegacyReader::new(file)
+            .read_u16("ProfileHeader.width")
+            .map_err(|error| error.to_string())?;
+        let height = LegacyReader::new(file)
+            .read_u16("ProfileHeader.height")
+            .map_err(|error| error.to_string())?;
+        let rotation_x = LegacyReader::new(file)
+            .read_i32("ProfileHeader.rotation_x")
+            .map_err(|error| error.to_string())?;
+        let rotation_y = LegacyReader::new(file)
+            .read_i32("ProfileHeader.rotation_y")
+            .map_err(|error| error.to_string())?;
 
         Ok(Self {
             name,
@@ -448,22 +449,21 @@ struct RowHeader {
 
 impl RowHeader {
     fn read(file: &mut SbFile) -> Result<Self, String> {
-        let mut num_frames = 0u16;
-        let mut action_done = 0u16;
-        let mut hotspot_x = 0i32;
-        let mut hotspot_y = 0i32;
-        let mut action_id = 0u16;
-
-        file.serialize_u16(&mut num_frames)
-            .map_err(|e| format!("RowHeader: num_frames: {e}"))?;
-        file.serialize_u16(&mut action_done)
-            .map_err(|e| format!("RowHeader: action_done: {e}"))?;
-        file.serialize_i32(&mut hotspot_x)
-            .map_err(|e| format!("RowHeader: hotspot_x: {e}"))?;
-        file.serialize_i32(&mut hotspot_y)
-            .map_err(|e| format!("RowHeader: hotspot_y: {e}"))?;
-        file.serialize_u16(&mut action_id)
-            .map_err(|e| format!("RowHeader: action_id: {e}"))?;
+        let num_frames = LegacyReader::new(file)
+            .read_u16("RowHeader.num_frames")
+            .map_err(|error| error.to_string())?;
+        let action_done = LegacyReader::new(file)
+            .read_u16("RowHeader.action_done")
+            .map_err(|error| error.to_string())?;
+        let hotspot_x = LegacyReader::new(file)
+            .read_i32("RowHeader.hotspot_x")
+            .map_err(|error| error.to_string())?;
+        let hotspot_y = LegacyReader::new(file)
+            .read_i32("RowHeader.hotspot_y")
+            .map_err(|error| error.to_string())?;
+        let action_id = LegacyReader::new(file)
+            .read_u16("RowHeader.action_id")
+            .map_err(|error| error.to_string())?;
 
         Ok(Self {
             num_frames,
@@ -498,25 +498,24 @@ impl FrameHeader {
     const PACKED_SIZE: usize = 4 + 2 + 2 + 2 + 2 + 2; // = 14
 
     fn read(file: &mut SbFile) -> Result<Self, String> {
-        let mut id_in_bank = 0u32;
-        let mut delay = 0u16;
-        let mut distance = 0u16;
-        let mut x_offset = 0i16;
-        let mut y_offset = 0i16;
-        let mut sound_id = 0u16;
-
-        file.serialize_u32(&mut id_in_bank)
-            .map_err(|e| format!("FrameHeader: id_in_bank: {e}"))?;
-        file.serialize_u16(&mut delay)
-            .map_err(|e| format!("FrameHeader: delay: {e}"))?;
-        file.serialize_u16(&mut distance)
-            .map_err(|e| format!("FrameHeader: distance: {e}"))?;
-        file.serialize_i16(&mut x_offset)
-            .map_err(|e| format!("FrameHeader: x_offset: {e}"))?;
-        file.serialize_i16(&mut y_offset)
-            .map_err(|e| format!("FrameHeader: y_offset: {e}"))?;
-        file.serialize_u16(&mut sound_id)
-            .map_err(|e| format!("FrameHeader: sound_id: {e}"))?;
+        let id_in_bank = LegacyReader::new(file)
+            .read_u32("FrameHeader.id_in_bank")
+            .map_err(|error| error.to_string())?;
+        let delay = LegacyReader::new(file)
+            .read_u16("FrameHeader.delay")
+            .map_err(|error| error.to_string())?;
+        let distance = LegacyReader::new(file)
+            .read_u16("FrameHeader.distance")
+            .map_err(|error| error.to_string())?;
+        let x_offset = LegacyReader::new(file)
+            .read_i16("FrameHeader.x_offset")
+            .map_err(|error| error.to_string())?;
+        let y_offset = LegacyReader::new(file)
+            .read_i16("FrameHeader.y_offset")
+            .map_err(|error| error.to_string())?;
+        let sound_id = LegacyReader::new(file)
+            .read_u16("FrameHeader.sound_id")
+            .map_err(|error| error.to_string())?;
 
         Ok(Self {
             id_in_bank,
@@ -731,9 +730,9 @@ impl SpriteScriptor {
     /// On success the file position is rewound to the start of the matching
     /// profile header.  Returns `false` if the profile is not found.
     fn find_profile(file: &mut SbFile, profile_name: &str) -> Result<bool, String> {
-        let mut num_profiles = 0u16;
-        file.serialize_u16(&mut num_profiles)
-            .map_err(|e| format!("find_profile: read num_profiles: {e}"))?;
+        let num_profiles = LegacyReader::new(file)
+            .read_u16("profile count")
+            .map_err(|error| error.to_string())?;
 
         let mut header = ProfileHeader::read(file)?;
 
@@ -744,10 +743,12 @@ impl SpriteScriptor {
             for _ in 0..header.num_rows {
                 let row = RowHeader::read(file)?;
                 // Skip all frame headers for this row
-                file.skip(
-                    (row.num_frames as u64 * FrameHeader::PACKED_SIZE as u64) as i64,
-                    1, // SEEK_CUR (relative seek)
-                );
+                LegacyReader::new(file)
+                    .skip(
+                        (row.num_frames as u64 * FrameHeader::PACKED_SIZE as u64) as i64,
+                        "skip profile frames",
+                    )
+                    .map_err(|error| error.to_string())?;
             }
 
             header = ProfileHeader::read(file)?;
@@ -756,7 +757,12 @@ impl SpriteScriptor {
 
         if header.name == profile_name {
             // Rewind to the start of this profile header
-            file.skip(-(ProfileHeader::PACKED_SIZE as i64), 1); // SEEK_CUR (relative seek)
+            LegacyReader::new(file)
+                .skip(
+                    -(ProfileHeader::PACKED_SIZE as i64),
+                    "rewind profile header",
+                )
+                .map_err(|error| error.to_string())?;
             Ok(true)
         } else {
             Ok(false)
@@ -775,13 +781,13 @@ impl SpriteScriptor {
         let mut file = SbFile::open(path, 0).map_err(|e| format!("open rhs {path}: {e}"))?;
 
         // File starts with a u32 bank signature followed by u16 num_profiles.
-        let mut signature = 0u32;
-        file.serialize_u32(&mut signature)
-            .map_err(|e| format!("read signature: {e}"))?;
+        let signature = LegacyReader::new(&mut file)
+            .read_u32("bank signature")
+            .map_err(|error| error.to_string())?;
 
-        let mut num_profiles = 0u16;
-        file.serialize_u16(&mut num_profiles)
-            .map_err(|e| format!("read num_profiles: {e}"))?;
+        let num_profiles = LegacyReader::new(&mut file)
+            .read_u16("profile count")
+            .map_err(|error| error.to_string())?;
 
         let mut out = Vec::with_capacity(num_profiles as usize);
         for _ in 0..num_profiles {
@@ -920,6 +926,17 @@ impl SpriteScriptor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn truncated_profile_headers_report_path_offset_and_field() {
+        let mut file = super::SbFile::from_owned_bytes(vec![0; 33], "fixture.rhs");
+        let error = super::ProfileHeader::read(&mut file)
+            .err()
+            .expect("truncated header");
+        assert!(error.contains("fixture.rhs"), "{error}");
+        assert!(error.contains("byte 32"), "{error}");
+        assert!(error.contains("ProfileHeader.num_rows"), "{error}");
+    }
+
     #[test]
     fn original_program_requiredness_uses_prepared_mode_and_enabled_policy() {
         use crate::spellforge::SpellforgeScriptMode::*;
@@ -1199,9 +1216,9 @@ mod tests {
         let mut scriptor = SpriteScriptor::with_resources(std::sync::Arc::new(resources));
         let loaded = scriptor
             .load(path, "Robin", "Robin/Robin", FrameKind::Character, |file| {
-                let mut signature = 0;
-                file.serialize_u32(&mut signature)
-                    .map_err(|error| format!("signature: {error}"))?;
+                let signature = LegacyReader::new(file)
+                    .read_u32("bank signature")
+                    .map_err(|error| error.to_string())?;
                 (signature == 0x1234_5678)
                     .then_some(())
                     .ok_or_else(|| format!("wrong signature {signature:#x}"))

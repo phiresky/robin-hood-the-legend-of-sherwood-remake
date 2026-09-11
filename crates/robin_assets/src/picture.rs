@@ -102,30 +102,20 @@ impl SixteenPacking {
 // ---------------------------------------------------------------------------
 
 pub fn read_u16(file: &mut SbFile) -> Result<u16> {
-    let mut v = 0u16;
-    file.serialize_u16(&mut v)
-        .map_err(|e| anyhow!("read_u16: error {e}"))?;
-    Ok(v)
+    Ok(robin_data_io::legacy_io::LegacyReader::new(file).read_u16("picture u16")?)
 }
 
 pub fn read_u32(file: &mut SbFile) -> Result<u32> {
-    let mut v = 0u32;
-    file.serialize_u32(&mut v)
-        .map_err(|e| anyhow!("read_u32: error {e}"))?;
-    Ok(v)
+    Ok(robin_data_io::legacy_io::LegacyReader::new(file).read_u32("picture u32")?)
 }
 
 pub fn read_i32(file: &mut SbFile) -> Result<i32> {
-    let mut v = 0i32;
-    file.serialize_i32(&mut v)
-        .map_err(|e| anyhow!("read_i32: error {e}"))?;
-    Ok(v)
+    Ok(robin_data_io::legacy_io::LegacyReader::new(file).read_i32("picture i32")?)
 }
 
 pub(crate) fn read_bytes(file: &mut SbFile, len: usize) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
-    file.serialize_bytes(&mut buf)
-        .map_err(|e| anyhow!("read_bytes({len}): error {e}"))?;
+    robin_data_io::legacy_io::LegacyReader::new(file).read_bytes("picture bytes", &mut buf)?;
     Ok(buf)
 }
 

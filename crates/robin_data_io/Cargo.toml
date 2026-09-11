@@ -8,6 +8,7 @@ publish.workspace = true
 serde = { workspace = true }
 robin_util.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

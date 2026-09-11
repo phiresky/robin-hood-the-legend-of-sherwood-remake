@@ -82,9 +82,7 @@ impl EngineInner {
                         &cache_key,
                         crate::sprite_script::FrameKind::Animation,
                         |file| {
-                            let mut sig = 0u32;
-                            file.serialize_u32(&mut sig)
-                                .map_err(|e| format!("read signature: {e}"))?;
+                            let sig = robin_data_io::legacy_io::LegacyReader::new(file).read_u32("bank signature").map_err(|error| error.to_string())?;
                             if sig != bank_signature {
                                 return Err(format!(
                                     "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"

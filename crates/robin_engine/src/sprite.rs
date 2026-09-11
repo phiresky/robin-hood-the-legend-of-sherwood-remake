@@ -1334,9 +1334,9 @@ impl Sprite {
         let path = scriptor.resolve_rhs_path(frame_kind, base_dir, filename, ambiance)?;
 
         let info = scriptor.load(&path, profile_name, &cache_key, frame_kind, |file| {
-            let mut sig = 0u32;
-            file.serialize_u32(&mut sig)
-                .map_err(|e| format!("read signature: {e}"))?;
+            let sig = robin_data_io::legacy_io::LegacyReader::new(file)
+                .read_u32("bank signature")
+                .map_err(|error| error.to_string())?;
             if sig != bank_signature {
                 return Err(format!(
                     "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"

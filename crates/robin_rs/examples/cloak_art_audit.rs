@@ -120,9 +120,10 @@ fn audit_track(
             &cache_key,
             FrameKind::Character,
             |file| {
-                let mut signature = 0u32;
-                file.serialize_u32(&mut signature)
-                    .map_err(|error| format!("read RHS signature: {error}"))
+                robin_engine::legacy_io::LegacyReader::new(file)
+                    .read_u32("RHS signature")
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
             },
         )
         .map_err(|error| anyhow!("{} profile {:?}: {error}", rhs.display(), profile_name))?;
