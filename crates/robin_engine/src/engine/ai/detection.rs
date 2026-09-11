@@ -410,9 +410,6 @@ fn visibility_stage_debug_enabled(
 struct EnemyOpticalTarget {
     id: EntityId,
     position: MapPoint,
-    /// Exact owner-boundary world position. This must not be
-    /// reconstructed through projected map coordinates.
-    position_world: crate::coordinates::WorldPoint3D,
     /// Literal current element position. Direct geometry helpers bypass the
     /// creation-slot boundary snapshot used by optical detection.
     live_position_world: crate::coordinates::WorldPoint3D,
@@ -551,8 +548,6 @@ struct SoldierSightContext {
     /// Literal owner position, before the AI `Position(actor)` door-side
     /// forecast used by shared entity views.
     position: crate::ai::Position,
-    /// Literal stored 3D position used for squared distance to the primary target.
-    position_world: crate::coordinates::WorldPoint3D,
     eye: MapPoint,
     /// World-space eye point, used verbatim as the origin of
     /// opaque-reachability queries.
@@ -692,7 +687,6 @@ impl SoldierSightContext {
                 sector: entity.element_data().sector(),
                 level: entity.element_data().layer(),
             },
-            position_world: entity.element_data().position(),
             eye,
             eye_world,
             dir: entity.element_data().direction(),
@@ -4032,7 +4026,6 @@ impl EngineInner {
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position: boundary.map,
-                        position_world: boundary.world,
                         live_position_world: pc.element.position(),
                         ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
                         ground_position: GroundPoint::from_map_and_z(boundary.map, ground_z),
@@ -4089,11 +4082,9 @@ impl EngineInner {
                         })
                         .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&soldier.element));
                     let position = boundary.map;
-                    let position_world = boundary.world;
                     Some(EnemyOpticalTarget {
                         id: entity_id,
                         position,
-                        position_world,
                         live_position_world: soldier.element.position(),
                         ai_position: self.ai_position_at_owner_boundary(entity_id, owner_boundary),
                         ground_position: GroundPoint::from_map_and_z(
@@ -4161,7 +4152,15 @@ impl EngineInner {
             .into_iter()
             .find(|entry| entry.id == target)
             .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
-        (optical.ai_position, optical.position_world)
+        // The unused optical world-position copy is gone; test the actual
+        // owner-boundary source directly without retaining dead runtime state.
+        let boundary = self.boundary_position(
+            target,
+            owner,
+            positions_before_movement,
+            crate::engine::ai::OwnerActorPhase::AfterActor,
+        );
+        (optical.ai_position, boundary.world)
     }
 
     /// Live positive visibility for one NPC viewer and one human
