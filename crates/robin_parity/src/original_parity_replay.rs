@@ -40,7 +40,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
-use base64::Engine as _;
 // Version 67 native parity traces are authoritative artifacts. Keep their
 // codec pinned independently of the game's intentionally evolving formats.
 use bitcode_parity as bitcode;

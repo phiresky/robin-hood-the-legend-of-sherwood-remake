@@ -28,6 +28,7 @@ fn cli_checks_modes_values_and_repeated_entity_filters() {
     }
 }
 use super::*;
+use base64::Engine as _;
 use bitcode_parity as bitcode;
 
 #[test]

@@ -15,7 +15,7 @@ pub(super) fn structured_divergences(
         .collect()
 }
 use super::{
-    BTreeSet, BufWriter, Engine, EntityId, EntityMap, File, Path, PathBuf, Serialize,
+    BTreeMap, BTreeSet, BufWriter, Engine, EntityId, EntityMap, File, PathBuf, Serialize,
     TRACE_SCHEMA_VERSION, TraceElement, TraceEntityId, TraceEntityKind, TraceFlightStep,
     TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch,
     TraceVisibilityQuery, VecDeque,

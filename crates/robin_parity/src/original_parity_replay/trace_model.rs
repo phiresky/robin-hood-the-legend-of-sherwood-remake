@@ -22,7 +22,7 @@ impl From<TraceDirectorCompletion> for robin_engine::engine::DirectorCompletion 
 }
 
 /// JSON trace header and the embedded header layout of
-/// [`BinaryTraceHeaderV68`].
+/// [`BinaryTraceHeaderV68`](super::native_model::BinaryTraceHeaderV68).
 ///
 /// ON-DISK FORMAT INVARIANT: changing any field, field order, or field type
 /// changes bitcode's native trace layout. Such a change must bump
@@ -358,7 +358,7 @@ pub(super) struct TraceSkill {
 
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct TraceProductionSector {
-    r#type: u32,
+    pub(super) r#type: u32,
     pub(super) speed: u16,
     pub(super) amount: u16,
     pub(super) produced_amount: u16,
@@ -525,7 +525,7 @@ pub(super) enum TraceRngDomain {
 #[serde(deny_unknown_fields)]
 pub(super) struct TraceRngPrefix {
     #[allow(dead_code)]
-    r#type: String,
+    pub(super) r#type: String,
     pub(super) draws: TraceRngBatch,
 }
 
@@ -555,8 +555,8 @@ pub(super) struct TraceRecordMarker {
     Eq,
     PartialOrd,
     Ord,
-    pub(super) bitcode::Encode,
-    pub(super) bitcode::Decode,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub(super) struct TraceEntityId {
     pub(super) kind: TraceEntityKind,
@@ -893,7 +893,7 @@ pub(super) fn missing_legacy_seek_distance() -> f32 {
 ///
 /// ON-DISK FORMAT INVARIANT: do not change fields, their order, or their
 /// types without bumping `TRACE_NATIVE_VERSION` and freezing this layout in a
-/// version-named compatibility type, as done by [`v67::TraceElementV67`].
+/// version-named compatibility type, as done by [`TraceElementV67`](super::v67::TraceElementV67).
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct TraceElement {
     pub(super) entity_id: TraceEntityId,

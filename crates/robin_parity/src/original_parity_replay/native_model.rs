@@ -100,7 +100,7 @@ pub(super) struct BinaryTraceHeaderV68 {
 ///
 /// ON-DISK FORMAT INVARIANT: this enum and every transitively encoded child
 /// type are immutable for version 68. Shape changes require a version bump and
-/// an explicit legacy decoder such as [`BinaryTraceRecordV67`].
+/// an explicit legacy decoder such as [`BinaryTraceRecordV67`](super::v67::BinaryTraceRecordV67).
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 pub(super) enum BinaryTraceRecord {
     Frame(TraceFrame),
