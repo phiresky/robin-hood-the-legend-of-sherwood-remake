@@ -589,7 +589,6 @@ mod tests {
             None,
             EntityId::Soldier(crate::entity_id::SoldierId(1)),
             &mut ExecuteSideOutcomes::default(),
-            &crate::profiles::ProfileManager::default(),
         );
         assert_eq!(
             soldier.actor_data().unwrap().action_state,
@@ -602,7 +601,6 @@ mod tests {
             None,
             EntityId::Soldier(crate::entity_id::SoldierId(1)),
             &mut ExecuteSideOutcomes::default(),
-            &crate::profiles::ProfileManager::default(),
         );
         assert_eq!(
             soldier.actor_data().unwrap().action_state,
@@ -1002,17 +1000,113 @@ mod tests {
 
     #[test]
     fn weak_sword_first_arrival_at_action_done_preserves_done() {
-        let mut entity = weak_soldier_at_action_done(25);
-        let mut motion = MotionState::Done;
+        use crate::order::Order;
+        use crate::sequence::SequenceElement;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
-        apply_weak_sword_tiredness_after_perform(
-            &mut entity,
-            OrderType::BeingWeakSword,
-            &mut motion,
+        let sim = crate::sim_rng::test_context();
+        let assets = crate::engine::types::LevelAssets::new();
+        let mut engine = EngineInner::new();
+        let mut entity = weak_soldier_at_action_done(100);
+        entity.element_data_mut().kind = ElementKind::ActorSoldier;
+        let action = OrderType::BeingWeakSword;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![1; 3],
+            distances: vec![0; 3],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(conversion),
         );
+        let actor = engine.add_entity(entity);
+        let mut selected = SequenceElement::new(1, Command::Wait, Some(actor));
+        selected.orders.push_back(Order::test_new(action, 0.0, 0.0));
+        let sequence = engine.orders.sequence_manager.launch_element(selected);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
 
-        assert_eq!(motion, MotionState::Done);
-        assert_eq!(entity.human_data().unwrap().tiredness, 20);
+        let (_, _, start) = engine.tick_actor_animation_for(&sim, &assets, actor);
+        assert_eq!(start.expect("weak-sword START").motion, MotionState::Start);
+        for _ in 0..10 {
+            let before = engine
+                .get_entity(actor)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .tiredness;
+            let (_, _, result) = engine.tick_actor_animation_for(&sim, &assets, actor);
+            let entity = engine.get_entity(actor).unwrap();
+            assert_eq!(
+                entity.human_data().unwrap().tiredness,
+                before - WEAKNESS_DISMISH
+            );
+            if !sprite_is_at_action_done(entity.sprite()) {
+                continue;
+            }
+            assert_eq!(
+                result.expect("first action-done tick").motion,
+                MotionState::Done
+            );
+            let frame = (entity.sprite().current_frame, entity.sprite().frame_count);
+            let (_, _, held) = engine.tick_actor_animation_for(&sim, &assets, actor);
+            assert_eq!(
+                held.expect("following held tick").motion,
+                MotionState::InProgress
+            );
+            let entity = engine.get_entity(actor).unwrap();
+            assert_eq!(
+                (entity.sprite().current_frame, entity.sprite().frame_count),
+                frame
+            );
+            assert_eq!(
+                entity.human_data().unwrap().tiredness,
+                before - 2 * WEAKNESS_DISMISH
+            );
+            return;
+        }
+        panic!("weak-sword fixture never reached its action-done frame");
+    }
+
+    #[test]
+    fn falling_landing_depends_on_death_not_unconsciousness() {
+        for dead in [false, true] {
+            for unconscious in [false, true] {
+                let mut entity = weak_soldier_at_action_done(0);
+                entity.npc_data_mut().unwrap().life_points = if dead { 0 } else { 100 };
+                entity.human_data_mut().unwrap().unconscious = unconscious;
+                entity.set_posture(Posture::Flying);
+                apply_falling_completion_side_effect(
+                    &mut entity,
+                    OrderType::FallingHitWithSword,
+                    MotionState::Terminated,
+                );
+                assert_eq!(
+                    entity.element_data().posture(),
+                    if dead {
+                        Posture::DeadBack
+                    } else {
+                        Posture::Lying
+                    }
+                );
+                assert_eq!(
+                    entity.actor_data().unwrap().action_state,
+                    ActionState::WaitingSword
+                );
+                assert_eq!(entity.human_data().unwrap().unconscious, unconscious);
+            }
+        }
     }
 
     #[test]
@@ -2696,7 +2790,6 @@ fn apply_soldier_execute_side_effects(
     antagonist: Option<EntityId>,
     entity_id: EntityId,
     outcomes: &mut ExecuteSideOutcomes,
-    _profile_manager: &crate::profiles::ProfileManager,
 ) {
     use crate::order::OrderType as OT;
     use crate::sprite::MotionState as MS;
@@ -4006,7 +4099,6 @@ fn apply_being_dead_start_side_effect(
 fn fall_landing_states(
     anim_type: OrderType,
     is_dead: bool,
-    _is_unconscious: bool,
 ) -> Option<(Posture, Option<ActionState>)> {
     let lying_or_dead_back = if is_dead {
         Posture::DeadBack
@@ -4173,8 +4265,7 @@ fn apply_falling_completion_side_effect(
         entity.position_iface_mut().set_anti_collision_on(true);
     }
     let is_dead = entity.is_dead();
-    let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
-    if let Some((posture, action_state)) = fall_landing_states(anim_type, is_dead, is_unconscious) {
+    if let Some((posture, action_state)) = fall_landing_states(anim_type, is_dead) {
         entity.set_posture(posture);
         let hard_hit_done = motion == MotionState::Done
             && matches!(
@@ -4229,11 +4320,7 @@ fn apply_combat_injury_side_effect(
 /// first reaches the action-done frame, preserve the sprite's `Done` result:
 /// The original game checks action completion before advancing the action, so the hold begins
 /// only on the following actor tick in [`hold_weak_sword_at_action_done`].
-fn apply_weak_sword_tiredness_after_perform(
-    entity: &mut Entity,
-    anim_type: OrderType,
-    _motion: &mut MotionState,
-) {
+fn apply_weak_sword_tiredness_after_perform(entity: &mut Entity, anim_type: OrderType) {
     if anim_type != OrderType::BeingWeakSword {
         return;
     }
@@ -6437,11 +6524,7 @@ impl EngineInner {
                             );
                         }
                         if !weak_sword_held {
-                            apply_weak_sword_tiredness_after_perform(
-                                entity,
-                                anim_type,
-                                &mut motion_state,
-                            );
+                            apply_weak_sword_tiredness_after_perform(entity, anim_type);
                         }
                         if let Some(action_state_before_perform) =
                             weak_stunned_action_before_perform
@@ -6549,7 +6632,6 @@ impl EngineInner {
                             antagonist,
                             entity_id,
                             &mut completion_outcomes.execute_sides,
-                            &assets.profile_manager,
                         );
                         apply_npc_execute_side_effects(
                             entity,
