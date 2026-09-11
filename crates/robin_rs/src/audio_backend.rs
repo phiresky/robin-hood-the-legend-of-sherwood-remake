@@ -93,14 +93,8 @@ impl KiraAudioBackend {
         num_channels: u32,
         files: Arc<SbFileSystem>,
     ) -> Result<Self, String> {
-        let reused: Option<AudioManager> = None;
-
-        let reused_manager = reused.is_some();
-        let mut manager = match reused {
-            Some(manager) => manager,
-            None => AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
-                .map_err(|e| format!("kira AudioManager init failed: {e}"))?,
-        };
+        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())
+            .map_err(|e| format!("kira AudioManager init failed: {e}"))?;
         let listener = manager
             .add_listener(
                 mint::Vector3 {
@@ -120,10 +114,7 @@ impl KiraAudioBackend {
             .map_err(|e| format!("kira add_listener failed: {e}"))?;
         let channels = (0..num_channels).map(|_| None).collect();
         let spatial_tracks = (0..num_channels).map(|_| None).collect();
-        tracing::info!(
-            reused_manager,
-            "kira audio initialised: {num_channels} channel slots"
-        );
+        tracing::info!("kira audio initialised: {num_channels} channel slots");
         Ok(Self {
             manager: Some(manager),
             sound_dir: sound_dir.into(),
