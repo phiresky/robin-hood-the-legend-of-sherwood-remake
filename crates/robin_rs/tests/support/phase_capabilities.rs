@@ -483,6 +483,59 @@ fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
 }
 
 #[test]
+fn scripted_modal_helpers_borrow_engine_without_timeline_authority() {
+    let source = syn::parse_file(include_str!("../../src/game_session/frame_simulate.rs")).unwrap();
+    for name in ["drive_scripted_modal_lanes", "drive_leave_mission_prompt"] {
+        let function = source
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing modal helper {name}"));
+        struct Arguments;
+        impl<'ast> Visit<'ast> for Arguments {
+            fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+                for segment in &ty.path.segments {
+                    assert!(
+                        segment.ident != "TimelineRuntime" && segment.ident != "EngineManager",
+                        "scripted modal helpers must not own timeline or snapshot replacement authority"
+                    );
+                }
+                visit::visit_type_path(self, ty);
+            }
+        }
+        let mut engine_found = false;
+        for input in &function.sig.inputs {
+            Arguments.visit_fn_arg(input);
+            let syn::FnArg::Typed(argument) = input else {
+                continue;
+            };
+            let syn::Type::Reference(reference) = argument.ty.as_ref() else {
+                continue;
+            };
+            let syn::Type::Path(path) = reference.elem.as_ref() else {
+                continue;
+            };
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "Engine")
+            {
+                assert!(
+                    reference.mutability.is_none(),
+                    "modal engine access must be read-only"
+                );
+                engine_found = true;
+            }
+        }
+        assert!(engine_found, "{name} must borrow its read-only engine");
+    }
+}
+
+#[test]
 fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
     let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
     let owner = runtime

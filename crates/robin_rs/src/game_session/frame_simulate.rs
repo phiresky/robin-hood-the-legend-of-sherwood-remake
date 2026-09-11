@@ -266,14 +266,13 @@ enum ScriptedModalMode {
 async fn drive_scripted_modal_lanes(
     host: &mut Host,
     game: &Game,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    engine: &robin_engine::engine::Engine,
     profiles: &engine_profiles::ProfileManager,
     window: &mut GameWindow,
     audio: &mut super::interactive::MissionAudio,
     resources: &mut super::interactive::MissionResources,
     ui: &mut super::interactive::MissionUi,
     presentation: &mut super::interactive::MissionPresentation,
-    _runtime: &mut super::runtime::TimelineRuntime,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     mut rendered: bool,
@@ -283,7 +282,7 @@ async fn drive_scripted_modal_lanes(
         && ui.active_modal.is_none()
         && host.effects.has_signal(HostSignal::SherwoodTrading)
     {
-        let access = sherwood_trading_access(host, &manager.engine, profiles);
+        let access = sherwood_trading_access(host, engine, profiles);
         match host.effects.take_sherwood_trading(access) {
             Ok(false) => {}
             Err(reason) => {
@@ -297,8 +296,8 @@ async fn drive_scripted_modal_lanes(
                     tracing::warn!("Sherwood trading: menu resources unavailable — skipped");
                     return rendered;
                 };
-                let sectors = manager.engine.live_tradable_production_sectors(profiles);
-                let ransom = crate::ingame_menu::trading::ransom_from_engine(&manager.engine);
+                let sectors = engine.live_tradable_production_sectors(profiles);
+                let ransom = crate::ingame_menu::trading::ransom_from_engine(engine);
                 ui.active_modal = Some(ActiveModal::Trading(Box::new(
                     crate::ingame_menu::TradingModalState::new(
                         window,
@@ -339,13 +338,13 @@ async fn drive_scripted_modal_lanes(
                 &mut resources.text,
                 &resources.level_descriptors,
                 &mut frame.replay_modal_dismissals,
-                manager.engine.simulation_tick().number(),
+                engine.simulation_tick().number(),
             )
             .await;
             drain_pending_sherwood_stat(
                 host,
                 &mut modal_ctx,
-                &manager.engine,
+                engine,
                 profiles,
                 &mut frame.replay_modal_dismissals,
             )
@@ -399,11 +398,11 @@ async fn drive_scripted_modal_lanes(
                     &mut modal_ctx,
                     &mut resources.text,
                     &resources.level_descriptors,
-                    manager.engine.simulation_tick().number(),
+                    engine.simulation_tick().number(),
                 )
                 .map(|batch| ActiveModal::PopupScroll(Box::new(batch))),
                 ScriptedModalLane::SherwoodReport => {
-                    start_active_sherwood_report(host, &mut modal_ctx, &manager.engine, profiles)
+                    start_active_sherwood_report(host, &mut modal_ctx, engine, profiles)
                         .map(|batch| ActiveModal::PopupScroll(Box::new(batch)))
                 }
                 ScriptedModalLane::Debriefing => start_active_debriefing_batch(
@@ -430,7 +429,7 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
-                &manager.engine,
+                engine,
                 profiles,
             );
             dispatch_active_modal_outcome(outcome, host, &mut modal_commands);
@@ -487,14 +486,13 @@ fn dispatch_active_modal_outcome(
 #[allow(clippy::too_many_arguments)]
 fn drive_leave_mission_prompt(
     host: &mut Host,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    engine: &robin_engine::engine::Engine,
     assets: &robin_engine::engine::LevelAssets,
     window: &mut GameWindow,
     audio: &mut super::interactive::MissionAudio,
     resources: &mut super::interactive::MissionResources,
     ui: &mut super::interactive::MissionUi,
     presentation: &mut super::interactive::MissionPresentation,
-    _runtime: &mut super::runtime::TimelineRuntime,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     rendered: bool,
@@ -552,7 +550,7 @@ fn drive_leave_mission_prompt(
         host,
         &mut modal_ctx,
         &mut frame.replay_modal_dismissals,
-        &manager.engine,
+        engine,
         &assets.profile_manager,
     );
     dispatch_active_modal_outcome(outcome, host, &mut frame.stage_post_commands());
@@ -1252,14 +1250,13 @@ impl InteractiveFrameSimulation {
             modal_rendered_this_frame = drive_scripted_modal_lanes(
                 host,
                 game,
-                manager,
+                &manager.engine,
                 profiles,
                 window,
                 audio,
                 resources,
                 ui,
                 presentation,
-                runtime,
                 &mut frame,
                 ScriptedModalMode::Interactive,
                 modal_rendered_this_frame,
@@ -1274,14 +1271,13 @@ impl InteractiveFrameSimulation {
         if !terminal_modal_active && !lost_sherwood_modal_active {
             modal_rendered_this_frame = drive_leave_mission_prompt(
                 host,
-                manager,
+                &manager.engine,
                 assets.as_ref(),
                 window,
                 audio,
                 resources,
                 ui,
                 presentation,
-                runtime,
                 &mut frame,
                 modal_mode,
                 modal_rendered_this_frame,
