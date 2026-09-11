@@ -2193,6 +2193,37 @@ mod tests {
     }
 
     #[test]
+    fn loaded_old_demo_menu_and_ui_panel_agree_on_final_layout_ids() {
+        let mut bytes = b"SRES".to_vec();
+        bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(b"TEXT");
+        bytes.extend_from_slice(&MENU_TEXT_TABLE_ID.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&170u16.to_le_bytes());
+        for index in 0..170 {
+            let text: Vec<_> = format!("Original {index}").encode_utf16().collect();
+            bytes.extend_from_slice(&(text.len() as u16).to_le_bytes());
+            for unit in text {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("old-demo.res", bytes).unwrap();
+        let files = std::sync::Arc::new(robin_engine::sbfile::SbFileSystem::new(vfs));
+        let mut resources = ResourceManager::with_files(files);
+        resources.attach_resource_file("old-demo.res").unwrap();
+        let menu = MenuText::load(&mut resources);
+        for index in [54, 100, 144, 166, 167] {
+            let (label, _, _) = crate::ui_panel::menu_text_string(&mut resources, index).unwrap();
+            assert_eq!(menu.get(index), label);
+        }
+        assert_eq!(menu.get(54), "Original 53");
+        assert_eq!(menu.get(166), "Original 165");
+        assert_eq!(menu.get(167), "Original 167");
+    }
+
+    #[test]
     fn menu_text_fallback_is_english() {
         let text = MenuText::default();
         assert_eq!(text.get(MT_BTN_OK), ""); // no fallback populated by default()
