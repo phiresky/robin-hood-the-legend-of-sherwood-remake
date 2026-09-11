@@ -1658,13 +1658,12 @@ impl EngineInner {
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
             let grid = &self.world.fast_grid;
-            let global = &mut self.ai.global;
             self.world
                 .entities
                 .get_mut(npc_id)
                 .and_then(Entity::enemy_ai_mut)
                 .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} has no enemy AI"))
-                .observe_after_synchronous_panic(sim, global, &ctx, &tick, Some(grid));
+                .observe_after_synchronous_panic(sim, &ctx, &tick, Some(grid));
             // The resumed tail contains state changes, focusing, and movement.
             // Close their owner-local callbacks and actor effects before the
             // enclosing synchronous Panic continuation returns.

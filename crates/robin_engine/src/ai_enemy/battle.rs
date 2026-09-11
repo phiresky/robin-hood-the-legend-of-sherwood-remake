@@ -2671,12 +2671,11 @@ impl EnemyAi {
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
             eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} distance_arg_bits={:08x} state={:?}/{:?} primary={:?} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
+                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} state={:?}/{:?} primary={:?} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order,
                 reachpoint,
-                _distance_arg.to_bits(),
                 self.base.current_state,
                 self.base.current_substate,
                 self.base.primary_target,
