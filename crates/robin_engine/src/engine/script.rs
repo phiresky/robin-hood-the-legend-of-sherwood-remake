@@ -7462,8 +7462,21 @@ mod script_context_tests {
                 active: true,
                 legacy_dummy: false,
             }));
-        script.state.sequence_recorder.sequence_id = 3;
-        script.state.sequence_recorder.recording = Some(crate::sequence::RecordingSession::new());
+        let mut recording = crate::sequence::RecordingSession::new();
+        for expected_level in [2, 3] {
+            let mut timer = crate::sequence::SequenceElement::new_generic(
+                1,
+                crate::element::Command::Timer,
+                None,
+            );
+            timer.set_property(
+                crate::sequence::Field::Timer,
+                crate::sequence::FieldValue::Integer(12),
+            );
+            recording.add_element(timer);
+            assert_eq!(recording.advance_level(), expected_level);
+        }
+        script.state.sequence_recorder = Some(recording);
         let location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
         script.attach_bindings(crate::natives::AttachedScriptBindings {
             script_location_count: 1,
@@ -7505,8 +7518,19 @@ mod script_context_tests {
                 .is_none()
         );
         assert_eq!(decoded.state.computed_locations.len(), 1);
-        assert!(decoded.state.sequence_recorder.recording.is_some());
+        assert!(decoded.state.sequence_recorder.is_some());
         assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
+        let recording = decoded.state.sequence_recorder.as_mut().unwrap();
+        assert_eq!(recording.command_level, 3);
+        assert_eq!(recording.advance_level(), 3, "empty Then does not advance");
+        let mut timer =
+            crate::sequence::SequenceElement::new_generic(1, crate::element::Command::Timer, None);
+        timer.set_property(
+            crate::sequence::Field::Timer,
+            crate::sequence::FieldValue::Integer(12),
+        );
+        recording.add_element(timer);
+        assert_eq!(recording.advance_level(), 4);
     }
 
     #[test]

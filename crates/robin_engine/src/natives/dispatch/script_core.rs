@@ -131,14 +131,13 @@ impl NativeContext<'_, '_> {
                 // If a recording is already active, warn and
                 // return 0 *without mutating state*; otherwise
                 // allocate, set sequence_level = 1, return 1.
-                if self.script_state.sequence_recorder.recording.is_some() {
+                if self.script_state.sequence_recorder.is_some() {
                     tracing::error!(
                         "Script error in Start: cannot start a new record sequence while another is still being recorded"
                     );
                     0
                 } else {
-                    self.script_state.sequence_recorder.recording = Some(RecordingSession::new());
-                    self.script_state.sequence_recorder.sequence_id = 1;
+                    self.script_state.sequence_recorder = Some(RecordingSession::new());
                     1
                 }
             }
@@ -146,7 +145,7 @@ impl NativeContext<'_, '_> {
                 // No active recording returns false. An empty active
                 // recording is diagnosed and discarded, but the script command
                 // still returns true after ending that recording.
-                if let Some(rec) = self.script_state.sequence_recorder.recording.take() {
+                if let Some(rec) = self.script_state.sequence_recorder.take() {
                     match rec.finalize() {
                         Some(seq) => {
                             self.launch_script_sequence(seq, 1);
@@ -169,9 +168,8 @@ impl NativeContext<'_, '_> {
                 // < 1), warn and return 0 *without mutating
                 // state*; else advance the level and return the
                 // current sequence level.
-                if let Some(rec) = &mut self.script_state.sequence_recorder.recording {
+                if let Some(rec) = &mut self.script_state.sequence_recorder {
                     let level = rec.advance_level();
-                    self.script_state.sequence_recorder.sequence_id = level as i32;
                     level as i32
                 } else {
                     tracing::error!(

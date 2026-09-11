@@ -1,12 +1,13 @@
 //! Run Initialize on every .scb in a directory and report results.
 //!
-//!   cargo run --bin batch_run -- datadirs/fullgame/Data/Levels
+//! cargo run --example batch_run -- datadirs/fullgame/Data/Levels
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use robin_assets::scb;
-use robin_engine::interp::Vm;
 use robin_engine::natives::{NativeContext, ScriptEffects, ScriptState};
-use robin_engine::vm::{self, Instruction};
+use robin_engine::script_manager::{ScriptManager, ScriptProgram};
+use std::path::Path;
+use std::sync::Arc;
 
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
 struct Args {
@@ -14,126 +15,263 @@ struct Args {
     dir: String,
 }
 
-fn main() {
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ScriptResult {
+    script: String,
+    status: String,
+    execution: Option<ExecutionStats>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ExecutionStats {
+    deferred_commands: usize,
+    ip: u32,
+    frames: usize,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct BatchReport {
+    results: Vec<ScriptResult>,
+    errors: Vec<String>,
+}
+
+impl BatchReport {
+    fn exit_code(&self) -> std::process::ExitCode {
+        if self.errors.is_empty() {
+            std::process::ExitCode::SUCCESS
+        } else {
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_initialize(file: scb::ScbFile) -> Result<Option<ScriptResult>, String> {
+    // Validate every class even when none provides Initialize.
+    let program = ScriptProgram::from_scb(file).map_err(|error| error.to_string())?;
+    let mut manager = ScriptManager::from_program(Arc::new(program));
+    let Some(class) = manager.scb().classes.iter().find(|class| {
+        class
+            .functions
+            .iter()
+            .any(|function| function.name == "Initialize")
+    }) else {
+        return Ok(None);
+    };
+    let class_name = class.class_name.clone();
+    let count = class
+        .functions
+        .iter()
+        .find(|function| function.name == "Initialize")
+        .expect("selected class has Initialize")
+        .num_parameters;
+    let count = usize::try_from(count)
+        .map_err(|_| format!("{class_name}::Initialize: negative parameter count"))?;
+    let mut instance = manager
+        .create_instance(&class_name)
+        .map_err(|error| error.to_string())?;
+    let mut activation = instance
+        .begin_activation(&manager, "Initialize", &vec![0; count])
+        .map_err(|error| error.to_string())?;
+    let mut script_effects = ScriptEffects::new();
+    let mut entities = robin_engine::entities::Entities::new();
+    let mut ai_global = robin_engine::ai::AiGlobalState::default();
+    let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+    let simulation = robin_engine::sim_rng::SimulationContext::with_seed(0);
+    let mut native_globals = Vec::new();
+    let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
+        &simulation,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
+    let mut script_state = ScriptState::default();
+    let mut script_domains = robin_engine::engine::ScriptDomains::default();
+    let mut context = NativeContext::new(
+        &mut script_effects,
+        &mut script_state,
+        &mut script_domains,
+        &capabilities,
+    );
+
+    let stop = instance.poll_activation_with_host(
+        &mut manager,
+        &mut activation,
+        500_000,
+        "Initialize",
+        &mut context,
+    );
+    Ok(Some(ScriptResult {
+        script: format!("{class_name}::Initialize"),
+        // Report the actual stop. Yield, instruction budget, authored Empty,
+        // and a nested return are not claims of completed initialization.
+        status: format!("{stop:?}"),
+        execution: Some(ExecutionStats {
+            deferred_commands: context.engine_commands().len(),
+            ip: activation.ip,
+            frames: activation.frames.len(),
+        }),
+    }))
+}
+
+fn run_directory(directory: &Path) -> Result<BatchReport, String> {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| format!("{}: read directory: {error}", directory.display()))?;
+    let mut report = BatchReport::default();
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) == Some("scb") {
+                    paths.push(path);
+                }
+            }
+            Err(error) => report.errors.push(format!(
+                "{}: enumerate directory: {error}",
+                directory.display()
+            )),
+        }
+    }
+    paths.sort();
+    for path in paths {
+        let outcome = scb::parse_file(&path)
+            .map_err(|error| error.to_string())
+            .and_then(run_initialize);
+        match outcome {
+            Ok(Some(mut result)) => {
+                result.script = format!("{}: {}", path.display(), result.script);
+                report.results.push(result);
+            }
+            Ok(None) => report.results.push(ScriptResult {
+                script: path.display().to_string(),
+                status: "NO-INIT".into(),
+                execution: None,
+            }),
+            Err(error) => {
+                let error = format!("{}: {error}", path.display());
+                report.results.push(ScriptResult {
+                    script: path.display().to_string(),
+                    status: format!("ERROR: {error}"),
+                    execution: None,
+                });
+                report.errors.push(error);
+            }
+        }
+    }
+    Ok(report)
+}
+
+fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt::init();
     let args = <Args as clap::Parser>::parse();
-    let dir = &args.dir;
-
-    let mut results: Vec<(String, &str, usize, usize)> = Vec::new();
-
-    let entries: Vec<_> = std::fs::read_dir(dir)
-        .expect("can't read dir")
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("scb"))
-        .collect();
-
-    for entry in &entries {
-        let path = entry.path();
-        let name = path.file_stem().unwrap().to_string_lossy().to_string();
-
-        let scb_file = match scb::parse_file(&path) {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!("{name:<30} PARSE ERROR: {e}");
-                continue;
-            }
-        };
-
-        // Find a class with an Initialize function
-        let mut found = false;
-        for class in &scb_file.classes {
-            if let Some(func) = class.functions.iter().find(|f| f.name == "Initialize") {
-                let instructions: Vec<Instruction> = class
-                    .quads
-                    .iter()
-                    .map(|q| vm::decode(*q).unwrap_or(Instruction::Empty))
-                    .collect();
-
-                let mut script_effects = ScriptEffects::new();
-                let mut entities = robin_engine::entities::Entities::new();
-                let mut ai_global = robin_engine::ai::AiGlobalState::default();
-                let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
-                let simulation = robin_engine::sim_rng::SimulationContext::with_seed(0);
-                let mut native_globals = Vec::new();
-                let capabilities = robin_engine::natives::NativeSessionCapabilities::new(
-                    &simulation,
-                    &mut entities,
-                    &mut ai_global,
-                    &mut fast_grid,
-                    &mut native_globals,
-                );
-                let mut script_state = ScriptState::default();
-                let mut script_domains = robin_engine::engine::ScriptDomains::default();
-                let context = NativeContext::new(
-                    &mut script_effects,
-                    &mut script_state,
-                    &mut script_domains,
-                    &capabilities,
-                );
-                let mut vm_state = Vm::new().with_host(context);
-                vm_state
-                    .vm
-                    .heap
-                    .resize(class.size_of_member_variables.max(0) as usize, 0);
-
-                // Set up caller frame
-                vm_state.vm.frames[0].temporary.resize(64, 0);
-                for _ in 0..func.num_parameters {
-                    vm_state
-                        .vm
-                        .outgoing_params
-                        .extend_from_slice(&0i32.to_le_bytes());
-                }
-                let caller_frame = robin_engine::interp::Frame {
-                    parameters: std::mem::take(&mut vm_state.vm.outgoing_params),
-                    return_address: instructions.len() as u32,
-                    ..Default::default()
-                };
-                vm_state.vm.frames.push(caller_frame);
-                vm_state.vm.ip = func.address as u32;
-
-                let stop = vm_state.run_up_to(&instructions, 500_000);
-
-                let stop_str = match stop {
-                    robin_engine::interp::StopReason::Returned => "OK-ret",
-                    robin_engine::interp::StopReason::ReturnedValue(_) => "OK-retval",
-                    robin_engine::interp::StopReason::RanOff => "OK-ranoff",
-                    robin_engine::interp::StopReason::StepLimit => "LIMIT",
-                    robin_engine::interp::StopReason::HitEmpty => "EMPTY",
-                    robin_engine::interp::StopReason::Unimplemented(_) => "UNIMPL",
-                    robin_engine::interp::StopReason::Yield(_) => "YIELD",
-                };
-
-                let final_ip = vm_state.vm.ip as usize;
-                // Count deferred engine commands as a stand-in for "natives invoked"
-                // (the previous host-trace facility is gone).
-                let host = vm_state.take_host();
-
-                results.push((
-                    format!("{}::{}", class.class_name, func.name),
-                    stop_str,
-                    host.script_effects().engine_commands().len(),
-                    final_ip,
-                ));
-                found = true;
-                break;
-            }
+    let report = match run_directory(Path::new(&args.dir)) {
+        Ok(report) => report,
+        Err(error) => {
+            tracing::error!("{error}");
+            return std::process::ExitCode::FAILURE;
         }
-        if !found {
-            results.push((name, "NO-INIT", 0, 0));
+    };
+    for result in &report.results {
+        if let Some(execution) = &result.execution {
+            tracing::info!(
+                "{}: {} (deferred commands: {}, ip: {}, frames: {})",
+                result.script,
+                result.status,
+                execution.deferred_commands,
+                execution.ip,
+                execution.frames
+            );
+        } else {
+            tracing::info!("{}: {}", result.script, result.status);
         }
     }
-
+    for error in &report.errors {
+        tracing::error!("{error}");
+    }
     tracing::info!(
-        "{:<40} {:>10} {:>8} {:>8}",
-        "SCRIPT",
-        "RESULT",
-        "NATIVES",
-        "IP"
+        "{} scripts processed, {} errors",
+        report.results.len(),
+        report.errors.len()
     );
-    tracing::info!("{}", "-".repeat(70));
-    for (name, result, natives, ip) in &results {
-        tracing::info!("{name:<40} {result:>10} {natives:>8} {ip:>8}");
+    report.exit_code()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Minimal real SCB encoding exercises the same directory/parser/program
+    // path as the command-line tool; this is not a replacement interpreter.
+    fn script_bytes(opcode: u8, initialize: bool) -> Vec<u8> {
+        let mut bytes = scb::SCB_MAGIC.to_vec();
+        bytes.extend_from_slice(&scb::SCB_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for text in ["fixture.scs", "Probe"] {
+            bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(text.as_bytes());
+        }
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // members
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // heap size
+        bytes.extend_from_slice(&i32::from(initialize).to_le_bytes());
+        if initialize {
+            bytes.extend_from_slice(&10u32.to_le_bytes());
+            bytes.extend_from_slice(b"Initialize");
+            for _ in 0..6 {
+                bytes.extend_from_slice(&0i32.to_le_bytes());
+            }
+        }
+        bytes.extend_from_slice(&1i32.to_le_bytes());
+        bytes.push(opcode);
+        bytes.extend_from_slice(&[0; 8]);
+        bytes
     }
-    tracing::info!("{} scripts processed", results.len());
+
+    #[test]
+    fn missing_directory_is_an_explicit_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing");
+        let error = run_directory(&missing).unwrap_err();
+        assert!(error.contains("read directory"), "{error}");
+        assert!(error.contains(missing.to_str().unwrap()), "{error}");
+    }
+
+    #[test]
+    fn mixed_valid_and_corrupt_scripts_are_all_reported_and_fail_the_batch() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("a-corrupt.scb", script_bytes(255, false)),
+            ("b-valid.scb", script_bytes(58, true)),
+            ("c-parse.scb", b"not a script".to_vec()),
+        ] {
+            std::fs::write(directory.path().join(name), bytes).unwrap();
+        }
+        let report = run_directory(directory.path()).unwrap();
+        assert_eq!(report.results.len(), 3);
+        assert_eq!(report.errors.len(), 2);
+        assert_eq!(report.exit_code(), std::process::ExitCode::FAILURE);
+        assert!(report.results[0].status.contains("0xff"));
+        assert!(report.results[0].status.contains("Probe"));
+        assert!(report.results[0].status.contains("instruction 0"));
+        assert!(report.results[0].execution.is_none());
+        assert_eq!(report.results[1].status, "HitEmpty");
+        assert!(report.results[1].execution.is_some());
+        assert!(report.results[2].status.starts_with("ERROR:"));
+        assert!(report.results[2].execution.is_none());
+    }
+
+    #[test]
+    fn only_a_valid_program_without_initialize_is_no_init() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("no-init.scb"),
+            script_bytes(58, false),
+        )
+        .unwrap();
+        let report = run_directory(directory.path()).unwrap();
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.results[0].status, "NO-INIT");
+        assert!(report.results[0].execution.is_none());
+        assert_eq!(report.exit_code(), std::process::ExitCode::SUCCESS);
+    }
 }

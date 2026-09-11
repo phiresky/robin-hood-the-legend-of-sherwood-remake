@@ -241,6 +241,18 @@ pub fn decode(q: Quad) -> Result<Instruction, DecodeError> {
     Ok(decode_with(op, q.operands))
 }
 
+/// Checked preparation policy shared by runtime programs and best-effort
+/// decompilation. Raw disassembly must keep using [`decode`] to show the bytes
+/// as authored. Only these four shipped opcodes are known Q_EMPTY workarounds.
+/// TODO(parity): locate the Original rewrite rationale for these exceptions.
+pub fn decode_for_preparation(q: Quad) -> Result<Instruction, DecodeError> {
+    if [58, 107, 208, 229].contains(&q.operation) {
+        Ok(Instruction::Empty)
+    } else {
+        decode(q)
+    }
+}
+
 fn decode_with(op: Opcode, ops: [u8; 8]) -> Instruction {
     // Little-endian decoders, all reading from offset 0 of the 8-byte
     // operand block.
@@ -557,6 +569,28 @@ mod tests {
                 b: 3
             }
         );
+    }
+
+    #[test]
+    fn preparation_preserves_only_named_shipped_empty_exceptions() {
+        for operation in [58, 107, 208, 229] {
+            let quad = Quad {
+                operation,
+                operands: [0; 8],
+            };
+            assert_eq!(decode(quad), Err(DecodeError::UnknownOpcode(operation)));
+            assert_eq!(decode_for_preparation(quad), Ok(Instruction::Empty));
+        }
+        let invalid = Quad {
+            operation: 255,
+            operands: [0; 8],
+        };
+        assert_eq!(
+            decode_for_preparation(invalid),
+            Err(DecodeError::UnknownOpcode(255))
+        );
+        let nop = mkq(Opcode::Nop, [0; 8]);
+        assert_eq!(decode_for_preparation(nop), decode(nop));
     }
 
     #[test]

@@ -70,9 +70,7 @@ pub use signatures::{
     NativeParamSig, NativeSignature, SPELLFORGE_NATIVE_ALIASES, native_definition_by_index,
     native_definition_by_name, native_signature_by_index, native_signature_by_name,
 };
-pub use state::{
-    ComputedScriptLocation, DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT, ScriptState, SequenceRecorderState,
-};
+pub use state::{ComputedScriptLocation, DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT, ScriptState};
 
 use handle_codec::ScriptHandleKind;
 
@@ -846,7 +844,6 @@ impl NativeContext<'_, '_> {
     fn recording_level(&self) -> u16 {
         self.script_state
             .sequence_recorder
-            .recording
             .as_ref()
             .map_or(1, |r| r.command_level)
     }
@@ -902,7 +899,7 @@ impl NativeContext<'_, '_> {
     /// Add a sequence element to the current recording session.
     /// Returns 1 on success, 0 if not currently recording.
     fn record_element(&mut self, element: SequenceElement) -> i32 {
-        if let Some(rec) = &mut self.script_state.sequence_recorder.recording {
+        if let Some(rec) = &mut self.script_state.sequence_recorder {
             rec.add_element(element);
             1
         } else {
@@ -924,7 +921,7 @@ impl NativeContext<'_, '_> {
     /// emission keeps the caller-provided starting level so the helper
     /// composes cleanly with the surrounding recording flow.
     fn record_seq_step(&mut self, elem: SequenceElement, is_first: bool) {
-        if !is_first && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
+        if !is_first && let Some(rec) = self.script_state.sequence_recorder.as_mut() {
             rec.advance_level();
         }
         self.record_element(elem);
@@ -1059,7 +1056,7 @@ impl NativeContext<'_, '_> {
             "movement-sequence construction: STRAIGHT flag must be clear"
         );
 
-        if self.script_state.sequence_recorder.recording.is_none() {
+        if self.script_state.sequence_recorder.is_none() {
             return false;
         }
 
@@ -1322,7 +1319,6 @@ impl NativeContext<'_, '_> {
         let first_gate_size = self
             .script_state
             .sequence_recorder
-            .recording
             .as_ref()
             .map(|r| r.current_size())
             .unwrap_or(0);
@@ -1354,7 +1350,6 @@ impl NativeContext<'_, '_> {
                 let cur_size = self
                     .script_state
                     .sequence_recorder
-                    .recording
                     .as_ref()
                     .map(|r| r.current_size())
                     .unwrap_or(0);
@@ -1666,7 +1661,7 @@ impl NativeContext<'_, '_> {
             sector: dest_sector,
         };
 
-        let rec = self.script_state.sequence_recorder.recording.as_mut()?;
+        let rec = self.script_state.sequence_recorder.as_mut()?;
         match rec.moving_actors.get(&actor_handle).copied() {
             Some(prev) => {
                 rec.moving_actors.insert(actor_handle, new_target);

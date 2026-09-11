@@ -75,7 +75,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// imported Messenger copies in native snapshots (save 78 / replay 36).
 /// Protocol 45 removes unused imported sound and same-frame AI target-claim
 /// snapshot state (save 79 / replay 37).
-pub const NET_PROTOCOL_VERSION: u32 = 45;
+/// Protocol 46 stores the optional recording session directly instead of a
+/// recorder wrapper with a write-only sequence ID (save 80 / replay 38).
+pub const NET_PROTOCOL_VERSION: u32 = 46;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1825,7 +1827,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_excludes_unused_sound_and_ai_claim_state() {
+    fn protocol_version_uses_canonical_recording_session() {
         // Version 38 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
@@ -1848,7 +1850,9 @@ mod tests {
         // imported Messenger blob from native snapshots.
         // Version 45 removes unused imported sound and same-frame AI target
         // claims from snapshots and state hashes.
-        assert_eq!(NET_PROTOCOL_VERSION, 45);
+        // Version 46 replaces the recorder wrapper and write-only sequence
+        // ID with the optional recording session in snapshots and hashes.
+        assert_eq!(NET_PROTOCOL_VERSION, 46);
     }
 
     #[test]

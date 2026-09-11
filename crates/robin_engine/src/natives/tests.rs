@@ -537,6 +537,100 @@ fn send_message_native_launches_and_yields_inline() {
 }
 
 #[test]
+fn sequence_recording_errors_and_empty_completion_leave_no_persisted_history() {
+    assert!(
+        serde_json::from_value::<ScriptState>(serde_json::json!({
+            "computed_locations": []
+        }))
+        .is_err()
+    );
+    let mut host = BoundScriptEffects::new();
+    let call = |host: &mut BoundScriptEffects, native: NativeFn| {
+        HostFunctions::call(host, native as u32, &mut NativeStack::default())
+            .expect_return("recording control is synchronous")
+    };
+    let baseline = robin_util::state_hash::compute(&host.state);
+    assert_eq!(call(&mut host, NativeFn::Then), 0);
+    assert_eq!(call(&mut host, NativeFn::Thanx), 0);
+    assert_eq!(robin_util::state_hash::compute(&host.state), baseline);
+    for _ in 0..2 {
+        assert_eq!(call(&mut host, NativeFn::Start), 1);
+        let recording_hash = robin_util::state_hash::compute(&host.state);
+        assert_eq!(call(&mut host, NativeFn::Start), 0);
+        assert_eq!(robin_util::state_hash::compute(&host.state), recording_hash);
+        assert_eq!(call(&mut host, NativeFn::Then), 1);
+        assert_eq!(call(&mut host, NativeFn::Thanx), 1);
+        assert_eq!(robin_util::state_hash::compute(&host.state), baseline);
+        assert!(serde_json::to_value(&host.state).unwrap()["sequence_recorder"].is_null());
+        assert_eq!(host.sequence_manager.sequences_iter().count(), 0);
+    }
+}
+
+#[test]
+fn sequence_recording_continues_after_json_and_native_state_snapshots() {
+    let call = |host: &mut BoundScriptEffects, native: NativeFn| {
+        HostFunctions::call(host, native as u32, &mut NativeStack::default())
+            .expect_return("recording control is synchronous")
+    };
+    let record_timer = |host: &mut BoundScriptEffects| {
+        let mut args = NativeStack::default();
+        args.push_i32(12);
+        assert_eq!(
+            HostFunctions::call(host, NativeFn::RecordTimer as u32, &mut args)
+                .expect_return("record timer"),
+            1
+        );
+    };
+    let mut original = BoundScriptEffects::new();
+    assert_eq!(call(&mut original, NativeFn::Start), 1);
+    for level in [2, 3] {
+        record_timer(&mut original);
+        assert_eq!(call(&mut original, NativeFn::Then), level);
+    }
+    record_timer(&mut original);
+    let hash = robin_util::state_hash::compute(&original.state);
+    let json = serde_json::to_value(&original.state).unwrap();
+    assert_eq!(json["sequence_recorder"]["command_level"], 3);
+    assert!(json["sequence_recorder"].get("sequence_id").is_none());
+    let json_state: ScriptState = serde_json::from_value(json).unwrap();
+    let native_state: ScriptState = bitcode::decode(&bitcode::encode(&original.state)).unwrap();
+    for state in [json_state, native_state] {
+        let mut restored = BoundScriptEffects::new();
+        restored.state = state;
+        assert_eq!(robin_util::state_hash::compute(&restored.state), hash);
+        assert_eq!(call(&mut restored, NativeFn::Start), 0);
+        assert_eq!(call(&mut restored, NativeFn::Then), 4);
+        assert_eq!(call(&mut restored, NativeFn::Then), 4);
+        record_timer(&mut restored);
+        assert!(matches!(
+            HostFunctions::call(
+                &mut restored,
+                NativeFn::Thanx as u32,
+                &mut NativeStack::default()
+            ),
+            NativeCallOutcome::Yield(crate::interp::NativeYield {
+                operation: crate::interp::NativeOperation::SequenceAction(_),
+                resume: crate::interp::ResumePolicy::Fixed(1),
+            })
+        ));
+        assert_eq!(
+            robin_util::state_hash::compute(&restored.state),
+            robin_util::state_hash::compute(&ScriptState::default())
+        );
+        let sequences: Vec<_> = restored.sequence_manager.sequences_iter().collect();
+        assert_eq!(sequences.len(), 1);
+        assert_eq!(
+            sequences[0]
+                .elements
+                .iter()
+                .map(|element| element.command_level)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+    }
+}
+
+#[test]
 fn thanx_returns_true_for_an_empty_active_recording() {
     let mut host = BoundScriptEffects::new();
     assert_eq!(
@@ -915,7 +1009,7 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
         sector_in: crate::sector::SectorNumber::new(98),
         ..Door::default()
     });
-    host.state.sequence_recorder.recording = Some(RecordingSession::new());
+    host.state.sequence_recorder = Some(RecordingSession::new());
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
 
     {
@@ -952,7 +1046,6 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
     let pass = host
         .state
         .sequence_recorder
-        .recording
         .as_ref()
         .expect("recording remains open")
         .sequence
@@ -1018,7 +1111,7 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
         },
         0,
     );
-    host.state.sequence_recorder.recording = Some(RecordingSession::new());
+    host.state.sequence_recorder = Some(RecordingSession::new());
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let source = SectorHandle::new(0).unwrap();
     let goal = source.with_arena_index(
@@ -1073,7 +1166,6 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
     let elements = &host
         .state
         .sequence_recorder
-        .recording
         .as_ref()
         .expect("recording remains open")
         .sequence
@@ -1207,7 +1299,7 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
             vec![118, 117, 122, 120]
         );
         host.script_domains.interactables.doors = doors;
-        host.state.sequence_recorder.recording = Some(RecordingSession::new());
+        host.state.sequence_recorder = Some(RecordingSession::new());
         let actor = ScriptHandleCodec::actor_handle_from_index(0);
         host.bindings.script_location_count = 1;
         host.bindings.script_point_count = 1;
@@ -1275,7 +1367,7 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
             call_host_native(&mut host, NativeFn::RecordMove, &mut stack),
             1
         );
-        let recording = host.state.sequence_recorder.recording.as_ref().unwrap();
+        let recording = host.state.sequence_recorder.as_ref().unwrap();
         assert_eq!(
             recording.moving_actors[&actor].sector.arena_index(),
             exact.then(|| SectorIndex::new(10_014).unwrap())
@@ -2060,7 +2152,7 @@ fn record_move_rejects_mixed_exact_source_and_legacy_number_only_computed_goal()
             Some(source_arena),
         );
     host.entities.push(Some(soldier));
-    host.state.sequence_recorder.recording = Some(crate::sequence::RecordingSession::new());
+    host.state.sequence_recorder = Some(crate::sequence::RecordingSession::new());
     host.state
         .computed_locations
         .push(Some(ComputedScriptLocation {

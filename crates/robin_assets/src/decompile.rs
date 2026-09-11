@@ -12,7 +12,7 @@ use std::fmt::{self, Write};
 use crate::actor_names::{ActorNames, ScriptKind};
 use crate::scb::{ClassEntry, ScbFile};
 use robin_engine::natives::{native_name, native_signature_by_index};
-use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode};
+use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode_for_preparation};
 
 // ── Known parameter names for script functions ─────────────────
 //
@@ -1623,9 +1623,13 @@ fn build_scroll_popup_text_map(scb: &ScbFile, names: &ActorNames) -> HashMap<usi
 /// pattern doesn't match (e.g. the ID is computed, or no popup call).
 fn find_first_popup_text_id(class: &ClassEntry) -> Option<i32> {
     use robin_engine::vm::Instruction::*;
-    let instrs: Vec<_> = class.quads.iter().map(|q| decode(*q).ok()).collect();
+    let instrs: Vec<_> = class
+        .quads
+        .iter()
+        .map(|q| decode_for_preparation(*q))
+        .collect();
     for (i, ins) in instrs.iter().enumerate() {
-        let Some(NativeCall { index }) = ins else {
+        let Ok(NativeCall { index }) = ins else {
             continue;
         };
         if native_name(*index) != "DisplayPopupText" {
@@ -1636,8 +1640,16 @@ fn find_first_popup_text_id(class: &ClassEntry) -> Option<i32> {
         // so we skip the `NATIVEPARAM` (and stray `NOP`s) to find it.
         for j in (0..i).rev() {
             match &instrs[j] {
-                Some(Aff0IConstant { constant, .. }) => return Some(*constant),
-                Some(Nop) | Some(NativeParam { .. }) | None => continue,
+                Ok(Aff0IConstant { constant, .. }) => return Some(*constant),
+                Ok(Nop) | Ok(NativeParam { .. }) => continue,
+                // Preserve the established skip for the preparation helper's
+                // shipped no-op exceptions, but not an authored Q_EMPTY.
+                Ok(Empty) if class.quads[j].operation != robin_engine::vm::Opcode::Empty as u8 => {
+                    continue;
+                }
+                // Unknown instructions can overwrite the candidate argument.
+                // Never infer a popup ID by looking through missing semantics.
+                Err(_) => break,
                 _ => break,
             }
         }
@@ -1932,12 +1944,29 @@ fn decompile_class(
         .map(|f| (f.address as usize, f.name.as_str()))
         .collect();
 
-    // Decode all instructions
-    let instructions: Vec<Instruction> = class
+    // Preserve best-effort output without inventing executable no-ops. A
+    // broken class remains visible as raw evidence; other classes still render.
+    let decoded: Vec<_> = class
         .quads
         .iter()
-        .map(|q| decode(*q).unwrap_or(Instruction::Empty))
+        .map(|q| decode_for_preparation(*q))
         .collect();
+    if decoded.iter().any(Result::is_err) {
+        let _ = writeln!(
+            out,
+            "    // Cannot decompile this class: unknown instruction semantics."
+        );
+        for (address, (quad, instruction)) in class.quads.iter().zip(&decoded).enumerate() {
+            let _ = writeln!(
+                out,
+                "    // quad {address}: opcode {:#04x}, operands {:02x?}, {instruction:?}",
+                quad.operation, quad.operands
+            );
+        }
+        let _ = writeln!(out, "}}\n");
+        return;
+    }
+    let instructions: Vec<Instruction> = decoded.into_iter().map(Result::unwrap).collect();
 
     // Decompile each function
     for (fi, func) in class.functions.iter().enumerate() {
@@ -2045,6 +2074,87 @@ fn decompile_class(
 mod tests {
     use super::*;
     use crate::scb;
+
+    fn diagnostic_class(name: &str, operations: &[u8]) -> ClassEntry {
+        ClassEntry {
+            source_file: "diagnostic.scs".into(),
+            class_name: name.into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: vec![scb::Function {
+                name: "Initialize".into(),
+                address: 0,
+                num_parameters: 0,
+                size_of_return_value: 0,
+                size_of_parameters: 0,
+                size_of_volatile: 0,
+                size_of_temporary: 0,
+            }],
+            quads: operations
+                .iter()
+                .map(|&operation| scb::Quad {
+                    operation,
+                    operands: [0; 8],
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn unknown_class_is_raw_evidence_not_an_empty_default_override() {
+        let mut broken = diagnostic_class("Broken", &[0, 255]);
+        broken.quads[1].operands = [1, 2, 3, 4, 5, 6, 7, 8];
+        let mut annotated = String::new();
+        decompile_class(&mut annotated, &broken, None, Some(ScriptKind::Mission));
+        assert!(annotated.contains("class Broken"));
+        assert!(annotated.contains("Cannot decompile this class"));
+        assert!(annotated.contains("quad 1: opcode 0xff"));
+        assert!(annotated.contains("[01, 02, 03, 04, 05, 06, 07, 08]"));
+        assert!(annotated.contains("UnknownOpcode(255)"));
+        let output = decompile(&ScbFile {
+            version: scb::SCB_VERSION,
+            classes: vec![broken, diagnostic_class("Valid", &[6])],
+        });
+        let valid = output.split("class Valid").nth(1).unwrap();
+        assert!(valid.contains("Initialize("));
+        assert!(!valid.contains("Cannot decompile"));
+    }
+
+    #[test]
+    fn shipped_empty_exceptions_remain_decompilable() {
+        let output = decompile(&ScbFile {
+            version: scb::SCB_VERSION,
+            classes: vec![diagnostic_class("Shipped", &[58, 107, 208, 229, 6])],
+        });
+        assert!(output.contains("Initialize("));
+        assert!(!output.contains("Cannot decompile"));
+    }
+
+    #[test]
+    fn popup_constant_inference_stops_at_unknown_instruction() {
+        use robin_engine::vm::Opcode;
+        let mut class = diagnostic_class(
+            "Scroll",
+            &[
+                Opcode::Aff0IConstant as u8,
+                Opcode::Nop as u8,
+                Opcode::NativeCall as u8,
+            ],
+        );
+        class.quads[0].operands[4..].copy_from_slice(&17i32.to_le_bytes());
+        class.quads[2].operands[..4].copy_from_slice(
+            &(robin_engine::natives::NativeFn::DisplayPopupText as u32).to_le_bytes(),
+        );
+        assert_eq!(find_first_popup_text_id(&class), Some(17));
+        for operation in [58, 107, 208, 229] {
+            class.quads[1].operation = operation;
+            assert_eq!(find_first_popup_text_id(&class), Some(17));
+        }
+        class.quads[1].operation = Opcode::Empty as u8;
+        assert_eq!(find_first_popup_text_id(&class), None);
+        class.quads[1].operation = 255;
+        assert_eq!(find_first_popup_text_id(&class), None);
+    }
 
     #[test]
     fn scroll_text_uses_authored_identity_not_display_name_suffixes() {

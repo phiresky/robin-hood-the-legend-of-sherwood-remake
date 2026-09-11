@@ -219,7 +219,7 @@ fn end_sequence_rejects_before_mutating_the_recording() {
             },
         )
         .unwrap();
-    assert!(script_state.sequence_recorder.recording.is_some());
+    assert!(script_state.sequence_recorder.is_some());
     assert!(host.ordered.is_empty());
 }
 
@@ -330,7 +330,7 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
     assert_eq!(soldier.npc_data().unwrap().money, 33);
     assert!(!soldier.enemy_ai().unwrap().forced_attentive);
     assert!(host.ordered.is_empty());
-    assert!(script_state.sequence_recorder.recording.is_none());
+    assert!(script_state.sequence_recorder.is_none());
 
     ai_global.ezekiel_2517 = false;
     let capabilities = NativeSessionCapabilities::new(
@@ -398,7 +398,7 @@ fn spellforge_alias_opens_recording() {
         )
         .unwrap();
     assert!(
-        script_state.sequence_recorder.recording.is_some(),
+        script_state.sequence_recorder.is_some(),
         "StartSequence should have opened a recording"
     );
 }
