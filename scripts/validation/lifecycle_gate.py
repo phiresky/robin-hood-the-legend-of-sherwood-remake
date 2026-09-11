@@ -2,6 +2,7 @@
 """Provisioned lifecycle acceptance; never installs tools or changes player data."""
 import argparse
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -188,11 +189,24 @@ def require_game_data(data):
         raise RuntimeError("ROBINHOOD_DATA_DIR must contain Data/ (case-insensitive)")
 
 
+def require_python_xlib():
+    try:
+        importlib.import_module("Xlib.display")
+        importlib.import_module("Xlib.ext.xtest")
+    except ImportError as error:
+        raise RuntimeError(
+            "native X input requires provisioned python-xlib in this Python environment; "
+            "activate a validation venv or set PYTHONPATH to its isolated dependency directory "
+            "(see docs/validation/lifecycle-gates.md). Nothing is installed automatically."
+        ) from error
+
+
 def native(evidence, summary):
     binary = Path(os.environ["ROBIN_LIFECYCLE_BINARY"]).resolve(strict=True)
     data = Path(os.environ["ROBINHOOD_DATA_DIR"]).resolve(strict=True)
     require_game_data(data)
-    # Input helpers use libX11 directly; no xdotool executable is involved.
+    require_python_xlib()
+    # Input helpers use confined python-xlib; no xdotool executable is involved.
     for tool in ("unshare", "ip", "Xvfb"):
         executable(tool)
     expected = os.environ["ROBIN_LIFECYCLE_BINARY_SHA256"]

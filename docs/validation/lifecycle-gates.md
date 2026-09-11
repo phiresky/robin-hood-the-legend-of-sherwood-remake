@@ -64,10 +64,31 @@ completion. It does not retain browser identity keys or assert audible sound.
 
 ## Native lifecycle
 
-Requires Linux user/network namespaces, `unshare`, `ip`, `Xvfb`, `libX11`,
+Requires Linux user/network namespaces, `unshare`, `ip`, `Xvfb`, `python-xlib`,
 Vulkan, and a Leicester demo root containing `Data/`. The development binary
 must include the release feature set (desktop, replay HTTP hooks and audio
-dependencies); the runtime gate disables sound explicitly. Build separately:
+dependencies); the runtime gate disables sound explicitly.
+
+The **same Python interpreter** running the gate and its input workers must
+import `Xlib.display` and `Xlib.ext.xtest`. Verify provisioning first:
+
+```sh
+python3 -c 'import Xlib.display, Xlib.ext.xtest'
+```
+
+If missing, explicitly provision a disposable dependency directory (not a system
+installation), then pass its `PYTHONPATH` to the gate. The gate never installs it:
+
+```sh
+robin_validation_deps=$(mktemp -d /tmp/robin-validation-python.XXXXXX)
+python3 -m pip install --target "$robin_validation_deps" python-xlib==0.33
+export PYTHONPATH="$robin_validation_deps${PYTHONPATH:+:$PYTHONPATH}"
+python3 -c 'import Xlib.display, Xlib.ext.xtest'
+```
+
+Both all-window briefing dismissal and save/load keys run in bounded child
+processes with this environment. A missing dependency is a recorded prerequisite
+failure, never a skipped input check. Build the game separately:
 
 ```sh
 CARGO_BUILD_JOBS=1 cargo build --locked -p robin_rs --bin robin --no-default-features --features release
@@ -90,7 +111,9 @@ The supplied binary source is a caller's build-provenance assertion, not
 inferred from the current checkout. The summary distinguishes it from the
 harness checkout commit. Preserve the adjacent built-in `mods` installation if
 copying a binary out of target. Preserve the exact tested binary separately if
-the checkout will later be deleted; the wrapper hashes it but does not copy it.
+the checkout will later be deleted. Each live driver pins the game executable
+and any installed sibling `robin-replay-admission` helper into its evidence
+`bin/` directory, records their hashes, and checks those copies before launch.
 
 Each of four runs receives a fresh loopback-only network namespace and isolated
 save/config/cache/data/runtime roots via the existing `frame_steps_live.py`:

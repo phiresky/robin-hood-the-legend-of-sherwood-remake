@@ -14,6 +14,10 @@ import lifecycle_gate as gate
 
 class LifecycleGateTests(unittest.TestCase):
     def setUp(self):
+        # Orchestration fixtures do not depend on host X11 provisioning.
+        xlib = patch.object(gate, "require_python_xlib")
+        xlib.start()
+        self.addCleanup(xlib.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -256,6 +260,18 @@ class LifecycleGateTests(unittest.TestCase):
             gate.run(command, timeout=0.5)
         with self.assertRaises(ProcessLookupError):
             os.kill(int(pid_file.read_text()), 0)
+
+
+class PythonXlibPrerequisiteTests(unittest.TestCase):
+    def test_missing_dependency_has_actionable_failure(self):
+        with patch.object(gate.importlib, "import_module", side_effect=ImportError("Xlib")):
+            with self.assertRaisesRegex(RuntimeError, "PYTHONPATH.*Nothing is installed"):
+                gate.require_python_xlib()
+
+    def test_requires_display_and_xtest_modules(self):
+        with patch.object(gate.importlib, "import_module") as load:
+            gate.require_python_xlib()
+        self.assertEqual([call.args[0] for call in load.call_args_list], ["Xlib.display", "Xlib.ext.xtest"])
 
 
 if __name__ == "__main__":

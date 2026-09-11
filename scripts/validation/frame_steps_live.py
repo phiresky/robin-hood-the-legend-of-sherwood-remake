@@ -17,6 +17,7 @@ import traceback
 import urllib.request
 
 from input_worker import dismiss_briefings
+from lifecycle_gate import require_python_xlib
 from runtime_evidence import DriverInterrupted, failure, finish_children, snapshot_client, stop_process_group, verify_client
 
 
@@ -79,6 +80,7 @@ def main():
     try:
         binary = snapshot_client(args.binary.resolve(strict=True), evidence, summary)
         data = args.data.resolve(strict=True)
+        require_python_xlib()
         (evidence / "driver.py").write_bytes(Path(__file__).read_bytes())
         interfaces = json.loads(subprocess.check_output(["ip", "-j", "link", "show"], timeout=10))
         if sorted(interface["ifname"] for interface in interfaces) != ["lo"]:

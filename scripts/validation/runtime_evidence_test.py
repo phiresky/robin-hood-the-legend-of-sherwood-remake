@@ -162,6 +162,7 @@ class RuntimeEvidenceTests(unittest.TestCase):
                 # One poll: missing windows is retriable at startup, then the
                 # ordinary bounded wait must fail with retained evidence.
                 with patch.object(sys, "argv", argv), \
+                     patch.object(frame, "require_python_xlib"), \
                      patch.object(frame.subprocess, "Popen", launch), \
                      patch.object(frame.subprocess, "check_output", return_value=b'[{"ifname":"lo"}]'), \
                      patch.object(frame.subprocess, "run"), \
