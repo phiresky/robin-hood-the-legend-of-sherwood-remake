@@ -26,6 +26,8 @@ mod original_data {
 pub mod actor_names;
 pub mod binary_reader;
 #[cfg(feature = "engine-adapters")]
+pub mod custom_sprites;
+#[cfg(feature = "engine-adapters")]
 pub mod decompile;
 #[cfg(feature = "engine-adapters")]
 pub mod disasm;

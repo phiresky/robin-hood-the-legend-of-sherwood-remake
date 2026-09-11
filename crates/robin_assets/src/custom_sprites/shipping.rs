@@ -1,9 +1,9 @@
 //! Portable custom sprites: exact RGB565 four-pixel dictionaries and the
 //! shipping adaptive VQ codec. PNGs and disposable caches are not required.
 use super::*;
+use crate::sprite_codec::{SpriteGrid, decode_grids_shipping, encode_grids_shipping};
 use anyhow::{Context, Result, ensure};
 use assets_frame_holder::{RuntimeSprite, TRANSPARENT_COLOR_16};
-use robin_assets::sprite_codec::{SpriteGrid, decode_grids_shipping, encode_grids_shipping};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
@@ -31,12 +31,11 @@ pub(super) fn frame_tiles(frame: &RuntimeSprite) -> Result<Vec<[u16; 4]>> {
     );
     let width = usize::from(frame.width);
     let stride = width.div_ceil(4) * 4;
-    robin_assets::packed_sprite::validate_rle(&frame.packed_data, width, frame.height.into())?;
+    crate::packed_sprite::validate_rle(&frame.packed_data, width, frame.height.into())?;
     let mut tiles = Vec::new();
     let mut position = 0;
     for _ in 0..frame.height {
-        let row =
-            robin_assets::packed_sprite::read_rle_row(&frame.packed_data, &mut position, width)?;
+        let row = crate::packed_sprite::read_rle_row(&frame.packed_data, &mut position, width)?;
         let mut pixels = vec![TRANSPARENT_COLOR_16; stride];
         let literals = &frame.packed_data[row.literals];
         pixels[row.first..row.first + literals.len()].copy_from_slice(literals);
@@ -148,12 +147,12 @@ fn decode_group(group: Group) -> Result<Vec<RuntimeSprite>> {
     Ok(frames)
 }
 
-pub(super) fn read(path: &Path) -> Result<HackableRhsCache> {
+pub fn read(path: &Path) -> Result<HackableRhsCache> {
     let compressed = std::fs::read(path).with_context(|| path.display().to_string())?;
     read_bytes(&compressed, &path.display().to_string())
 }
 
-pub(super) fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
+pub fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
     let bytes = zstd::stream::decode_all(compressed)?;
     ensure!(bytes.starts_with(MAGIC), "unsupported custom VQ format");
     let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..])?;
@@ -237,7 +236,7 @@ pub fn encode_custom_sprite_dir(source: &Path, destination: &Path) -> Result<usi
     Ok(frames.len())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

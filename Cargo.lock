@@ -6104,7 +6104,6 @@ dependencies = [
  "png",
  "robin_assets",
  "robin_engine",
- "robin_rs",
  "serde",
  "serde_json",
  "tempfile",

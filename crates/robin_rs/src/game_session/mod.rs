@@ -25,8 +25,6 @@ mod runtime;
 mod session_policy;
 mod setup;
 pub(crate) use setup::PhaseTimer;
-pub use setup::encode_custom_sprite_dir;
-pub use setup::encode_custom_sprite_family;
 mod sherwood_flow;
 pub(crate) use setup::initial_sim_config;
 pub use setup::{load_fixed_vip_name_map, load_peasant_name_pool};

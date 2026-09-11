@@ -37,7 +37,7 @@ fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
         .and_then(|s| s.to_str())
         .is_some_and(|s| s.ends_with(".rhs.d"))
     {
-        let count = robin_rs::game_session::encode_custom_sprite_dir(
+        let count = robin_assets::custom_sprites::encode_custom_sprite_dir(
             source,
             &destination.join("sprites.vq.zst"),
         )?;
@@ -91,7 +91,7 @@ fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
         }
     }
     for (index, sources) in families.values().enumerate() {
-        frames += robin_rs::game_session::encode_custom_sprite_family(
+        frames += robin_assets::custom_sprites::encode_custom_sprite_family(
             sources,
             &destination.join(format!("family-{index:02}.sprites.vq.zst")),
         )?;
@@ -117,7 +117,10 @@ struct Args {
 fn main() -> Result<()> {
     let args = <Args as clap::Parser>::parse();
     if !args.family.is_empty() {
-        robin_rs::game_session::encode_custom_sprite_family(&args.family[1..], &args.family[0])?;
+        robin_assets::custom_sprites::encode_custom_sprite_family(
+            &args.family[1..],
+            &args.family[0],
+        )?;
         return Ok(());
     }
     if !args.map.is_empty() {

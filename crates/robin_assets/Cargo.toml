@@ -60,6 +60,7 @@ smallvec = { version = "1", features = ["union"] }
 bitcode.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+png = { version = "0.18", optional = true }
 zstd.workspace = true
 # Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
 # decode terrain `.map` files when the converter has transcoded them to
@@ -124,7 +125,7 @@ spinning_top = "0.3"
 default = ["engine-adapters"]
 # Game-level preparation, VM tooling and resource-manager adapters. Raw sprite,
 # picture and compression codecs remain usable without the simulation crate.
-engine-adapters = ["dep:robin_engine"]
+engine-adapters = ["dep:robin_engine", "dep:png"]
 # Threaded sprite decode on wasm32 (rayon worker pool via wasm-bindgen-rayon).
 # Requires an atomics + shared-memory build; without pool initialization at
 # runtime the decode paths fall back to serial.

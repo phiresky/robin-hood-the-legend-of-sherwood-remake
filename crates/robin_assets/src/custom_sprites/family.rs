@@ -1,10 +1,10 @@
 //! Custom colour families using the production shipping VQ bank, grouped
 //! encoder, self-reference derivation, and dependency-aware materializer.
 use super::*;
+use crate::shipping_datadir::{RhsData, ShippingSprite, ShippingSpriteBank, SpriteVqChunk};
+use crate::sprite_codec::SpriteGrid;
 use anyhow::{Context, Result, ensure};
 use assets_frame_holder::{FrameDictionary, RuntimeSprite, TRANSPARENT_COLOR_16};
-use robin_assets::shipping_datadir::{RhsData, ShippingSprite, ShippingSpriteBank, SpriteVqChunk};
-use robin_assets::sprite_codec::SpriteGrid;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -56,7 +56,7 @@ fn runtime_sprite(
     sprite: &ShippingSprite,
     dictionary: &FrameDictionary,
 ) -> Result<RuntimeSprite> {
-    robin_assets::packed_sprite::validate_vq(
+    crate::packed_sprite::validate_vq(
         &sprite.packed_data,
         sprite.width.into(),
         sprite.height.into(),
@@ -93,11 +93,11 @@ fn runtime_sprite(
     })
 }
 
-pub(super) fn read(path: &Path) -> Result<Vec<(String, HackableRhsCache)>> {
+pub fn read(path: &Path) -> Result<Vec<(String, HackableRhsCache)>> {
     read_selected_bytes(&std::fs::read(path)?, None)
 }
 
-pub(super) fn read_selected_bytes(
+pub fn read_selected_bytes(
     compressed: &[u8],
     selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<(String, HackableRhsCache)>> {
@@ -407,7 +407,7 @@ pub fn encode_custom_sprite_family(sources: &[PathBuf], destination: &Path) -> R
             self_refs: base.is_none(),
             blob: Vec::new(),
         };
-        let chunks = robin_assets::sprite_groups::encode_vq_groups(
+        let chunks = crate::sprite_groups::encode_vq_groups(
             &template,
             &views,
             &bases,

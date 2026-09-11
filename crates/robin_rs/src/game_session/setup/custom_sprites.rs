@@ -1,64 +1,21 @@
 //! Custom sprite decoding and disposable cache policy.
-mod family;
-mod shipping;
 use super::error::ResourcePreparationError;
 use super::localization::read_optional_json;
-pub use family::encode_custom_sprite_family;
+#[cfg(test)]
+use robin_assets::custom_sprites::HackableRhsCacheProfile;
+use robin_assets::custom_sprites::{
+    HACKABLE_RHS_CACHE_VERSION, HackableRhsCache, HackableRhsManifest,
+    build_hackable_cache_with_reader, decode_png_rgba_bytes, family, hackable_animation_conversion,
+    hackable_manifest_hash, hackable_source_stamp, shipping,
+};
 use robin_assets::frame_holder as assets_frame_holder;
-use robin_engine::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize};
+#[cfg(test)]
+use robin_engine::coordinates::{SpriteAnchor, SpriteSize};
+#[cfg(test)]
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 use robin_engine::{campaign::Campaign, profiles as engine_profiles, sbfile as engine_sbfile};
-pub use shipping::encode_custom_sprite_dir;
 
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsManifest {
-    pixel_format: HackableRhsPixelFormat,
-    profiles: Vec<HackableRhsProfile>,
-}
-
-#[derive(Debug, Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum HackableRhsPixelFormat {
-    Rgba,
-    LegacyColorKeys,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsProfile {
-    name: String,
-    width: f32,
-    height: f32,
-    center_x: f32,
-    center_y: f32,
-    rows: Vec<HackableRhsRow>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsRow {
-    action_id: u16,
-    action_done: u16,
-    average_speed: f32,
-    #[serde(default, rename = "direction")]
-    _direction: u16,
-    hotspot_x: f32,
-    hotspot_y: f32,
-    path: String,
-    frames: Vec<HackableRhsFrame>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct HackableRhsFrame {
-    file: String,
-    delay: u16,
-    distance: u16,
-    offset_x: f32,
-    offset_y: f32,
-    sound_id: u16,
-}
-
-const HACKABLE_RHS_CACHE_VERSION: u32 = 2;
-// Retain the original filename so v1 caches can be repaired in place without
-// decoding hundreds of thousands of source PNGs again.
+// Retain the original filename so v1 caches can be repaired in place.
 const HACKABLE_RHS_CACHE_FILE: &str = ".robin-rhs-cache-v1.zst";
 // Per-family cache budgets, not limits on authored sprite content. Oversized
 // families still load from source; their disposable cache is simply not used.
@@ -67,94 +24,6 @@ const HACKABLE_RHS_CACHE_DECODED_LIMIT: u64 = 512 * 1024 * 1024;
 // Our level-3 encoder needs far less than this. Bound decoder working memory
 // independently of the amount of output a compressed stream produces.
 const HACKABLE_RHS_CACHE_WINDOW_LOG_MAX: u32 = 27;
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-struct HackableRhsCache {
-    version: u32,
-    manifest_hash: [u8; 32],
-    sources: Vec<HackableRhsCacheSource>,
-    frames: Vec<assets_frame_holder::RuntimeSprite>,
-    profiles: Vec<HackableRhsCacheProfile>,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-struct HackableRhsCacheSource {
-    relative_path: String,
-    len: u64,
-    modified_secs: u64,
-    modified_nanos: u32,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
-struct HackableRhsCacheProfile {
-    name: String,
-    info: SpriteInfo,
-}
-
-fn decode_png_rgba(
-    path: &std::path::Path,
-) -> Result<(u16, u16, Vec<u8>), ResourcePreparationError> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| ResourcePreparationError::unavailable(path.display(), error))?;
-    decode_png_rgba_bytes(&bytes, &path.display().to_string())
-        .map_err(|error| ResourcePreparationError::malformed(path.display(), error))
-}
-
-fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Vec<u8>), String> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|e| format!("decode {source}: {e}"))?;
-    let width = u16::try_from(reader.info().width)
-        .map_err(|_| format!("sprite width exceeds u16 for {source}"))?;
-    let height = u16::try_from(reader.info().height)
-        .map_err(|_| format!("sprite height exceeds u16 for {source}"))?;
-    let rgba_len = usize::from(width)
-        .checked_mul(usize::from(height))
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| format!("sprite RGBA output size overflows for {source}"))?;
-    let mut buf = vec![
-        0;
-        reader
-            .output_buffer_size()
-            .ok_or_else(|| format!("unknown PNG output size for {source}"))?
-    ];
-    let info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| format!("read frame {source}: {e}"))?;
-    buf.truncate(info.buffer_size());
-    let rgba = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => {
-            let mut out = Vec::with_capacity(rgba_len);
-            for px in buf.as_chunks::<3>().0 {
-                out.extend_from_slice(&[px[0], px[1], px[2], 255]);
-            }
-            out
-        }
-        png::ColorType::Grayscale => {
-            let mut out = Vec::with_capacity(rgba_len);
-            for &value in &buf {
-                out.extend_from_slice(&[value, value, value, 255]);
-            }
-            out
-        }
-        png::ColorType::GrayscaleAlpha => {
-            let mut out = Vec::with_capacity(rgba_len);
-            for px in buf.as_chunks::<2>().0 {
-                out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
-            }
-            out
-        }
-        other => {
-            return Err(format!(
-                "PNG decoder did not expand color type {other:?} for {source}"
-            ));
-        }
-    };
-    Ok((width, height, rgba))
-}
 
 fn current_hackable_character_filenames(
     campaign: &Campaign,
@@ -212,32 +81,6 @@ fn current_hackable_character_filenames(
         filenames.insert(profile.filename.clone());
     }
     Ok(Some(filenames))
-}
-
-fn hackable_manifest_hash(bytes: &[u8]) -> [u8; 32] {
-    use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).into()
-}
-
-fn hackable_source_stamp(
-    root: &std::path::Path,
-    relative_path: &str,
-) -> Result<HackableRhsCacheSource, String> {
-    let requested = root.join(relative_path);
-    let path = engine_sbfile::resolve_case_insensitive(&requested).unwrap_or(requested);
-    let metadata = std::fs::metadata(&path)
-        .map_err(|error| format!("stat hackable sprite {}: {error}", path.display()))?;
-    let modified = metadata
-        .modified()
-        .map_err(|error| format!("read mtime for {}: {error}", path.display()))?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("invalid mtime for {}: {error}", path.display()))?;
-    Ok(HackableRhsCacheSource {
-        relative_path: relative_path.to_owned(),
-        len: metadata.len(),
-        modified_secs: modified.as_secs(),
-        modified_nanos: modified.subsec_nanos(),
-    })
 }
 
 fn hackable_cache_sources_are_current(
@@ -386,143 +229,6 @@ fn write_hackable_cache(_root: &std::path::Path, _cache: &HackableRhsCache) -> R
     Ok(())
 }
 
-fn hackable_animation_conversion(scripts: &[SpriteScript]) -> Vec<u16> {
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-    for (row_index, script) in scripts.iter().enumerate() {
-        if let Some(slot) = conversion.get_mut(script.action_id as usize)
-            && *slot == UNMAPPED
-        {
-            *slot = row_index as u16;
-        }
-    }
-
-    // Minimal hackable characters may only provide idle and walking loops.
-    // Install fallbacks only after every authored action has claimed its own
-    // slot, so a real run row always wins over the walking fallback.
-    for (source, aliases) in [
-        (3usize, &[0usize, 1, 2, 4, 8][..]),
-        (6, &[5, 7, 9, 10, 11, 12][..]),
-    ] {
-        let source_row = conversion[source];
-        if source_row == UNMAPPED {
-            continue;
-        }
-        for &alias in aliases {
-            if conversion[alias] == UNMAPPED {
-                conversion[alias] = source_row;
-            }
-        }
-    }
-    conversion
-}
-
-fn build_hackable_cache(
-    root: &std::path::Path,
-    manifest_hash: [u8; 32],
-    manifest: HackableRhsManifest,
-) -> Result<HackableRhsCache, ResourcePreparationError> {
-    build_hackable_cache_with_reader(
-        manifest_hash,
-        manifest,
-        |relative_path, legacy_color_keys| {
-            let frame_path = root.join(relative_path);
-            let (width, height, rgba) = decode_png_rgba(&frame_path)?;
-            let source = hackable_source_stamp(root, relative_path).map_err(|error| {
-                ResourcePreparationError::unavailable(frame_path.display(), error)
-            })?;
-            Ok((
-                assets_frame_holder::FrameHolder::pack_runtime_rgba_sprite(
-                    width,
-                    height,
-                    &rgba,
-                    legacy_color_keys,
-                ),
-                Some(source),
-            ))
-        },
-    )
-}
-
-fn build_hackable_cache_with_reader(
-    manifest_hash: [u8; 32],
-    manifest: HackableRhsManifest,
-    mut read_frame: impl FnMut(
-        &str,
-        bool,
-    ) -> Result<
-        (
-            assets_frame_holder::RuntimeSprite,
-            Option<HackableRhsCacheSource>,
-        ),
-        ResourcePreparationError,
-    >,
-) -> Result<HackableRhsCache, ResourcePreparationError> {
-    let mut frames = Vec::new();
-    let mut sources = Vec::new();
-    let mut local_frames = std::collections::HashMap::<String, u32>::new();
-    let mut profiles = Vec::with_capacity(manifest.profiles.len());
-    let legacy_color_keys = matches!(
-        manifest.pixel_format,
-        HackableRhsPixelFormat::LegacyColorKeys
-    );
-
-    for profile in manifest.profiles {
-        let mut scripts = Vec::with_capacity(profile.rows.len());
-        for row in profile.rows {
-            let mut script = SpriteScript {
-                action_id: row.action_id,
-                action_done: row.action_done,
-                average_speed: row.average_speed,
-                hotspot: SpriteLocalPoint::new(row.hotspot_x, row.hotspot_y),
-                ..SpriteScript::default()
-            };
-            for frame in row.frames {
-                let relative_path = std::path::Path::new(&row.path)
-                    .join(&frame.file)
-                    .to_string_lossy()
-                    .into_owned();
-                let local_id = if let Some(local_id) = local_frames.get(&relative_path) {
-                    *local_id
-                } else {
-                    let (sprite, source) = read_frame(&relative_path, legacy_color_keys)?;
-                    let local_id = frames.len() as u32;
-                    frames.push(sprite);
-                    sources.extend(source);
-                    local_frames.insert(relative_path, local_id);
-                    local_id
-                };
-                script.frame_ids.push(local_id);
-                script.delays.push(frame.delay);
-                script.distances.push(frame.distance);
-                script
-                    .offsets
-                    .push(SpriteFrameOffset::new(frame.offset_x, frame.offset_y));
-                script.sound_ids.push(frame.sound_id);
-                script.sum_distance = script.sum_distance.saturating_add(frame.distance);
-            }
-            scripts.push(script);
-        }
-        let conversion = hackable_animation_conversion(&scripts);
-        profiles.push(HackableRhsCacheProfile {
-            name: profile.name,
-            info: SpriteInfo {
-                scripts: std::sync::Arc::new(scripts),
-                conversion: std::sync::Arc::new(conversion),
-                size: SpriteSize::new(profile.width, profile.height),
-                center: SpriteAnchor::new(profile.center_x, profile.center_y),
-            },
-        });
-    }
-
-    Ok(HackableRhsCache {
-        version: HACKABLE_RHS_CACHE_VERSION,
-        manifest_hash,
-        sources,
-        frames,
-        profiles,
-    })
-}
-
 /// Fully decoded custom content. Preparation never mutates live sprite owners.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct PreparedCustomSprites {
@@ -565,22 +271,8 @@ fn validate_cache_frames(
     filename: &str,
     cache: &HackableRhsCache,
 ) -> Result<(), ResourcePreparationError> {
-    for profile in &cache.profiles {
-        for script in profile.info.scripts.iter() {
-            for frame_id in &script.frame_ids {
-                if *frame_id as usize >= cache.frames.len() {
-                    return Err(ResourcePreparationError::malformed(
-                        filename,
-                        format!(
-                            "sprite profile {} references missing local frame {frame_id}",
-                            profile.name
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
+    robin_assets::custom_sprites::validate_cache_frames(filename, cache)
+        .map_err(|error| ResourcePreparationError::malformed(filename, error))
 }
 
 pub(super) fn prepare_custom_character_dirs(
@@ -907,21 +599,6 @@ mod tests {
     }
 
     #[test]
-    fn authored_sprite_io_and_decode_failures_are_distinct() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("frame.png");
-        assert!(matches!(
-            decode_png_rgba(&path),
-            Err(ResourcePreparationError::Unavailable { .. })
-        ));
-        std::fs::write(&path, b"not a png").unwrap();
-        assert!(matches!(
-            decode_png_rgba(&path),
-            Err(ResourcePreparationError::Malformed { .. })
-        ));
-    }
-
-    #[test]
     fn invalid_cache_install_does_not_append_partial_frames() {
         let cache = HackableRhsCache {
             version: HACKABLE_RHS_CACHE_VERSION,
@@ -961,7 +638,7 @@ mod tests {
     #[test]
     fn missing_authored_frame_rejects_whole_prepared_cache() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest: HackableRhsManifest = serde_json::from_value(serde_json::json!({
+        let manifest = serde_json::json!({
             "pixel_format": "rgba", "profiles": [{
                 "name": "test", "width": 1.0, "height": 1.0, "center_x": 0.0, "center_y": 0.0,
                 "rows": [{ "action_id": 3, "action_done": 0, "average_speed": 0.0,
@@ -969,119 +646,29 @@ mod tests {
                     "frames": [{ "file": "missing.png", "delay": 1, "distance": 0,
                         "offset_x": 0.0, "offset_y": 0.0, "sound_id": 0 }]}]
             }]
-        }))
+        });
+        let character = dir.path().join("Data/Characters/Test.rhs.d");
+        std::fs::create_dir_all(&character).unwrap();
+        std::fs::write(
+            character.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
         .unwrap();
+        let files = isolated_files();
+        assert_eq!(
+            files.add_overlay_path(dir.path().to_str().unwrap()),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
         assert!(matches!(
-            build_hackable_cache(dir.path(), [0; 32], manifest),
+            prepare_overlay_characters(&files, None),
             Err(ResourcePreparationError::Unavailable { .. })
         ));
+        std::fs::write(character.join("missing.png"), b"not a png").unwrap();
+        assert!(matches!(
+            prepare_overlay_characters(&files, None),
+            Err(ResourcePreparationError::Malformed { .. })
+        ));
     }
-    #[test]
-    fn png_decoder_rejects_oversized_headers_before_pixel_decoding() {
-        for (width, height, expected) in [
-            (65_536, 1, "sprite width exceeds u16"),
-            (1, 65_536, "sprite height exceeds u16"),
-        ] {
-            let mut bytes = Vec::new();
-            let mut encoder = png::Encoder::new(&mut bytes, width, height);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_chunk(png::chunk::IDAT, &[]).unwrap();
-            drop(writer);
-            let error = decode_png_rgba_bytes(&bytes, "oversized test").unwrap_err();
-            assert!(error.contains(expected), "{error}");
-        }
-    }
-
-    #[test]
-    fn png_decoder_preserves_supported_color_and_depth_conversions() {
-        for (color, depth, source, expected) in [
-            (
-                png::ColorType::Rgb,
-                png::BitDepth::Eight,
-                vec![1, 2, 3, 4, 5, 6],
-                vec![1, 2, 3, 255, 4, 5, 6, 255],
-            ),
-            (
-                png::ColorType::Rgba,
-                png::BitDepth::Eight,
-                vec![1, 2, 3, 0, 4, 5, 6, 127],
-                vec![1, 2, 3, 0, 4, 5, 6, 127],
-            ),
-            (
-                png::ColorType::Grayscale,
-                png::BitDepth::Eight,
-                vec![17, 231],
-                vec![17, 17, 17, 255, 231, 231, 231, 255],
-            ),
-            (
-                png::ColorType::GrayscaleAlpha,
-                png::BitDepth::Eight,
-                vec![17, 0, 231, 127],
-                vec![17, 17, 17, 0, 231, 231, 231, 127],
-            ),
-            (
-                png::ColorType::Rgb,
-                png::BitDepth::Sixteen,
-                vec![1, 255, 2, 255, 3, 255, 4, 255, 5, 255, 6, 255],
-                vec![1, 2, 3, 255, 4, 5, 6, 255],
-            ),
-            (
-                png::ColorType::Grayscale,
-                png::BitDepth::Sixteen,
-                vec![17, 255, 231, 255],
-                vec![17, 17, 17, 255, 231, 231, 231, 255],
-            ),
-        ] {
-            let mut bytes = Vec::new();
-            let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
-            encoder.set_color(color);
-            encoder.set_depth(depth);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(&source).unwrap();
-            writer.finish().unwrap();
-            assert_eq!(
-                decode_png_rgba_bytes(&bytes, "color test").unwrap(),
-                (2, 1, expected)
-            );
-        }
-    }
-
-    #[test]
-    fn png_decoder_expands_indexed_pixels_and_palette_transparency() {
-        let mut encoded = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut encoded, 2, 1);
-            encoder.set_color(png::ColorType::Indexed);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder.set_palette(vec![0, 255, 0, 0, 0, 255]);
-            encoder.set_trns(vec![0, 127]);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(&[0, 1]).unwrap();
-        }
-
-        let (width, height, rgba) = decode_png_rgba_bytes(&encoded, "indexed test").unwrap();
-
-        assert_eq!((width, height), (2, 1));
-        assert_eq!(rgba, [0, 255, 0, 0, 0, 0, 255, 127]);
-    }
-
-    #[test]
-    fn hackable_animation_fallbacks_do_not_override_authored_actions() {
-        let script = |action_id| SpriteScript {
-            action_id,
-            ..SpriteScript::default()
-        };
-        let conversion = hackable_animation_conversion(&[script(3), script(6), script(10)]);
-
-        assert_eq!(conversion[9], 1, "missing transition reuses walking");
-        assert_eq!(conversion[10], 2, "authored running row must win");
-
-        let minimal = hackable_animation_conversion(&[script(3), script(6)]);
-        assert_eq!(minimal[10], 1, "minimal sprites may reuse walking");
-    }
-
     #[test]
     fn cache_byte_limits_accept_exact_boundary_and_reject_extra_bytes() {
         assert_eq!(read_cache_bytes_limited(&b"abcd"[..], 4).unwrap(), b"abcd");
