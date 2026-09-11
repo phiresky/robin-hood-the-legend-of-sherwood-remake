@@ -1110,12 +1110,6 @@ impl SbFile {
     pub fn is_eof(&self) -> bool {
         self.position >= self.size
     }
-    pub fn is_read_mode(&self) -> bool {
-        true
-    }
-    pub fn is_write_mode(&self) -> bool {
-        false
-    }
     pub fn get_version(&self) -> u32 {
         self.version
     }
@@ -1136,12 +1130,6 @@ impl SbFile {
         let mut b = [0u8; 1];
         self.serialize_bytes(&mut b)?;
         *val = b[0];
-        Ok(())
-    }
-    pub fn serialize_i8(&mut self, val: &mut i8) -> Result<(), i32> {
-        let mut b = 0u8;
-        self.serialize_u8(&mut b)?;
-        *val = b as i8;
         Ok(())
     }
     pub fn serialize_u16(&mut self, val: &mut u16) -> Result<(), i32> {
@@ -1166,18 +1154,6 @@ impl SbFile {
         let mut b = [0u8; 4];
         self.serialize_bytes(&mut b)?;
         *val = i32::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_u64(&mut self, val: &mut u64) -> Result<(), i32> {
-        let mut b = [0u8; 8];
-        self.serialize_bytes(&mut b)?;
-        *val = u64::from_le_bytes(b);
-        Ok(())
-    }
-    pub fn serialize_i64(&mut self, val: &mut i64) -> Result<(), i32> {
-        let mut b = [0u8; 8];
-        self.serialize_bytes(&mut b)?;
-        *val = i64::from_le_bytes(b);
         Ok(())
     }
     pub fn serialize_f32(&mut self, val: &mut f32) -> Result<(), i32> {
