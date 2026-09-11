@@ -613,6 +613,60 @@ fn global_natives_share_allocated_slots_across_sessions() {
 }
 
 #[test]
+fn scb_globals_access_initialized_padding_slots() {
+    for (id, expected) in [(1, 0), (15, 9)] {
+        let program = vec![
+            BeginFunction {
+                volatile_count: 0,
+                temp_count: 3,
+            },
+            Aff0IConstant {
+                dst: TMP0,
+                constant: 0,
+            },
+            Aff0IConstant {
+                dst: TMP4,
+                constant: 7,
+            },
+            NativeParam { sym: TMP0 },
+            NativeParam { sym: TMP4 },
+            NativeCall {
+                index: NativeFn::InitGlobal as u32,
+            },
+            Aff0IConstant {
+                dst: TMP0,
+                constant: 15,
+            },
+            Aff0IConstant {
+                dst: TMP4,
+                constant: 9,
+            },
+            NativeParam { sym: TMP0 },
+            NativeParam { sym: TMP4 },
+            NativeCall {
+                index: NativeFn::SetGlobal as u32,
+            },
+            Aff0IConstant {
+                dst: TMP0,
+                constant: id,
+            },
+            NativeParam { sym: TMP0 },
+            NativeCall {
+                index: NativeFn::GetGlobal as u32,
+            },
+            Aff1NativeGetReturn { sym: TMP8 },
+            ReturnVal { sym: TMP8 },
+        ];
+        let mut vm = Vm::new().with_host(Box::new(BoundScriptEffects::new()));
+        assert_eq!(
+            vm.run(&program),
+            StopReason::ReturnedValue(expected),
+            "allocated global slot {id}"
+        );
+    }
+}
+
+#[test]
 fn globals_init_set_get() {
     let program = vec![
         BeginFunction {
