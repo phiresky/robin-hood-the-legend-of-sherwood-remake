@@ -718,7 +718,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   and removes the unused engine-camera scratch fields. Removing hash-skipped
 ///   fields also removes their markers from the state-hash stream.
 ///   Older native layouts are rejected; Original-game import is unchanged.
-pub const SAVE_FORMAT_VERSION: u32 = 81;
+/// - **v82** (canonical initial soldier camps): removes the duplicate royalist
+///   and lacklandist presence flags from AI snapshots and hashes; the existing
+///   soldier-camp set remains authoritative. Original-game import is unchanged.
+pub const SAVE_FORMAT_VERSION: u32 = 82;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1331,8 +1334,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_excludes_unused_location_and_object_fields() {
-        assert_eq!(SAVE_FORMAT_VERSION, 81);
+    fn save_format_version_uses_canonical_initial_soldier_camps() {
+        assert_eq!(SAVE_FORMAT_VERSION, 82);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -2160,6 +2163,24 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 80")
+        );
+    }
+
+    #[test]
+    fn read_rejects_duplicate_soldier_presence_flags_before_engine_decode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pre_canonical_soldier_camps_save.json");
+        let old_save = serde_json::json!({
+            "header": { "magic": SAVE_MAGIC, "version": 81 },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("duplicate soldier-presence snapshots must fail at the header");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 81")
         );
     }
 
