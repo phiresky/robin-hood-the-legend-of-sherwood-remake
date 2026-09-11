@@ -779,11 +779,7 @@ impl EngineInner {
                 &ctx,
                 &tick_data,
                 assets,
-                if positions_before_movement.is_some() {
-                    crate::engine::ai::OwnerBoundaryPolicy::CURRENT.with_deferred_turn()
-                } else {
-                    crate::engine::ai::OwnerBoundaryPolicy::CURRENT
-                },
+                crate::engine::ai::OwnerBoundaryPolicy::Current,
             );
             if trace_shadow_delivery {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
@@ -984,7 +980,7 @@ impl EngineInner {
                 // indexes by handle.
                 self.prepare_detection_forecasts_for_owner(npc_id, None, &mut tick_data);
             }
-            self.dispatch_think_with_drain_without_forecast_deferred_turn(
+            self.dispatch_think_with_drain_without_forecast(
                 sim, npc_id, &stimulus, &ctx, &tick_data, assets,
             );
             processed += 1;

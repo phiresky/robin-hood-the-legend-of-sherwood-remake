@@ -13,9 +13,7 @@ mod detection;
 mod event_dispatch;
 mod initialization;
 mod owner_scheduling;
-pub(in crate::engine) use owner_scheduling::{
-    CompletionBoundary, OwnerBoundaryPolicy, TurnInstruction,
-};
+pub(in crate::engine) use owner_scheduling::{CompletionBoundary, OwnerBoundaryPolicy};
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
@@ -2018,7 +2016,7 @@ mod parity_tests {
             &sim,
             owner,
             &assets,
-            crate::engine::ai::OwnerBoundaryPolicy::CURRENT.with_deferred_turn(),
+            crate::engine::ai::OwnerBoundaryPolicy::Current,
         );
         {
             let ai = engine

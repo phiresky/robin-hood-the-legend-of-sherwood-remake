@@ -377,7 +377,7 @@ impl EngineInner {
                 &ctx,
                 &tick_data,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
+                crate::engine::ai::OwnerBoundaryPolicy::Current,
             );
         }
         self.display_one_shot_noise(noise);
@@ -916,7 +916,7 @@ impl EngineInner {
             ctx,
             tick_data,
             assets,
-            crate::engine::ai::OwnerBoundaryPolicy::CURRENT.with_deferred_turn(),
+            crate::engine::ai::OwnerBoundaryPolicy::Current,
         )
     }
 
@@ -936,30 +936,7 @@ impl EngineInner {
             ctx,
             tick_data,
             assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
-        )
-    }
-
-    /// Owner-local Think before the current frame's SequenceManager hourglass.
-    /// Keep standalone Turns registered but uninstructed just like the
-    /// detection FIFO that originally produced a retained stimulus.
-    pub(in crate::engine) fn dispatch_think_with_drain_without_forecast_deferred_turn(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        stimulus: &crate::ai::Stimulus,
-        ctx: &crate::ai::AiContext,
-        tick_data: &crate::ai::AiPerTickData,
-        assets: &LevelAssets,
-    ) -> bool {
-        self.dispatch_think_with_drain_mode(
-            sim,
-            npc_id,
-            stimulus,
-            ctx,
-            tick_data,
-            assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
         )
     }
 
@@ -1066,7 +1043,7 @@ impl EngineInner {
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             self.surface_synchronous_completion_events_for_owner(npc_id);
 
-            self.process_synchronous_reentrant_actions_for_mode(sim, npc_id, assets, policy.turn());
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
@@ -1102,7 +1079,7 @@ impl EngineInner {
             // those direct original-game call boundaries before deciding this owner has
             // stabilised; otherwise the result-bearing request can escape to
             // the global cross-action batch.
-            self.process_synchronous_reentrant_actions_for_mode(sim, npc_id, assets, policy.turn());
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
             let still_pending = {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
@@ -1283,21 +1260,6 @@ impl EngineInner {
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.process_synchronous_reentrant_actions_for_mode(
-            sim,
-            source_id,
-            assets,
-            crate::engine::ai::TurnInstruction::Immediate,
-        );
-    }
-
-    pub(super) fn process_synchronous_reentrant_actions_for_mode(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source_id: crate::element::EntityId,
-        assets: &LevelAssets,
-        turn: TurnInstruction,
-    ) {
         loop {
             let actions = self
                 .world
@@ -1469,7 +1431,6 @@ impl EngineInner {
                         radius,
                         continuation,
                         assets,
-                        turn,
                     ),
                     crate::ai::CrossNpcAction::UpdateLeftCombatNeighbour {
                         target,
@@ -1532,18 +1493,16 @@ impl EngineInner {
                     }
                     crate::ai::CrossNpcAction::SendStimulus { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_stimuli_for(sim, source_id, assets, turn)
+                        self.process_synchronous_stimuli_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_patrol_member_relay_for(
-                            sim, source_id, assets, turn,
-                        )
+                        self.process_synchronous_patrol_member_relay_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::RequestPatrolDispatch { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
                         self.process_synchronous_patrol_dispatch_requests_for(
-                            sim, source_id, assets, turn,
+                            sim, source_id, assets,
                         )
                     }
                     crate::ai::CrossNpcAction::RequestAlert { .. } => {
@@ -1552,7 +1511,7 @@ impl EngineInner {
                     }
                     crate::ai::CrossNpcAction::RequestThinkResult { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
-                        self.process_synchronous_think_results_for(sim, source_id, assets, turn)
+                        self.process_synchronous_think_results_for(sim, source_id, assets)
                     }
                     crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
                         self.requeue_isolated_synchronous_action(source_id, action.clone());
@@ -1572,7 +1531,7 @@ impl EngineInner {
                 // Direct original-game calls are depth-first: if A emits C while B was
                 // already queued, C closes before B. Isolate A's generated
                 // work, recursively drain it, then continue the saved batch.
-                self.process_synchronous_reentrant_actions_for_mode(sim, source_id, assets, turn);
+                self.process_synchronous_reentrant_actions_for(sim, source_id, assets);
                 let ai = self
                     .world
                     .entities
@@ -1793,7 +1752,7 @@ impl EngineInner {
                 sim,
                 target_id,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
+                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
         } else {
             // Recursive neighbours execute under the same static depth but
@@ -1802,7 +1761,7 @@ impl EngineInner {
                 sim,
                 target_id,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
+                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
         }
         self.replace_cross_npc_logical_think_depth(
@@ -2010,7 +1969,6 @@ impl EngineInner {
         radius: u16,
         continuation: crate::ai::LookThereContinuation,
         assets: &LevelAssets,
-        turn: TurnInstruction,
     ) {
         assert_eq!(
             source_id.index(),
@@ -2096,7 +2054,7 @@ impl EngineInner {
                     fallback_to_sender: None,
                     to_whole_patrol: false,
                 });
-            self.process_synchronous_stimuli_for(sim, source_id, assets, turn);
+            self.process_synchronous_stimuli_for(sim, source_id, assets);
         }
 
         self.process_synchronous_look_there_resume(sim, source_id, caller, continuation, assets);
@@ -2265,7 +2223,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        turn: TurnInstruction,
     ) {
         let actions = self
             .world
@@ -2350,7 +2307,7 @@ impl EngineInner {
                 &ctx,
                 &tick_data,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
             if !handled && let Some(sender) = fallback_to_sender {
                 let sender_id = self.entity_id_for_index(sender).unwrap_or_else(|| {
@@ -2393,7 +2350,7 @@ impl EngineInner {
                     &sender_ctx,
                     &sender_tick,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
                 );
             }
         }

@@ -13,7 +13,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        turn: TurnInstruction,
     ) {
         let relays = self
             .world
@@ -132,7 +131,7 @@ impl EngineInner {
                     &ctx,
                     &tick_data,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
                 );
             }
         }
@@ -147,7 +146,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        turn: TurnInstruction,
     ) {
         let requests = self
             .world
@@ -247,7 +245,7 @@ impl EngineInner {
                     sim,
                     chief_id,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
                 );
                 continue;
             }
@@ -293,7 +291,7 @@ impl EngineInner {
                 &caller_ctx,
                 &caller_tick,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
         }
     }
@@ -303,7 +301,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        turn: TurnInstruction,
     ) {
         let requests = self
             .world
@@ -463,14 +460,14 @@ impl EngineInner {
                     sim,
                     source_id,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
                 );
             } else {
                 self.drain_ai_owner_work_for_mode(
                     sim,
                     assets,
                     source_id,
-                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
+                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
                 );
             }
         }

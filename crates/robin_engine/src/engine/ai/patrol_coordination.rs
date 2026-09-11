@@ -79,9 +79,7 @@ impl EngineInner {
             // this frame. Close the member's AI side effects now while
             // leaving the registered Turn uninstructed until the next
             // sequence-manager pass.
-            self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
-                sim, member, assets,
-            );
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
         }
     }
 
@@ -560,7 +558,7 @@ impl EngineInner {
                 &ctx,
                 &tick_data,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
             // Patrol coordination constructs its Move element inline in the
             // original game, making the command query report MOVE_OK immediately.
@@ -616,9 +614,7 @@ impl EngineInner {
             // member is still waiting. Close its AI/callback work before the
             // chief advances, but leave owner instruction to the later
             // SequenceManager hourglass just like the Original.
-            self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
-                sim, minion_id, assets,
-            );
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, minion_id, assets);
             self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", minion_id);
         }
     }

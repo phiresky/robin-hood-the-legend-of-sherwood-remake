@@ -1,51 +1,17 @@
 use super::*;
 
-/// Observation and instruction boundaries for a recursive owner call. These
-/// are independent policies: suppressing unrelated forecasts must not also
-/// delay an otherwise synchronous Turn.
-/// Dispatch and drain helpers carry this value intact; named overrides retain
-/// the existing call, forecast, and instruction boundaries without new drains.
+/// Observation context for a recursive owner call. This is a transient call
+/// argument, not persisted engine state. SequenceManager retains ownership of
+/// instruction timing; this policy only selects whether forecasts are rebuilt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::engine) struct OwnerBoundaryPolicy {
-    observation: OwnerObservation,
-    turn: TurnInstruction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum OwnerObservation {
+pub(in crate::engine) enum OwnerBoundaryPolicy {
     Current,
     WithoutForecast,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::engine) enum TurnInstruction {
-    Immediate,
-    Deferred,
-}
-
 impl OwnerBoundaryPolicy {
-    pub(in crate::engine) const CURRENT: Self = Self {
-        observation: OwnerObservation::Current,
-        turn: TurnInstruction::Immediate,
-    };
-    pub(in crate::engine) const WITHOUT_FORECAST: Self = Self {
-        observation: OwnerObservation::WithoutForecast,
-        turn: TurnInstruction::Immediate,
-    };
-
-    pub(in crate::engine) const fn with_turn(self, turn: TurnInstruction) -> Self {
-        Self { turn, ..self }
-    }
-
-    pub(in crate::engine) const fn with_deferred_turn(self) -> Self {
-        self.with_turn(TurnInstruction::Deferred)
-    }
-
     pub(in crate::engine) fn without_forecast(self) -> bool {
-        matches!(self.observation, OwnerObservation::WithoutForecast)
-    }
-    pub(in crate::engine) const fn turn(self) -> TurnInstruction {
-        self.turn
+        matches!(self, Self::WithoutForecast)
     }
 }
 
@@ -68,41 +34,12 @@ mod policy_tests {
     use super::*;
 
     #[test]
-    fn owner_observation_and_turn_policies_remain_independent() {
-        for (observation, without_forecast, name) in [
-            (OwnerBoundaryPolicy::CURRENT, false, "Current"),
-            (
-                OwnerBoundaryPolicy::WITHOUT_FORECAST,
-                true,
-                "WithoutForecast",
-            ),
+    fn owner_observation_policy_selects_forecast_behavior() {
+        for (policy, without_forecast) in [
+            (OwnerBoundaryPolicy::Current, false),
+            (OwnerBoundaryPolicy::WithoutForecast, true),
         ] {
-            for (turn, turn_name) in [
-                (TurnInstruction::Immediate, "Immediate"),
-                (TurnInstruction::Deferred, "Deferred"),
-            ] {
-                let policy = observation.with_turn(turn);
-                assert_eq!(policy.without_forecast(), without_forecast);
-                assert_eq!(policy.turn(), turn);
-                assert_eq!(
-                    policy.with_deferred_turn().without_forecast(),
-                    without_forecast
-                );
-                assert_eq!(
-                    policy.with_deferred_turn().turn(),
-                    TurnInstruction::Deferred
-                );
-                assert_eq!(policy.with_turn(TurnInstruction::Immediate), observation);
-                let encoded = serde_json::to_value(policy).unwrap();
-                assert_eq!(
-                    encoded,
-                    serde_json::json!({ "observation": name, "turn": turn_name })
-                );
-                assert_eq!(
-                    serde_json::from_value::<OwnerBoundaryPolicy>(encoded).unwrap(),
-                    policy
-                );
-            }
+            assert_eq!(policy.without_forecast(), without_forecast);
         }
     }
 
@@ -160,7 +97,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, OwnerBoundaryPolicy::CURRENT);
+        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, OwnerBoundaryPolicy::Current);
     }
 
     /// Native `SetAIState` decision-tick recursion must remain
@@ -176,7 +113,7 @@ impl EngineInner {
             sim,
             npc_id,
             assets,
-            OwnerBoundaryPolicy::WITHOUT_FORECAST,
+            OwnerBoundaryPolicy::WithoutForecast,
         );
     }
 
@@ -194,7 +131,7 @@ impl EngineInner {
             sim,
             npc_id,
             assets,
-            OwnerBoundaryPolicy::WITHOUT_FORECAST,
+            OwnerBoundaryPolicy::WithoutForecast,
         )
     }
 
@@ -329,7 +266,7 @@ impl EngineInner {
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
             launched_moves.extend(self.drain_pending_move_requests_for_owner(sim, npc_id));
             self.surface_synchronous_completion_events_for_owner(npc_id);
-            self.process_synchronous_reentrant_actions_for_mode(sim, npc_id, assets, policy.turn());
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             self.dispatch_condolations_for_npc(sim, npc_id, assets);
         }
 
@@ -572,7 +509,7 @@ impl EngineInner {
             sim,
             npc_id,
             assets,
-            crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
+            crate::engine::ai::OwnerBoundaryPolicy::Current,
         );
     }
 
@@ -586,21 +523,7 @@ impl EngineInner {
             sim,
             npc_id,
             assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
-        );
-    }
-
-    pub(in crate::engine) fn drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.drain_direct_ai_owner_boundary_mode(
-            sim,
-            npc_id,
-            assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
         );
     }
 
@@ -1186,7 +1109,7 @@ impl EngineInner {
             if completion_boundary.surfaces_completion() {
                 self.surface_synchronous_completion_events_for_owner(npc_id);
             }
-            self.process_synchronous_reentrant_actions_for_mode(sim, npc_id, assets, policy.turn());
+            self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
             // produced causally on this call stack and must close now.
@@ -1445,7 +1368,7 @@ impl EngineInner {
             sim,
             npc_id,
             assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
+            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
         );
         let actor_command = self.actor_command(npc_id);
         let post_refresh_stuck_command_active = matches!(

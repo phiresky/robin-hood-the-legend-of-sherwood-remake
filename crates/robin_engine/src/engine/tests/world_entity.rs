@@ -898,7 +898,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     let owned_before_manager: Vec<_> = engine
@@ -1027,7 +1027,7 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     let owned: Vec<_> = engine
@@ -1093,7 +1093,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     let owned: Vec<_> = engine
@@ -1156,7 +1156,7 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     assert!(
@@ -2783,7 +2783,7 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     let ai = engine
@@ -3041,7 +3041,7 @@ fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() 
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     let ai = engine
@@ -7323,12 +7323,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         .expect("call rejector has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
-    engine.process_synchronous_think_results_for(
-        &sim,
-        officer_id,
-        &assets,
-        crate::engine::ai::TurnInstruction::Deferred,
-    );
+    engine.process_synchronous_think_results_for(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)
@@ -7631,7 +7626,7 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
         &sim,
         owner,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
     let commands = engine
         .orders
@@ -7701,12 +7696,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             continuation: ThinkResultContinuation::OfficerCalledSoldier,
         });
 
-    engine.process_synchronous_think_results_for(
-        &sim,
-        officer_id,
-        &assets,
-        crate::engine::ai::TurnInstruction::Deferred,
-    );
+    engine.process_synchronous_think_results_for(&sim, officer_id, &assets);
 
     let officer = engine
         .get_entity(officer_id)
@@ -7824,7 +7814,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
         &sim,
         source_id,
         &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
+        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
     );
 
     let turns: Vec<_> = engine

@@ -1310,9 +1310,7 @@ impl EngineInner {
                 // then materialize any resulting movement before resuming the VM.
                 // Normal-priority movement remains registered for
                 // the sequence-manager tick; it is not instructed inline.
-                self.drain_direct_ai_owner_boundary_without_forecast_deferred_instruct(
-                    sim, owner, assets,
-                );
+                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
                 self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
@@ -3687,7 +3685,7 @@ impl EngineInner {
             stimulus,
             ctx,
             Some(tick_data),
-            crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
+            crate::engine::ai::OwnerBoundaryPolicy::Current,
         )
     }
 
@@ -3707,7 +3705,7 @@ impl EngineInner {
             stimulus,
             ctx,
             Some(tick_data),
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
+            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
         )
     }
 
@@ -3726,7 +3724,7 @@ impl EngineInner {
             stimulus,
             ctx,
             None,
-            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
+            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
         )
     }
 
@@ -4140,7 +4138,7 @@ impl EngineInner {
             sim,
             assets,
             owner,
-            crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
+            crate::engine::ai::OwnerBoundaryPolicy::Current,
         );
     }
 
@@ -5701,12 +5699,7 @@ impl EngineInner {
                 // ordinary element is instructed until the later global
                 // sequence-manager update. Preserve that FIFO rather than
                 // making this owner boundary execute either element early.
-                self.drain_direct_ai_owner_prefix_boundary_mode(
-                    sim,
-                    owner,
-                    assets,
-                    policy.with_deferred_turn(),
-                );
+                self.drain_direct_ai_owner_prefix_boundary_mode(sim, owner, assets, policy);
                 let ai = self
                     .world
                     .entities
