@@ -2900,7 +2900,6 @@ impl EngineInner {
         time_hourglass_phase(HourglassPhase::Sequences, || {
             self.hourglass_phase_sequences_authoritative(
                 sim,
-                display,
                 assets,
                 &manager_fifo_before_entity_phase,
                 &terminal_movement_order_pops,

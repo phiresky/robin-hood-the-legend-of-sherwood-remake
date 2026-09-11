@@ -1259,10 +1259,7 @@ impl EngineInner {
         pc: EntityId,
         slot: u8,
     ) {
-        if self
-            .replay_legacy_quickito(sim, display, assets, pc, slot)
-            .is_some()
-        {
+        if self.replay_legacy_quickito(sim, assets, pc, slot).is_some() {
             return;
         }
         if self
@@ -1714,7 +1711,6 @@ impl EngineInner {
     pub(super) fn replay_legacy_quickito(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         pc: EntityId,
         slot: u8,
@@ -1748,7 +1744,7 @@ impl EngineInner {
                     // saved double-click. At this input boundary no entity
                     // phase work remains; the normal sequence phase drains
                     // precisely the newly registered click sequence.
-                    self.hourglass_phase_sequences_authoritative(sim, display, assets, &[], &[]);
+                    self.hourglass_phase_sequences_authoritative(sim, assets, &[], &[]);
                     self.actor_make_fast(sim, pc);
                 }
                 succeeded

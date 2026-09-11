@@ -721,7 +721,6 @@ impl EngineInner {
     pub(in crate::engine) fn hourglass_phase_sequences_authoritative(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         manager_fifo_before_entity_phase: &[(crate::sequence::SequenceId, usize)],
         terminal_movement_order_pops: &[super::super::movement::TerminalMovementOrderPop],
@@ -3614,12 +3613,11 @@ impl EngineInner {
         assets: &LevelAssets,
         terminal_movement_order_pops: &[super::super::movement::TerminalMovementOrderPop],
     ) {
-        let mut camera = self.feedback.cutscene_camera.display.clone();
+        let camera = self.feedback.cutscene_camera.display.clone();
         let manager_fifo_before_entity_phase =
             self.orders.sequence_manager.deferred_elements_to_go();
         self.hourglass_phase_sequences_authoritative(
             sim,
-            &mut camera,
             assets,
             &manager_fifo_before_entity_phase,
             terminal_movement_order_pops,
