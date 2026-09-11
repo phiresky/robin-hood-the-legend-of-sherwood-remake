@@ -2419,7 +2419,7 @@ mod required_state_tests {
                 ..Default::default()
             };
             assert!(
-                unprepared_replay_launch_error(&args)
+                super::unprepared_replay_launch_error(&args)
                     .unwrap()
                     .contains("before canonical decode")
             );
