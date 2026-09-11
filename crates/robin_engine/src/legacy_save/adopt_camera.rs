@@ -53,7 +53,6 @@ pub(crate) struct LegacyCameraAdoptionPlan {
     camera_wanted: MapPoint,
     fixed_camera_speed: u16,
     desired_zoom_factor: f32,
-    old_zoom_factor: f32,
     background_transform: BackgroundTransform,
     locker: bool,
 }
@@ -84,6 +83,9 @@ impl LegacyCameraAdoptionPlan {
     ) -> Result<Self, LegacyCameraAdoptionError> {
         validate_point("view", saved.view)?;
         validate_finite("zoom_factor", saved.zoom_factor)?;
+        // The raw parser retains old_zoom_factor for binary layout fidelity,
+        // but adoption ignores this unused Original interpolation scratch.
+        // Retail restart saves can contain an uninitialized NaN here.
         if saved.zoom_factor <= 0.0 {
             return Err(LegacyCameraAdoptionError::NonPositiveZoom {
                 value: saved.zoom_factor,
@@ -117,7 +119,6 @@ impl LegacyCameraAdoptionPlan {
             camera_wanted: point(saved.camera_wanted),
             fixed_camera_speed: saved.fixed_camera_speed,
             desired_zoom_factor: saved.desired_zoom_factor,
-            old_zoom_factor: restore_old_zoom_factor(saved.old_zoom_factor, saved.zoom_factor),
             background_transform,
             locker: saved.locker,
         })
@@ -128,9 +129,7 @@ impl LegacyCameraAdoptionPlan {
     pub(crate) fn apply(self, engine: &mut EngineInner) -> LegacyCameraHostState {
         let camera = &mut engine.feedback.cutscene_camera;
         camera.view_position = self.view;
-        camera.old_view_position = self.view;
         camera.zoom_factor = self.zoom_factor;
-        camera.old_zoom_factor = self.old_zoom_factor;
         camera.camera_slide = self.camera_slide;
         camera.camera_wanted = self.camera_wanted;
         camera.fixed_camera_speed = self.fixed_camera_speed;
@@ -160,20 +159,6 @@ impl LegacyCameraAdoptionPlan {
             display_op: DisplayOpCode::Redraw,
             frame_scrolled: [false; 4],
         }
-    }
-}
-
-fn restore_old_zoom_factor(saved_old: f32, current: f32) -> f32 {
-    // The original game serializes this interpolation scratch value but never reads
-    // it after loading; every later zoom transition overwrites it from
-    // the zoom factor first. Some retail
-    // restart saves consequently contain an uninitialized NaN here. Keep a
-    // valid serialized value verbatim, and give the otherwise-dead scratch
-    // field the same neutral value a newly-started transition would assign.
-    if saved_old.is_finite() {
-        saved_old
-    } else {
-        current
     }
 }
 
@@ -302,7 +287,63 @@ mod tests {
     use crate::{
         coordinates::MapSize,
         engine::{EngineInner, peripherals::HostDisplayState},
+        legacy_save::engine::{
+            LegacyGameState, LegacyMessenger, LegacyShortBriefings, LegacySound,
+        },
     };
+
+    fn preamble() -> LegacyEnginePreamble {
+        LegacyEnginePreamble {
+            start_offset: 0,
+            cheat_used_flags: 0,
+            shield_protected: false,
+            freeze_all: false,
+            view: LegacyPoint2 { x: 100.0, y: 200.0 },
+            zoom_factor: 1.0,
+            camera_slide: LegacyPoint2 { x: -1.0, y: -1.0 },
+            fixed_camera_speed: 0,
+            speed: 1.0,
+            speed_index: 0,
+            desired_zoom_factor: 2.0,
+            old_zoom_factor: 0.5,
+            background_transform: background(),
+            universal_frame_counter: 0,
+            creation_counter: 0,
+            repulsive_point_counter: 0,
+            lock_engine: false,
+            mission_won: false,
+            mission_won_first_time: false,
+            camera_wanted: LegacyPoint2 { x: 900.0, y: 800.0 },
+            locker: true,
+            skip_data: String::new(),
+            short_briefings: LegacyShortBriefings {
+                primaries: Vec::new(),
+                secondaries: Vec::new(),
+            },
+            sound: LegacySound {
+                serialized: false,
+                state: None,
+            },
+            messenger: LegacyMessenger {
+                lock_view: false,
+                setting_watch: false,
+                watch_timer: 0,
+                action: 0,
+                draw_hidden: false,
+            },
+            game: LegacyGameState {
+                men_to_blazon_conversion: false,
+                campaign_map: false,
+                campaign_map_displayed: false,
+                post_initialized: false,
+                start_mission_disabled_temp: false,
+                quit_mission_disabled_temp: false,
+                start_mission_enabled: true,
+                quit_mission_enabled: true,
+            },
+            elements_offset: 0,
+        }
+    }
 
     fn background() -> LegacyBackgroundTransform {
         LegacyBackgroundTransform {
@@ -375,7 +416,6 @@ mod tests {
             camera_wanted: MapPoint::new(900.0, 800.0),
             fixed_camera_speed: 12,
             desired_zoom_factor: 2.0,
-            old_zoom_factor: 0.5,
             background_transform: converted,
             locker: true,
         };
@@ -418,9 +458,53 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_uninitialized_old_zoom_scratch_from_retail_restart_saves() {
-        assert_eq!(restore_old_zoom_factor(0.5, 1.0), 0.5);
-        assert_eq!(restore_old_zoom_factor(f32::NAN, 1.0), 1.0);
-        assert_eq!(restore_old_zoom_factor(f32::INFINITY, 2.0), 2.0);
+    fn adoption_ignores_non_finite_legacy_zoom_scratch_but_validates_current_zoom() {
+        let mut baseline = EngineInner::new();
+        baseline.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+        let saved = preamble();
+        let abi = LegacySaveAbiProfile::PortLinuxI386V48;
+        let mut expected = baseline.clone();
+        let expected_host = LegacyCameraAdoptionPlan::preflight(&baseline, abi, &saved)
+            .unwrap()
+            .apply(&mut expected);
+
+        for scratch in [0.5, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut saved = saved.clone();
+            saved.old_zoom_factor = scratch;
+            let mut restored = baseline.clone();
+            let host = LegacyCameraAdoptionPlan::preflight(&baseline, abi, &saved)
+                .expect("unused Original scratch must not reject an otherwise valid camera")
+                .apply(&mut restored);
+            assert_eq!(
+                crate::replay::state_hash(&restored),
+                crate::replay::state_hash(&expected)
+            );
+            assert_eq!(
+                serde_json::to_value(&restored.feedback.cutscene_camera).unwrap(),
+                serde_json::to_value(&expected.feedback.cutscene_camera).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(&host.background_transform).unwrap(),
+                serde_json::to_value(&expected_host.background_transform).unwrap()
+            );
+        }
+
+        for zoom in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut saved = saved.clone();
+            saved.zoom_factor = zoom;
+            assert!(matches!(
+                LegacyCameraAdoptionPlan::preflight(&baseline, abi, &saved),
+                Err(LegacyCameraAdoptionError::NonFinite { field, .. })
+                    if field == "zoom_factor"
+            ));
+        }
+        for zoom in [0.0, -1.0] {
+            let mut saved = saved.clone();
+            saved.zoom_factor = zoom;
+            assert!(matches!(
+                LegacyCameraAdoptionPlan::preflight(&baseline, abi, &saved),
+                Err(LegacyCameraAdoptionError::NonPositiveZoom { .. })
+            ));
+        }
     }
 }

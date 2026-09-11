@@ -713,7 +713,12 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v80** (canonical recording session): replaces the recorder wrapper and
 ///   its write-only sequence ID with the optional recording session itself.
 ///   Older native layouts are rejected; Original-game import is unchanged.
-pub const SAVE_FORMAT_VERSION: u32 = 80;
+/// - **v81** (discard unused location/object/camera state): removes the
+///   computed-location dummy and object repulsive-point copy from snapshots,
+///   and removes the unused engine-camera scratch fields. Removing hash-skipped
+///   fields also removes their markers from the state-hash stream.
+///   Older native layouts are rejected; Original-game import is unchanged.
+pub const SAVE_FORMAT_VERSION: u32 = 81;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1326,8 +1331,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_uses_canonical_recording_session() {
-        assert_eq!(SAVE_FORMAT_VERSION, 80);
+    fn save_format_version_excludes_unused_location_and_object_fields() {
+        assert_eq!(SAVE_FORMAT_VERSION, 81);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -2137,6 +2142,24 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 79")
+        );
+    }
+
+    #[test]
+    fn read_rejects_unused_location_and_object_fields_before_engine_decode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pre_location_and_object_cleanup_save.json");
+        let old_save = serde_json::json!({
+            "header": { "magic": SAVE_MAGIC, "version": 80 },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("obsolete location/object snapshots must fail at the header");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 80")
         );
     }
 

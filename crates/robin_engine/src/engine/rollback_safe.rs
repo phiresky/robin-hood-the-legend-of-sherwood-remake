@@ -5657,9 +5657,9 @@ mod tests {
     #[test]
     fn native_snapshot_decodes_through_the_engine_facade() {
         let (mut engine, _) = frame_api_fixture();
-        engine.inner.feedback.cutscene_camera.old_view_position =
+        engine.inner.feedback.cutscene_camera.view_position =
             crate::coordinates::MapPoint::new(73.0, 91.0);
-        engine.inner.feedback.cutscene_camera.old_zoom_factor = 2.0;
+        engine.inner.feedback.cutscene_camera.zoom_factor = 2.0;
         let expected_hash = crate::replay::state_hash(&engine);
         let bytes = engine.encode_native_snapshot();
 
@@ -5668,14 +5668,10 @@ mod tests {
 
         assert_eq!(crate::replay::state_hash(&decoded), expected_hash);
         assert_eq!(
-            decoded.inner.feedback.cutscene_camera.old_view_position,
-            crate::coordinates::MapPoint::ZERO,
-            "bitcode-skipped presentation position must restore its canonical default"
+            decoded.inner.feedback.cutscene_camera.view_position,
+            engine.inner.feedback.cutscene_camera.view_position
         );
-        assert_eq!(
-            decoded.inner.feedback.cutscene_camera.old_zoom_factor, 1.0,
-            "bitcode-skipped presentation zoom must restore its canonical default"
-        );
+        assert_eq!(decoded.inner.feedback.cutscene_camera.zoom_factor, 2.0);
     }
 
     #[test]
@@ -7929,9 +7925,6 @@ mod tests {
     #[test]
     fn persisted_projection_matches_disk_reconstruction_and_reattaches_script_resources() {
         let (mut source, assets, program, _) = scripted_snapshot_fixture();
-        source.inner.feedback.cutscene_camera.old_zoom_factor = 7.0;
-        source.inner.feedback.cutscene_camera.old_view_position =
-            crate::coordinates::MapPoint::new(37.0, 91.0);
         source
             .inner
             .ai
@@ -7961,11 +7954,6 @@ mod tests {
                 .primary_target_multiplicity_initialized
         );
         assert!(raw.inner.ai.global.primary_target_multiplicity_initialized);
-        assert_eq!(raw.inner.feedback.cutscene_camera.old_zoom_factor, 7.0);
-        assert_eq!(
-            projected.inner.feedback.cutscene_camera.old_zoom_factor,
-            1.0
-        );
         assert!(std::sync::Arc::ptr_eq(
             &raw.inner.scripts.mission.as_ref().unwrap().manager.program,
             &program

@@ -568,10 +568,6 @@ impl BackgroundTransform {
 const DIRECTOR_CAMERA_VIEW_WIDTH: f32 = 1024.0;
 const DIRECTOR_CAMERA_VIEW_HEIGHT: f32 = 768.0;
 
-fn default_zoom_factor() -> f32 {
-    1.0
-}
-
 fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -595,12 +591,6 @@ pub struct DirectorCameraFrame {
 pub struct CameraState {
     /// Top-left corner of the view in map coordinates.
     pub view_position: MapPoint,
-    /// Previous frame's view position. Display interpolation scratch:
-    /// kept on the legacy camera object for now, but excluded from
-    /// deterministic snapshots and rollback hashes.
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    pub old_view_position: MapPoint,
     /// Target position for camera slide animations.
     pub camera_slide: MapPoint,
     /// Desired camera slide destination.
@@ -610,11 +600,6 @@ pub struct CameraState {
 
     /// Current zoom factor (0.5, 1.0, or 2.0).
     pub zoom_factor: f32,
-    /// Previous frame's zoom factor. Display interpolation scratch;
-    /// excluded from deterministic snapshots.
-    #[bitcode(skip)]
-    #[state_hash(skip)]
-    pub old_zoom_factor: f32,
     /// Target zoom factor for smooth zoom transitions.
     pub desired_zoom_factor: f32,
     /// Whether zoom initialization is done for the current transition.
@@ -726,12 +711,10 @@ impl PersistedCameraState {
     pub(crate) fn capture(value: &CameraState) -> Self {
         let CameraState {
             view_position: _,
-            old_view_position: _,
             camera_slide: _,
             camera_wanted: _,
             fixed_camera_speed: _,
             zoom_factor: _,
-            old_zoom_factor: _,
             desired_zoom_factor: _,
             zoom_init_done: _,
             mechanized_zoom: _,
@@ -767,12 +750,10 @@ impl PersistedCameraState {
     pub(crate) fn into_runtime(self) -> CameraState {
         CameraState {
             view_position: self.view_position,
-            old_view_position: CameraState::default().old_view_position,
             camera_slide: self.camera_slide,
             camera_wanted: self.camera_wanted,
             fixed_camera_speed: self.fixed_camera_speed,
             zoom_factor: self.zoom_factor,
-            old_zoom_factor: default_zoom_factor(),
             desired_zoom_factor: self.desired_zoom_factor,
             zoom_init_done: self.zoom_init_done,
             mechanized_zoom: self.mechanized_zoom,
@@ -792,12 +773,10 @@ impl Default for CameraState {
     fn default() -> Self {
         Self {
             view_position: MapPoint::ZERO,
-            old_view_position: MapPoint::ZERO,
             camera_slide: MapPoint::new(-1.0, -1.0), // -1 = inactive
             camera_wanted: MapPoint::ZERO,
             fixed_camera_speed: 0,
             zoom_factor: 1.0,
-            old_zoom_factor: 1.0,
             desired_zoom_factor: 1.0,
             zoom_init_done: false,
             mechanized_zoom: false,

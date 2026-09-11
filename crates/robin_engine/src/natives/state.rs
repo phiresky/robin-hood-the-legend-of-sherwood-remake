@@ -61,8 +61,8 @@ pub struct ComputedScriptLocation {
     /// a complete saved position. Legacy snapshots retain the number-only field above.
     #[serde(default)]
     pub sector_handle: Option<crate::position_interface::SectorHandle>,
-    /// Serialized script-point flags. New runtime points use
-    /// `active = true`, `legacy_dummy = false`.
+    /// Serialized script-point activation state. New runtime points are active.
+    /// TODO: audit Original point activation consumers; Rust currently retains
+    /// this flag in snapshots but does not interpret it at runtime.
     pub active: bool,
-    pub legacy_dummy: bool,
 }

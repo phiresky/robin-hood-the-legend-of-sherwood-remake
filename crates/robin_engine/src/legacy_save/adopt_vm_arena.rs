@@ -507,7 +507,6 @@ impl LegacyVmArenaBuilder<'_> {
                             super::adopt::retained_position_sector_handle(self.assets, slot)
                         }),
                         active: location.active,
-                        legacy_dummy: location.legacy_dummy,
                     })
                 })
                 .transpose()?;
@@ -607,6 +606,86 @@ mod tests {
                 value: LegacyVmMemberValue::Location(value),
             }],
         }
+    }
+
+    #[test]
+    fn imported_dummy_bit_does_not_change_runtime_locations_or_handles() {
+        let mut engine = EngineInner::new();
+        let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
+        std::sync::Arc::make_mut(&mut grid.level)
+            .layers
+            .resize(2, crate::fast_find_grid::GridLayer::default());
+        let mut assets = LevelAssets::new();
+        assets.scripts.location_count = 7;
+        let mut imported = Vec::new();
+        for legacy_dummy in [false, true] {
+            let raw = LegacyVmLocation {
+                legacy_dummy,
+                position: LegacyPoint2 { x: 12.5, y: -8.0 },
+                layer: 1,
+                active: false,
+                sector: LegacySectorRef(None),
+            };
+            // The Original representation still carries the bit for diagnostics.
+            assert_eq!(
+                serde_json::to_value(&raw).unwrap()["legacy_dummy"],
+                legacy_dummy
+            );
+            let section = one_location(Some(raw));
+            let mut builder = LegacyVmArenaBuilder {
+                engine: &engine,
+                assets: &assets,
+                slices: BTreeMap::new(),
+                locations: Vec::new(),
+            };
+            builder
+                .push(LegacyVmArenaOwner::Element(1), &one_location(None))
+                .unwrap();
+            builder.push(LegacyVmArenaOwner::Global, &section).unwrap();
+            assert_eq!(builder.slices[&LegacyVmArenaOwner::Global].start, 1);
+            assert_eq!(builder.locations.len(), 2);
+            assert!(builder.locations[0].is_none());
+            let location = builder.locations[1].unwrap();
+            assert_eq!(location.position, (12.5, -8.0));
+            assert_eq!(location.layer, Some(1));
+            assert_eq!(location.sector, None);
+            assert_eq!(location.sector_handle, None);
+            assert!(!location.active);
+            let index =
+                assets.scripts.location_count + builder.slices[&LegacyVmArenaOwner::Global].start;
+            assert_eq!(
+                ScriptHandleCodec::location_index(ScriptHandleCodec::location_handle_from_index(
+                    index
+                )),
+                Some(8)
+            );
+            imported.push(crate::natives::ScriptState {
+                computed_locations: builder.locations,
+                ..Default::default()
+            });
+        }
+        assert_eq!(bitcode::encode(&imported[0]), bitcode::encode(&imported[1]));
+        assert_eq!(
+            robin_util::state_hash::compute(&imported[0]),
+            robin_util::state_hash::compute(&imported[1])
+        );
+        let json = serde_json::to_value(&imported[1]).unwrap();
+        assert!(json["computed_locations"][1].get("legacy_dummy").is_none());
+        let persisted: crate::natives::ScriptState = serde_json::from_value(json).unwrap();
+        let snapshot: crate::natives::ScriptState =
+            bitcode::decode(&bitcode::encode(&imported[1])).unwrap();
+        for restored in [persisted, snapshot] {
+            assert_eq!(restored.computed_locations, imported[1].computed_locations);
+            assert_eq!(
+                robin_util::state_hash::compute(&restored),
+                robin_util::state_hash::compute(&imported[1])
+            );
+        }
+        imported[1].computed_locations[1].as_mut().unwrap().active = true;
+        assert_ne!(
+            robin_util::state_hash::compute(&imported[0]),
+            robin_util::state_hash::compute(&imported[1])
+        );
     }
 
     #[test]

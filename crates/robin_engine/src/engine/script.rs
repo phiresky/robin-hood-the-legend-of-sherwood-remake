@@ -7460,7 +7460,6 @@ mod script_context_tests {
                 sector: Some(44),
                 sector_handle: None,
                 active: true,
-                legacy_dummy: false,
             }));
         let mut recording = crate::sequence::RecordingSession::new();
         for expected_level in [2, 3] {

@@ -114,12 +114,8 @@ impl EngineInner {
                 // rendering both happen externally in game_session
                 // (`draw_background`, `sort_for_display` +
                 // `render_entities_gpu` + `render_selection_outlines_gpu`),
-                // so nothing to do here beyond snapshotting the camera.
+                // so nothing to do here.
                 // A cache-surface workflow is a future perf optimisation.
-                self.feedback.cutscene_camera.old_view_position =
-                    self.feedback.cutscene_camera.view_position;
-                self.feedback.cutscene_camera.old_zoom_factor =
-                    self.feedback.cutscene_camera.zoom_factor;
             }
             DisplayOpCode::Scroll => {
                 self.perform_check_scroll(display);
@@ -133,10 +129,6 @@ impl EngineInner {
                 );
                 // The full background is redrawn each frame externally;
                 // no incremental cache scroll needed here.
-                self.feedback.cutscene_camera.old_view_position =
-                    self.feedback.cutscene_camera.view_position;
-                self.feedback.cutscene_camera.old_zoom_factor =
-                    self.feedback.cutscene_camera.zoom_factor;
                 // Mouse position is updated by game_session after draw().
             }
             DisplayOpCode::InitZoom => {

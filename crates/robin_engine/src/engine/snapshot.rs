@@ -185,11 +185,6 @@ struct NativeWorldSnapshot {
 
 impl FlatEngineSnapshot {
     fn into_engine_inner(self) -> EngineInner {
-        let mut feedback = self.feedback;
-        let default_camera = super::CameraState::default();
-        feedback.cutscene_camera.old_view_position = default_camera.old_view_position;
-        feedback.cutscene_camera.old_zoom_factor = default_camera.old_zoom_factor;
-
         EngineInner {
             mission_domain: self.mission_domain,
             control: self.control,
@@ -199,7 +194,7 @@ impl FlatEngineSnapshot {
             orders: self.orders,
             scripts: self.scripts,
             players: self.players,
-            feedback,
+            feedback: self.feedback,
         }
     }
 }

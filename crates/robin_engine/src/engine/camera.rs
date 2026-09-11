@@ -713,11 +713,6 @@ impl EngineInner {
                 display.background_transform.zoom_to_down = false;
                 self.feedback.pending_side_effects.invalidate_background = true;
             }
-
-            self.feedback.cutscene_camera.old_view_position =
-                self.feedback.cutscene_camera.view_position;
-            self.feedback.cutscene_camera.old_zoom_factor =
-                self.feedback.cutscene_camera.zoom_factor;
         } else {
             // Interpolate zoom / view between the endpoints captured in
             // `InitZoom`.  The Rust renderer re-composes live each
@@ -780,10 +775,6 @@ impl EngineInner {
             } else {
                 display.background_transform.zoom_to_down = false;
             }
-            self.feedback.cutscene_camera.old_view_position =
-                self.feedback.cutscene_camera.view_position;
-            self.feedback.cutscene_camera.old_zoom_factor =
-                self.feedback.cutscene_camera.zoom_factor;
         }
 
         self.feedback.pending_side_effects.invalidate_background = true;
