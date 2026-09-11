@@ -92,10 +92,9 @@ pub fn decode_png_rgba_bytes(bytes: &[u8], source: &str) -> Result<(u16, u16, Ve
         .map_err(|_| format!("sprite width exceeds u16 for {source}"))?;
     let height = u16::try_from(reader.info().height)
         .map_err(|_| format!("sprite height exceeds u16 for {source}"))?;
-    let rgba_len = usize::from(width)
-        .checked_mul(usize::from(height))
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| format!("sprite RGBA output size overflows for {source}"))?;
+    let pixels = crate::packed_sprite::pixel_count(width.into(), height.into())
+        .map_err(|error| format!("{source}: {error}"))?;
+    let rgba_len = pixels * 4;
     let mut buf = vec![
         0;
         reader
@@ -596,6 +595,7 @@ mod tests {
         for (width, height, expected) in [
             (65_536, 1, "sprite width exceeds u16"),
             (1, 65_536, "sprite height exceeds u16"),
+            (65_535, 65_535, "sprite exceeds"),
         ] {
             let mut bytes = Vec::new();
             let mut encoder = png::Encoder::new(&mut bytes, width, height);
