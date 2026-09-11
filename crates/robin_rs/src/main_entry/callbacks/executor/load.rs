@@ -3,9 +3,10 @@
 
 use super::super::{
     OperationOutcome, PostLoadSync, PreparedLoad, SaveBannerKind, SaveLoadEvent,
-    current_mission_id, replay_loaded_identity, validated_save_reload_target,
+    current_mission_id, validated_save_reload_target,
 };
 use crate::savegame::SpecialSlot;
+use anyhow::Context;
 use robin_engine::{engine as engine_api, profiles::ProfileManager};
 
 pub(super) enum LoadRoute {
@@ -94,8 +95,8 @@ pub(super) fn route(
 /// from the decoded payload, before any subsequent live-engine fixups.
 #[derive(serde::Serialize)]
 pub(super) struct AppliedLoad {
-    snapshot: Option<Vec<u8>>,
-    identity: Option<crate::save_file::ReplaySaveIdentity>,
+    snapshot: Vec<u8>,
+    identity: crate::save_file::ReplaySaveIdentity,
 }
 
 impl<'de> serde::Deserialize<'de> for AppliedLoad {
@@ -119,9 +120,9 @@ impl AppliedLoad {
             ),
         };
         OperationOutcome {
-            event: self.identity.map(|identity| SaveLoadEvent::LoadApplied {
-                snapshot: self.snapshot,
-                identity,
+            event: Some(SaveLoadEvent::LoadApplied {
+                snapshot: Some(self.snapshot),
+                identity: self.identity,
                 is_continue,
             }),
             completion: super::super::OperationCompletion::Restored {
@@ -142,10 +143,15 @@ pub(super) fn apply(
 ) -> anyhow::Result<AppliedLoad> {
     let CurrentMissionLoad { save } = prepared;
     let save = save.into_payload();
-    let identity = replay_loaded_identity(&save);
+    // Both pieces of recording evidence are required before changing the live
+    // engine. A successful restore must never disappear from the timeline just
+    // because computing its identity failed.
+    let identity = save
+        .replay_identity()
+        .context("prepare loaded save replay identity")?;
     // Dereference the process-local prepared-save wrapper: the replay carries
     // the public save envelope, never the checkpoint's local authority.
-    let snapshot = Some(serde_json::to_vec(&*save)?);
+    let snapshot = serde_json::to_vec(&*save).context("encode loaded save replay snapshot")?;
     save.apply_to_with_game(engine, host, game, assets)?;
     Ok(AppliedLoad { snapshot, identity })
 }
@@ -198,11 +204,13 @@ mod tests {
             panic!("same mission must not require reload")
         };
         assert_eq!(prepared.save.save().engine.frame_counter(), 41);
+        let identity = prepared.save().replay_identity().unwrap();
         let applied = apply(prepared, &mut engine, &mut host, &mut game, &assets).unwrap();
         assert_eq!(engine.frame_counter(), 41);
         let outcome = applied.outcome(LoadCompletion::Quick);
         let super::SaveLoadEvent::LoadApplied {
             snapshot: Some(snapshot),
+            identity: recorded_identity,
             ..
         } = outcome.event.as_ref().expect("successful load receipt")
         else {
@@ -212,10 +220,81 @@ mod tests {
         embedded.validate_current_schema().unwrap();
         assert_eq!(embedded.header.mission_id, 17);
         assert_eq!(embedded.engine.frame_counter(), 41);
+        assert_eq!(*recorded_identity, identity);
         assert!(outcome.processed() && outcome.reset_input());
         assert_eq!(outcome.banner, Some(SaveBannerKind::Loaded));
         assert!(!outcome.restore().unwrap().is_continue);
         assert!(outcome.transition().is_none() && !outcome.restart_requested());
+    }
+
+    #[test]
+    fn replay_identity_failure_rejects_load_before_live_state_changes() {
+        use crate::host::{
+            PendingSnapshotTransition, PendingSnapshotTransitionPayload, SnapshotSave,
+        };
+        use robin_engine::engine::{Engine, EngineArgs, LevelLoadArgs, SimConfig};
+        use robin_engine::multiplayer::{MultiplayerSessionId, SnapshotTransitionId};
+
+        let directory = tempfile::tempdir().unwrap();
+        let (_, mut host, mut engine, mut assets, mut game, profiles) =
+            diagnostic_callback_fixture(directory.path());
+        // Original parity RNG ownership is deliberately non-serializable. Use
+        // that real failure, not an injected codec or a permissive dummy save.
+        let source = Engine::new(EngineArgs {
+            campaign: engine.campaign().clone(),
+            level: LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "",
+                progress: &mut |_| {},
+                loaded: robin_engine::level_data::LoadedLevel::empty_for_test(),
+                bg_pixel_dims: (0.0, 0.0),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed: 0,
+            original_rng_replay: Some(vec![1; 10_000]),
+            sim_config: SimConfig::default(),
+        })
+        .unwrap();
+        let mut save =
+            crate::save_file::GameSaveFile::capture(&source, &host, 17, "invalid".into());
+        save.header.mission_assets = game.mission_assets().unwrap().clone();
+        assert!(save.replay_identity().is_err());
+
+        // Follow the actual in-memory committed-load admission path. This
+        // fixture cannot enter through disk JSON because its RNG cannot encode.
+        let id = SnapshotTransitionId {
+            session_id: MultiplayerSessionId([7; 32]),
+            sequence: 1,
+        };
+        host.transport
+            .prepare_snapshot_transition(PendingSnapshotTransition::new(
+                id,
+                PendingSnapshotTransitionPayload::Save {
+                    load: SnapshotSave::Remote(Box::new(save)),
+                },
+            ));
+        host.transport.commit_snapshot_transition(id).unwrap();
+        let prepared = crate::main_entry::PreparedLoad::from_committed_snapshot(
+            host.transport.take_committed_snapshot_transition().unwrap(),
+        )
+        .unwrap();
+        let LoadRoute::Current(prepared) = route(prepared, &engine, &game, &profiles).unwrap()
+        else {
+            panic!("same-mission load expected");
+        };
+        engine.test_set_frame_counter(99);
+        let before = serde_json::to_value((&engine, &host.audio.sound, &game.persistent)).unwrap();
+        let error = match apply(prepared, &mut engine, &mut host, &mut game, &assets) {
+            Ok(_) => panic!("a restore without replay identity must not succeed"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("prepare loaded save replay identity"));
+        assert!(format!("{error:#}").contains("original RNG parity replay cannot be serialized"));
+        assert_eq!(
+            serde_json::to_value((&engine, &host.audio.sound, &game.persistent)).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -285,8 +364,8 @@ mod tests {
         ] {
             // Reducer-only fixture: no claim that an engine was applied here.
             let receipt = AppliedLoad {
-                snapshot: None,
-                identity: None,
+                snapshot: b"policy-only fixture".to_vec(),
+                identity: crate::save_file::ReplaySaveIdentity::Payload([7; 32]),
             };
             let bytes = serde_json::to_vec(&receipt).unwrap();
             assert!(serde_json::from_slice::<AppliedLoad>(&bytes).is_err());
@@ -294,7 +373,14 @@ mod tests {
             assert_eq!(outcome.reset_input(), reset);
             assert_eq!(outcome.banner, banner);
             assert_eq!(outcome.restore().unwrap().is_continue, continued);
-            assert!(outcome.event.is_none() && outcome.transition().is_none());
+            assert!(matches!(
+                &outcome.event,
+                Some(super::SaveLoadEvent::LoadApplied {
+                    snapshot: Some(_),
+                    ..
+                })
+            ));
+            assert!(outcome.transition().is_none());
         }
     }
 }

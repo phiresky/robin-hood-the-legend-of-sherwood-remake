@@ -788,18 +788,6 @@ fn replay_save_written_event(
     }
 }
 
-fn replay_loaded_identity(
-    save: &crate::save_file::PreparedGameSave,
-) -> Option<crate::save_file::ReplaySaveIdentity> {
-    match save.replay_identity() {
-        Ok(identity) => Some(identity),
-        Err(error) => {
-            tracing::error!("loaded save has no usable replay identity: {error:#}");
-            None
-        }
-    }
-}
-
 fn begin_multiplayer_snapshot_transition(
     host: &mut crate::host::Host,
     load: PreparedLoad,
