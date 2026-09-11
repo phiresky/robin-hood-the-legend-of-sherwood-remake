@@ -611,7 +611,8 @@ mod tests {
     #[test]
     fn imported_dummy_bit_does_not_change_runtime_locations_or_handles() {
         let mut engine = EngineInner::new();
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid.level)
+        let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
+        std::sync::Arc::make_mut(&mut grid.level)
             .layers
             .resize(2, crate::fast_find_grid::GridLayer::default());
         let mut assets = LevelAssets::new();

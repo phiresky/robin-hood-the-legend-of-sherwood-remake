@@ -1484,7 +1484,6 @@ fn object_type(value: u32, creation_order: u32) -> Result<ObjectType, LegacyObje
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::legacy_save::payload_base::LegacyPoint2;
     use crate::legacy_save::payload_nonactors::LegacyRepulsivePointPayload;
     use crate::profiles::{BowProfile, BowShootMode};
 
