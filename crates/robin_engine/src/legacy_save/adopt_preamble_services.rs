@@ -522,7 +522,8 @@ mod tests {
         // Import is authoritative even without a VM and in both directions.
         LegacyPreambleServicesPlan {
             sound: None,
-            messenger,
+            view_locked: messenger.lock_view,
+            selected_action: convert_messenger_action(messenger.action).unwrap(),
             game: LegacyGameState {
                 post_initialized: false,
                 ..game
