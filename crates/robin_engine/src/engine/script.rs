@@ -7891,6 +7891,14 @@ mod script_context_tests {
                 assert_eq!(engine.scripts.globals.len(), 16);
                 let expected = engine.scripts.globals.clone();
                 let before = crate::replay::state_hash(&engine);
+                let program = engine
+                    .scripts
+                    .mission
+                    .as_ref()
+                    .unwrap()
+                    .manager
+                    .program
+                    .clone();
                 let json = serde_json::to_value(&engine).unwrap();
                 assert_eq!(json["scripts"]["globals"], serde_json::json!(expected));
                 assert!(json["scripts"]["mission"]["state"].get("globals").is_none());
@@ -7901,6 +7909,12 @@ mod script_context_tests {
                 for mut restored in [restored_json, restored_native] {
                     assert_eq!(restored.scripts.globals, expected);
                     assert_eq!(crate::replay::state_hash(&restored), before);
+                    restored
+                        .scripts
+                        .mission
+                        .as_mut()
+                        .unwrap()
+                        .attach_program(program.clone());
                     restored.attach_script_bindings(&assets);
                     assert_eq!(
                         restored.call_external_native(&sim, &assets, "GetGlobal", &[15]),
