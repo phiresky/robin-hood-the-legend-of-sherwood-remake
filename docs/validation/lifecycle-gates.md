@@ -91,13 +91,15 @@ processes with this environment. A missing dependency is a recorded prerequisite
 failure, never a skipped input check. Build the game separately:
 
 ```sh
-CARGO_BUILD_JOBS=1 cargo build --locked -p robin_rs --bin robin --no-default-features --features release
+CARGO_BUILD_JOBS=1 bash scripts/build-native.sh --no-default-features --features robin_rs/release
 git rev-parse HEAD
-sha256sum target/debug/robin
+sha256sum target/debug/robin target/debug/robin-replay-admission
 ```
 
-Record that exact source and binary digest; do not rebuild or replace the
-binary during acceptance. Supply those recorded values:
+This builds both the game and its required adjacent native replay-admission
+helper. Record that exact source and both binary digests; do not rebuild or
+replace either executable during acceptance. Supply the game digest below;
+each driver also records and verifies its retained helper digest:
 
 ```sh
 ROBIN_LIFECYCLE_BINARY=/absolute/path/to/checkout/target/debug/robin \
