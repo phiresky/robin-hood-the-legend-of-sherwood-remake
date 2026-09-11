@@ -46,8 +46,8 @@ use robin_run_protocol::{
     demo_content_object_path_v1, official_achievement_policies_v1, official_content_subjects_v1,
     simulation_content_component_relative_path_v1,
 };
-use serde::de::{DeserializeOwned, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::typed_js_authority::{
     JavaScriptBuildToolAuthorityDocumentV1, JavaScriptBuildToolRoleV1,
@@ -2741,108 +2741,8 @@ fn make_verifier_bundles_read_only(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug)]
-struct StrictJsonValue(serde_json::Value);
-
-impl<'de> Deserialize<'de> for StrictJsonValue {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(StrictJsonVisitor)
-    }
-}
-
-struct StrictJsonVisitor;
-
-impl<'de> Visitor<'de> for StrictJsonVisitor {
-    type Value = StrictJsonValue;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("JSON without duplicate object keys")
-    }
-
-    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(value.into()))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(value.into()))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(value.into()))
-    }
-
-    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        serde_json::Number::from_f64(value)
-            .map(serde_json::Value::Number)
-            .map(StrictJsonValue)
-            .ok_or_else(|| E::custom("non-finite JSON number"))
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        Ok(StrictJsonValue(value.to_owned().into()))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(value.into()))
-    }
-
-    fn visit_none<E>(self) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(serde_json::Value::Null))
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(serde_json::Value::Null))
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut values = Vec::new();
-        while let Some(value) = sequence.next_element::<StrictJsonValue>()? {
-            values.push(value.0);
-        }
-        Ok(StrictJsonValue(serde_json::Value::Array(values)))
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut values = serde_json::Map::new();
-        while let Some(key) = map.next_key::<String>()? {
-            ensure_serde(
-                !values.contains_key(&key),
-                format!("duplicate JSON object key {key:?}"),
-            )?;
-            values.insert(key, map.next_value::<StrictJsonValue>()?.0);
-        }
-        Ok(StrictJsonValue(serde_json::Value::Object(values)))
-    }
-}
-
-fn ensure_serde<E: serde::de::Error>(condition: bool, message: String) -> Result<(), E> {
-    if condition {
-        Ok(())
-    } else {
-        Err(E::custom(message))
-    }
-}
-
 fn strict_json_from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let value = StrictJsonValue::deserialize(&mut deserializer)?;
-    deserializer.end()?;
-    Ok(serde_json::from_value(value.0)?)
+    Ok(robin_run_protocol::strict_json::from_slice(bytes)?)
 }
 
 #[cfg(test)]
@@ -3317,8 +3217,17 @@ mod tests {
 
     #[test]
     fn strict_json_rejects_duplicate_keys() {
-        let duplicate = br#"{"schema_version":1,"schema_version":1}"#;
-        assert!(strict_json_from_slice::<serde_json::Value>(duplicate).is_err());
+        for duplicate in [
+            br#"{"schema_version":1,"schema_version":1}"#.as_slice(),
+            br#"{"nested":[{"key":null,"key":true}]}"#.as_slice(),
+        ] {
+            let error = strict_json_from_slice::<serde_json::Value>(duplicate).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<robin_run_protocol::strict_json::StrictJsonError>(),
+                Some(robin_run_protocol::strict_json::StrictJsonError::DuplicateKey(_))
+            ));
+        }
+        assert!(strict_json_from_slice::<serde_json::Value>(b"null true").is_err());
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod moderation;
 mod offer_binding;
 mod query;
 mod rejection_code;
+pub mod strict_json;
 mod validation;
 mod verification_result;
 mod verifier_job;
