@@ -4641,7 +4641,7 @@ impl EngineInner {
         let mut terminal_movement_order_pops = Vec::new();
         let mut prepared = {
             let _detail = entity_system_detail_guard(EntitySystemDetail::PrepareNpc);
-            self.prepare_npc_owner_pass(sim, assets)
+            self.prepare_npc_owner_pass()
         };
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,

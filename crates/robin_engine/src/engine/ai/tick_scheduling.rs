@@ -35,11 +35,7 @@ impl EngineInner {
     }
 
     /// Prepare the shared, RNG-free portion of the fused owner pass.
-    pub(in crate::engine) fn prepare_npc_owner_pass(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
-    ) -> PreparedNpcOwnerPass {
+    pub(in crate::engine) fn prepare_npc_owner_pass(&mut self) -> PreparedNpcOwnerPass {
         if !self.ai.global.primary_target_multiplicity_initialized {
             // The human actor's primary-target multiplicity is temporary initialization state and
             // is explicitly absent from the save stream. Loading a save into

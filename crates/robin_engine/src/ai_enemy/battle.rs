@@ -2642,12 +2642,7 @@ impl EnemyAi {
         self.base.set_emoticon(EmoticonType::XMark);
 
         // Compute distance from `seek_position` (which is now fresh).
-        let distance = {
-            let dx = ctx.position.x - self.base.seek_position.x;
-            let dy = ctx.position.y - self.base.seek_position.y;
-            (dx * dx + dy * dy).sqrt()
-        };
-        self.reconsider_enemy_approach(false, distance, ctx, tick, grid);
+        self.reconsider_enemy_approach(false, ctx, tick, grid);
     }
 
     // -----------------------------------------------------------------------
@@ -2658,8 +2653,7 @@ impl EnemyAi {
     /// Decide how to approach the primary target: run when far, walk
     /// when close, fight when in melee range.
     ///
-    /// `distance` is the world-distance from self to the primary target
-    /// (caller computes it because the AI struct doesn't own a position).
+    /// Distance is sampled here from the target-specific live position.
     /// `seek_position` must already be set to the target's position
     /// before calling.
     ///
@@ -2669,7 +2663,6 @@ impl EnemyAi {
     pub fn reconsider_enemy_approach(
         &mut self,
         reachpoint: bool,
-        _distance_arg: f32,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -5495,7 +5488,7 @@ mod tests {
             ..Position::default()
         });
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         // begin_swordfight raises Engage before its state change suspends the
         // actor-outbox prefix into the queued state-change owner work; the
@@ -5576,7 +5569,7 @@ mod tests {
             level: 0,
         });
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         let expected_entry = Position {
             x: 410.0,
@@ -5650,7 +5643,7 @@ mod tests {
             level: 0,
         });
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(173)));
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
@@ -5705,7 +5698,7 @@ mod tests {
         tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
         tick.primary_target_position = Some(target_position);
 
-        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(true, &ctx, &tick, None);
 
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
         let transition = ai
@@ -5821,7 +5814,7 @@ mod tests {
         tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
         tick.primary_target_position = Some(target_position);
 
-        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(true, &ctx, &tick, None);
 
         let work = &ai.base.outbox.reentrant.owner_work;
         let crate::ai::AiOwnerWork::StateChange(old_notification) = &work[0] else {
@@ -6044,7 +6037,7 @@ mod tests {
         // "walking circus pyramid" command comparison.
         tick.primary_target_animation = Some(crate::order::OrderType::WalkingCarryingOnShoulders);
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert!(!ai.base.already_on_point);
