@@ -331,3 +331,11 @@ test = true
 [[example]]
 name = "sprite_probe_rle_dict"
 test = true
+
+[[example]]
+name = "sprite_size_bench"
+test = true
+
+[[example]]
+name = "sprite_compression_probe"
+test = true
