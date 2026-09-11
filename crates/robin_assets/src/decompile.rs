@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Write};
 
-use crate::actor_names::{ActorNames, ScriptKind, sanitize_class_name};
+use crate::actor_names::{ActorNames, ScriptKind};
 use crate::scb::{ClassEntry, ScbFile};
 use robin_engine::natives::{native_name, native_signature_by_index};
 use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode};
@@ -1597,46 +1597,24 @@ fn emit_name_const(
 /// keyed by actor-slot index. `emit_actors_const` drops the string as
 /// a doc comment on the matching `Scrolls` entry.
 ///
-/// We match by the sanitized class name embedded in `actor_names.actors`
-/// (the same transformation `pick_base_name` applies), stripping any
-/// `_N` dedup suffix. That's robust to class-declaration order not
-/// matching mission-scroll order — we only need the name round-trip.
+/// Match exact authored class identities, independently of display-name suffixes
+/// and class declaration order.
 fn build_scroll_popup_text_map(scb: &ScbFile, names: &ActorNames) -> HashMap<usize, String> {
-    use crate::actor_names::ActorSlotKind;
-    // Sanitized class name → popup text id from the class's IsTaken.
-    let mut by_sanitized: HashMap<String, i32> = HashMap::new();
-    for class in &scb.classes {
-        if names.kind_of(&class.class_name) != Some(ScriptKind::Scroll) {
-            continue;
-        }
-        if let Some(id) = find_first_popup_text_id(class) {
-            by_sanitized.insert(sanitize_class_name(&class.class_name), id);
-        }
-    }
-    if by_sanitized.is_empty() {
-        return HashMap::new();
-    }
-
-    let mut out = HashMap::new();
-    for (i, (kind, name)) in names
-        .actor_kinds
+    let by_class: HashMap<&str, i32> = scb
+        .classes
         .iter()
-        .zip(names.actors.iter())
-        .enumerate()
-    {
-        if *kind != Some(ActorSlotKind::Scroll) {
-            continue;
-        }
-        let Some(n) = name.as_deref() else { continue };
-        let base = strip_dedup_suffix(n);
-        let Some(text_id) = by_sanitized.get(base).copied() else {
-            continue;
-        };
-        if let Some(text) = names.popup_text(text_id) {
-            out.insert(i, format!("\"{}\"", escape_text_for_comment(text)));
-        }
-    }
-    out
+        .filter_map(|class| {
+            find_first_popup_text_id(class).map(|id| (class.class_name.as_str(), id))
+        })
+        .collect();
+    names
+        .scroll_classes
+        .iter()
+        .filter_map(|(&position, class)| {
+            let text = names.popup_text(*by_class.get(class.as_str())?)?;
+            Some((position, format!("\"{}\"", escape_text_for_comment(text))))
+        })
+        .collect()
 }
 
 /// Walk a class's instructions looking for the first
@@ -1665,19 +1643,6 @@ fn find_first_popup_text_id(class: &ClassEntry) -> Option<i32> {
         }
     }
     None
-}
-
-/// Reverse of `pick_base_name` + `push_with_name` dedup — turns
-/// `Kent_2` back into `Kent` for the lookup into `by_sanitized`.
-fn strip_dedup_suffix(name: &str) -> &str {
-    if let Some((head, tail)) = name.rsplit_once('_')
-        && !tail.is_empty()
-        && tail.bytes().all(|b| b.is_ascii_digit())
-    {
-        head
-    } else {
-        name
-    }
 }
 
 /// Header emitted once per file: alias every "semantic" type seen in
@@ -2080,6 +2045,72 @@ fn decompile_class(
 mod tests {
     use super::*;
     use crate::scb;
+
+    #[test]
+    fn scroll_text_uses_authored_identity_not_display_name_suffixes() {
+        use robin_engine::vm::{Opcode, Quad};
+        let class = |name: &str, text: i32| {
+            let mut constant = [0; 8];
+            constant[4..].copy_from_slice(&text.to_le_bytes());
+            let mut call = [0; 8];
+            call[..4].copy_from_slice(
+                &(robin_engine::natives::NativeFn::DisplayPopupText as u32).to_le_bytes(),
+            );
+            ClassEntry {
+                source_file: String::new(),
+                class_name: name.into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: Vec::new(),
+                quads: vec![
+                    Quad {
+                        operation: Opcode::Aff0IConstant as u8,
+                        operands: constant,
+                    },
+                    Quad {
+                        operation: Opcode::NativeCall as u8,
+                        operands: call,
+                    },
+                ],
+            }
+        };
+        let scb = ScbFile {
+            version: scb::SCB_VERSION,
+            classes: vec![
+                class("Scroll_2", 1),
+                class("Scroll", 0),
+                class("Scroll_80000001", 2),
+            ],
+        };
+        let names = ActorNames {
+            // Intentionally ambiguous display names are irrelevant to this lookup.
+            actors: vec![Some("Scroll_2".into()); 4],
+            scroll_classes: [
+                (0, "Scroll"),
+                (1, "Scroll"),
+                (2, "Scroll_2"),
+                (3, "Scroll_80000001"),
+            ]
+            .map(|(index, name)| (index, name.to_owned()))
+            .into(),
+            popup_texts: vec![
+                "base".into(),
+                "authored suffix".into(),
+                "hashed class".into(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            build_scroll_popup_text_map(&scb, &names),
+            [
+                (0, "\"base\"".into()),
+                (1, "\"base\"".into()),
+                (2, "\"authored suffix\"".into()),
+                (3, "\"hashed class\"".into()),
+            ]
+            .into()
+        );
+    }
 
     #[test]
     #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]

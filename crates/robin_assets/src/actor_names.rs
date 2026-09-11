@@ -89,6 +89,9 @@ pub struct ActorNames {
     /// `actor_kinds[i]` is which entity kind occupies slot `i`, or
     /// `None` if nothing lives there. Parallel to `actors`.
     pub actor_kinds: Vec<Option<ActorSlotKind>>,
+    /// Exact authored scroll class, keyed by global script-element position.
+    /// Display-name sanitizing and deduplication must not change this identity.
+    pub scroll_classes: HashMap<usize, String>,
     /// `patches[i]` is the identifier for `GetPatchScript(i)`, or `None`.
     pub patches: Vec<Option<String>>,
     /// SCB class name → which engine slot binds it.
@@ -419,6 +422,7 @@ fn build_names(loaded: &LoadedLevel, profiles: &ProfileManager) -> ActorNames {
     push_soldiers(&loaded.mission, profiles, &mut slots);
     push_targets(&loaded.mission, &mut slots);
     push_bonuses(&loaded.mission, &mut slots);
+    let scroll_start = slots.actors.len();
     push_scrolls(&loaded.mission, &mut slots);
 
     let patches = collect_patch_names(
@@ -433,6 +437,19 @@ fn build_names(loaded: &LoadedLevel, profiles: &ProfileManager) -> ActorNames {
     ActorNames {
         actors: slots.actors,
         actor_kinds: slots.kinds,
+        scroll_classes: loaded
+            .mission
+            .scrolls
+            .iter()
+            .enumerate()
+            .filter_map(|(index, scroll)| {
+                scroll
+                    .script_class
+                    .as_ref()
+                    .filter(|class| !class.is_empty())
+                    .map(|class| (scroll_start + index, class.clone()))
+            })
+            .collect(),
         patches,
         class_kinds,
         popup_texts: Vec::new(),
@@ -449,7 +466,7 @@ struct Slots {
     /// Dedup counter per kind. Shared so `Actors.Guard_A04` and
     /// `Actors.Guard_A04_2` stay stable, but also scoped per kind so
     /// `Anim.Fumee` and `PatchFx.Fumee` don't collide with each other.
-    used: HashMap<(ActorSlotKind, String), usize>,
+    used: HashMap<ActorSlotKind, HashMap<String, usize>>,
 }
 
 impl Slots {
@@ -458,13 +475,7 @@ impl Slots {
             if b.is_empty() {
                 return None;
             }
-            let counter = self.used.entry((kind, b.clone())).or_insert(0);
-            *counter += 1;
-            Some(if *counter == 1 {
-                b
-            } else {
-                format!("{b}_{counter}")
-            })
+            Some(unique_name(b, self.used.entry(kind).or_default()))
         });
         self.actors.push(named);
         self.kinds.push(Some(kind));
@@ -625,15 +636,24 @@ fn collect_patch_names<'a>(
             out.push(None);
             continue;
         }
-        let count = used.entry(base.clone()).or_insert(0);
-        *count += 1;
-        out.push(Some(if *count == 1 {
-            base
-        } else {
-            format!("{base}_{count}")
-        }));
+        out.push(Some(unique_name(base, &mut used)));
     }
     out
+}
+
+/// Reserve emitted names as well as authored bases, so an authored numeric
+/// suffix cannot collide with an identifier generated for a previous slot.
+fn unique_name(base: String, used: &mut HashMap<String, usize>) -> String {
+    let mut candidate = base.clone();
+    loop {
+        if let std::collections::hash_map::Entry::Vacant(entry) = used.entry(candidate.clone()) {
+            entry.insert(1);
+            return candidate;
+        }
+        let counter = used.get_mut(&base).expect("colliding base is reserved");
+        *counter += 1;
+        candidate = format!("{base}_{counter}");
+    }
 }
 
 /// Sanitize to a TypeScript-friendly identifier: keep alphanumerics,
@@ -667,6 +687,25 @@ pub(crate) fn sanitize_class_name(class: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emitted_identifiers_are_unique_even_when_authored_names_have_suffixes() {
+        let mut slots = Slots::default();
+        for base in ["Guard", "Guard", "Guard_2", "Guard", "Guard_2"] {
+            slots.push_with_name(ActorSlotKind::Actor, Some(base.into()));
+        }
+        assert_eq!(
+            slots.actors,
+            ["Guard", "Guard_2", "Guard_2_2", "Guard_3", "Guard_2_3"]
+                .map(|name| Some(name.to_owned()))
+        );
+        slots.push_with_name(ActorSlotKind::Scroll, Some("Guard".into()));
+        assert_eq!(slots.actors.last().unwrap().as_deref(), Some("Guard"));
+        let mut used = HashMap::new();
+        assert_eq!(unique_name("Guard_2".into(), &mut used), "Guard_2");
+        assert_eq!(unique_name("Guard".into(), &mut used), "Guard");
+        assert_eq!(unique_name("Guard".into(), &mut used), "Guard_3");
+    }
 
     #[test]
     fn shipping_datadir_helper_installs_decoded_mission_in_private_vfs() {
