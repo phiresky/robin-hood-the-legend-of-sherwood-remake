@@ -95,6 +95,7 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
 
     let mut occurrences: Vec<Occurrence> = Vec::new();
     let mut ok = 0usize;
+    let mut failed = false;
 
     for path in &args.paths {
         let stem = Path::new(path)
@@ -110,6 +111,7 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("{path}: {e}");
+                failed = true;
                 continue;
             }
         };
@@ -119,13 +121,14 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
         if args.decompile {
             for (cls, body) in extract_classes(&text) {
                 let base = strip_hash_suffix(&cls);
-                occurrences.push((stem.clone(), cls, hash_body(body), base));
+                occurrences.push((stem.clone(), cls, hash_body(&body), base));
             }
         }
 
         let out_path = out_dir.join(format!("{stem}.ts"));
         if let Err(e) = std::fs::write(&out_path, text) {
             tracing::error!("write {}: {e}", out_path.display());
+            failed = true;
             continue;
         }
         ok += 1;
@@ -136,6 +139,7 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
         let summary = build_duplicate_summary(&occurrences);
         if let Err(e) = std::fs::write(&summary_path, summary) {
             tracing::error!("write {}: {e}", summary_path.display());
+            failed = true;
         }
     }
 
@@ -144,7 +148,11 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
         args.paths.len(),
         out_dir.display()
     );
-    std::process::ExitCode::SUCCESS
+    if failed {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
+    }
 }
 
 fn load_actor_names(
@@ -186,7 +194,7 @@ fn render(
 
 /// Iterate `class Name … { … }` blocks in decompiled TS output.
 /// Returns `(class_name, body)` pairs. Skips `abstract class` bases.
-fn extract_classes(text: &str) -> impl Iterator<Item = (String, &str)> {
+fn extract_classes(text: &str) -> impl Iterator<Item = (String, String)> {
     let mut out = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
@@ -201,21 +209,13 @@ fn extract_classes(text: &str) -> impl Iterator<Item = (String, &str)> {
                 j += 1;
             }
             let body = lines[start..=j.min(lines.len() - 1)].join("\n");
-            // Stash: because we can't return a &str easily with ownership
-            // in this closure-less loop, collect owned and return Vec.
             out.push((name.to_owned(), body));
             i = j + 1;
         } else {
             i += 1;
         }
     }
-    // Convert owned bodies back to static-lifetime &str via leaking — OK
-    // here because batch mode is a one-shot process and Strings are small
-    // relative to the overall run.
-    out.into_iter().map(|(n, b)| {
-        let leaked: &'static str = Box::leak(b.into_boxed_str());
-        (n, leaked as &str)
-    })
+    out.into_iter()
 }
 
 fn hash_body(s: &str) -> u64 {
@@ -265,8 +265,9 @@ fn build_duplicate_summary(occ: &[Occurrence]) -> String {
         for o in insts {
             by_hash.entry(o.2).or_default().push(o);
         }
-        let mut groups: Vec<&Vec<&Occurrence>> = by_hash.values().collect();
-        groups.sort_by_key(|v| std::cmp::Reverse(v.len()));
+        let mut groups: Vec<_> = by_hash.iter().collect();
+        // Equal-sized variants must not inherit randomized HashMap iteration.
+        groups.sort_by(|(hash_a, a), (hash_b, b)| b.len().cmp(&a.len()).then(hash_a.cmp(hash_b)));
 
         let _ = writeln!(
             md,
@@ -274,7 +275,7 @@ fn build_duplicate_summary(occ: &[Occurrence]) -> String {
             insts.len(),
             by_hash.len()
         );
-        for (i, group) in groups.iter().enumerate() {
+        for (i, (_, group)) in groups.iter().enumerate() {
             let _ = writeln!(md, "\n**Variant {}** ({} files):", i + 1, group.len());
             let mut files: Vec<&str> = group.iter().map(|o| o.0.as_str()).collect();
             files.sort();
@@ -285,4 +286,181 @@ fn build_duplicate_summary(occ: &[Occurrence]) -> String {
         let _ = writeln!(md);
     }
     md
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn class_bodies_are_owned_and_keep_normalized_lines_and_boundaries() {
+        let classes = {
+            let text = String::from(
+                "abstract class Base {\r\n}\r\nclass First extends Base {\r\n  f() {\r\n  }\r\n}\r\n\r\nclass Second {\r\n}\r\n",
+            );
+            extract_classes(&text).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            classes,
+            vec![
+                (
+                    "First".to_owned(),
+                    "class First extends Base {\n  f() {\n  }\n}".to_owned()
+                ),
+                ("Second".to_owned(), "class Second {\n}".to_owned()),
+            ]
+        );
+        assert_eq!(
+            hash_body(&classes[0].1),
+            hash_body("class First extends Base {\n  f() {\n  }\n}")
+        );
+    }
+
+    #[test]
+    fn incomplete_class_still_extends_to_end_of_input() {
+        assert!(extract_classes("").next().is_none());
+        for text in ["class Last {", "class Last {\n  unfinished();\n"] {
+            assert_eq!(
+                extract_classes(text).collect::<Vec<_>>(),
+                vec![(
+                    "Last".to_owned(),
+                    text.lines().collect::<Vec<_>>().join("\n")
+                ),]
+            );
+        }
+    }
+
+    #[test]
+    fn variant_ties_use_body_hash_after_descending_frequency() {
+        let mut occurrences = vec![
+            ("z".into(), "Probe".into(), 99, "Probe".into()),
+            ("b".into(), "Probe".into(), 17, "Probe".into()),
+            ("a".into(), "Probe".into(), 17, "Probe".into()),
+            ("y".into(), "Probe".into(), 99, "Probe".into()),
+            ("single".into(), "Probe".into(), 1, "Probe".into()),
+        ];
+        let expected = build_duplicate_summary(&occurrences);
+        assert!(expected.contains("**Variant 1** (2 files):\n- `a`\n- `b`"));
+        assert!(expected.contains("**Variant 2** (2 files):\n- `y`\n- `z`"));
+        assert!(expected.contains("**Variant 3** (1 files):\n- `single`"));
+        for _ in 0..occurrences.len() {
+            occurrences.rotate_left(1);
+            assert_eq!(build_duplicate_summary(&occurrences), expected);
+        }
+        occurrences.reverse();
+        assert_eq!(build_duplicate_summary(&occurrences), expected);
+    }
+
+    fn write_script(path: &Path) {
+        // Real minimal SCB fixture: one class with no members/functions/quads.
+        let mut bytes = robin_assets::scb::SCB_MAGIC.to_vec();
+        bytes.extend_from_slice(&robin_assets::scb::SCB_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for value in ["fixture.scs", "Probe"] {
+            bytes.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        for _ in 0..4 {
+            bytes.extend_from_slice(&0i32.to_le_bytes());
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn batch_args(paths: &[&Path]) -> Args {
+        Args {
+            decompile: true,
+            datadir: None,
+            mission: None,
+            out_dir: None,
+            paths: paths
+                .iter()
+                .map(|path| path.to_str().unwrap().to_owned())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn batch_reports_input_failure_but_still_writes_valid_outputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing.scb");
+        let corrupt = directory.path().join("corrupt.scb");
+        let valid = directory.path().join("valid.scb");
+        std::fs::write(&corrupt, b"not an SCB").unwrap();
+        write_script(&valid);
+        let out = directory.path().join("out");
+        assert_eq!(
+            run_batch(
+                out.to_str().unwrap(),
+                &batch_args(&[&missing, &corrupt, &valid])
+            ),
+            std::process::ExitCode::FAILURE
+        );
+        assert!(
+            std::fs::read_to_string(out.join("valid.ts"))
+                .unwrap()
+                .contains("class Probe {")
+        );
+        assert!(out.join("_duplicates.md").is_file());
+        assert!(!out.join("missing.ts").exists());
+        assert!(!out.join("corrupt.ts").exists());
+    }
+
+    #[test]
+    fn batch_output_and_summary_write_failures_are_not_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first.scb");
+        let second = directory.path().join("second.scb");
+        write_script(&first);
+        write_script(&second);
+        let out = directory.path().join("out");
+        std::fs::create_dir_all(out.join("first.ts")).unwrap();
+        assert_eq!(
+            run_batch(out.to_str().unwrap(), &batch_args(&[&first, &second])),
+            std::process::ExitCode::FAILURE
+        );
+        assert!(out.join("second.ts").is_file());
+        let summary_out = directory.path().join("summary-out");
+        std::fs::create_dir_all(summary_out.join("_duplicates.md")).unwrap();
+        assert_eq!(
+            run_batch(summary_out.to_str().unwrap(), &batch_args(&[&first])),
+            std::process::ExitCode::FAILURE
+        );
+        assert!(summary_out.join("first.ts").is_file());
+    }
+
+    #[test]
+    fn batch_output_directory_creation_failure_is_not_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let valid = directory.path().join("valid.scb");
+        write_script(&valid);
+        let out = directory.path().join("not-a-directory");
+        std::fs::write(&out, b"existing file").unwrap();
+        assert_eq!(
+            run_batch(out.to_str().unwrap(), &batch_args(&[&valid])),
+            std::process::ExitCode::FAILURE
+        );
+        assert_eq!(std::fs::read(&out).unwrap(), b"existing file");
+    }
+
+    #[test]
+    fn optional_actor_names_remain_a_logged_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let valid = directory.path().join("valid.scb");
+        write_script(&valid);
+        let mut args = batch_args(&[&valid]);
+        args.datadir = Some(
+            directory
+                .path()
+                .join("missing-datadir")
+                .to_str()
+                .unwrap()
+                .to_owned(),
+        );
+        let out = directory.path().join("out");
+        assert_eq!(
+            run_batch(out.to_str().unwrap(), &args),
+            std::process::ExitCode::SUCCESS
+        );
+        assert!(out.join("valid.ts").is_file());
+    }
 }
