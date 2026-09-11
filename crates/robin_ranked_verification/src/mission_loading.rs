@@ -115,11 +115,12 @@ pub(crate) fn load_raw_mission_inputs(
     )]));
 
     (assets.peasant_firstnames, assets.peasant_surnames) =
-        robin_assets::original_text::load_peasant_name_pool(&mut text)
-            .map_err(|error| RankedVerifierLoadError::ResourceArchive {
+        robin_assets::original_text::load_peasant_name_pool(&mut text).map_err(|error| {
+            RankedVerifierLoadError::ResourceArchive {
                 path: "Data/Text/Level.res",
                 message: format!("{error:#}"),
-            })?;
+            }
+        })?;
     assets.fixed_vip_names = robin_assets::original_text::load_fixed_vip_name_map(&mut text)
         .map_err(|error| RankedVerifierLoadError::ResourceArchive {
             path: "Data/Text/Level.res",
