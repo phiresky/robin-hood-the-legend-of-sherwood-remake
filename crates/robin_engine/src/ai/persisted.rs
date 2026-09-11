@@ -692,7 +692,6 @@ pub struct PersistedAiGlobalState {
     houses: Vec<House>,
     door_rally_points: Vec<DoorRallyPoint>,
     all_soldier_handles: std::sync::Arc<Vec<u32>>,
-    same_frame_target_claims: Vec<(HumanHandle, HumanHandle)>,
 }
 
 impl PersistedAiGlobalState {
@@ -727,7 +726,6 @@ impl PersistedAiGlobalState {
             houses,
             door_rally_points,
             all_soldier_handles,
-            same_frame_target_claims,
             primary_target_multiplicity_scratch: _,
             primary_target_multiplicity_initialized: _,
         } = runtime;
@@ -761,7 +759,6 @@ impl PersistedAiGlobalState {
             houses: houses.clone(),
             door_rally_points: door_rally_points.clone(),
             all_soldier_handles: all_soldier_handles.clone(),
-            same_frame_target_claims: same_frame_target_claims.clone(),
         }
     }
 
@@ -796,7 +793,6 @@ impl PersistedAiGlobalState {
             houses: self.houses,
             door_rally_points: self.door_rally_points,
             all_soldier_handles: self.all_soldier_handles,
-            same_frame_target_claims: self.same_frame_target_claims,
             primary_target_multiplicity_scratch: Default::default(),
             primary_target_multiplicity_initialized: Default::default(),
         }

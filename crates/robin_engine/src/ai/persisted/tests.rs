@@ -312,7 +312,6 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
         green_alert_soldiers: 17,
         freeze: true,
         all_soldier_handles: std::sync::Arc::new(vec![19, 0, 7]),
-        same_frame_target_claims: vec![(19, 7), (0, 7)],
         ..Default::default()
     };
     raw.primary_target_multiplicity_scratch.insert(7, 19);
@@ -320,9 +319,16 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
     let raw_clone = raw.clone();
     let restored =
         assert_projection_matches_wire!(raw.clone(), PersistedAiGlobalState, AiGlobalState);
+    // Target selection now persists only its live actor state, not a dead
+    // global compensation ledger from the former batched AI scheduler.
+    assert!(
+        serde_json::to_value(&restored)
+            .unwrap()
+            .get("same_frame_target_claims")
+            .is_none()
+    );
     assert!(restored.primary_target_multiplicity_scratch.is_empty());
     assert!(!restored.primary_target_multiplicity_initialized);
-    assert_eq!(restored.same_frame_target_claims, vec![(19, 7), (0, 7)]);
     assert_eq!(
         raw_clone.primary_target_multiplicity_scratch.get(&7),
         Some(&19)

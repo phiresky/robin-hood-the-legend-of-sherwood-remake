@@ -746,17 +746,6 @@ fn attacking_reactiontime_enemy_near_enabled(
     }
 }
 
-fn battle_friend_nearer_to_detected_target(
-    owner_world: crate::coordinates::WorldPoint3D,
-    friend_position: crate::ai::Position,
-    target_world: crate::coordinates::WorldPoint3D,
-    target_position: crate::ai::Position,
-) -> bool {
-    let owner_target_sq =
-        crate::ai_enemy::battle_owner_target_square_distance(owner_world, target_world);
-    crate::ai_enemy::battle_friend_is_nearer(friend_position, target_position, owner_target_sq)
-}
-
 fn enemy_is_in_react_immediately_zone(
     origin: MapPoint,
     target: MapPoint,
@@ -3327,7 +3316,6 @@ impl EngineInner {
                 tick_data.us_battle_points = 100 + my_pride as u32;
                 tick_data.has_officer_nearby = false;
                 tick_data.simple_soldiers_near = false;
-                tick_data.friends_nearer_to_enemy = 0;
 
                 // Also add visible PCs to us-list (they fight on our
                 // side when the NPC is Royalist, but for Lacklandists
@@ -3384,81 +3372,12 @@ impl EngineInner {
                     if ss.rank == crate::profiles::ProfileRank::Officer {
                         tick_data.has_officer_nearby = true;
                     }
-
-                    // An attacking friend already in any swordfight /
-                    // approach substate counts as occupying their
-                    // primary target.  Otherwise, count the friend
-                    // only if he is closer than us to our current
-                    // primary target.
-                    if ss.ai_state == AiState::Attacking && ss.primary_target.is_some() {
-                        if crate::ai_enemy::is_any_swordfight_substate(ss.ai_substate as u32) {
-                            tick_data.friends_nearer_to_enemy += 1;
-                        } else if let Some((best_target_id, _, _)) = best_target {
-                            // Original compares this friend with the primary
-                            // target selected immediately before the camp
-                            // registry walk. The reference is the owner's
-                            // literal 3D squared distance (stretched world Y,
-                            // Z included and truncated to 32 bits); the friend arm is
-                            // the raw map-space Position delta. Do not use the
-                            // first portrait-priority PC or the target-choice
-                            // score: neither has compatible identity or units.
-                            let target = enemy_targets
-                                .iter()
-                                .find(|target| target.id == best_target_id)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "selected enemy target {} disappeared from NPC {} detection view",
-                                        best_target_id.index(),
-                                        npc_id.index()
-                                    )
-                                });
-                            let target_world = target.position_world;
-                            let friend_position = *world
-                                .ai_positions
-                                .get(&ss.id)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "friend {} is absent from NPC {} owner-boundary AI position view",
-                                        ss.id.index(),
-                                        npc_id.index()
-                                    )
-                                });
-                            let target_position = target.ai_position;
-                            if battle_friend_nearer_to_detected_target(
-                                viewer.position_world,
-                                friend_position,
-                                target_world,
-                                target_position,
-                            ) {
-                                tick_data.friends_nearer_to_enemy += 1;
-                            }
-                        }
-                    }
                 }
 
                 // Primary target multiplicity
                 tick_data.primary_target_multiplicity.clear();
                 for (&target, &mult) in &primary_target_multiplicity {
                     tick_data.primary_target_multiplicity.push((target, mult));
-                }
-                for &(attacker, target) in &self.ai.global.same_frame_target_claims {
-                    if attacker == enemy_ai.base.me || target == 0 {
-                        continue;
-                    }
-                    let Some(claimant) = soldier_snapshots
-                        .iter()
-                        .find(|ss| ss.id.index() == attacker)
-                    else {
-                        continue;
-                    };
-                    if !diplomacy.is_allied(claimant.camp, my_camp) || !claimant.able_to_fight {
-                        continue;
-                    }
-                    if Some(crate::ai::AiEntityHandle::new(target)) == enemy_ai.base.primary_target
-                    {
-                        tick_data.friends_nearer_to_enemy =
-                            tick_data.friends_nearer_to_enemy.saturating_add(1);
-                    }
                 }
 
                 // ── Camp soldier snapshots for alert functions ──
@@ -6321,45 +6240,6 @@ mod tests {
             difficulty_hearing_factor(false, DifficultyLevel::Legendary),
             1.0
         );
-    }
-
-    #[test]
-    fn friend_distance_gate_uses_selected_target_with_source_units() {
-        let owner_world = crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0);
-        let selected_target_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
-        let selected_target = Position {
-            x: 100.0,
-            y: 0.0,
-            ..Position::default()
-        };
-        let friend = Position {
-            x: 50.0,
-            y: 0.0,
-            ..Position::default()
-        };
-
-        assert!(battle_friend_nearer_to_detected_target(
-            owner_world,
-            friend,
-            selected_target_world,
-            selected_target,
-        ));
-
-        // The removed proxy measured the friend against the first PC in
-        // portrait order and compared that squared value with the selected
-        // target's linear score. This unrelated first PC would reverse the
-        // result despite not being the selected primary target.
-        let portrait_first = Position {
-            x: -1_000.0,
-            y: 0.0,
-            ..Position::default()
-        };
-        let proxy_dx = friend.x - portrait_first.x;
-        let proxy_dy =
-            (friend.y - portrait_first.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-        let obsolete_proxy_sq = (proxy_dx * proxy_dx + proxy_dy * proxy_dy) as u32;
-        let selected_linear_score = 100_u32;
-        assert!(obsolete_proxy_sq > selected_linear_score);
     }
 
     #[test]

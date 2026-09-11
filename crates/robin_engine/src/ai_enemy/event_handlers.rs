@@ -1971,7 +1971,7 @@ impl EnemyAi {
                             // Non-soldier human attacker — retarget and
                             // attack.
                             self.base.primary_target = Some(attacker);
-                            self.attack_enemy(attacker.get(), Some(&mut *global), ctx, tick, grid);
+                            self.attack_enemy(attacker.get(), ctx, tick, grid);
                         }
                         // Dead-or-unconscious view-status assignment
                         // applies whenever the attacker info was human,

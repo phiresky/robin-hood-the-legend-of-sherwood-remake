@@ -473,7 +473,7 @@ impl EnemyAi {
                 let target = self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
                 if let Some(target) = target {
                     self.base.primary_target = Some(target);
-                    self.attack_enemy(target.get(), None, ctx, tick, None);
+                    self.attack_enemy(target.get(), ctx, tick, None);
                     return;
                 }
             }
@@ -628,7 +628,6 @@ impl EnemyAi {
         let mut battle_tick = tick.clone();
         battle_tick.friends_lower_company = 0;
         battle_tick.soldiers_lower_pride = false;
-        battle_tick.friends_nearer_to_enemy = 0;
         battle_tick.us_battle_points = 100 + self.soldier_profile_pride as u32;
         battle_tick.has_officer_nearby = false;
         battle_tick.simple_soldiers_near = false;
@@ -1501,7 +1500,7 @@ impl EnemyAi {
                     );
                     if let Some(target) = target {
                         self.base.primary_target = Some(target);
-                        self.attack_enemy(target.get(), Some(&mut *global), ctx, tick, grid);
+                        self.attack_enemy(target.get(), ctx, tick, grid);
                         if self
                             .base
                             .outbox
@@ -2597,7 +2596,6 @@ impl EnemyAi {
     pub(super) fn attack_enemy(
         &mut self,
         enemy: HumanHandle,
-        global: Option<&mut AiGlobalState>,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -2643,14 +2641,6 @@ impl EnemyAi {
 
         // primary_target then emoticon.
         self.base.primary_target = Some(AiEntityHandle::new(enemy));
-        if let Some(global) = global
-            && !global
-                .same_frame_target_claims
-                .iter()
-                .any(|&(attacker, target)| attacker == self.base.me && target == enemy)
-        {
-            global.same_frame_target_claims.push((self.base.me, enemy));
-        }
         debug_assert!(
             ctx.entity_view(enemy)
                 .map(|v| ctx.is_hostile_with(v.camp))
@@ -4718,7 +4708,7 @@ mod tests {
             ..AiContext::test_fixture()
         };
 
-        ai.attack_enemy(252, None, &ctx, &tick, None);
+        ai.attack_enemy(252, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(252)));
         assert_eq!(ai.base.seek_position, authoritative);
@@ -4768,7 +4758,7 @@ mod tests {
             ..FighterSnapshot::default()
         });
 
-        ai.attack_enemy(137, None, &ctx, &tick, None);
+        ai.attack_enemy(137, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(137)));
         assert_eq!(ai.base.seek_position, live_target);
@@ -6089,6 +6079,29 @@ mod tests {
         // nearer friends are therefore insufficient; four are sufficient.
         assert!(!enough_nearer_friends_to_observe(3, 1, 45));
         assert!(enough_nearer_friends_to_observe(4, 1, 45));
+    }
+
+    #[test]
+    fn friend_distance_gate_uses_selected_target_with_source_units() {
+        // Exercise the live battle helpers, not the removed detection-time
+        // aggregate whose value was discarded before every decision.
+        let owner_world = crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0);
+        let target_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
+        let target = Position {
+            x: 100.0,
+            ..Position::default()
+        };
+        let friend = Position {
+            x: 50.0,
+            ..Position::default()
+        };
+        let distance = battle_owner_target_square_distance(owner_world, target_world);
+        assert!(battle_friend_is_nearer(friend, target, distance));
+        let other_target = Position {
+            x: -1000.0,
+            ..Position::default()
+        };
+        assert!(!battle_friend_is_nearer(friend, other_target, distance));
     }
 
     #[test]

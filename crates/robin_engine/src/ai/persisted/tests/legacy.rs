@@ -474,7 +474,6 @@ struct LegacyAiGlobalState {
     houses: Vec<House>,
     door_rally_points: Vec<DoorRallyPoint>,
     all_soldier_handles: std::sync::Arc<Vec<u32>>,
-    same_frame_target_claims: Vec<(HumanHandle, HumanHandle)>,
     #[serde(skip)]
     #[bitcode(skip)]
     primary_target_multiplicity_scratch: std::collections::BTreeMap<HumanHandle, u32>,
@@ -515,7 +514,6 @@ impl LegacyAiGlobalState {
             houses: runtime.houses.clone(),
             door_rally_points: runtime.door_rally_points.clone(),
             all_soldier_handles: runtime.all_soldier_handles.clone(),
-            same_frame_target_claims: runtime.same_frame_target_claims.clone(),
             primary_target_multiplicity_scratch: runtime
                 .primary_target_multiplicity_scratch
                 .clone(),
@@ -567,7 +565,6 @@ impl LegacyWire for AiGlobalState {
             houses: legacy.houses,
             door_rally_points: legacy.door_rally_points,
             all_soldier_handles: legacy.all_soldier_handles,
-            same_frame_target_claims: legacy.same_frame_target_claims,
             primary_target_multiplicity_scratch: legacy.primary_target_multiplicity_scratch,
             primary_target_multiplicity_initialized: legacy.primary_target_multiplicity_initialized,
         }

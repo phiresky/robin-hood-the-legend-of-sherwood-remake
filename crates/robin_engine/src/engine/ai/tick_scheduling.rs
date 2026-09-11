@@ -40,7 +40,6 @@ impl EngineInner {
         _sim: &crate::sim_rng::SimulationContext,
         _assets: &LevelAssets,
     ) -> PreparedNpcOwnerPass {
-        self.ai.global.same_frame_target_claims.clear();
         if !self.ai.global.primary_target_multiplicity_initialized {
             // The human actor's primary-target multiplicity is temporary initialization state and
             // is explicitly absent from the save stream. Loading a save into
@@ -107,10 +106,6 @@ impl EngineInner {
         );
     }
 
-    pub(in crate::engine) fn finish_npc_owner_pass(&mut self) {
-        self.ai.global.same_frame_target_claims.clear();
-    }
-
     pub(in crate::engine) fn tick_enemy_ai_blip_detection_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -139,7 +134,6 @@ impl EngineInner {
             }
             return;
         }
-        self.ai.global.same_frame_target_claims.clear();
         if !self.ai.global.primary_target_multiplicity_initialized {
             self.ai.global.primary_target_multiplicity_scratch.clear();
             self.ai.global.primary_target_multiplicity_initialized = true;
@@ -183,7 +177,6 @@ impl EngineInner {
             self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
             self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
         }
-        self.ai.global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
         // Keep this AI pass to target selection, pursuit, and swordfight

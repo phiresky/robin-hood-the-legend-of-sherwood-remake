@@ -4091,7 +4091,6 @@ impl EnemyAi {
                         new_primary
                             .expect("observation attack requires a primary target")
                             .get(),
-                        Some(&mut *global),
                         ctx,
                         tick,
                         grid,

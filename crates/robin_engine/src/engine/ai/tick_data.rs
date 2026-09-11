@@ -1218,13 +1218,6 @@ impl EngineInner {
             let my_pride = enemy_ai.soldier_profile_pride;
             tick.us_battle_points = 100 + my_pride as u32;
 
-            let self_to_target_sq = tick.primary_target_position.map(|target_pos| {
-                let dx = target_pos.x - me_pos.x;
-                let dy =
-                    (target_pos.y - me_pos.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-                dx * dx + dy * dy
-            });
-
             for friend in &tick.nearby_fighters {
                 if !friend.is_friendly || friend.handle == me_handle || !friend.is_able_to_fight {
                     continue;
@@ -1271,48 +1264,6 @@ impl EngineInner {
                 }
                 if friend.rank == crate::profiles::ProfileRank::Officer {
                     tick.has_officer_nearby = true;
-                }
-
-                if friend.ai_state == crate::ai::AiState::Attacking
-                    && friend.primary_target.is_some()
-                {
-                    if crate::ai_enemy::is_any_swordfight_substate(friend.current_substate) {
-                        tick.friends_nearer_to_enemy =
-                            tick.friends_nearer_to_enemy.saturating_add(1);
-                    } else if let Some(self_sq) = self_to_target_sq {
-                        let Some(target_pos) = tick.primary_target_position else {
-                            continue;
-                        };
-                        let dx = friend.position.x - target_pos.x;
-                        // The original game compares two differently shaped
-                        // squared distances here: the owner's Y delta is stretched,
-                        // while the friend's raw saved-position delta is not.
-                        let dy = friend.position.y - target_pos.y;
-                        if dx * dx + dy * dy < self_sq {
-                            tick.friends_nearer_to_enemy =
-                                tick.friends_nearer_to_enemy.saturating_add(1);
-                        }
-                    }
-                }
-            }
-
-            for &(attacker, target) in &self.ai.global.same_frame_target_claims {
-                if attacker == me_handle || target == 0 {
-                    continue;
-                }
-                let attacker_id = EntityId::Soldier(SoldierId(attacker));
-                let Some(Entity::Soldier(s)) = self.world.entities.get(attacker_id) else {
-                    continue;
-                };
-                if !self.camps_are_allied(s.soldier.cached_camp, my_camp)
-                    || !s.element.active
-                    || s.human.unconscious
-                    || s.npc.life_points <= 0
-                {
-                    continue;
-                }
-                if Some(crate::ai::AiEntityHandle::new(target)) == primary_target_handle {
-                    tick.friends_nearer_to_enemy = tick.friends_nearer_to_enemy.saturating_add(1);
                 }
             }
         }
