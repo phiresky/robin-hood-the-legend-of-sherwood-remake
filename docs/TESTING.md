@@ -44,6 +44,18 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 
 Feature choices are deliberate. Do not substitute `--all-features`; video,
 Android, browser threads, and shader tooling have distinct dependencies.
+
+CPU parity replay needs engine-owned timing separately from licensed game data:
+`original_parity_replay --core-datadir /path/to/assets/core-datadir TRACE`.
+The development default is `assets/core-datadir` relative to the invocation
+directory, resolved before entering `ROBINHOOD_DATA_DIR`. Copied/installed runners
+must supply their core data root explicitly; they never read a build-checkout
+path or substitute licensed-data timing for missing/corrupt core timing.
+The `client` feature rejects this CPU-only option and uses client asset startup.
+Fixture/sweep Python drivers accept `--core-datadir` (default: their checkout's
+core assets); the shell release sweep accepts `PARITY_SWEEP_CORE_DATADIR`.
+`--allow-legacy-result` in the fixture gate omits the new runner flag for older
+baseline executables, which retain their original asset lookup behavior.
 The assets gate checks resolved normal/build dependencies across all targets:
 offline `robin_modding_tools` must not pull in the `robin_rs` client;
 pure `robin_assets` must not pull in `robin_engine`; pure `robin_content` also

@@ -5,6 +5,8 @@ use super::{
 };
 
 pub(super) struct Options {
+    #[cfg(not(feature = "client"))]
+    pub(super) core_datadir: PathBuf,
     pub(super) inspect_capabilities: bool,
     pub(super) scan_all: bool,
     pub(super) no_auto_dump: bool,
@@ -25,6 +27,10 @@ pub(super) struct Options {
 #[derive(clap::Parser, Serialize, Deserialize)]
 #[command(about = "Replay or inspect an Original parity trace")]
 pub(super) struct CliOptions {
+    /// CPU replay core data root (default: invocation-relative assets/core-datadir).
+    /// Not supported by the client-feature runner, which uses client asset startup.
+    #[arg(long, conflicts_with = "mode")]
+    pub(super) core_datadir: Option<PathBuf>,
     #[arg(long, group = "mode")]
     pub(super) inspect_capabilities: bool,
     #[arg(long)]
@@ -66,6 +72,7 @@ pub(super) struct CliOptions {
 
 pub(super) fn parse_options() -> Options {
     let CliOptions {
+        core_datadir,
         inspect_capabilities,
         scan_all,
         no_auto_dump,
@@ -86,6 +93,17 @@ pub(super) fn parse_options() -> Options {
         dump_through,
         dump_entities,
     } = <CliOptions as clap::Parser>::parse();
+    #[cfg(feature = "client")]
+    assert!(
+        core_datadir.is_none(),
+        "--core-datadir is only supported by the CPU runner; client builds use client asset startup"
+    );
+    #[cfg(not(feature = "client"))]
+    let core_datadir = {
+        let path = core_datadir.unwrap_or_else(|| PathBuf::from("assets/core-datadir"));
+        std::path::absolute(&path)
+            .unwrap_or_else(|error| panic!("resolve --core-datadir {}: {error}", path.display()))
+    };
     let reblock_policy_requested = reblock_records.is_some() || reblock_window_log.is_some();
     let reblock_records = reblock_records.unwrap_or(TRACE_NATIVE_BLOCK_RECORDS);
     let reblock_window_log = reblock_window_log.unwrap_or(TRACE_NATIVE_WINDOW_LOG);
@@ -121,6 +139,8 @@ pub(super) fn parse_options() -> Options {
     );
     let reblock_policy = NativeStoragePolicy::new(reblock_records, reblock_window_log);
     Options {
+        #[cfg(not(feature = "client"))]
+        core_datadir,
         inspect_capabilities,
         scan_all,
         no_auto_dump,

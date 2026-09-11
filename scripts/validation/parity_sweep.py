@@ -165,7 +165,13 @@ def plan(args):
                          selected_campaigns=dict(collections.Counter(e["campaign"] for e in selected))), indent=2))
 
 
-def run_case(entry, index, output, runner, runner_sha, datadir, timeout):
+def core_identity(args):
+    root = (getattr(args, "core_datadir", None) or Path(__file__).resolve().parents[2] / "assets/core-datadir").resolve(strict=True)
+    return dict(path=str(root), audio_durations_sha256=digest(root / "Data/AudioDurations.json"))
+
+
+def run_case(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir=None):
+    core_datadir = (core_datadir or Path(__file__).resolve().parents[2] / "assets/core-datadir").resolve()
     started = time.monotonic()
     trace = output / "traces" / entry["path"]
     log_path = output / "logs" / f"{index:04d}.log"
@@ -179,7 +185,7 @@ def run_case(entry, index, output, runner, runner_sha, datadir, timeout):
                 raise ValueError("copied trace identity changed")
             with log_path.open("wb") as log:
                 try:
-                    status = subprocess.run([str(runner), "--no-auto-dump", str(trace)],
+                    status = subprocess.run([str(runner), "--no-auto-dump", "--core-datadir", str(core_datadir), str(trace)],
                         env=dict(os.environ, ROBINHOOD_DATA_DIR=str(datadir)),
                         stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=False).returncode
                 except subprocess.TimeoutExpired:
@@ -229,6 +235,7 @@ def recover(output, manifest, args):
             or digest(validator) != launch["validator_sha256"]
             or manifest["source_commit"] != launch["source_commit"]
             or str(args.datadir.resolve(strict=True)) != launch["datadir"]
+            or core_identity(args) != launch.get("core_input")
             or (args.workers, args.timeout, args.hours) !=
                (launch["workers"], launch["timeout_seconds"], launch["hours"])):
         raise ValueError("resume provenance/configuration mismatch")
@@ -328,7 +335,7 @@ def run(args):
             runner_sha256=runner_sha, manifest_sha256=digest(manifest_path),
             script_sha256=digest(__file__), validator_sha256=digest(Path(__file__).resolve().parents[1]/"parity_result.py"),
             workers=args.workers, timeout_seconds=args.timeout, hours=args.hours,
-            datadir=str(args.datadir.resolve(strict=True)), started_unix=time.time()))
+            datadir=str(args.datadir.resolve(strict=True)), core_input=core_identity(args), started_unix=time.time()))
         for entry in entries:
             relative = Path(entry["path"])
             if relative.is_absolute() or ".." in relative.parts:
@@ -364,13 +371,16 @@ def dispatch(args, output, manifest, db, records, queue, launch):
         pending = {}
         while pending or next_index < len(queue):
             while len(pending) < args.workers and next_index < len(queue) and time.monotonic() < deadline:
+                if core_identity(args) != launch["core_input"]:
+                    raise ValueError("core timing input changed during sweep")
                 index = queue[next_index]
                 next_index += 1
                 db.execute("UPDATE cases SET state='running' WHERE id=?", (index,))
                 db.commit()
                 timeout = min(args.timeout, max(0.01, deadline-time.monotonic()))
                 future = pool.submit(run_case, entries[index], index, output, runner,
-                                     runner_sha, args.datadir.resolve(strict=True), timeout)
+                                     runner_sha, args.datadir.resolve(strict=True), timeout,
+                                     Path(launch["core_input"]["path"]))
                 pending[future] = index
                 print(f"START {index:04d} {entries[index]['path']}", flush=True)
             if not pending:
@@ -380,6 +390,8 @@ def dispatch(args, output, manifest, db, records, queue, launch):
             for future in done:
                 index = pending.pop(future)
                 record = future.result()
+                if core_identity(args) != launch["core_input"]:
+                    raise ValueError("core timing input changed during sweep")
                 records.append(record)
                 db.execute("UPDATE cases SET state=?, result_json=? WHERE id=?",
                            (record["classification"], json.dumps(record), index))
@@ -391,6 +403,8 @@ def dispatch(args, output, manifest, db, records, queue, launch):
             write_json(output / "progress.json", dict(completed=len(records), total=len(entries),
                 counts=dict(collections.Counter(r["classification"] for r in records)),
                 running=list(pending.values()), elapsed_seconds=time.monotonic()-started))
+    if core_identity(args) != launch["core_input"]:
+        raise ValueError("core timing input changed during sweep")
     db.execute("UPDATE cases SET state='not_run_budget' WHERE state='pending'")
     db.commit()
     counts = dict(db.execute("SELECT state, count(*) FROM cases GROUP BY state"))
@@ -417,6 +431,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--runner", type=Path, required=True)
     p.add_argument("--datadir", type=Path, required=True)
+    p.add_argument("--core-datadir", type=Path, default=Path(__file__).resolve().parents[2] / "assets/core-datadir")
     p.add_argument("--workers", type=int, choices=(1,2), default=2)
     p.add_argument("--timeout", type=int, default=1800)
     p.add_argument("--hours", type=float, default=8)

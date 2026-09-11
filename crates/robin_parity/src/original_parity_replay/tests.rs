@@ -17,6 +17,13 @@ fn cli_checks_modes_values_and_repeated_entity_filters() {
     assert_eq!(args.dump_from, 3);
     assert_eq!(args.dump_entities.len(), 2);
     for arguments in [
+        vec![
+            "parity",
+            "--core-datadir",
+            "core",
+            "--convert",
+            "trace.jsonl",
+        ],
         vec!["parity", "--convert", "--reblock", "trace.jsonl"],
         vec!["parity", "--reblock-records", "32", "trace.jsonl"],
         vec!["parity", "--http-server", "0", "trace.jsonl"],

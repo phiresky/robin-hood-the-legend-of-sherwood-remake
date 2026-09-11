@@ -48,6 +48,8 @@ class SweepTests(unittest.TestCase):
                           capabilities=dict(policy_version=1, trace_schema=16, native_version=68, exceptions=[]))
             result.update(changes or {})
             def execute(*args, **kwargs):
+                self.assertIn("--core-datadir", args[0])
+                self.assertTrue(Path(args[0][args[0].index("--core-datadir") + 1]).is_absolute())
                 if timeout:
                     raise subprocess.TimeoutExpired("fixture", 1)
                 kwargs["stdout"].write(("ROBIN_PARITY_RESULT "+json.dumps(result)+"\n").encode())
@@ -85,7 +87,7 @@ class SweepTests(unittest.TestCase):
             runner.write_bytes(b"runner fixture")
             counts = dict(active=0, peak=0)
             lock = threading.Lock()
-            def worker(entry, index, output, runner, runner_sha, datadir, timeout):
+            def worker(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir):
                 with lock:
                     counts["active"] += 1
                     counts["peak"] = max(counts["peak"], counts["active"])
@@ -104,7 +106,7 @@ class SweepTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT count(*) FROM cases WHERE state IN ('pending','running')").fetchone()[0], 0)
             db.close()
 
-    def resumed_campaign(self, expired=False, corrupt=False):
+    def resumed_campaign(self, expired=False, corrupt=False, changed_core=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             corpus, output = root/"corpus", root/"audit"
@@ -141,11 +143,21 @@ class SweepTests(unittest.TestCase):
             if corrupt:
                 (output/"logs/0000.log").write_text("tampered")
             args.resume = True
+            if changed_core:
+                args.core_datadir = root / "different-core"
+                (args.core_datadir / "Data").mkdir(parents=True)
+                (args.core_datadir / "Data/AudioDurations.json").write_text("different timing")
             calls = []
             def resumed(*arguments):
                 calls.append(arguments[1])
                 return worker(*arguments)
             with patch.object(sweep, "run_case", resumed), patch("builtins.print"):
+                if changed_core:
+                    with self.assertRaisesRegex(ValueError, "resume provenance"):
+                        sweep.run(args)
+                    self.assertFalse(calls)
+                    self.assertFalse((output/"interruptions").exists())
+                    return
                 if corrupt:
                     with self.assertRaisesRegex(ValueError, "saved result mismatch"):
                         sweep.run(args)
@@ -168,6 +180,35 @@ class SweepTests(unittest.TestCase):
 
     def test_resume_rejects_modified_evidence_before_mutation(self):
         self.resumed_campaign(corrupt=True)
+
+    def test_resume_rejects_different_core_authority(self):
+        self.resumed_campaign(changed_core=True)
+
+    def test_running_sweep_rejects_changed_core_before_publishing_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus, output, core = root/"corpus", root/"audit", root/"core"
+            corpus.mkdir()
+            output.mkdir()
+            (core/"Data").mkdir(parents=True)
+            timing = core/"Data/AudioDurations.json"
+            timing.write_text("original timing")
+            trace = corpus/"trace"
+            trace.write_bytes(b"fixture")
+            sweep.write_json(output/"manifest.json", dict(manifest_version=1,
+                source_commit="fixture", source_corpus=str(corpus), artifacts=[
+                    dict(path="trace", campaign="fixture", sha256=sweep.digest(trace))]))
+            runner = root/"runner"
+            runner.write_bytes(b"runner fixture")
+            args = types.SimpleNamespace(output=output, runner=runner, datadir=corpus,
+                core_datadir=core, workers=1, timeout=10, hours=1/3600)
+            def worker(*unused):
+                timing.write_text("replacement timing")
+                return dict(index=0, classification="exact_eof", status=0)
+            with patch.object(sweep, "run_case", worker), patch("builtins.print"):
+                with self.assertRaisesRegex(ValueError, "core timing input changed"):
+                    sweep.run(args)
+            self.assertFalse((output/"campaign-result.json").exists())
 
 
 if __name__ == "__main__":

@@ -1009,6 +1009,7 @@ pub(super) fn restore_campaign(
 pub(super) fn initialize_headless_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
+    timing: &robin_engine::audio_durations::AudioDurations,
 ) -> (Engine, LevelAssets, robin_engine::scb::ScbFile) {
     let mut profile_manager = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open(
@@ -1104,7 +1105,7 @@ pub(super) fn initialize_headless_engine(
             .to_sim_config(header.synchronous_pathfinding),
     })
     .expect("initialize engine");
-    crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
+    crate::populate_sound_duration_tables(&mut assets, &profiles, timing)
         .expect("load deterministic sound duration tables");
     assets.attachments.pixel_opacity = Some(Arc::new(frame_holder));
     (engine, assets, scb)

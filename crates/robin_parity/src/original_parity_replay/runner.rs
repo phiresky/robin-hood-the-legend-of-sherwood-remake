@@ -164,6 +164,12 @@ pub(super) type ClientWindow = robin_rs::window::GameWindow;
 pub(super) type ClientWindow = ();
 
 pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
+    #[cfg(not(feature = "client"))]
+    let timing = {
+        crate::prepare_core_audio_timing(&options.core_datadir).unwrap_or_else(|error| {
+            panic!("prepare replay core input (use --core-datadir for installed runners): {error}")
+        })
+    };
     let replay_started = Instant::now();
     let scan_all = options.scan_all;
     let no_auto_dump = options.no_auto_dump;
@@ -282,7 +288,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         initialize_engine(&header, initial_rng_draws.clone());
     #[cfg(not(feature = "client"))]
     let (mut engine, assets, mission_scb) =
-        initialize_headless_engine(&header, initial_rng_draws.clone());
+        initialize_headless_engine(&header, initial_rng_draws.clone(), &timing);
     let mut loaded_save_host = None;
     let mut legacy_blocked_box_shadows = BTreeMap::new();
     if let Some(initial_save) = initial_save {

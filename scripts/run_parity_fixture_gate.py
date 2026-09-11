@@ -43,6 +43,8 @@ def main() -> int:
     parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--datadir", type=Path, required=True)
+    parser.add_argument("--core-datadir", type=Path,
+                        help="CPU core data root (default: this checkout's assets/core-datadir)")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, default=Path(__file__).parent / "parity-campaigns/refactor-eof-gate-20260907.json")
     parser.add_argument("--timeout", type=int, default=900)
@@ -51,9 +53,13 @@ def main() -> int:
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("timeout must be positive")
+    if args.allow_legacy_result and args.core_datadir is not None:
+        parser.error("--core-datadir cannot be passed to an older --allow-legacy-result runner")
     runner = args.runner.resolve(strict=True)
     corpus = args.corpus.resolve(strict=True)
     datadir = args.datadir.resolve(strict=True)
+    core_datadir = None if args.allow_legacy_result else (
+        args.core_datadir or Path(__file__).resolve().parents[1] / "assets/core-datadir").resolve(strict=True)
     manifest = json.loads(args.manifest.read_text())
     if manifest.get("manifest_version") != 1:
         parser.error("unsupported fixture manifest version")
@@ -82,7 +88,8 @@ def main() -> int:
         print(f"Replaying {entry['path']} ({entry['frames']} recorded frames)", flush=True)
         with log_path.open("wb") as log:
             try:
-                status = subprocess.run([str(runner), "--no-auto-dump", str(trace)],
+                core_args = [] if args.allow_legacy_result else ["--core-datadir", str(core_datadir)]
+                status = subprocess.run([str(runner), "--no-auto-dump", *core_args, str(trace)],
                                         env=env, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=args.timeout, check=False).returncode
             except subprocess.TimeoutExpired:
@@ -103,6 +110,7 @@ def main() -> int:
         print(f"  {'exact EOF' if matched else 'FAILED'}; status={status}; log={log_path}", flush=True)
     report = dict(gate_version=1, manifest_sha256=digest(args.manifest),
                   runner_sha256=runner_sha, runner=str(runner), source_runner=str(source_runner), datadir=str(datadir),
+                  core_datadir=str(core_datadir) if core_datadir is not None else None,
                   legacy_result_allowed=args.allow_legacy_result, results=records)
     (output / "gate-result.json").write_text(json.dumps(report, indent=2) + "\n")
     return 0 if records and all(record["exact_eof"] for record in records) else 1

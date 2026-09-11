@@ -92,20 +92,35 @@ pub fn background_dimensions(
 
 /// Use engine-owned timing even for CPU-only trace replay. Recorded Original
 /// boundary facts remain explicit replay inputs, not inferred audio durations.
+pub fn prepare_core_audio_timing(
+    core: &std::path::Path,
+) -> Result<robin_engine::audio_durations::AudioDurations, String> {
+    // A fresh reader admits only this root: neither legacy mounts nor CWD can
+    // supply a missing explicit timing file. Decode once before the runner chdir.
+    let files = robin_util::asset_fs::AssetVfs::new();
+    files
+        .mount_directory(core)
+        .map_err(|error| format!("core datadir {}: {error}", core.display()))?;
+    let bytes = files
+        .read(robin_engine::audio_durations::AUDIO_DURATIONS_PATH)
+        .map_err(|error| format!("core datadir {}: {error}", core.display()))?;
+    let timing = robin_engine::audio_durations::AudioDurations::from_json(&bytes)
+        .map_err(|error| format!("core datadir {}: {error}", core.display()))?;
+    use sha2::Digest as _;
+    let hash: String = sha2::Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    tracing::info!(core_datadir = %core.display(), audio_durations_sha256 = %hash, "prepared parity core timing");
+    Ok(timing)
+}
+
+/// Publish the already-admitted timing input without reopening source files.
 pub fn populate_sound_duration_tables(
     assets: &mut LevelAssets,
     profiles: &ProfileManager,
-    _sound_directory: &str,
+    timing: &robin_engine::audio_durations::AudioDurations,
 ) -> Result<(), String> {
-    let files = SbFile::snapshot_legacy_file_system();
-    // TODO: accept an explicit core-datadir path for separately installed parity tools.
-    let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/core-datadir");
-    let status = files.add_overlay_path(core.to_str().ok_or("non-UTF8 core datadir")?);
-    if status != robin_engine::sbfile::SBFILE_NO_ERROR
-        && status != robin_engine::sbfile::SBFILE_ERROR_PATH_ALREADY_PRESENT
-    {
-        return Err(format!("cannot mount parity core audio timing: {status}"));
-    }
     assets.audio.required_exclamation_ids.extend(
         profiles
             .characters
@@ -115,6 +130,5 @@ pub fn populate_sound_duration_tables(
             .chain(profiles.civilians.iter().map(|p| p.exclamation_id))
             .filter(|id| *id != 0),
     );
-    robin_engine::audio_durations::AudioDurations::load(&files)?
-        .populate(&mut assets.audio, profiles)
+    timing.populate(&mut assets.audio, profiles)
 }

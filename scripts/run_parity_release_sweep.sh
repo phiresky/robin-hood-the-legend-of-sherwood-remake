@@ -24,6 +24,7 @@ fi
 workspace=$(pwd)
 script_dir=$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")
 datadir=${PARITY_SWEEP_DATADIR:-$workspace/datadirs/fullgame_linux}
+core_datadir=${PARITY_SWEEP_CORE_DATADIR:-$workspace/assets/core-datadir}
 snapshot="$audit_dir/traces.snapshot"
 
 # Recordings are independent and each runner has its own process state. Runner
@@ -308,7 +309,7 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
         fi
         timeout --foreground --signal=TERM --kill-after=10s 900s \
             env ROBINHOOD_DATA_DIR="$datadir" \
-            "$runner" --no-auto-dump "$trace" > "$run_log" 2>&1 \
+            "$runner" --no-auto-dump --core-datadir "$core_datadir" "$trace" > "$run_log" 2>&1 \
             {start_gate_fd}>&- &
         runner_pid=$!
         # Publication of a failure cannot cross this boundary: the runner is
@@ -318,7 +319,7 @@ for ((index = shard; index < ${#traces[@]}; index += shards)); do
     else
         timeout --foreground --signal=TERM --kill-after=10s 900s \
             env ROBINHOOD_DATA_DIR="$datadir" \
-            "$runner" --no-auto-dump "$trace" > "$run_log" 2>&1 \
+            "$runner" --no-auto-dump --core-datadir "$core_datadir" "$trace" > "$run_log" 2>&1 \
             || runner_command_status=$?
     fi
     if (( runner_command_status == 0 )); then
