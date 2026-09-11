@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import briefing_x11
+import client_x11
 import frame_steps_live as frame
 import input_worker
 import namespace_x11
@@ -21,6 +22,26 @@ import runtime_evidence as evidence
 
 
 class RuntimeEvidenceTests(unittest.TestCase):
+    def test_client_key_and_click_use_confined_adapter_and_last_robin_window(self):
+        for arguments in (["key", "F5"], ["click", "100", "200"]):
+            with self.subTest(arguments=arguments):
+                windows = [Mock(id=11), Mock(id=33)]
+                for window in windows:
+                    window.get_wm_name.return_value = "Robin"
+                connection = Mock()
+                connection.screen.return_value.root.query_tree.return_value.children = windows
+                xlib = SimpleNamespace(X=SimpleNamespace(RevertToPointerRoot=1, CurrentTime=0,
+                    NONE=0, KeyPressMask=1, KeyReleaseMask=2, ButtonPressMask=4, ButtonReleaseMask=8),
+                    XK=Mock(), protocol=Mock())
+                with patch.dict(sys.modules, {"Xlib": xlib, "Xlib.ext": SimpleNamespace(xtest=Mock())}), \
+                     patch.object(client_x11, "open_display", return_value=connection) as opened, \
+                     patch.object(client_x11.time, "sleep"), contextlib.redirect_stdout(io.StringIO()):
+                    client_x11.send_input(arguments)
+                opened.assert_called_once_with()
+                windows[0].send_event.assert_not_called()
+                self.assertEqual(windows[1].send_event.call_count, 2)
+                connection.close.assert_called_once()
+
     def test_briefing_targets_every_robin_window_through_confined_adapter(self):
         windows = [Mock(id=11), Mock(id=22), Mock(id=33)]
         for window, title in zip(windows, ("Robin host", "not the game", "Robin peer")):
