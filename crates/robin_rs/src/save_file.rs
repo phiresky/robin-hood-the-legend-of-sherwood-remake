@@ -700,7 +700,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v76** (ordered AI detectable mutations): replaces the four pending
 ///   detectable queues with one authoritative FIFO. Queue order is persisted
 ///   and hashed; older native snapshots are rejected rather than reordered.
-pub const SAVE_FORMAT_VERSION: u32 = 76;
+/// - **v77** (canonical script-global vector): replaces parallel imported-vector
+///   and live ID/value-map storage with one ID-indexed vector. Older native snapshots
+///   are rejected rather than interpreting their old layout as current state.
+pub const SAVE_FORMAT_VERSION: u32 = 77;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1313,8 +1316,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_ordered_ai_detectable_mutations() {
-        assert_eq!(SAVE_FORMAT_VERSION, 76);
+    fn save_format_version_includes_canonical_script_global_vector() {
+        assert_eq!(SAVE_FORMAT_VERSION, 77);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -2017,6 +2020,26 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 75")
+        );
+    }
+
+    #[test]
+    fn read_rejects_pre_canonical_script_globals_before_deserializing_engine() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pre_canonical_globals_save.json");
+        // Even empty globals used a different native layout in v76. Reject
+        // the header before trying to deserialize this incomplete engine.
+        let old_save = serde_json::json!({
+            "header": { "magic": SAVE_MAGIC, "version": 76 },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("pre-canonical script globals must be rejected at the header");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 76")
         );
     }
 

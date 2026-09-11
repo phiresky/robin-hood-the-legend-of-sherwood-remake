@@ -89,7 +89,9 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 34 makes the ordered pending AI
+/// On-disk replay schema version. Version 35 uses one canonical script-global
+/// vector in authoritative snapshots and state hashes instead of parallel
+/// imported-vector and live ID/value-map storage. Version 34 makes the ordered pending AI
 /// detectable-mutation FIFO authoritative snapshot and state-hash data.
 /// Version 33 embeds serde JSON saves in load
 /// records when a pinned timeline marker cannot reproduce the loaded state.
@@ -132,7 +134,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 34;
+pub const REPLAY_SCHEMA_VERSION: u32 = 35;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -833,8 +835,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_includes_ordered_ai_detectable_mutations() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 34);
+    fn replay_schema_version_includes_canonical_script_global_vector() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 35);
     }
 
     #[test]
