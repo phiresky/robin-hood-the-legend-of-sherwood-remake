@@ -3144,6 +3144,18 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
 
 #[test]
 fn detectable_mutations_preserve_statement_order_through_snapshot_and_drain() {
+    // Native actor decoding needs more than libtest's 2 MiB thread stack for
+    // this complete three-actor snapshot. Keep the adjustment local to this
+    // codec matrix rather than changing production or the full test runner.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(check_detectable_snapshot_and_drain_matrix)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn check_detectable_snapshot_and_drain_matrix() {
     use crate::ai::DetectableMutation::{Add, Append, DeleteEntity, DeleteType};
     use crate::element::DetectableType::Friend;
     let sim = crate::sim_rng::test_context();
@@ -3213,8 +3225,7 @@ fn detectable_mutations_preserve_statement_order_through_snapshot_and_drain() {
             .outbox
             .actor
             .detectable_mutations = operations.clone();
-        // Construct one state at a time: keeping an array of three full engine
-        // values needlessly exhausts the default test-thread stack.
+        // Construct one state at a time instead of an array of whole engines.
         for restore in 0..3 {
             let mut engine = match restore {
                 0 => base.clone(),
