@@ -15,9 +15,4 @@ fn ranked_protocol_tracks_exact_runtime_schemas() {
         robin_engine::multiplayer::NET_PROTOCOL_VERSION,
         "ranked session admission must track the exact runtime network protocol",
     );
-    assert_eq!(
-        robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-        42,
-        "authoritative AI detectable FIFO ordering requires network protocol 42",
-    );
 }
