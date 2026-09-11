@@ -812,9 +812,14 @@ pub async fn prepare_directory(directory: &Path) -> Result<()> {
     let result = async {
         load_file(&directory.join(MANIFEST), true).await?;
         let manifest = super::read_manifest(directory)?;
+        let next_chunk = super::chunk_name(manifest.chunks.len());
         for chunk in manifest.chunks {
             load_file(&directory.join(chunk.file), true).await?;
         }
+        // A crash can leave an unpublished child in IndexedDB. Hydrate its
+        // real revision before synchronous creation checks the cache, so a
+        // retry rejects the collision without journaling a replacement.
+        load_file(&directory.join(next_chunk), false).await?;
         load_file(&directory.join("ranked.json"), false).await?;
         flush_pending().await
     }
@@ -1153,23 +1158,38 @@ mod tests {
         assert_eq!(history.load_back_for_frame(1).unwrap().to_frame, 0);
         retire_mission().await.unwrap();
 
-        // Browser failures remain sticky: a staged-file collision never
-        // overwrites its bytes, and reopening retains the published prefix.
+        // A cold retry must discover a durable unpublished child before it
+        // can journal a create with an incorrect absent-file expectation.
         prepare_directory(&directory).await.unwrap();
         let mut archive = MissionArchive::open(&directory).unwrap();
         let (_, _, root) = archive.assembled_replay().unwrap();
         archive.stage_continuation(2, None).unwrap();
-        let recorder =
+        let mut recorder =
             ReplayRecorder::continue_recording(archive.writer().unwrap(), root, 2).unwrap();
+        recorder.flush().unwrap();
+        flush_pending().await.unwrap();
         let staged_path = directory.join(archive.current_chunk());
         let staged = read_bounded(&staged_path, MAX_BYTES).unwrap();
-        assert!(crate::replay_archive::reserve_unreferenced_chunk(&staged_path).is_err());
+        drop(recorder);
+        drop(archive);
+        restart().await;
+        prepare_directory(&directory).await.unwrap();
+        let mut archive = MissionArchive::open(&directory).unwrap();
+        let before = with_session(|s| Ok(s.journal.clone())).unwrap();
+        let key = journal_key(&before);
+        let saved = storage().unwrap().get_item(&key).unwrap();
+        assert!(archive.stage_continuation(2, None).is_err());
         SESSION.with(|slot| {
+            let session = slot.borrow();
+            let session = session.as_ref().unwrap();
+            assert_eq!(session.files[&staged_path].bytes, staged);
+            assert!(session.files[&staged_path].dirty.is_none());
             assert_eq!(
-                slot.borrow().as_ref().unwrap().files[&staged_path].bytes,
-                staged
+                serde_json::to_value(&session.journal).unwrap(),
+                serde_json::to_value(&before).unwrap()
             );
         });
+        assert_eq!(storage().unwrap().get_item(&key).unwrap(), saved);
         assert!(
             flush_pending()
                 .await
@@ -1177,10 +1197,12 @@ mod tests {
                 .to_string()
                 .contains("recording failed")
         );
-        drop(recorder);
         drop(archive);
+        // The sticky failure needs a new session, but must not poison its
+        // initialization with an impossible recovery-journal expectation.
         restart().await;
         prepare_directory(&directory).await.unwrap();
+        assert_eq!(read_bounded(&staged_path, MAX_BYTES).unwrap(), staged);
         assert_eq!(
             crate::replay_archive::load_directory(&directory)
                 .unwrap()
