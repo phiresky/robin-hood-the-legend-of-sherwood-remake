@@ -55,6 +55,30 @@ def verify_replay(log, load_record_frame, final_record_frame):
         raise AssertionError("save/load replay did not finish")
 
 
+def recording_bounds(directory):
+    """Read the two chronological chunks created by this one-load scenario."""
+    manifest = json.loads((directory / "mission.json").read_text())
+    chunks = manifest["chunks"]
+    if manifest["version"] != 1 or len(chunks) != 2:
+        raise AssertionError("expected a version-1 recording with exactly two chunks")
+    records = []
+    previous = None
+    for index, chunk in enumerate(chunks):
+        if (chunk["file"] != f"{index:08d}.rhrec.jsonl"
+                or chunk["previous"] != previous
+                or (chunk["loaded_save"] is not None) != (index == 1)):
+            raise AssertionError("unexpected save/load recording chunk linkage")
+        rows = [json.loads(line) for line in (directory / chunk["file"]).read_text().splitlines()]
+        if rows[0]["chunk"] != chunk:
+            raise AssertionError("recording header differs from manifest")
+        records.extend(rows[1:])
+        previous = chunk["file"]
+    loads = [record["f"] for record in records if any(item.get("kind") == "state_load" for item in record.get("t", []))]
+    if loads != [chunks[1]["first_ordinal"]]:
+        raise AssertionError(f"expected one state_load at the second chunk boundary, observed {loads}")
+    return loads[0], max(record.get("f", 0) for record in records)
+
+
 def exercise_save_load(request, wait, display, evidence, summary):
     def key(name):
         subprocess.run([sys.executable, str(Path(__file__).with_name("client_x11.py")), "key", name],
@@ -85,10 +109,7 @@ def exercise_save_load(request, wait, display, evidence, summary):
     summary["save_load"]["continued_frame"] = request("/state")["frame"]
     if summary["save_load"]["continued_frame"] != saved_frame + 100:
         raise AssertionError("continued recording did not advance exactly from the restored frame")
-    records = [json.loads(line) for line in (evidence / "live.rhrec.jsonl").read_text().splitlines()]
-    loads = [record["f"] for record in records if any(item.get("kind") == "state_load" for item in record.get("t", []))]
-    if len(loads) != 1:
-        raise AssertionError(f"expected one state_load boundary, observed {len(loads)}")
-    summary["save_load"]["load_record_frame"] = loads[0]
-    summary["save_load"]["final_record_frame"] = max(record.get("f", 0) for record in records)
+    load_frame, final_frame = recording_bounds(evidence / "live.rhrec.jsonl")
+    summary["save_load"]["load_record_frame"] = load_frame
+    summary["save_load"]["final_record_frame"] = final_frame
     summary["checks"]["recording_continues_after_state_load"] = True

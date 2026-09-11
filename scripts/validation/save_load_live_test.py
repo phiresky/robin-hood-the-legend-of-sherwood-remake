@@ -2,15 +2,46 @@
 """Pure assertion tests; the native driver remains a separate integration gate."""
 
 import copy
+import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
-from save_load_live import restored_authority, verify_replay, verify_restored
+from save_load_live import recording_bounds, restored_authority, verify_replay, verify_restored
 
 
 class SaveLoadAssertions(unittest.TestCase):
+    def test_chunked_recording_bounds_and_rejected_bad_boundaries(self):
+        chunks = [
+            {"file": "00000000.rhrec.jsonl", "previous": None, "first_ordinal": 0, "loaded_save": None},
+            {"file": "00000001.rhrec.jsonl", "previous": "00000000.rhrec.jsonl", "first_ordinal": 139, "loaded_save": {"marker": 56}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = {"version": 1, "chunks": chunks}
+            (root / "mission.json").write_text(json.dumps(manifest))
+            (root / chunks[0]["file"]).write_text('\n'.join(map(json.dumps, [
+                {"chunk": chunks[0]}, {"f": 0}, {"f": 138}])))
+            path = root / chunks[1]["file"]
+            rows = [{"chunk": chunks[1]}, {"f": 139, "t": [{"kind": "state_load"}]}, {"f": 250}]
+            path.write_text('\n'.join(map(json.dumps, rows)))
+            self.assertEqual(recording_bounds(root), (139, 250))
+            for transitions in ([], [{"kind": "state_load"}, {"kind": "other"}]):
+                invalid = copy.deepcopy(rows)
+                invalid[1]["t"] = transitions
+                if transitions:
+                    invalid.append({"f": 200, "t": [{"kind": "state_load"}]})
+                path.write_text('\n'.join(map(json.dumps, invalid)))
+                with self.assertRaisesRegex(AssertionError, "state_load"):
+                    recording_bounds(root)
+            path.write_text('\n'.join(map(json.dumps, rows)))
+            chunks[1]["previous"] = None
+            (root / "mission.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(AssertionError, "linkage"):
+                recording_bounds(root)
+
     def test_modes_that_skip_gate_are_rejected(self):
         for extra in (["--replay-file", "missing"], ["--bootstrap-probe"]):
             with self.subTest(extra=extra):

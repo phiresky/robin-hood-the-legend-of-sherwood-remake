@@ -702,6 +702,31 @@ impl SaveGameManager {
         )
     }
 
+    /// Mirror a successfully loaded save without capturing a new replay marker.
+    pub(crate) fn write_loaded_continue_background(
+        &mut self,
+        mut save: GameSaveFile,
+        profiles: &ProfileManager,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<SaveWriteStatus> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (&mut save, profiles, thumbnail);
+            anyhow::bail!(
+                "browser manual special-save persistence is unavailable; use durable autosaves"
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.finish_background()?;
+            self.ensure_no_pending_delete()?;
+            self.reconcile_quick_slots()?;
+            let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
+            save.header.display_text = self.catalog[index].text.clone();
+            self.queue_special_save(index, save, profiles, thumbnail)
+        }
+    }
+
     /// Save the current engine state to the "QuickSave" slot.
     /// The previous quick save (if any) is rotated to "ExQuickSave".
     fn write_quick_save_payload(
@@ -897,36 +922,47 @@ impl SaveGameManager {
                 display_text,
                 provenance,
             )?;
-            let path = self.save_path(idx);
-            let thumb_data = thumbnail.cloned();
-            let thumb_path = self.thumb_path(idx);
-            let mut metadata = self.catalog[idx].clone();
-            metadata.update_snapshot_metadata(
-                &save.header,
-                save.engine.campaign(),
+            self.queue_special_save(
+                idx,
+                save,
                 profiles.context("save metadata requires profiles")?,
-            );
-            metadata.validate_published_metadata()?;
-            let name = self.slot_name(idx).map_err(anyhow::Error::msg)?;
-            let recovery_path = self.owned_recovery_path();
-            self.operations.start(name, move || {
-                save.validate_current_schema()?;
-                let bytes =
-                    serde_json::to_vec_pretty(&save).context("serialize owned save payload")?;
-                let receipt = SpecialSaveRecovery {
-                    slot: metadata,
-                    digest: Sha256::digest(&bytes).into(),
-                };
-                persistence::publish_payload(&recovery_path, &path, &receipt, &bytes, true)?;
-                if let Some(thumb) = thumb_data
-                    && let Err(err) = thumb.write_to(&thumb_path)
-                {
-                    tracing::warn!("Owned save thumbnail failed (payload completed): {err:#}");
-                }
-                Ok(receipt.slot)
-            })?;
-            Ok(SaveWriteStatus::Queued)
+                thumbnail,
+            )
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn queue_special_save(
+        &mut self,
+        idx: usize,
+        save: GameSaveFile,
+        profiles: &ProfileManager,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<SaveWriteStatus> {
+        let path = self.save_path(idx);
+        let thumb_data = thumbnail.cloned();
+        let thumb_path = self.thumb_path(idx);
+        let mut metadata = self.catalog[idx].clone();
+        metadata.update_snapshot_metadata(&save.header, save.engine.campaign(), profiles);
+        metadata.validate_published_metadata()?;
+        let name = self.slot_name(idx).map_err(anyhow::Error::msg)?;
+        let recovery_path = self.owned_recovery_path();
+        self.operations.start(name, move || {
+            save.validate_current_schema()?;
+            let bytes = serde_json::to_vec_pretty(&save).context("serialize owned save payload")?;
+            let receipt = SpecialSaveRecovery {
+                slot: metadata,
+                digest: Sha256::digest(&bytes).into(),
+            };
+            persistence::publish_payload(&recovery_path, &path, &receipt, &bytes, true)?;
+            if let Some(thumb) = thumb_data
+                && let Err(err) = thumb.write_to(&thumb_path)
+            {
+                tracing::warn!("Owned save thumbnail failed (payload completed): {err:#}");
+            }
+            Ok(receipt.slot)
+        })?;
+        Ok(SaveWriteStatus::Queued)
     }
 
     /// Capture and publish a session-only Restart atomically. No disk index is
@@ -3198,6 +3234,60 @@ mod tests {
         )
         .unwrap();
         game
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn loaded_continue_mirror_preserves_the_saved_replay_boundary() {
+        use crate::replay_archive::MissionArchive;
+        use crate::replay_recording::SharedReplayRecorder;
+        use robin_engine::replay::ReplayRecorder;
+
+        let root = tempfile::tempdir().unwrap();
+        let (mut engine, _, profiles, mut host) = fresh_save_session("Loaded mirror");
+        let game = game_for_save(&profiles, 17);
+        let archive = MissionArchive::create(&root.path().join("replay")).unwrap();
+        let recorder = ReplayRecorder::with_writer(
+            archive.writer().unwrap(),
+            "Mission_17".into(),
+            game.mission_assets().unwrap().clone(),
+            0,
+            Default::default(),
+            engine.campaign(),
+        )
+        .unwrap();
+        let recorder = SharedReplayRecorder::archived(recorder, archive);
+        host.application_context()
+            .replay_recording()
+            .install_capture_recorder(Some(recorder.clone()));
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        manager
+            .write_quick_save(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        let quick = manager
+            .find_by_filename(save_file::special_slots::QUICK)
+            .unwrap();
+        let saved = GameSaveFile::read_from(&manager.save_path(quick)).unwrap();
+        let identity = saved.replay_identity().unwrap();
+        let link = saved.header.replay.clone().expect("saved replay link");
+        let ordinal = recorder.next_ordinal();
+        engine.test_set_frame_counter(117);
+        manager
+            .write_loaded_continue_background(saved, &profiles, None)
+            .unwrap();
+        manager.finish_background().unwrap();
+        let target = manager
+            .find_by_filename(save_file::special_slots::CONTINUE)
+            .unwrap();
+        let mirrored = GameSaveFile::read_from(&manager.save_path(target)).unwrap();
+        assert_eq!(mirrored.replay_identity().unwrap(), identity);
+        assert_eq!(mirrored.header.replay, Some(link));
+        assert_eq!(
+            recorder.next_ordinal(),
+            ordinal,
+            "a load mirror must not record the restored state on the old timeline"
+        );
+        assert_ne!(mirrored.engine.frame_counter(), engine.frame_counter());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

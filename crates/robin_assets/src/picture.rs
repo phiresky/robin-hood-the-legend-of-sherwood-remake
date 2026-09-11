@@ -496,6 +496,7 @@ impl Picture {
     }
 
     /// Original RES pictures can retain the exporter's pre-conversion RGB24 size.
+    #[cfg(any(feature = "engine-adapters", test))]
     pub(crate) fn load_original_sixteen_from_bytes(bytes: &[u8]) -> Result<Self> {
         Self::load_sixteen_bytes(bytes, true)
     }

@@ -25,6 +25,12 @@ pub(super) struct CurrentMissionLoad {
     save: PreparedLoad,
 }
 
+impl CurrentMissionLoad {
+    pub(super) fn save(&self) -> &crate::save_file::GameSaveFile {
+        self.save.save()
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 impl CurrentMissionLoad {
     pub(super) fn replay_directory(&self) -> Option<&std::path::Path> {
@@ -88,7 +94,6 @@ pub(super) fn route(
 /// from the decoded payload, before any subsequent live-engine fixups.
 #[derive(serde::Serialize)]
 pub(super) struct AppliedLoad {
-    mission_id: u32,
     snapshot: Option<Vec<u8>>,
     identity: Option<crate::save_file::ReplaySaveIdentity>,
 }
@@ -102,10 +107,6 @@ impl<'de> serde::Deserialize<'de> for AppliedLoad {
 }
 
 impl AppliedLoad {
-    pub(super) fn mission_id(&self) -> u32 {
-        self.mission_id
-    }
-
     pub(super) fn outcome(self, completion: LoadCompletion) -> OperationOutcome {
         let (is_continue, reset_input, banner) = match completion {
             LoadCompletion::Restart => (false, false, None),
@@ -141,17 +142,12 @@ pub(super) fn apply(
 ) -> anyhow::Result<AppliedLoad> {
     let CurrentMissionLoad { save } = prepared;
     let save = save.into_payload();
-    let mission_id = save.header.mission_id;
     let identity = replay_loaded_identity(&save);
     // Dereference the process-local prepared-save wrapper: the replay carries
     // the public save envelope, never the checkpoint's local authority.
     let snapshot = Some(serde_json::to_vec(&*save)?);
     save.apply_to_with_game(engine, host, game, assets)?;
-    Ok(AppliedLoad {
-        snapshot,
-        mission_id,
-        identity,
-    })
+    Ok(AppliedLoad { snapshot, identity })
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -204,7 +200,6 @@ mod tests {
         assert_eq!(prepared.save.save().engine.frame_counter(), 41);
         let applied = apply(prepared, &mut engine, &mut host, &mut game, &assets).unwrap();
         assert_eq!(engine.frame_counter(), 41);
-        assert_eq!(applied.mission_id(), 17);
         let outcome = applied.outcome(LoadCompletion::Quick);
         let super::SaveLoadEvent::LoadApplied {
             snapshot: Some(snapshot),
@@ -215,6 +210,7 @@ mod tests {
         };
         let embedded: crate::save_file::GameSaveFile = serde_json::from_slice(snapshot).unwrap();
         embedded.validate_current_schema().unwrap();
+        assert_eq!(embedded.header.mission_id, 17);
         assert_eq!(embedded.engine.frame_counter(), 41);
         assert!(outcome.processed() && outcome.reset_input());
         assert_eq!(outcome.banner, Some(SaveBannerKind::Loaded));
@@ -290,7 +286,6 @@ mod tests {
             // Reducer-only fixture: no claim that an engine was applied here.
             let receipt = AppliedLoad {
                 snapshot: None,
-                mission_id: 17,
                 identity: None,
             };
             let bytes = serde_json::to_vec(&receipt).unwrap();

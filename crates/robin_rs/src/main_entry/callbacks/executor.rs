@@ -408,14 +408,14 @@ async fn execute_load(
             // recording if its history is unavailable; still apply the save.
             tracing::error!("Browser replay load preparation failed: {error:#}");
         }
+        // Mirror the immutable loaded payload, not a fresh capture of the
+        // restored engine while the recorder still owns the pre-load timeline.
+        let mirror = completion.mirrors_continue().then(|| save.save().clone());
         let applied = load::apply(save, engine, host, game, assets)?;
-        if completion.mirrors_continue() {
-            if let Err(error) = save_manager.write_continue_save_background(
-                host,
-                game,
-                engine,
-                applied.mission_id(),
-                Some(profiles),
+        if let Some(mirror) = mirror {
+            if let Err(error) = save_manager.write_loaded_continue_background(
+                mirror,
+                profiles,
                 thumb_ref,
             ) {
                 tracing::warn!("Continue mirror after load could not start: {error:#}");
