@@ -2854,6 +2854,84 @@ mod tests {
     }
 
     #[test]
+    fn select_door_step_materializes_without_firing_its_hulk_callback() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(7));
+        let actor = engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap();
+        actor.active_door_pass = Some(ActiveDoorPass {
+            door_index: crate::gate::DoorIndex::new(43).unwrap(),
+            direct: true,
+            position_direct: true,
+            steps: [
+                DoorPassStep::Select { speed: 1.25 },
+                DoorPassStep::PassingDoor,
+            ]
+            .into(),
+            preallocated_order_ids: [std::num::NonZeroU32::new(41), std::num::NonZeroU32::new(42)]
+                .into(),
+            triggers_fired: 0,
+            current_action: OrderType::WalkingUpright,
+            current_reverse: false,
+            saved_action_state: None,
+        });
+        let next_order_id = engine.orders.next_order_id;
+        let DoorPassAdvance::ActionPoint { order } = EngineInner::advance_door_pass(
+            actor,
+            owner,
+            MapPoint::ZERO,
+            &mut engine.orders.next_order_id,
+        ) else {
+            panic!("Select must materialize a real action-point order")
+        };
+        assert_eq!(order.order_type, OrderType::Select);
+        assert_eq!(order.order_id.get(), 41);
+        assert_eq!(order.tolerance, 1.25);
+        assert_eq!(
+            order.completion,
+            crate::order::OrderCompletion::ResumeDoorPass
+        );
+        assert_eq!(engine.orders.next_order_id, next_order_id);
+        let entity = engine.world.entities.get(owner).unwrap();
+        assert_eq!(entity.human_data().unwrap().running_hulk, 0);
+        let pass = entity
+            .actor_data()
+            .unwrap()
+            .active_door_pass
+            .as_ref()
+            .unwrap();
+        assert_eq!(pass.triggers_fired, 0);
+        assert!(matches!(
+            pass.steps.front(),
+            Some(DoorPassStep::PassingDoor)
+        ));
+        assert_eq!(
+            entity.element_data().sector(),
+            crate::position_interface::SectorHandle::new(7)
+        );
+
+        // The callback consumed by the animation outcome lane still applies
+        // the returned order's fade speed; materialization above did not run it.
+        engine.apply_select_hulk(owner, order.tolerance);
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .running_hulk,
+            25
+        );
+    }
+
+    #[test]
     fn wall_transition_and_passing_door_use_separate_owner_slots() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_pc(7));
@@ -2874,8 +2952,6 @@ mod tests {
         engine.script_domains.interactables.doors.push(door.clone());
         let (_, seq_id) = dispatch_pass(&mut engine, &[door], owner);
 
-        let mut door_triggers = Vec::new();
-        let mut select_triggers = Vec::new();
         let transition_destination = engine
             .world
             .entities
@@ -2895,8 +2971,6 @@ mod tests {
                 actor,
                 owner,
                 transition_destination,
-                &mut door_triggers,
-                &mut select_triggers,
                 &mut engine.orders.next_order_id,
             )
         };
@@ -2917,7 +2991,21 @@ mod tests {
         transition_order.reverse = reverse;
         transition_order.compute_direction = compute_direction;
         transition_order.tolerance = tolerance;
-        assert!(door_triggers.is_empty());
+        assert_eq!(
+            engine
+                .world
+                .entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_door_pass
+                .as_ref()
+                .unwrap()
+                .triggers_fired,
+            0,
+            "materializing the transition cannot fire the following door action point"
+        );
         assert_eq!(
             engine
                 .world

@@ -311,7 +311,6 @@ impl EngineInner {
 
     pub(super) fn drain_resume_door_pass(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         resume_door_pass: Vec<EntityId>,
     ) {
@@ -327,12 +326,8 @@ impl EngineInner {
                 continue;
             };
             self.apply_door_pass_transition_completion_side_effects(assets, entity_id, action);
-            // Advance through Transition / PassingDoor / Walk steps.
-            // PassingDoor triggers fired here need to run through
-            // `execute_pass_door` with `&mut self`, so we collect them
-            // and drain after the borrow on the actor ends.
-            let mut door_triggers: Vec<(EntityId, crate::gate::DoorIndex, bool, u8)> = Vec::new();
-            let mut select_triggers: Vec<(EntityId, f32)> = Vec::new();
+            // Materialize one successor. PassingDoor and Select callbacks
+            // run only when that successor reaches its own Execute slot.
             let (advance, arrived_movement, completed_pass) = {
                 let Some(entity) = self.world.entities.get_mut(entity_id) else {
                     continue;
@@ -345,8 +340,6 @@ impl EngineInner {
                     actor,
                     entity_id,
                     transition_destination,
-                    &mut door_triggers,
-                    &mut select_triggers,
                     &mut self.orders.next_order_id,
                 );
                 // If the door pass is done (no more steps), mirror the
@@ -372,13 +365,6 @@ impl EngineInner {
                 (adv, arrived, completed)
             };
 
-            // Fire any PassingDoor triggers that came up during this resume.
-            for (eid, door_index, direct, trigger_num) in door_triggers {
-                self.execute_pass_door(sim, assets, eid, door_index, direct, trigger_num);
-            }
-            for (eid, speed) in select_triggers {
-                self.apply_select_hulk(eid, speed);
-            }
             if let Some((door_index, direct)) = completed_pass {
                 tracing::debug!(
                     entity = ?entity_id,

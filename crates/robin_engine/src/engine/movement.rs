@@ -4676,9 +4676,6 @@ struct MovementDeferred {
     // Door-pass Transition orders to push onto the actor's current
     // sequence element after the loop closes (needs sequence_manager).
     transition_pushes: Vec<(crate::sequence::SequenceId, usize, crate::order::Order)>,
-    // Pending `DoorPassStep::Select` hulk requests — processed after the
-    // loop since they mutate both the carrier and its carried target.
-    select_triggers: Vec<(EntityId, f32)>,
     completed_door_passes: Vec<(EntityId, crate::gate::DoorIndex, bool)>,
     // Rider entities whose running animation hit the charge
     // decision frames while carrying RIDER_CHARGE.
@@ -6881,7 +6878,6 @@ impl EngineInner {
             sword_movement_terminations,
             door_triggers,
             transition_pushes,
-            select_triggers,
             completed_door_passes,
             galopp_event,
             blocked_impossible,
@@ -7308,11 +7304,6 @@ impl EngineInner {
                     panic!("door-pass successor has stale element handle ({seq_id:?}, {elem_idx})")
                 });
             insert_door_pass_successor(element, order);
-        }
-
-        // Fire pending Select hulk flashes.
-        for (entity_id, speed) in select_triggers {
-            self.apply_select_hulk(entity_id, speed);
         }
 
         for (entity_id, posture, action_state) in post_seek_terminal_state_effects {
@@ -8006,14 +7997,7 @@ impl EngineInner {
                 return;
             }
 
-            let advance = Self::advance_door_pass(
-                actor,
-                eid,
-                goal,
-                &mut deferred.door_triggers,
-                &mut deferred.select_triggers,
-                &mut self.orders.next_order_id,
-            );
+            let advance = Self::advance_door_pass(actor, eid, goal, &mut self.orders.next_order_id);
             match advance {
                 DoorPassAdvance::Continue {
                     order_id,
@@ -9968,14 +9952,7 @@ impl EngineInner {
                 if is_final_waypoint {
                     let mut clear_completed_movement_goal = false;
                     let advance = if actor.active_door_pass.is_some() {
-                        Self::advance_door_pass(
-                            actor,
-                            eid,
-                            goal,
-                            &mut deferred.door_triggers,
-                            &mut deferred.select_triggers,
-                            &mut self.orders.next_order_id,
-                        )
+                        Self::advance_door_pass(actor, eid, goal, &mut self.orders.next_order_id)
                     } else {
                         DoorPassAdvance::Done { completed: None }
                     };
@@ -10415,14 +10392,7 @@ impl EngineInner {
                     // All waypoints for current walk step consumed.
                     // Check if we have more door-pass steps.
                     let advance = if actor.active_door_pass.is_some() {
-                        Self::advance_door_pass(
-                            actor,
-                            eid,
-                            goal,
-                            &mut deferred.door_triggers,
-                            &mut deferred.select_triggers,
-                            &mut self.orders.next_order_id,
-                        )
+                        Self::advance_door_pass(actor, eid, goal, &mut self.orders.next_order_id)
                     } else {
                         DoorPassAdvance::Done { completed: None }
                     };
@@ -11049,16 +11019,14 @@ impl EngineInner {
     /// Pops one translated motion/door sub-order. `PassingDoor` action
     /// points are returned as real orders instead of being drained in the
     /// predecessor's completion slot: the original-game frame update executes one
-    /// current order and only then advances to its successor. `Select`
-    /// retains its generic-animation callback plumbing for now.
+    /// current order and only then advances to its successor. `Select` likewise
+    /// returns a real order; its own Execute slot owns the hulk callback.
     ///
     /// See [`DoorPassAdvance`] for return semantics.
     pub(super) fn advance_door_pass(
         actor: &mut crate::element::ActorData,
         entity_id: EntityId,
         transition_destination: MapPoint,
-        _door_triggers: &mut Vec<(EntityId, crate::gate::DoorIndex, bool, u8)>,
-        _select_triggers: &mut Vec<(EntityId, f32)>,
         next_order_id: &mut u32,
     ) -> DoorPassAdvance {
         let dp = match actor.active_door_pass.as_mut() {

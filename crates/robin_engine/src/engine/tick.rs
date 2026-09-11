@@ -6122,7 +6122,7 @@ impl EngineInner {
         self.drain_unlock_door_done(unlock_door_done);
         self.drain_next_jump_step(assets, next_jump_step);
         self.drain_select_hulk(select_hulk);
-        self.drain_resume_door_pass(sim, assets, resume_door_pass);
+        self.drain_resume_door_pass(assets, resume_door_pass);
         for entity_id in rejected_dead_idle_posture_requests {
             self.process_rejected_nonlying_posture_request_for(entity_id);
         }
