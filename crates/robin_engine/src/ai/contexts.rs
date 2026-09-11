@@ -1075,16 +1075,6 @@ pub struct AiPerTickData {
     pub patrol_chief_state: AiState,
     pub enemy_sq_distances: Vec<(HumanHandle, i32)>,
     pub min_sq_enemy_distance: i32,
-    pub friends_lower_company: u16,
-    pub soldiers_lower_pride: bool,
-    pub friends_nearer_to_enemy: u16,
-    /// Sum of battle points for our side — 100 + pride per soldier, 100
-    /// per PC. Used by battle predecisions.
-    pub us_battle_points: u32,
-    /// True if any friend (not self) in `list_us` has officer rank.
-    pub has_officer_nearby: bool,
-    /// True if any friend in `list_us` has RANK_SOLDIER.
-    pub simple_soldiers_near: bool,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     /// Complete fighter-registry snapshot for direct pointer dereferences.
     ///
@@ -1396,12 +1386,6 @@ impl AiPerTickData {
             patrol_chief_state: AiState::Default,
             enemy_sq_distances: Vec::new(),
             min_sq_enemy_distance: i32::MAX,
-            friends_lower_company: 0,
-            soldiers_lower_pride: false,
-            friends_nearer_to_enemy: 0,
-            us_battle_points: 0,
-            has_officer_nearby: false,
-            simple_soldiers_near: false,
             primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),
@@ -1683,13 +1667,6 @@ pub struct AiGlobalState {
     /// AI tick can resolve a friend ID without re-borrowing the engine.
     pub all_soldier_handles: std::sync::Arc<Vec<u32>>,
 
-    /// Same-frame combat claims made by soldiers during the current AI
-    /// dispatch. Some engine side effects are batched, so this transient
-    /// list carries the live claim until the normal entity state catches
-    /// up — letting later soldiers in the same frame see earlier
-    /// enemy attack decisions.
-    pub same_frame_target_claims: Vec<(HumanHandle, HumanHandle)>,
-
     /// Owner-ordered mirror of human primary-target multiplicity.
     /// Original-game AI resets and increments these 16-bit counters directly
     /// on target humans, so later owners in the same actor pass observe the
@@ -1736,7 +1713,6 @@ impl Default for AiGlobalState {
             houses: Vec::new(),
             door_rally_points: Vec::new(),
             all_soldier_handles: std::sync::Arc::new(Vec::new()),
-            same_frame_target_claims: Vec::new(),
             primary_target_multiplicity_scratch: std::collections::BTreeMap::new(),
             primary_target_multiplicity_initialized: false,
         }

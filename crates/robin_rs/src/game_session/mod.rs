@@ -2391,6 +2391,42 @@ mod required_state_tests {
     }
 
     #[test]
+    fn raw_replay_inputs_fail_at_the_real_decode_and_mission_admission_boundaries() {
+        let directory = tempfile::tempdir().unwrap();
+        for (name, contents, expected) in [
+            ("missing", None, "open"),
+            ("malformed", Some("not a replay header\n"), "bad header"),
+            (
+                "unsupported",
+                Some(
+                    "{\"mission_id\":\"MissionA\",\"rng_seed\":42,\"version\":999,\"total_frames\":0,\"campaign\":null}\n",
+                ),
+                "unsupported replay schema version 999",
+            ),
+        ] {
+            let path = directory.path().join(format!("{name}.rhrec.jsonl"));
+            if let Some(contents) = contents {
+                std::fs::write(&path, contents).unwrap();
+            }
+            let spec = path.to_str().unwrap();
+            let error = crate::replay_format::load_replay_spec(spec).unwrap_err();
+            assert!(error.to_string().contains(expected), "{name}: {error}");
+            let args = crate::main_entry::MissionLaunch {
+                config: crate::main_entry::CliArgs {
+                    replay: Some(spec.to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(
+                super::unprepared_replay_launch_error(&args)
+                    .unwrap()
+                    .contains("before canonical decode")
+            );
+        }
+    }
+
+    #[test]
     fn replay_preparation_restores_all_frame_zero_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
         let args = crate::main_entry::MissionLaunch {

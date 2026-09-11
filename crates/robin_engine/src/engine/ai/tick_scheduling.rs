@@ -35,12 +35,7 @@ impl EngineInner {
     }
 
     /// Prepare the shared, RNG-free portion of the fused owner pass.
-    pub(in crate::engine) fn prepare_npc_owner_pass(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
-    ) -> PreparedNpcOwnerPass {
-        self.ai.global.same_frame_target_claims.clear();
+    pub(in crate::engine) fn prepare_npc_owner_pass(&mut self) -> PreparedNpcOwnerPass {
         if !self.ai.global.primary_target_multiplicity_initialized {
             // The human actor's primary-target multiplicity is temporary initialization state and
             // is explicitly absent from the save stream. Loading a save into
@@ -107,10 +102,6 @@ impl EngineInner {
         );
     }
 
-    pub(in crate::engine) fn finish_npc_owner_pass(&mut self) {
-        self.ai.global.same_frame_target_claims.clear();
-    }
-
     pub(in crate::engine) fn tick_enemy_ai_blip_detection_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -139,7 +130,6 @@ impl EngineInner {
             }
             return;
         }
-        self.ai.global.same_frame_target_claims.clear();
         if !self.ai.global.primary_target_multiplicity_initialized {
             self.ai.global.primary_target_multiplicity_scratch.clear();
             self.ai.global.primary_target_multiplicity_initialized = true;
@@ -183,7 +173,6 @@ impl EngineInner {
             self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
             self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
         }
-        self.ai.global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
         // Keep this AI pass to target selection, pursuit, and swordfight
@@ -1669,13 +1658,12 @@ impl EngineInner {
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
             let grid = &self.world.fast_grid;
-            let global = &mut self.ai.global;
             self.world
                 .entities
                 .get_mut(npc_id)
                 .and_then(Entity::enemy_ai_mut)
                 .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} has no enemy AI"))
-                .observe_after_synchronous_panic(sim, global, &ctx, &tick, Some(grid));
+                .observe_after_synchronous_panic(sim, &ctx, &tick, Some(grid));
             // The resumed tail contains state changes, focusing, and movement.
             // Close their owner-local callbacks and actor effects before the
             // enclosing synchronous Panic continuation returns.

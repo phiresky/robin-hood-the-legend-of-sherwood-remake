@@ -478,15 +478,8 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventReachPoint | StimulusType::EventTimer => {
-                let distance = {
-                    let dx = self.base.seek_position.x - ctx.position.x;
-                    let dy = (self.base.seek_position.y - ctx.position.y)
-                        * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    (dx * dx + dy * dy).sqrt()
-                };
                 self.reconsider_enemy_approach(
                     stimulus_type == StimulusType::EventReachPoint,
-                    distance,
                     ctx,
                     tick,
                     grid,
@@ -544,13 +537,7 @@ impl EnemyAi {
         // If can't charge, fall back to normal attack
         if !self.maybe_make_rider_attack(ctx, tick, grid) {
             self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
-            let distance = {
-                let dx = self.base.seek_position.x - ctx.position.x;
-                let dy = (self.base.seek_position.y - ctx.position.y)
-                    * crate::position_interface::INVERSE_ASPECT_RATIO;
-                (dx * dx + dy * dy).sqrt()
-            };
-            self.reconsider_enemy_approach(true, distance, ctx, tick, grid);
+            self.reconsider_enemy_approach(true, ctx, tick, grid);
         }
         false
     }
@@ -2387,7 +2374,7 @@ impl EnemyAi {
                 self.base.launch_timer(1, ctx.frame);
             }
             StimulusType::EventTimer => {
-                self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);
+                self.reconsider_enemy_approach(false, ctx, tick, grid);
             }
             _ => {}
         }
@@ -2432,7 +2419,7 @@ impl EnemyAi {
                 self.base.outbox.actor.set_focus(self.base.primary_target);
                 self.base.launch_timer(20, ctx.frame);
             } else {
-                self.reconsider_enemy_approach(false, 0.0, ctx, tick, grid);
+                self.reconsider_enemy_approach(false, ctx, tick, grid);
             }
         }
         false

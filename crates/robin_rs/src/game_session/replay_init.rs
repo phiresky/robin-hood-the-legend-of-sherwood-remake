@@ -349,7 +349,6 @@ pub(super) fn init_replay_and_rollback(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: Arc<LevelAssets>,
     args: &crate::main_entry::MissionLaunch,
-    _mission_idx: usize,
     mission_id: &str,
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
     engine_rng_seed: u64,
@@ -367,9 +366,12 @@ pub(super) fn init_replay_and_rollback(
             .is_none(),
         "pending replay must be consumed and supplied before mission Engine construction"
     );
-    let pending_paused = false;
+    assert!(
+        args.replay.is_none(),
+        "raw replay input must be decoded before mission Engine construction"
+    );
 
-    let is_playing_back = args.replay_data.is_some() || args.replay.is_some();
+    let is_playing_back = args.replay_data.is_some();
     let recorder = prepared_recorder.or_else(|| {
         init_recording(
             replay_campaign,
@@ -408,27 +410,7 @@ pub(super) fn init_replay_and_rollback(
         // seeded at construction with this header's seed.
         Some(ReplayPlayer::new(data))
     } else {
-        args.replay
-            .as_ref()
-            .and_then(|spec| match crate::replay_format::load_replay_spec(spec) {
-                Ok(data) => {
-                    tracing::info!(
-                        "Loaded replay: mission `{}`, {} frames, seed {}",
-                        data.header().mission_id,
-                        data.frame_count(),
-                        data.header().rng_seed,
-                    );
-                    // No restore_rng_from_seed here: see EngineArgs
-                    // setup in `load_level_and_sprite_bank` — the
-                    // engine RNG was already seeded at construction
-                    // with this header's seed.
-                    Some(ReplayPlayer::new(data))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load replay: {e}");
-                    None
-                }
-            })
+        None
     };
 
     assert_eq!(
@@ -476,7 +458,7 @@ pub(super) fn init_replay_and_rollback(
         player,
         rollback_checker,
         rewind_buffer,
-        start_paused: args.start_paused || pending_paused,
+        start_paused: args.start_paused,
     }
 }
 
@@ -486,6 +468,52 @@ mod tests {
     use std::io::Write as _;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    #[should_panic(
+        expected = "raw replay input must be decoded before mission Engine construction"
+    )]
+    fn replay_attachment_rejects_raw_input_before_recording_or_file_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Replay Attachment Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let application_context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            Default::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
+        let args = crate::main_entry::MissionLaunch {
+            global_options: application_context,
+            config: crate::main_entry::CliArgs {
+                replay: Some("must-not-be-read.rhrec.jsonl".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        init_replay_and_rollback(
+            &Default::default(),
+            Arc::new(LevelAssets::new()),
+            &args,
+            "Fixture",
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "Fixture", "Fixture", "Fixture",
+            )
+            .unwrap(),
+            0,
+            Default::default(),
+            false,
+            None,
+        );
+    }
 
     struct ControlledPrimary {
         bytes: Arc<Mutex<Vec<u8>>>,

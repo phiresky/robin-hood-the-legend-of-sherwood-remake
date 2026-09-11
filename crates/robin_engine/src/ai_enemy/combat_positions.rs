@@ -4000,7 +4000,7 @@ impl EnemyAi {
         //       - distance < 30
         //     gated by no same-camp soldier already approaching this target
         //     in WALKING/RUNNING/CHARGING.
-        if self.try_observation_attack(new_primary, global, ctx, tick, grid) {
+        if self.try_observation_attack(new_primary, ctx, tick, grid) {
             return;
         }
 
@@ -4014,13 +4014,12 @@ impl EnemyAi {
     pub(crate) fn observe_after_synchronous_panic(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
         let primary = self.base.primary_target;
-        if !self.try_observation_attack(primary, global, ctx, tick, grid) {
+        if !self.try_observation_attack(primary, ctx, tick, grid) {
             self.observe_and_step(sim, ctx, tick, grid);
         }
     }
@@ -4028,7 +4027,6 @@ impl EnemyAi {
     fn try_observation_attack(
         &mut self,
         new_primary: Option<AiEntityHandle>,
-        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -4091,7 +4089,6 @@ impl EnemyAi {
                         new_primary
                             .expect("observation attack requires a primary target")
                             .get(),
-                        Some(&mut *global),
                         ctx,
                         tick,
                         grid,

@@ -3578,7 +3578,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
         target.pc.life_points = 100;
 
         let sim = crate::sim_rng::test_context();
-        let mut prepared = engine.prepare_npc_owner_pass(&sim, &assets);
+        let mut prepared = engine.prepare_npc_owner_pass();
         engine.tick_npc_owner_pass(&sim, &assets, &positions, &mut prepared, observer_id);
 
         engine
@@ -4811,8 +4811,7 @@ fn nonserialized_primary_target_multiplicity_starts_empty_after_restore() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let sim = crate::sim_rng::test_context();
-    let _prepared = engine.prepare_npc_owner_pass(&sim, &assets);
+    let _prepared = engine.prepare_npc_owner_pass();
 
     assert!(engine.ai.global.primary_target_multiplicity_initialized);
     assert!(

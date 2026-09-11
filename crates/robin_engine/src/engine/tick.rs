@@ -2112,15 +2112,14 @@ pub(super) enum EntitySystemDetail {
     OwnerPrelude = 3,
     OwnerExecute = 4,
     NpcTail = 5,
-    FinishNpc = 6,
-    CorpseUpdates = 7,
-    FrameSounds = 8,
-    BuildEntityViews = 9,
-    BuildWorldView = 10,
-    RefreshDetection = 11,
+    CorpseUpdates = 6,
+    FrameSounds = 7,
+    BuildEntityViews = 8,
+    BuildWorldView = 9,
+    RefreshDetection = 10,
 }
 
-const ENTITY_SYSTEM_DETAIL_COUNT: usize = 12;
+const ENTITY_SYSTEM_DETAIL_COUNT: usize = 11;
 
 #[derive(Default)]
 struct EntitySystemDetailStats {
@@ -2188,7 +2187,6 @@ fn finish_entity_system_detail_frame() {
             owner_prelude_us = per_frame(EntitySystemDetail::OwnerPrelude),
             owner_execute_us = per_frame(EntitySystemDetail::OwnerExecute),
             npc_tail_us = per_frame(EntitySystemDetail::NpcTail),
-            finish_npc_us = per_frame(EntitySystemDetail::FinishNpc),
             corpse_us = per_frame(EntitySystemDetail::CorpseUpdates),
             frame_sounds_us = per_frame(EntitySystemDetail::FrameSounds),
             build_views_us = per_frame(EntitySystemDetail::BuildEntityViews),
@@ -4643,7 +4641,7 @@ impl EngineInner {
         let mut terminal_movement_order_pops = Vec::new();
         let mut prepared = {
             let _detail = entity_system_detail_guard(EntitySystemDetail::PrepareNpc);
-            self.prepare_npc_owner_pass(sim, assets)
+            self.prepare_npc_owner_pass()
         };
         self.tick_actor_animation_action_change_slots_with_hooks(
             sim,
@@ -4914,10 +4912,6 @@ impl EngineInner {
                 owner_hook(engine, owner);
             },
         );
-        {
-            let _detail = entity_system_detail_guard(EntitySystemDetail::FinishNpc);
-            self.finish_npc_owner_pass();
-        }
         terminal_movement_order_pops
     }
 

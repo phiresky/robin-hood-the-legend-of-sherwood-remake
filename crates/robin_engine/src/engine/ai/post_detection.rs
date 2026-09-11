@@ -1142,7 +1142,7 @@ mod tests {
     fn enemy_detection_tick_data_override_matches_the_exact_fifo_block() {
         let mut full_tick_data = crate::ai::AiPerTickData::stub();
         full_tick_data.personally_visible_enemies = 7;
-        full_tick_data.us_battle_points = 321;
+        full_tick_data.min_sq_enemy_distance = 321;
         let shadow = crate::ai::Stimulus::with_position(
             crate::ai::StimulusType::EventSeesShadow,
             crate::ai::Position::default(),
@@ -1160,7 +1160,7 @@ mod tests {
         let selected = take_enemy_detection_tick_data(1, &view, &mut pending)
             .expect("exact EVENT_VIEW queue entry keeps detection-built input");
         assert_eq!(selected.personally_visible_enemies, 7);
-        assert_eq!(selected.us_battle_points, 321);
+        assert_eq!(selected.min_sq_enemy_distance, 321);
         let selected = take_enemy_detection_tick_data(2, &out_of_view, &mut pending)
             .expect("exact EVENT_OUTOFVIEW queue entry keeps detection-built input");
         assert_eq!(selected.personally_visible_enemies, 7);
@@ -1174,7 +1174,7 @@ mod tests {
     fn event_view_tick_data_override_is_one_shot_at_exact_fifo_index() {
         let mut full_tick_data = crate::ai::AiPerTickData::stub();
         full_tick_data.personally_visible_enemies = 7;
-        full_tick_data.us_battle_points = 321;
+        full_tick_data.min_sq_enemy_distance = 321;
         let shadow = crate::ai::Stimulus::with_position(
             crate::ai::StimulusType::EventSeesShadow,
             crate::ai::Position::default(),
@@ -1190,7 +1190,7 @@ mod tests {
         let selected = take_enemy_detection_tick_data(1, &view, &mut pending)
             .expect("exact EVENT_VIEW queue entry keeps detection-built input");
         assert_eq!(selected.personally_visible_enemies, 7);
-        assert_eq!(selected.us_battle_points, 321);
+        assert_eq!(selected.min_sq_enemy_distance, 321);
         assert_eq!(
             pending.as_ref().expect("block remains for audit").matched,
             1

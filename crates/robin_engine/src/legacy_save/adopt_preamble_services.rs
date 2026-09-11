@@ -9,7 +9,7 @@ use crate::{
     coordinates::MapPoint,
     engine::EngineInner,
     profiles::Action,
-    sound::{LegacyV48SoundState, MusicMode, SoundSimState},
+    sound::SoundSimState,
     sound_geometry::SoundSourceAltitude,
     sound_source::{SoundSource, SoundSourceKind, SoundSourceManager},
 };
@@ -37,6 +37,29 @@ pub struct LegacyPreambleHostState {
     pub campaign_map_displayed: bool,
     pub start_mission_widget_enabled: bool,
     pub quit_mission_widget_enabled: bool,
+}
+
+impl LegacyPreambleHostState {
+    fn from_preamble_parts(
+        sound: &LegacySound,
+        messenger: &super::engine::LegacyMessenger,
+        game: &LegacyGameState,
+    ) -> Self {
+        let sound = sound.state.as_ref();
+        Self {
+            sound_system_ready: sound.map(|state| state.sound_system_ready),
+            three_d_sound: sound.map(|state| state.three_d_sound),
+            sound_active: sound.map(|state| state.active),
+            dummy_channel: sound.map(|state| state.dummy_channel),
+            stream_position: sound.map(|state| state.stream_position),
+            draw_hidden: messenger.draw_hidden,
+            campaign_map_displayed: game.campaign_map_displayed,
+            start_mission_widget_enabled: game.start_mission_enabled
+                && !game.start_mission_disabled_temp,
+            quit_mission_widget_enabled: game.quit_mission_enabled
+                && !game.quit_mission_disabled_temp,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -108,35 +131,11 @@ pub(crate) fn preflight_v48_preamble_services(
 ) -> Result<LegacyPreambleServicesPlan, LegacyPreambleServicesError> {
     let selected_action = convert_messenger_action(preamble.messenger.action)?;
     let sound = convert_sound(&preamble.sound)?;
-    let host = LegacyPreambleHostState {
-        sound_system_ready: preamble
-            .sound
-            .state
-            .as_ref()
-            .map(|state| state.sound_system_ready),
-        three_d_sound: preamble
-            .sound
-            .state
-            .as_ref()
-            .map(|state| state.three_d_sound),
-        sound_active: preamble.sound.state.as_ref().map(|state| state.active),
-        dummy_channel: preamble
-            .sound
-            .state
-            .as_ref()
-            .map(|state| state.dummy_channel),
-        stream_position: preamble
-            .sound
-            .state
-            .as_ref()
-            .map(|state| state.stream_position),
-        draw_hidden: preamble.messenger.draw_hidden,
-        campaign_map_displayed: preamble.game.campaign_map_displayed,
-        start_mission_widget_enabled: preamble.game.start_mission_enabled
-            && !preamble.game.start_mission_disabled_temp,
-        quit_mission_widget_enabled: preamble.game.quit_mission_enabled
-            && !preamble.game.quit_mission_disabled_temp,
-    };
+    let host = LegacyPreambleHostState::from_preamble_parts(
+        &preamble.sound,
+        &preamble.messenger,
+        &preamble.game,
+    );
 
     Ok(LegacyPreambleServicesPlan {
         sound,
@@ -179,10 +178,8 @@ fn convert_serialized_sound(
             "a finite positive zoom",
         ));
     }
-    let music_mode = match saved.music_mode {
-        0 => MusicMode::Quiet,
-        1 => MusicMode::Alert,
-        2 => MusicMode::Fight,
+    match saved.music_mode {
+        0..=2 => {}
         value => {
             return Err(invalid_sound(
                 "music_mode",
@@ -190,7 +187,7 @@ fn convert_serialized_sound(
                 "MODE_QUIET..=MODE_FIGHT (0..=2)",
             ));
         }
-    };
+    }
     let mut sources = SoundSourceManager::new();
     for (slot, entry) in saved.source_manager.slots.iter().enumerate() {
         let Some(entry) = entry else {
@@ -216,23 +213,9 @@ fn convert_serialized_sound(
 
     Ok(SoundSimState {
         sources,
-        legacy_v48: Some(LegacyV48SoundState {
-            sound_system_ready: saved.sound_system_ready,
-            three_d_sound: saved.three_d_sound,
-            active: saved.active,
-            listen_point: MapPoint::new(
-                saved.geometry.listen_point.x,
-                saved.geometry.listen_point.y,
-            ),
-            zoom_factor: saved.geometry.zoom_factor,
-            music_mode,
-            dummy_channel: saved.dummy_channel,
-            quiet_mode_weight: saved.quiet_mode_weight,
-            alert_mode_weight: saved.alert_mode_weight,
-            fight_mode_weight: saved.fight_mode_weight,
-            loop_index: saved.loop_index,
-            stream_position: saved.stream_position,
-        }),
+        // TODO: separately adopt Original music/geometry into the live host
+        // director. Keeping an unread imported copy here never applied it;
+        // raw parser data and the existing host handoff retain their roles.
         // The original game tears down all backend completion work during deactivation or clearing.
         finished_exclamations: Vec::new(),
         playing_exclamations: Vec::new(),
@@ -372,7 +355,7 @@ mod tests {
                 listen_point: LegacyPoint2 { x: 5.0, y: 6.0 },
                 zoom_factor: 1.25,
             },
-            music_mode: MusicMode::Alert as u8,
+            music_mode: crate::sound::MusicMode::Alert as u8,
             dummy_channel: -123,
             quiet_mode_weight: 11,
             alert_mode_weight: 22,
@@ -393,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn converts_exact_sound_source_slots_and_director_state() {
+    fn converts_exact_sound_source_slots_without_stale_director_state() {
         let converted = convert_serialized_sound(&sound()).expect("valid sound state");
         assert_eq!(converted.sources.num_sources(), 2);
         let source = converted.sources.get(0).expect("slot zero");
@@ -406,11 +389,135 @@ mod tests {
             vec![MapPoint::new(1.0, 2.0), MapPoint::new(3.0, 4.0)]
         );
         assert!(converted.sources.get(1).is_none());
-        let director = converted.legacy_v48.expect("director");
-        assert_eq!(director.music_mode, MusicMode::Alert);
-        assert_eq!(director.alert_mode_weight, 22);
-        assert_eq!(director.dummy_channel, -123);
         assert!(converted.playing_sources.is_empty());
+    }
+
+    #[test]
+    fn backend_and_director_variations_do_not_enter_sound_snapshots_or_hashes() {
+        let original = sound();
+        let baseline = convert_serialized_sound(&original).unwrap();
+        let mut changed = original.clone();
+        changed.sound_system_ready = false;
+        changed.three_d_sound = false;
+        changed.active = true;
+        changed.geometry.listen_point = LegacyPoint2 { x: -4.0, y: 27.0 };
+        changed.geometry.zoom_factor = 2.0;
+        changed.music_mode = 2;
+        changed.dummy_channel = i16::MAX;
+        changed.quiet_mode_weight = 101;
+        changed.alert_mode_weight = 202;
+        changed.fight_mode_weight = 303;
+        changed.loop_index = 9;
+        changed.stream_position = 1234;
+        let converted = convert_serialized_sound(&changed).unwrap();
+        assert_eq!(bitcode::encode(&baseline), bitcode::encode(&converted));
+        assert_eq!(
+            robin_util::state_hash::compute(&baseline),
+            robin_util::state_hash::compute(&converted)
+        );
+        let json = serde_json::to_value(&converted).unwrap();
+        assert!(json.get("legacy_v48").is_none());
+        let from_json: SoundSimState = serde_json::from_value(json).unwrap();
+        let from_snapshot: SoundSimState = bitcode::decode(&bitcode::encode(&converted)).unwrap();
+        for restored in [from_json, from_snapshot] {
+            assert_eq!(bitcode::encode(&restored), bitcode::encode(&baseline));
+            assert_eq!(
+                robin_util::state_hash::compute(&restored),
+                robin_util::state_hash::compute(&baseline)
+            );
+        }
+        // Live imported sources remain authoritative rather than disappearing
+        // along with the unused host director copy.
+        changed.source_manager.slots[0]
+            .as_mut()
+            .unwrap()
+            .source
+            .timer += 1;
+        assert_ne!(
+            robin_util::state_hash::compute(&baseline),
+            robin_util::state_hash::compute(&convert_serialized_sound(&changed).unwrap())
+        );
+    }
+
+    #[test]
+    fn native_sound_snapshots_preserve_live_completion_deadlines() {
+        let mut state = convert_serialized_sound(&sound()).unwrap();
+        state.playing_sources.push(crate::sound::PlayingSource {
+            source_index: 0,
+            finish_frame: 27,
+        });
+        state
+            .playing_exclamations
+            .push(crate::sound::PlayingExclamation {
+                actor_id: 12,
+                exclamation_id: 3,
+                finish_frame: 31,
+            });
+        let json: SoundSimState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let snapshot: SoundSimState = bitcode::decode(&bitcode::encode(&state)).unwrap();
+        for restored in [json, snapshot] {
+            assert_eq!(bitcode::encode(&restored), bitcode::encode(&state));
+            assert_eq!(
+                robin_util::state_hash::compute(&restored),
+                robin_util::state_hash::compute(&state)
+            );
+            assert_eq!(restored.playing_sources[0].finish_frame, 27);
+            assert_eq!(restored.playing_exclamations[0].finish_frame, 31);
+        }
+    }
+
+    #[test]
+    fn discarded_director_fields_and_live_source_slots_are_still_validated() {
+        for (field, alter) in [
+            (
+                "music_mode",
+                (|sound: &mut LegacySerializedSound| sound.music_mode = 3)
+                    as fn(&mut LegacySerializedSound),
+            ),
+            (
+                "geometry.listen_point.x",
+                |sound: &mut LegacySerializedSound| sound.geometry.listen_point.x = f32::NAN,
+            ),
+            (
+                "geometry.listen_point.y",
+                |sound: &mut LegacySerializedSound| sound.geometry.listen_point.y = f32::INFINITY,
+            ),
+            (
+                "geometry.zoom_factor",
+                |sound: &mut LegacySerializedSound| sound.geometry.zoom_factor = f32::NAN,
+            ),
+            (
+                "geometry.zoom_factor",
+                |sound: &mut LegacySerializedSound| sound.geometry.zoom_factor = 0.0,
+            ),
+            (
+                "geometry.zoom_factor",
+                |sound: &mut LegacySerializedSound| sound.geometry.zoom_factor = -1.0,
+            ),
+        ] {
+            let mut saved = sound();
+            alter(&mut saved);
+            assert!(matches!(
+                convert_serialized_sound(&saved),
+                Err(LegacyPreambleServicesError::InvalidSoundField { field: actual, .. }) if actual == field
+            ));
+        }
+        let mut saved = sound();
+        saved.source_manager.slots[0].as_mut().unwrap().slot_index = 1;
+        assert!(matches!(
+            convert_serialized_sound(&saved),
+            Err(LegacyPreambleServicesError::WrongSoundSlotIndex { .. })
+        ));
+        let mut saved = sound();
+        saved.source_manager.slots[0]
+            .as_mut()
+            .unwrap()
+            .registration_id += 1;
+        assert!(matches!(
+            convert_serialized_sound(&saved),
+            Err(LegacyPreambleServicesError::WrongSoundRegistration { .. })
+        ));
     }
 
     #[test]
@@ -470,6 +577,53 @@ mod tests {
             start_mission_widget_enabled: false,
             quit_mission_widget_enabled: true,
         };
+        for (ready, three_d, active, channel, position) in
+            [(true, false, true, 5, 0), (false, true, false, -123, 1234)]
+        {
+            let mut saved = sound();
+            saved.sound_system_ready = ready;
+            saved.three_d_sound = three_d;
+            saved.active = active;
+            saved.dummy_channel = channel;
+            saved.stream_position = position;
+            let actual = LegacyPreambleHostState::from_preamble_parts(
+                &LegacySound {
+                    serialized: true,
+                    state: Some(saved),
+                },
+                &messenger,
+                &game,
+            );
+            assert_eq!(
+                actual,
+                LegacyPreambleHostState {
+                    sound_system_ready: Some(ready),
+                    three_d_sound: Some(three_d),
+                    sound_active: Some(active),
+                    dummy_channel: Some(channel),
+                    stream_position: Some(position),
+                    ..host.clone()
+                }
+            );
+        }
+        assert_eq!(
+            LegacyPreambleHostState::from_preamble_parts(
+                &LegacySound {
+                    serialized: false,
+                    state: None
+                },
+                &messenger,
+                &game,
+            ),
+            LegacyPreambleHostState {
+                sound_system_ready: None,
+                three_d_sound: None,
+                sound_active: None,
+                dummy_channel: None,
+                stream_position: None,
+                ..host.clone()
+            }
+        );
         let plan = LegacyPreambleServicesPlan {
             sound: Some(convert_serialized_sound(&sound()).unwrap()),
             view_locked: messenger.lock_view,

@@ -902,24 +902,6 @@ impl MissionLoadError {
     }
 }
 
-#[cfg(test)]
-fn initial_rng_seed(
-    args: &crate::main_entry::MissionLaunch,
-    multiplayer_seed: Option<u64>,
-) -> Result<u64, String> {
-    if let Some(data) = args.replay_data.as_ref() {
-        crate::replay_format::validate_replay_data(data)
-            .map_err(|e| format!("failed to validate requested replay data: {e}"))?;
-        Ok(data.header().rng_seed)
-    } else if let Some(spec) = args.replay.as_deref() {
-        crate::replay_format::load_replay_spec(spec)
-            .map(|data| data.header().rng_seed)
-            .map_err(|e| format!("failed to load requested replay `{spec}`: {e}"))
-    } else {
-        Ok(multiplayer_seed.unwrap_or(0))
-    }
-}
-
 pub(crate) fn initial_sim_config(args: &crate::main_entry::MissionLaunch) -> engine_api::SimConfig {
     let mut sim_config = args.global_options.sim_config();
     sim_config.golden_eye |= args.goldeneye;
@@ -936,16 +918,6 @@ pub(crate) fn initial_sim_config(args: &crate::main_entry::MissionLaunch) -> eng
         sim_config.script_enabled = false;
     }
     sim_config
-}
-
-#[cfg(test)]
-fn construct_with_initial_rng_seed<T>(
-    args: &crate::main_entry::MissionLaunch,
-    multiplayer_seed: Option<u64>,
-    construct: impl FnOnce(u64) -> Result<T, String>,
-) -> Result<(T, u64), String> {
-    let rng_seed = initial_rng_seed(args, multiplayer_seed)?;
-    construct(rng_seed).map(|value| (value, rng_seed))
 }
 
 /// Loading feedback borrows presentation devices; it never owns mission state.
@@ -2172,10 +2144,6 @@ pub(super) fn init_audio_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_engine::replay::{ReplayData, ReplayFile, ReplayHeader};
-    use std::cell::Cell;
-    use std::collections::BTreeMap;
-    use std::io::Write;
 
     #[test]
     fn named_soldier_speech_preload_uses_the_spawn_profile() {
@@ -2306,6 +2274,8 @@ mod tests {
                 .construct_engine(&args, &mut feedback)
                 .unwrap_or_else(|error| panic!("construct stage: {}", error.message));
             assert_eq!(constructed.rng_seed, 0x1234);
+            assert_eq!(constructed.engine.rng_seed(), 0x1234);
+            assert_eq!(constructed.engine.sim_config(), constructed.sim_config);
             assert!(constructed.engine.sim_config().golden_eye);
             assert_eq!(
                 serde_json::to_value(&constructed.replay_campaign).unwrap(),
@@ -2328,6 +2298,7 @@ mod tests {
                 matches!(join, TerrainJoinPoint::BeforePresentationUpload)
             );
             assert_eq!(loaded.engine_rng_seed, 0x1234);
+            assert_eq!(loaded.engine.rng_seed(), 0x1234);
             assert!(loaded.dev.debug.all_view_cones);
         }
     }
@@ -2541,138 +2512,6 @@ mod tests {
 
         assert!(targets.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(targets.last().copied(), Some(1.0));
-    }
-
-    fn replay_data(seed: u64) -> ReplayData {
-        ReplayFile {
-            header: ReplayHeader {
-                mission_id: "Dem_Lei_MP".into(),
-                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                    "Dem_Lei_MP",
-                    "Leicester",
-                    "Leicester",
-                )
-                .unwrap(),
-                rng_seed: seed,
-                sim_config: engine_api::SimConfig::default(),
-                spellforge_package: None,
-                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
-                total_frames: 0,
-                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
-                campaign: bitcode::encode(&Campaign::default()),
-            },
-            frames: BTreeMap::new(),
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
-        }
-        .try_into()
-        .expect("valid replay fixture")
-    }
-
-    fn replay_file(contents: &str) -> tempfile::NamedTempFile {
-        // Local JSONL admission is explicit by suffix; extensionless files
-        // intentionally use the compact production lane.
-        let mut file = tempfile::Builder::new()
-            .suffix(".rhrec.jsonl")
-            .tempfile()
-            .unwrap();
-        file.write_all(contents.as_bytes()).unwrap();
-        file.flush().unwrap();
-        file
-    }
-
-    fn assert_engine_construction_not_reached(args: &crate::main_entry::MissionLaunch) -> String {
-        let constructed = Cell::new(false);
-        let result = construct_with_initial_rng_seed(args, Some(0xfeed), |seed| {
-            constructed.set(true);
-            Ok(seed)
-        });
-        assert!(!constructed.get());
-        result.unwrap_err()
-    }
-
-    #[test]
-    fn missing_requested_replay_fails_before_engine_construction() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("missing.rhrec.jsonl");
-        let args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                replay: Some(missing.to_string_lossy().into_owned()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let error = assert_engine_construction_not_reached(&args);
-
-        assert!(error.contains("failed to load requested replay"));
-        assert!(
-            error.contains("local JSONL replay decode failed: open"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn malformed_replay_header_fails_before_engine_construction() {
-        let file = replay_file("not a replay header\n");
-        let args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                replay: Some(file.path().to_string_lossy().into_owned()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let error = assert_engine_construction_not_reached(&args);
-
-        assert!(
-            error.contains("local JSONL replay decode failed: bad header:"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn unsupported_replay_version_fails_before_engine_construction() {
-        let file = replay_file(
-            r#"{"mission_id":"Dem_Lei_MP","rng_seed":42,"version":999,"total_frames":0,"campaign":null}
-"#,
-        );
-        let args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                replay: Some(file.path().to_string_lossy().into_owned()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let error = assert_engine_construction_not_reached(&args);
-
-        assert!(error.contains("unsupported replay schema version 999"));
-    }
-
-    #[test]
-    fn explicit_replay_data_reaches_engine_construction_with_header_seed() {
-        let args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                replay: Some("this path must not be loaded".into()),
-                ..Default::default()
-            },
-            replay_data: Some(replay_data(0xdead_beef)),
-            ..Default::default()
-        };
-        let constructed = Cell::new(false);
-
-        let (constructed_seed, rng_seed) =
-            construct_with_initial_rng_seed(&args, Some(0xfeed), |seed| {
-                constructed.set(true);
-                Ok(seed)
-            })
-            .unwrap();
-
-        assert!(constructed.get());
-        assert_eq!(constructed_seed, 0xdead_beef);
-        assert_eq!(rng_seed, 0xdead_beef);
     }
 
     #[test]

@@ -768,14 +768,15 @@ A list of which additional features we have added, which ones we might still wan
   record. Recorded simulation gates remain authoritative during modal playback.
   Native and wasm use fixed-width random index draws for campaign names and
   simulation shuffles, preserving the native stream across both platforms.
-  Missing or invalid referenced history is reported explicitly; it cannot become leaderboard
-  evidence. Fully verified marker restores qualify for the normal leaderboard:
+  Missing or invalid referenced history is reported explicitly; it cannot
+  become leaderboard evidence. Fully verified marker restores qualify for the normal leaderboard:
   verification executes abandoned gameplay too, and restores only states derived
   from verified save markers. The mission directory retains the original signed
   admission for resumes across application restarts. Release rules permit these
   complete histories; embedded foreign snapshots remain ineligible. Browser
-  chunks persist in localStorage, with explicit storage/quota failures; moving
-  this storage to IndexedDB remains a performance and capacity improvement.
+  chunks persist in fixed-size IndexedDB blocks, with a bounded synchronous
+  write-ahead journal protecting urgent save markers. Storage/quota failures
+  are explicit; recovery handles a page closing before journal retirement.
 
 - **Original-game parity traces**
   (`crates/robin_parity/src/original_parity_replay.rs`). A diagnostic runner

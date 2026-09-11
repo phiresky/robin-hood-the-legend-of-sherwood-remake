@@ -433,7 +433,6 @@ impl MissionBootstrap {
             &self.loaded.replay_campaign,
             Arc::clone(&assets),
             args,
-            self.spec.mission_idx,
             &mission_id,
             mission_assets,
             self.loaded.engine_rng_seed,
@@ -2091,6 +2090,10 @@ mod tests {
         let args = crate::main_entry::MissionLaunch {
             global_options: callbacks.application_context().clone(),
             replay_data: Some(replay),
+            config: crate::main_entry::CliArgs {
+                start_paused: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let profiles = std::sync::Arc::clone(&bootstrap.loaded.assets.profile_manager);
@@ -2112,7 +2115,6 @@ mod tests {
             &bootstrap.loaded.replay_campaign,
             std::sync::Arc::new(bootstrap.loaded.assets),
             &args,
-            0,
             &descriptor.mission_basename,
             descriptor.clone(),
             0,
@@ -2121,6 +2123,11 @@ mod tests {
             None,
         );
         assert!(replay.player.is_some());
+        assert!(replay.start_paused);
+        let header = replay.player.as_ref().unwrap().header();
+        assert_eq!(header.mission_assets, descriptor);
+        assert_eq!(header.rng_seed, 0);
+        assert_eq!(header.sim_config, bootstrap.loaded.engine_sim_config);
         assert!(replay.recorder.is_none());
         assert!(replay.rollback_checker.is_none());
         let allowed =

@@ -473,7 +473,7 @@ impl EnemyAi {
                 let target = self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick);
                 if let Some(target) = target {
                     self.base.primary_target = Some(target);
-                    self.attack_enemy(target.get(), None, ctx, tick, None);
+                    self.attack_enemy(target.get(), ctx, tick, None);
                     return;
                 }
             }
@@ -622,16 +622,12 @@ impl EnemyAi {
         // scans the complete same-camp fighter registry and gates each entry
         // with the owner's omnidirectional detection (whose radius is profile /
         // posture dependent and may exceed the 500-unit swordfight radius).
-        // Rebuild the decision-only aggregate fields from that complete camp
-        // snapshot, leaving `nearby_fighters` radius semantics untouched for
-        // combat-position and swordfight callers.
-        let mut battle_tick = tick.clone();
-        battle_tick.friends_lower_company = 0;
-        battle_tick.soldiers_lower_pride = false;
-        battle_tick.friends_nearer_to_enemy = 0;
-        battle_tick.us_battle_points = 100 + self.soldier_profile_pride as u32;
-        battle_tick.has_officer_nearby = false;
-        battle_tick.simple_soldiers_near = false;
+        // Compute decision-local aggregates in this registry scan. They are
+        // not caller inputs: nearby-fighter geometry keeps its separate
+        // combat-position and swordfight semantics, without cloning the tick.
+        let mut friends_lower_company = 0_u16;
+        let mut soldiers_lower_pride = false;
+        let mut simple_soldiers_near = false;
         let debug_them = super::them_lifecycle_debug_matches(ctx);
 
         self.base.list_us.clear();
@@ -640,7 +636,7 @@ impl EnemyAi {
         // registry. PCs and soldiers therefore have to remain interleaved:
         // every admitted candidate performs an opaque visibility query, and
         // changing that query order changes the spatial visibility cache.
-        for fighter in battle_fighter_candidates(&battle_tick.fighter_registry, self.base.me) {
+        for fighter in battle_fighter_candidates(&tick.fighter_registry, self.base.me) {
             let target = ctx.entity_view(fighter.handle).unwrap_or_else(|| {
                 panic!(
                     "battle-planning camp fighter {} is absent from the AI entity view",
@@ -648,7 +644,7 @@ impl EnemyAi {
                 )
             });
             let (position_world, direction) = if fighter.is_soldier {
-                let friend = battle_tick
+                let friend = tick
                     .camp_soldiers
                     .iter()
                     .find(|friend| friend.handle == fighter.handle)
@@ -682,12 +678,11 @@ impl EnemyAi {
             if fighter.is_pc {
                 self.base.list_us.push(fighter.handle);
                 if self.company_number > 0 {
-                    battle_tick.friends_lower_company =
-                        battle_tick.friends_lower_company.saturating_add(1);
+                    friends_lower_company = friends_lower_company.saturating_add(1);
                 }
                 continue;
             }
-            let friend = battle_tick
+            let friend = tick
                 .camp_soldiers
                 .iter()
                 .find(|friend| friend.handle == fighter.handle)
@@ -715,15 +710,11 @@ impl EnemyAi {
                 && (self.base.current_substate == Substate::AttackingReactiontime
                     || friend.ai_state == AiState::Attacking)
             {
-                battle_tick.friends_lower_company =
-                    battle_tick.friends_lower_company.saturating_add(1);
+                friends_lower_company = friends_lower_company.saturating_add(1);
             }
-            battle_tick.soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
-            battle_tick.us_battle_points += 100 + friend.pride as u32;
-            battle_tick.simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
-            battle_tick.has_officer_nearby |= friend.rank == ProfileRank::Officer;
+            soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
+            simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
         }
-        let tick = &battle_tick;
 
         // The original game's battle decision snapshots the current substate into a
         // stack-local `oldSubstate` before performing any decision work.
@@ -1205,9 +1196,9 @@ impl EnemyAi {
             // (1) Predecision: Offensive or defensive?
             let predecision = self.make_battle_predecisions(sim, ctx, tick);
 
-            // Use engine-populated cached values for battle context.
-            let friends_with_lower_company = tick.friends_lower_company;
-            let soldiers_with_lower_pride = tick.soldiers_lower_pride;
+            // Use the aggregates computed by this decision's camp scan.
+            let friends_with_lower_company = friends_lower_company;
+            let soldiers_with_lower_pride = soldiers_lower_pride;
 
             if self.combat_trainer {
                 decision = Decision::Observe;
@@ -1304,7 +1295,7 @@ impl EnemyAi {
                         decision = Decision::TowerGuardObserve;
                     }
                 } else if self.get_rank() == ProfileRank::Officer
-                    && tick.simple_soldiers_near
+                    && simple_soldiers_near
                     && !self.base.friends_are_alerted
                     && self.base.blood_alcohol == 0
                 {
@@ -1403,8 +1394,8 @@ impl EnemyAi {
             primary_target = ?self.base.primary_target,
             num_enemies_i_can_see,
             friends_nearer_to_enemy,
-            soldiers_lower_pride = tick.soldiers_lower_pride,
-            friends_lower_company = tick.friends_lower_company,
+            soldiers_lower_pride = soldiers_lower_pride,
+            friends_lower_company = friends_lower_company,
             "battle_decisions: chose decision"
         );
         if crate::ai_enemy::battle_decision_debug_enabled() {
@@ -1501,7 +1492,7 @@ impl EnemyAi {
                     );
                     if let Some(target) = target {
                         self.base.primary_target = Some(target);
-                        self.attack_enemy(target.get(), Some(&mut *global), ctx, tick, grid);
+                        self.attack_enemy(target.get(), ctx, tick, grid);
                         if self
                             .base
                             .outbox
@@ -2597,7 +2588,6 @@ impl EnemyAi {
     pub(super) fn attack_enemy(
         &mut self,
         enemy: HumanHandle,
-        global: Option<&mut AiGlobalState>,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -2643,14 +2633,6 @@ impl EnemyAi {
 
         // primary_target then emoticon.
         self.base.primary_target = Some(AiEntityHandle::new(enemy));
-        if let Some(global) = global
-            && !global
-                .same_frame_target_claims
-                .iter()
-                .any(|&(attacker, target)| attacker == self.base.me && target == enemy)
-        {
-            global.same_frame_target_claims.push((self.base.me, enemy));
-        }
         debug_assert!(
             ctx.entity_view(enemy)
                 .map(|v| ctx.is_hostile_with(v.camp))
@@ -2660,12 +2642,7 @@ impl EnemyAi {
         self.base.set_emoticon(EmoticonType::XMark);
 
         // Compute distance from `seek_position` (which is now fresh).
-        let distance = {
-            let dx = ctx.position.x - self.base.seek_position.x;
-            let dy = ctx.position.y - self.base.seek_position.y;
-            (dx * dx + dy * dy).sqrt()
-        };
-        self.reconsider_enemy_approach(false, distance, ctx, tick, grid);
+        self.reconsider_enemy_approach(false, ctx, tick, grid);
     }
 
     // -----------------------------------------------------------------------
@@ -2676,8 +2653,7 @@ impl EnemyAi {
     /// Decide how to approach the primary target: run when far, walk
     /// when close, fight when in melee range.
     ///
-    /// `distance` is the world-distance from self to the primary target
-    /// (caller computes it because the AI struct doesn't own a position).
+    /// Distance is sampled here from the target-specific live position.
     /// `seek_position` must already be set to the target's position
     /// before calling.
     ///
@@ -2687,7 +2663,6 @@ impl EnemyAi {
     pub fn reconsider_enemy_approach(
         &mut self,
         reachpoint: bool,
-        _distance_arg: f32,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -2696,12 +2671,11 @@ impl EnemyAi {
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
             eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} distance_arg_bits={:08x} state={:?}/{:?} primary={:?} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
+                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} state={:?}/{:?} primary={:?} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order,
                 reachpoint,
-                _distance_arg.to_bits(),
                 self.base.current_state,
                 self.base.current_substate,
                 self.base.primary_target,
@@ -4718,7 +4692,7 @@ mod tests {
             ..AiContext::test_fixture()
         };
 
-        ai.attack_enemy(252, None, &ctx, &tick, None);
+        ai.attack_enemy(252, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(252)));
         assert_eq!(ai.base.seek_position, authoritative);
@@ -4768,7 +4742,7 @@ mod tests {
             ..FighterSnapshot::default()
         });
 
-        ai.attack_enemy(137, None, &ctx, &tick, None);
+        ai.attack_enemy(137, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(137)));
         assert_eq!(ai.base.seek_position, live_target);
@@ -5513,7 +5487,7 @@ mod tests {
             ..Position::default()
         });
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         // begin_swordfight raises Engage before its state change suspends the
         // actor-outbox prefix into the queued state-change owner work; the
@@ -5594,7 +5568,7 @@ mod tests {
             level: 0,
         });
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         let expected_entry = Position {
             x: 410.0,
@@ -5668,7 +5642,7 @@ mod tests {
             level: 0,
         });
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(173)));
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
@@ -5723,7 +5697,7 @@ mod tests {
         tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
         tick.primary_target_position = Some(target_position);
 
-        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(true, &ctx, &tick, None);
 
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
         let transition = ai
@@ -5839,7 +5813,7 @@ mod tests {
         tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(198));
         tick.primary_target_position = Some(target_position);
 
-        ai.reconsider_enemy_approach(true, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(true, &ctx, &tick, None);
 
         let work = &ai.base.outbox.reentrant.owner_work;
         let crate::ai::AiOwnerWork::StateChange(old_notification) = &work[0] else {
@@ -6062,7 +6036,7 @@ mod tests {
         // "walking circus pyramid" command comparison.
         tick.primary_target_animation = Some(crate::order::OrderType::WalkingCarryingOnShoulders);
 
-        ai.reconsider_enemy_approach(false, 0.0, &ctx, &tick, None);
+        ai.reconsider_enemy_approach(false, &ctx, &tick, None);
 
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert!(!ai.base.already_on_point);
@@ -6089,6 +6063,29 @@ mod tests {
         // nearer friends are therefore insufficient; four are sufficient.
         assert!(!enough_nearer_friends_to_observe(3, 1, 45));
         assert!(enough_nearer_friends_to_observe(4, 1, 45));
+    }
+
+    #[test]
+    fn friend_distance_gate_uses_selected_target_with_source_units() {
+        // Exercise the live battle helpers, not the removed detection-time
+        // aggregate whose value was discarded before every decision.
+        let owner_world = crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0);
+        let target_world = crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
+        let target = Position {
+            x: 100.0,
+            ..Position::default()
+        };
+        let friend = Position {
+            x: 50.0,
+            ..Position::default()
+        };
+        let distance = battle_owner_target_square_distance(owner_world, target_world);
+        assert!(battle_friend_is_nearer(friend, target, distance));
+        let other_target = Position {
+            x: -1000.0,
+            ..Position::default()
+        };
+        assert!(!battle_friend_is_nearer(friend, other_target, distance));
     }
 
     #[test]

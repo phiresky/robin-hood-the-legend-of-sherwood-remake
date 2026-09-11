@@ -23,17 +23,6 @@ pub(super) struct FrameStart {
     pub(super) mp_clock_pause: bool,
 }
 
-/// State handed from modal/recorder bookkeeping to presentation.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub(super) struct FramePresentationState {
-    pub(super) frame: MissionFrame,
-    pub(super) rewind_active: bool,
-    pub(super) consumed_buffered: bool,
-    pub(super) shift_held: bool,
-    pub(super) modal_rendered: bool,
-    pub(super) history_commit_pending: bool,
-}
-
 /// Deterministic and presentation flags carried across the tick boundary.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct PreparedFrame {
