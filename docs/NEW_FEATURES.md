@@ -768,7 +768,7 @@ A list of which additional features we have added, which ones we might still wan
   record. Recorded simulation gates remain authoritative during modal playback.
   Native and wasm use fixed-width random index draws for campaign names and
   simulation shuffles, preserving the native stream across both platforms.
-  Current native save schema is 75 and replay schema is 33. Missing or invalid
+  Current native save schema is 76 and replay schema is 34. Missing or invalid
   referenced history is reported explicitly; it cannot become leaderboard
   evidence. Fully verified marker restores qualify for the normal leaderboard:
   verification executes abandoned gameplay too, and restores only states derived
@@ -1133,3 +1133,15 @@ through the normal load path, without depending on the original save file.
 Clean same-session saves still use compact load-back markers. Loading after a
 terminal recording starts a new recording with the embedded restore boundary.
 Save loads remain ineligible for ranked submissions.
+
+### Ordered pending AI detectable mutations
+
+Pending AI detectable additions, appends, removals, and entity removals share
+one authoritative FIFO, preserving their emission order through save/load,
+rollback, and reentrant owner boundaries. This changes persisted state and
+state hashes, including snapshots with no pending mutations. The coordinated
+native contract is save 76, replay 34, and multiplayer protocol 42; ranked
+admission and browser invitations require the same current versions. Earlier
+Rust saves/replays and peers are rejected by the existing strict version gates,
+not silently migrated. Original-game save import and original parity trace
+formats remain separate and unchanged.

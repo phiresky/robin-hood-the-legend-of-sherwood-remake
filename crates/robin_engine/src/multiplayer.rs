@@ -67,7 +67,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// messages to that complete current-main wire contract.
 /// Protocol 40 adds reversible background-patch configuration and activation
 /// targets to the engine snapshots exchanged by peers.
-pub const NET_PROTOCOL_VERSION: u32 = 41;
+/// Protocol 42 replaces four pending AI detectable queues with an ordered FIFO
+/// in authoritative snapshots and state hashes (save 76 / replay 34).
+pub const NET_PROTOCOL_VERSION: u32 = 42;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1817,7 +1819,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_includes_all_version_38_authority_rules() {
+    fn protocol_version_includes_ordered_ai_detectable_mutations() {
         // Version 38 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
@@ -1832,8 +1834,9 @@ mod tests {
         // snapshot bytes. Exact resumable full-mod admission and Spellforge
         // package identity are also part of the protocol contract, as are the
         // targeted authenticated leaderboard co-sign and official-ranked-
-        // session messages.
-        assert_eq!(NET_PROTOCOL_VERSION, 41);
+        // session messages. Version 42 additionally carries pending detectable
+        // mutations in authoritative FIFO order in snapshots and state hashes.
+        assert_eq!(NET_PROTOCOL_VERSION, 42);
     }
 
     #[test]

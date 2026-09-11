@@ -17,7 +17,7 @@ fn ranked_protocol_tracks_exact_runtime_schemas() {
     );
     assert_eq!(
         robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-        41,
-        "expanded deterministic achievement state requires network protocol 41",
+        42,
+        "authoritative AI detectable FIFO ordering requires network protocol 42",
     );
 }

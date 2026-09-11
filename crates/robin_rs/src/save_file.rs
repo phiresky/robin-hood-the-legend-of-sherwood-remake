@@ -697,7 +697,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v73** (2026-09-08, reversible background patches): adds the opt-in
 ///   simulation rule and remembered activation targets needed to reverse
 ///   animated patches after saving, loading, or rewinding.
-pub const SAVE_FORMAT_VERSION: u32 = 75;
+/// - **v76** (ordered AI detectable mutations): replaces the four pending
+///   detectable queues with one authoritative FIFO. Queue order is persisted
+///   and hashed; older native snapshots are rejected rather than reordered.
+pub const SAVE_FORMAT_VERSION: u32 = 76;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1310,8 +1313,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_reversible_background_patches() {
-        assert_eq!(SAVE_FORMAT_VERSION, 75);
+    fn save_format_version_includes_ordered_ai_detectable_mutations() {
+        assert_eq!(SAVE_FORMAT_VERSION, 76);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -1994,6 +1997,26 @@ mod tests {
         assert_eq!(
             message,
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 46")
+        );
+    }
+
+    #[test]
+    fn read_rejects_pre_fifo_schema_before_deserializing_engine() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pre_fifo_save.json");
+        // The intentionally incomplete engine must not be decoded using the
+        // new queue layout, even if all old pending queues would be empty.
+        let old_save = serde_json::json!({
+            "header": { "magic": SAVE_MAGIC, "version": 75 },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("pre-FIFO snapshots must be rejected at the header");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 75")
         );
     }
 
