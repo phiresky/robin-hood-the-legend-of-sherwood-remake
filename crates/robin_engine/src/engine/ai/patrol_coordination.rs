@@ -554,7 +554,13 @@ impl EngineInner {
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
             self.debug_patrol_turn_lifecycle("before_coordinate_think", minion_id);
             self.dispatch_think_with_drain_mode(
-                sim, minion_id, &stimulus, &ctx, &tick_data, assets, true, true,
+                sim,
+                minion_id,
+                &stimulus,
+                &ctx,
+                &tick_data,
+                assets,
+                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_deferred_turn(),
             );
             // Patrol coordination constructs its Move element inline in the
             // original game, making the command query report MOVE_OK immediately.

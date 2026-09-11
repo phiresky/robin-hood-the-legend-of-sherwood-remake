@@ -2605,7 +2605,7 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
         .orders
         .push(AiOrderIntent::face_toward(target.x, target.y));
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     let turn_sequence = engine
         .orders
@@ -2717,7 +2717,7 @@ fn face_to_waits_for_manager_regardless_of_owner_drain_mode() {
         .orders
         .push(AiOrderIntent::face_direction(9));
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     let turn_sequence = engine
         .orders
@@ -2814,7 +2814,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
             .push(AiOrderIntent::new(OrderType::RunningUpright, 900.0, 1700.0));
     }
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     let old = engine
         .orders
@@ -2971,7 +2971,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         .orders
         .push(intent);
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
     assert!(
@@ -3024,7 +3024,7 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         .orders
         .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     assert_eq!(engine.orders.pending_move_requests.len(), 1);
     assert!(
@@ -3164,7 +3164,7 @@ fn fallback_staging_preserves_authored_path_waiter_tail_after_waiter_is_gone() {
         .orders
         .push(fallback);
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     assert_eq!(engine.orders.pending_move_requests.len(), 1);
     assert!(
@@ -3200,7 +3200,7 @@ fn ordinary_move_staging_does_not_invent_path_waiter_tail() {
         .orders
         .push(AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0));
 
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
     assert_eq!(engine.orders.pending_move_requests.len(), 1);
     assert!(

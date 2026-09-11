@@ -13,7 +13,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        defer_turn_instruction: bool,
+        turn: TurnInstruction,
     ) {
         let relays = self
             .world
@@ -132,8 +132,7 @@ impl EngineInner {
                     &ctx,
                     &tick_data,
                     assets,
-                    true,
-                    defer_turn_instruction,
+                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
                 );
             }
         }
@@ -148,7 +147,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        defer_turn_instruction: bool,
+        turn: TurnInstruction,
     ) {
         let requests = self
             .world
@@ -248,10 +247,7 @@ impl EngineInner {
                     sim,
                     chief_id,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                        true,
-                        defer_turn_instruction,
-                    ),
+                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
                 );
                 continue;
             }
@@ -297,8 +293,7 @@ impl EngineInner {
                 &caller_ctx,
                 &caller_tick,
                 assets,
-                true,
-                defer_turn_instruction,
+                crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
             );
         }
     }
@@ -308,7 +303,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
-        defer_turn_instruction: bool,
+        turn: TurnInstruction,
     ) {
         let requests = self
             .world
@@ -468,18 +463,14 @@ impl EngineInner {
                     sim,
                     source_id,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                        true,
-                        defer_turn_instruction,
-                    ),
+                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
                 );
             } else {
                 self.drain_ai_owner_work_for_mode(
                     sim,
                     assets,
                     source_id,
-                    true,
-                    defer_turn_instruction,
+                    crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST.with_turn(turn),
                 );
             }
         }

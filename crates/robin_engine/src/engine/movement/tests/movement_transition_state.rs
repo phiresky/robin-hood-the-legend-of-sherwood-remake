@@ -143,7 +143,7 @@ mod suite {
             .ai_controller_mut()
             .unwrap()
             .run_to_map_exit(destination);
-        map_exit.launch_pending_orders_for_npc_mode(&sim, &assets, map_owner, false);
+        map_exit.launch_pending_orders_for_npc(&sim, &assets, map_owner);
         let launched = map_exit.drain_pending_move_requests_for_owner(&sim, map_owner);
         assert_eq!(
             launched.len(),
@@ -192,7 +192,7 @@ mod suite {
                     ordinary_destination.x,
                     ordinary_destination.y,
                 ));
-            ordinary.launch_pending_orders_for_npc_mode(&sim, &assets, ordinary_owner, false);
+            ordinary.launch_pending_orders_for_npc(&sim, &assets, ordinary_owner);
             assert!(
                 ordinary
                     .drain_pending_move_requests_for_owner(&sim, ordinary_owner)
@@ -811,7 +811,7 @@ mod suite {
 
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
-        engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+        engine.launch_pending_orders_for_npc(&sim, &assets, owner);
 
         assert_eq!(
             engine
@@ -856,7 +856,7 @@ mod suite {
             goto.move_flags = MoveFlags::STRAIGHT.bits() as u16;
             ai.outbox.actor.orders.push(goto);
         }
-        engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+        engine.launch_pending_orders_for_npc(&sim, &assets, owner);
         let mut display = crate::engine::HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 

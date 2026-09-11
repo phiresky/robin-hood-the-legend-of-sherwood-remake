@@ -11240,31 +11240,14 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        self.launch_pending_orders_for_npc_mode(sim, assets, entity_id, false);
+        self.launch_pending_orders_for_npc_after_halt(sim, assets, entity_id, false);
     }
 
-    pub(super) fn launch_pending_orders_for_npc_mode(
+    pub(super) fn launch_pending_orders_for_npc_after_halt(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        defer_turn_instruction: bool,
-    ) {
-        self.launch_pending_orders_for_npc_mode_after_halt(
-            sim,
-            assets,
-            entity_id,
-            defer_turn_instruction,
-            false,
-        );
-    }
-
-    pub(super) fn launch_pending_orders_for_npc_mode_after_halt(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        _defer_turn_instruction: bool,
         halt_already_applied: bool,
     ) {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()

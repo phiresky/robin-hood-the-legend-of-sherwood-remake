@@ -3687,8 +3687,7 @@ impl EngineInner {
             stimulus,
             ctx,
             Some(tick_data),
-            false,
-            false,
+            crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
         )
     }
 
@@ -3708,8 +3707,7 @@ impl EngineInner {
             stimulus,
             ctx,
             Some(tick_data),
-            true,
-            false,
+            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
         )
     }
 
@@ -3722,7 +3720,13 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
     ) -> bool {
         self.dispatch_filtered_stimulus_with_owner_mode(
-            sim, assets, entity_id, stimulus, ctx, None, true, false,
+            sim,
+            assets,
+            entity_id,
+            stimulus,
+            ctx,
+            None,
+            crate::engine::ai::OwnerBoundaryPolicy::WITHOUT_FORECAST,
         )
     }
 
@@ -3734,8 +3738,7 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
         ctx: &crate::ai::AiContext,
         enemy_tick_data: Option<&crate::ai::AiPerTickData>,
-        owner_local_no_forecast: bool,
-        defer_turn_instruction: bool,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
     ) -> bool {
         // The original game filters AI events before the main AI update
         // during AI initialization. Keep this diagnostic at that
@@ -4106,13 +4109,7 @@ impl EngineInner {
         // State changes call FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
-        self.drain_ai_owner_work_for_mode(
-            sim,
-            assets,
-            entity_id,
-            owner_local_no_forecast,
-            defer_turn_instruction,
-        );
+        self.drain_ai_owner_work_for_mode(sim, assets, entity_id, policy);
         handled
     }
 
@@ -4139,7 +4136,12 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: crate::element::EntityId,
     ) {
-        self.drain_ai_owner_work_for_mode(sim, assets, owner, false, false);
+        self.drain_ai_owner_work_for_mode(
+            sim,
+            assets,
+            owner,
+            crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
+        );
     }
 
     pub(super) fn drain_ai_owner_work_for_mode(
@@ -4147,16 +4149,14 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: crate::element::EntityId,
-        owner_local_no_forecast: bool,
-        defer_turn_instruction: bool,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
     ) {
         self.drain_ai_owner_work_for_boundary_mode(
             sim,
             assets,
             owner,
-            owner_local_no_forecast,
-            defer_turn_instruction,
-            true,
+            policy,
+            crate::engine::ai::CompletionBoundary::OwnerReturn,
         );
     }
 
@@ -4165,9 +4165,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: crate::element::EntityId,
-        owner_local_no_forecast: bool,
-        defer_turn_instruction: bool,
-        surface_completion: bool,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         enum OwnerAiKind {
@@ -4286,15 +4285,7 @@ impl EngineInner {
                             std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions),
                         )
                     };
-                    self.drain_direct_ai_owner_boundary_mode(
-                        sim,
-                        owner,
-                        assets,
-                        crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                            owner_local_no_forecast,
-                            defer_turn_instruction,
-                        ),
-                    );
+                    self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
                     let ai = self
                         .world
                         .entities
@@ -4797,7 +4788,7 @@ impl EngineInner {
                             .reentrant
                             .self_stimuli
                             .push(callback.into());
-                        if owner_local_no_forecast {
+                        if policy.without_forecast() {
                             self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
                         } else {
                             self.drain_self_stimuli_for_npc(sim, owner, assets);
@@ -4919,15 +4910,7 @@ impl EngineInner {
                         Some(owner_position_for_tail),
                         &owner_boundary_positions,
                     );
-                    self.drain_direct_ai_owner_boundary_mode(
-                        sim,
-                        owner,
-                        assets,
-                        crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                            owner_local_no_forecast,
-                            defer_turn_instruction,
-                        ),
-                    );
+                    self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
 
                     let ai = self
                         .world
@@ -4998,25 +4981,11 @@ impl EngineInner {
                     } else {
                         // Ordinary return-to-duty handling resumes on the same call stack
                         // and recursively closes its completion callbacks.
-                        if surface_completion {
-                            self.drain_direct_ai_owner_boundary_mode(
-                                sim,
-                                owner,
-                                assets,
-                                crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                                    owner_local_no_forecast,
-                                    defer_turn_instruction,
-                                ),
-                            );
+                        if completion_boundary.surfaces_completion() {
+                            self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
                         } else {
                             self.drain_direct_ai_owner_prefix_boundary_mode(
-                                sim,
-                                owner,
-                                assets,
-                                crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                                    owner_local_no_forecast,
-                                    defer_turn_instruction,
-                                ),
+                                sim, owner, assets, policy,
                             );
                         }
                     }
@@ -5034,15 +5003,7 @@ impl EngineInner {
                         true,
                         &owner_boundary_positions,
                     );
-                    self.drain_direct_ai_owner_boundary_mode(
-                        sim,
-                        owner,
-                        assets,
-                        crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                            owner_local_no_forecast,
-                            defer_turn_instruction,
-                        ),
-                    );
+                    self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty => {
@@ -5419,7 +5380,7 @@ impl EngineInner {
                         });
                     let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
                     if settlement.invoke_finished_callback {
-                        if owner_local_no_forecast {
+                        if policy.without_forecast() {
                             self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
                         } else {
                             self.drain_self_stimuli_for_npc(sim, owner, assets);
@@ -5744,10 +5705,7 @@ impl EngineInner {
                     sim,
                     owner,
                     assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::from_legacy_flags(
-                        owner_local_no_forecast,
-                        true,
-                    ),
+                    policy.with_deferred_turn(),
                 );
                 let ai = self
                     .world

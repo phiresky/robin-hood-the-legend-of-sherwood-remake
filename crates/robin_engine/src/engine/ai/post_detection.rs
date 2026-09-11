@@ -779,8 +779,11 @@ impl EngineInner {
                 &ctx,
                 &tick_data,
                 assets,
-                false,
-                positions_before_movement.is_some(),
+                if positions_before_movement.is_some() {
+                    crate::engine::ai::OwnerBoundaryPolicy::CURRENT.with_deferred_turn()
+                } else {
+                    crate::engine::ai::OwnerBoundaryPolicy::CURRENT
+                },
             );
             if trace_shadow_delivery {
                 let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {

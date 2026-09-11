@@ -764,7 +764,7 @@ fn set_state_halt_prefix_retains_detached_goto_until_engine_rejection() {
     // the AI borrow is released. The original game reports this while queuing movement
     // inline to enclosing tick completion, which recursively dispatches the
     // fallback seek event.
-    engine.launch_pending_orders_for_npc_mode(&sim, &assets, owner, false);
+    engine.launch_pending_orders_for_npc(&sim, &assets, owner);
     engine.surface_synchronous_completion_events_for_owner(owner);
     let ai = engine
         .get_entity(owner)
@@ -7323,7 +7323,12 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         .expect("call rejector has EnemyAi")
         .set_state(AiState::Attacking, Substate::AttackingSwordfight);
 
-    engine.process_synchronous_think_results_for(&sim, officer_id, &assets, true);
+    engine.process_synchronous_think_results_for(
+        &sim,
+        officer_id,
+        &assets,
+        crate::engine::ai::TurnInstruction::Deferred,
+    );
 
     let officer = engine
         .get_entity(officer_id)
@@ -7696,7 +7701,12 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             continuation: ThinkResultContinuation::OfficerCalledSoldier,
         });
 
-    engine.process_synchronous_think_results_for(&sim, officer_id, &assets, true);
+    engine.process_synchronous_think_results_for(
+        &sim,
+        officer_id,
+        &assets,
+        crate::engine::ai::TurnInstruction::Deferred,
+    );
 
     let officer = engine
         .get_entity(officer_id)

@@ -207,7 +207,12 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_pending_for_npc_mode(sim, npc_id, assets, false, false);
+        self.drain_pending_for_npc_mode(
+            sim,
+            npc_id,
+            assets,
+            crate::engine::ai::OwnerBoundaryPolicy::CURRENT,
+        );
     }
 
     pub(in crate::engine) fn drain_pending_for_npc_mode(
@@ -215,16 +220,14 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        owner_local_no_forecast: bool,
-        defer_turn_instruction: bool,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
     ) {
         self.drain_pending_for_npc_boundary_mode(
             sim,
             npc_id,
             assets,
-            owner_local_no_forecast,
-            defer_turn_instruction,
-            true,
+            policy,
+            crate::engine::ai::CompletionBoundary::OwnerReturn,
         );
     }
 
@@ -233,9 +236,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        owner_local_no_forecast: bool,
-        defer_turn_instruction: bool,
-        surface_completion: bool,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
         // Direct engine-owned AI calls also enter this drain. Close the
         // state-change callback boundary before consuming halt/effect/order work.
@@ -243,9 +245,8 @@ impl EngineInner {
             sim,
             assets,
             npc_id,
-            owner_local_no_forecast,
-            defer_turn_instruction,
-            surface_completion,
+            policy,
+            completion_boundary,
         );
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
@@ -759,13 +760,7 @@ impl EngineInner {
             ai.outbox.actor.orders = before;
             after
         };
-        self.launch_pending_orders_for_npc_mode_after_halt(
-            sim,
-            assets,
-            npc_id,
-            defer_turn_instruction,
-            halt_count != 0,
-        );
+        self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, halt_count != 0);
         // The original game constructs and launches its movement sequence inline
         // inside the AI call. Promote this owner's queued intent now so path
         // topology and any construction-time RNG are observed at this exact
@@ -791,7 +786,7 @@ impl EngineInner {
             // behind it as well so that phase arbitrates the two elements in
             // authored FIFO order instead of eagerly instructing the Turn
             // past the still-Todo attentive barrier.
-            self.launch_pending_orders_for_npc_mode_after_halt(sim, assets, npc_id, true, true);
+            self.launch_pending_orders_for_npc_after_halt(sim, assets, npc_id, true);
             // Entering the default state sets attentive mode and then the
             // caller immediately requests movement in the original game. The attentive
             // element must be registered first, but the movement request still constructs
@@ -1684,13 +1679,7 @@ impl EngineInner {
             // The resumed tail contains state changes, focusing, and movement.
             // Close their owner-local callbacks and actor effects before the
             // enclosing synchronous Panic continuation returns.
-            self.drain_pending_for_npc_mode(
-                sim,
-                npc_id,
-                assets,
-                owner_local_no_forecast,
-                defer_turn_instruction,
-            );
+            self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
         }
 
         let has_panic_seek_fallback = self
@@ -1810,13 +1799,7 @@ impl EngineInner {
                 .and_then(Entity::enemy_ai_mut)
                 .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} has no enemy AI"))
                 .get_battle_overview(0, &ctx, &tick);
-            self.drain_pending_for_npc_mode(
-                sim,
-                npc_id,
-                assets,
-                owner_local_no_forecast,
-                defer_turn_instruction,
-            );
+            self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
         }
     }
 }

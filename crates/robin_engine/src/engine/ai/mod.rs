@@ -13,7 +13,9 @@ mod detection;
 mod event_dispatch;
 mod initialization;
 mod owner_scheduling;
-pub(in crate::engine) use owner_scheduling::OwnerBoundaryPolicy;
+pub(in crate::engine) use owner_scheduling::{
+    CompletionBoundary, OwnerBoundaryPolicy, TurnInstruction,
+};
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
