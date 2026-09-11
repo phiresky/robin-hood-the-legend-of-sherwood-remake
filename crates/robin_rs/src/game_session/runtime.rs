@@ -3911,6 +3911,14 @@ mod tests {
                 4096.0,
             )
             .unwrap();
+            // Populate canonical serialization input, not a synthetic script
+            // bootstrap. Engine tests cover the actual SCB/native writes.
+            let mut expected_globals = vec![0; 16];
+            expected_globals[0] = 7;
+            expected_globals[15] = 9;
+            let mut fixture = serde_json::to_value(&engine).unwrap();
+            fixture["scripts"]["globals"] = serde_json::json!(expected_globals);
+            engine = serde_json::from_value(fixture).unwrap();
             let initial_engine = engine.clone();
             let mut host = Host::scratch(1024.0, 768.0);
             let mut game = Game::default();
@@ -3981,6 +3989,10 @@ mod tests {
             decoded
                 .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
                 .unwrap();
+            assert_eq!(
+                engine.parity_engine_state().script_globals,
+                expected_globals
+            );
             let mut restored = MissionFrame::new(0);
             restored.bind_timeline(live.current_frame());
             restored
@@ -4109,6 +4121,10 @@ mod tests {
                 }
                 if ordinal == load_ordinal {
                     assert_eq!(
+                        manager.engine.parity_engine_state().script_globals,
+                        expected_globals
+                    );
+                    assert_eq!(
                         robin_engine::replay::state_hash(&manager.engine),
                         restored_hash
                     );
@@ -4124,6 +4140,10 @@ mod tests {
             assert_eq!(
                 robin_engine::replay::state_hash(&manager.engine),
                 final_hash
+            );
+            assert_eq!(
+                manager.engine.parity_engine_state().script_globals,
+                expected_globals
             );
             assert_eq!(
                 serde_json::to_value(&playback_host.audio.sound).unwrap(),

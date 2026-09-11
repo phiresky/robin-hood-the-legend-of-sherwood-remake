@@ -1791,6 +1791,37 @@ mod tests {
     }
 
     #[test]
+    fn save_apply_preserves_populated_canonical_script_globals_and_zero_holes() {
+        let (engine, _) = fresh_engine();
+        // This intentionally populated serialization input tests client save
+        // persistence. Real SCB/native global writes are covered in the engine.
+        let mut expected = vec![0; 16];
+        expected[0] = 7;
+        expected[15] = 9;
+        let mut fixture = serde_json::to_value(&engine).unwrap();
+        fixture["scripts"]["globals"] = serde_json::json!(expected);
+        let engine: Engine = serde_json::from_value(fixture).unwrap();
+        assert_eq!(engine.parity_engine_state().script_globals, expected);
+
+        let host = Host::scratch(800.0, 600.0);
+        let save = GameSaveFile::capture(&engine, &host, 7, "canonical globals".into());
+        assert_eq!(save.engine.parity_engine_state().script_globals, expected);
+        let bytes = serde_json::to_vec(&save).unwrap();
+        let decoded: GameSaveFile = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            decoded.engine.parity_engine_state().script_globals,
+            expected
+        );
+
+        let (mut restored, assets) = fresh_engine();
+        let mut restored_host = Host::scratch(800.0, 600.0);
+        decoded
+            .apply_to(&mut restored, &mut restored_host, &assets)
+            .expect("apply populated canonical-global save");
+        assert_eq!(restored.parity_engine_state().script_globals, expected);
+    }
+
+    #[test]
     fn save_apply_round_trips_live_ai_slot_zero_without_null_collapse() {
         let (mut engine, assets) = fresh_engine();
         let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
