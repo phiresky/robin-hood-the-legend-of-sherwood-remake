@@ -31,6 +31,31 @@ fn encode_map(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn copy_mod(source: &Path, destination: &Path) -> Result<usize> {
+    ensure!(source.is_dir(), "source is not a directory");
+    ensure!(!destination.exists(), "destination already exists");
+    let canonical_source = source
+        .canonicalize()
+        .with_context(|| format!("resolve source {}", source.display()))?;
+    // create_dir requires an existing parent. Resolve that parent before any
+    // output is created so aliases cannot hide output inside the input tree.
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let canonical_destination = parent
+        .canonicalize()
+        .with_context(|| format!("resolve destination parent {}", parent.display()))?
+        .join(
+            destination
+                .file_name()
+                .context("destination has no directory name")?,
+        );
+    ensure!(
+        !canonical_destination.starts_with(&canonical_source),
+        "destination {} is inside source {}",
+        destination.display(),
+        source.display()
+    );
     std::fs::create_dir(destination)?;
     if source
         .file_name()
@@ -128,8 +153,6 @@ fn main() -> Result<()> {
     }
     let source = args.source.as_deref().expect("required source");
     let destination = args.destination.as_deref().expect("required destination");
-    ensure!(source.is_dir(), "source is not a directory");
-    ensure!(!destination.exists(), "destination already exists");
     let count = copy_mod(source, destination).with_context(|| source.display().to_string())?;
     println!("Verified {count} frames in {}", destination.display());
     Ok(())
@@ -138,6 +161,76 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_output_is_rejected_before_any_output_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let nested = source.join("authored");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(source.join("details.json"), b"authored data").unwrap();
+        for destination in [source.join("output"), nested.join("output")] {
+            let error = copy_mod(&source, &destination).unwrap_err();
+            assert!(error.to_string().contains("inside source"), "{error:#}");
+            assert!(!destination.exists());
+        }
+        assert_eq!(
+            std::fs::read(source.join("details.json")).unwrap(),
+            b"authored data"
+        );
+        assert_eq!(std::fs::read_dir(&source).unwrap().count(), 2);
+        assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_destination_parent_cannot_hide_output_inside_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let destination = alias.join("output");
+        let error = copy_mod(&source, &destination).unwrap_err();
+        assert!(error.to_string().contains("inside source"), "{error:#}");
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(&source).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn sibling_copy_succeeds_and_existing_destination_remains_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("details.json"), b"original").unwrap();
+        // A shared textual prefix is not path ancestry.
+        let destination = temp.path().join("source-encoded");
+        assert_eq!(copy_mod(&source, &destination).unwrap(), 0);
+        assert_eq!(
+            std::fs::read(destination.join("details.json")).unwrap(),
+            b"original"
+        );
+        std::fs::write(source.join("details.json"), b"changed source").unwrap();
+        let error = copy_mod(&source, &destination).unwrap_err();
+        assert!(
+            error.to_string().contains("destination already exists"),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(destination.join("details.json")).unwrap(),
+            b"original"
+        );
+    }
+
+    #[test]
+    fn missing_destination_parent_does_not_create_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        let parent = temp.path().join("missing");
+        assert!(copy_mod(&source, &parent.join("output")).is_err());
+        assert!(!parent.exists());
+    }
 
     #[test]
     fn cli_preserves_all_modes_and_rejects_ambiguous_invocations() {
