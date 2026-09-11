@@ -77,7 +77,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// snapshot state (save 79 / replay 37).
 /// Protocol 46 stores the optional recording session directly instead of a
 /// recorder wrapper with a write-only sequence ID (save 80 / replay 38).
-pub const NET_PROTOCOL_VERSION: u32 = 46;
+/// Protocol 47 removes unused computed-location dummy and object repulsive-point
+/// snapshot fields (save 81 / replay 39).
+pub const NET_PROTOCOL_VERSION: u32 = 47;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1827,7 +1829,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_uses_canonical_recording_session() {
+    fn protocol_version_excludes_unused_location_and_object_fields() {
         // Version 38 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
@@ -1852,7 +1854,9 @@ mod tests {
         // claims from snapshots and state hashes.
         // Version 46 replaces the recorder wrapper and write-only sequence
         // ID with the optional recording session in snapshots and hashes.
-        assert_eq!(NET_PROTOCOL_VERSION, 46);
+        // Version 47 removes the unused computed-location dummy from snapshots
+        // and hashes, and the already hash-excluded object repulsive-point copy.
+        assert_eq!(NET_PROTOCOL_VERSION, 47);
     }
 
     #[test]

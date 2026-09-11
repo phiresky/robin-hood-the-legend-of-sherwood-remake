@@ -1263,7 +1263,7 @@ mod tests {
             NetMsg::RankedCoSignContext(context),
             NetMsg::RankedSubmissionAccepted(accepted),
         ];
-        assert_eq!(NET_PROTOCOL_VERSION, 46);
+        assert_eq!(NET_PROTOCOL_VERSION, 47);
         for message in messages {
             assert_eq!(net_frame_class(&message), NetFrameClass::Control);
             let encoded = encode_msg(&message);
