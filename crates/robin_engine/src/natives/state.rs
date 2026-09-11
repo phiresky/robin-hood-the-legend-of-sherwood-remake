@@ -32,7 +32,10 @@ pub struct ScriptState {
     /// the storage list, so it still shifts every later location handle.
     pub computed_locations: Vec<Option<ComputedScriptLocation>>,
     /// State of an in-progress `Start`/`Then`/`Thanx` recording.
-    pub sequence_recorder: SequenceRecorderState,
+    /// Require an explicit null for idle state rather than accepting a missing
+    /// field from a truncated snapshot after removing the old wrapper.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub sequence_recorder: Option<RecordingSession>,
 }
 
 #[derive(
@@ -62,22 +65,4 @@ pub struct ComputedScriptLocation {
     /// `active = true`, `legacy_dummy = false`.
     pub active: bool,
     pub legacy_dummy: bool,
-}
-
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct SequenceRecorderState {
-    pub recording: Option<RecordingSession>,
-    /// Assigned by the earlier port's chained script-step handling. It is
-    /// currently not read and is retained only until the recorder itself can
-    /// be simplified.
-    pub sequence_id: i32,
 }

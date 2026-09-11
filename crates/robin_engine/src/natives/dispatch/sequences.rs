@@ -422,7 +422,6 @@ impl NativeContext<'_, '_> {
                 let pre_record_size = self
                     .script_state
                     .sequence_recorder
-                    .recording
                     .as_ref()
                     .map(|r| r.current_size())
                     .unwrap_or(0);
@@ -448,7 +447,7 @@ impl NativeContext<'_, '_> {
                 // NONINTERRUPTABLE walks bump every just-added
                 // element to Script priority.
                 if matches!(style, 2 | 3)
-                    && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut()
+                    && let Some(rec) = self.script_state.sequence_recorder.as_mut()
                 {
                     rec.bump_priority_from(
                         pre_record_size,
@@ -487,7 +486,6 @@ impl NativeContext<'_, '_> {
                 let pre_record_size = self
                     .script_state
                     .sequence_recorder
-                    .recording
                     .as_ref()
                     .map(|r| r.current_size())
                     .unwrap_or(0);
@@ -513,7 +511,7 @@ impl NativeContext<'_, '_> {
                 // just-added element to Preference priority (one
                 // rung weaker than RecordMove's Script).
                 if matches!(style, 2 | 3)
-                    && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut()
+                    && let Some(rec) = self.script_state.sequence_recorder.as_mut()
                 {
                     rec.bump_priority_from(
                         pre_record_size,
@@ -595,7 +593,6 @@ impl NativeContext<'_, '_> {
                 let pre_record_size = self
                     .script_state
                     .sequence_recorder
-                    .recording
                     .as_ref()
                     .map(|r| r.current_size())
                     .unwrap_or(0);
@@ -621,7 +618,7 @@ impl NativeContext<'_, '_> {
                 // Apply the same NONINTERRUPTABLE bump the inner
                 // RecordMove would apply.
                 if matches!(style, 2 | 3)
-                    && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut()
+                    && let Some(rec) = self.script_state.sequence_recorder.as_mut()
                 {
                     rec.bump_priority_from(
                         pre_record_size,
@@ -682,7 +679,6 @@ impl NativeContext<'_, '_> {
                 let already_moving = self
                     .script_state
                     .sequence_recorder
-                    .recording
                     .as_ref()
                     .is_some_and(|r| r.moving_actors.contains_key(&actor));
 
@@ -735,7 +731,7 @@ impl NativeContext<'_, '_> {
 
                 // Always refresh the cached destination on both
                 // the insert and update paths.
-                if let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
+                if let Some(rec) = self.script_state.sequence_recorder.as_mut() {
                     let (layer, sector) = dest_layer_sector
                         .expect("validated RecordEnterGame point has no motion sector");
                     rec.moving_actors.insert(
@@ -850,7 +846,7 @@ impl NativeContext<'_, '_> {
                 // Insert the two moves at adjacent sequence
                 // levels so they execute sequentially rather
                 // than concurrently.
-                if let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
+                if let Some(rec) = self.script_state.sequence_recorder.as_mut() {
                     rec.advance_level();
                 }
 

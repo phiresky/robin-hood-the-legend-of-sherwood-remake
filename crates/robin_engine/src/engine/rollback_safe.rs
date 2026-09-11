@@ -2889,7 +2889,7 @@ impl Engine {
             });
         };
         script.assert_no_active_call_frames();
-        if script.state.sequence_recorder.recording.is_some() {
+        if script.state.sequence_recorder.is_some() {
             panic!("parity script capture reached an open sequence recording");
         }
 
