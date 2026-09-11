@@ -81,11 +81,8 @@ fn item_preview_enabled(engine: &Engine, profile_setting: bool) -> bool {
     profile_setting && engine.original_rng_replay_cursor().is_none()
 }
 
-/// Integration seam for the ground-target arm supplied by the stone-noise
-/// feature. Keeping the presentation here makes the mechanics and radius use
-/// one canonical item config without duplicating the authoritative stimulus.
-#[allow(dead_code)]
-pub(crate) fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, center: MapPoint) {
+/// Use the canonical noise radius without duplicating the authoritative stimulus.
+fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, center: MapPoint) {
     if engine.sim_config().item_gameplay.stone_ground_distraction
         && item_preview_enabled(
             engine,
@@ -1372,6 +1369,13 @@ fn cursor_for_stone(
                         Action::Stone,
                         shift_held,
                     );
+                    if host.frontend.trajectory_preview().is_valid() {
+                        set_stone_distraction_preview(
+                            engine,
+                            host,
+                            trajectory_landing(host, mouse_map_pt),
+                        );
+                    }
                 } else {
                     host.frontend.reject_trajectory_hit();
                 }
@@ -1966,6 +1970,120 @@ mod tests {
             )
             .expect("selection command admission");
         pc
+    }
+
+    #[test]
+    fn stone_ground_cursor_publishes_only_eligible_landing_preview() {
+        use robin_engine::coordinates::WorldPoint3D;
+        use robin_engine::element::TrajectoryPoint;
+        use robin_engine::engine::input::TrajectoryPreview;
+        use robin_engine::engine::{EngineArgs, LevelLoadArgs, SimConfig};
+
+        // Exercise the cursor arm, including its terrain and trajectory gates,
+        // rather than calling the presentation helper directly. Shift planning
+        // bypasses the live actor's range check just as it does in the UI.
+        for (setting, gameplay, parity, valid_ground, valid_arc) in [
+            (true, true, false, true, true),
+            (false, true, false, true, true),
+            (true, false, false, true, true),
+            (true, true, true, true, true),
+            (true, true, false, false, true),
+            (true, true, false, true, false),
+        ] {
+            let (_, mut assets, mut host) = fixture();
+            let loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(
+                br#"{
+                    "map_filename": "stone-preview-test", "spawn": [10, 10],
+                    "spawn_player": false,
+                    "walkable_polygon": [[0, 0], [200, 0], [200, 200], [0, 200]]
+                }"#,
+            )
+            .expect("ground fixture");
+            let mut campaign = Campaign::default();
+            campaign.missions.push(robin_engine::mission::Mission {
+                profile_idx: Some(0),
+                ..Default::default()
+            });
+            campaign.current_mission_idx = Some(0);
+            let mut sim_config = SimConfig {
+                script_enabled: false,
+                ..Default::default()
+            };
+            sim_config.item_gameplay.stone_ground_distraction = gameplay;
+            let engine = Engine::new(EngineArgs {
+                campaign,
+                level: LevelLoadArgs {
+                    assets: &mut assets,
+                    level_directory: "",
+                    progress: &mut |_| {},
+                    loaded,
+                    bg_pixel_dims: (400.0, 400.0),
+                },
+                ground_mark_sprite: None,
+                titbit_row_frame_counts: Vec::new(),
+                rng_seed: 0,
+                original_rng_replay: parity.then(|| vec![0; 1024]),
+                sim_config,
+            })
+            .expect("stone cursor engine");
+            let mut preferences = host.frontend.preferences().gameplay_config();
+            preferences.item_previews.stone_distraction_area = setting;
+            crate::host::FrontendPreferences::new(
+                Default::default(),
+                Default::default(),
+                preferences,
+                &Default::default(),
+            )
+            .apply(&mut host.frontend);
+            let landing = MapPoint::new(75.0, 80.0);
+            if valid_arc {
+                host.frontend
+                    .apply_trajectory_preview(TrajectoryPreview::ShowArc {
+                        points: vec![TrajectoryPoint {
+                            position: WorldPoint3D::new(landing.x, landing.y, 0.0),
+                            time: 3,
+                        }],
+                        start: WorldPoint3D::new(10.0, 10.0, 0.0),
+                        layer: 0,
+                        crumpled: false,
+                    });
+            }
+            let mouse = if valid_ground {
+                MapPoint::new(50.0, 50.0)
+            } else {
+                MapPoint::new(300.0, 300.0)
+            };
+            assert_eq!(
+                engine.is_mouse_sector_valid_for_ground_target(mouse),
+                valid_ground
+            );
+            let cursor = cursor_for_stone(&engine, &mut host, &assets, mouse, true);
+            let ground_allowed =
+                engine.sim_config().item_gameplay.stone_ground_distraction && valid_ground;
+            assert_eq!(
+                cursor,
+                if ground_allowed {
+                    RHMOUSE_STONE_YES
+                } else {
+                    RHMOUSE_STONE_NO
+                }
+            );
+            let preview = host.frontend.item_effect_preview();
+            assert_eq!(
+                preview.is_some(),
+                setting && gameplay && !parity && valid_ground && valid_arc
+            );
+            if let Some(preview) = preview {
+                assert_eq!(preview.center, landing);
+                assert_ne!(preview.center, mouse);
+                assert_eq!(
+                    preview.radius,
+                    Some(robin_engine::gameplay_config::STONE_DISTRACTION_RADIUS as u16)
+                );
+                assert_eq!(preview.localization_key, "item_preview.stone.distraction");
+                assert!(!preview.blocked);
+            }
+        }
     }
 
     #[test]
