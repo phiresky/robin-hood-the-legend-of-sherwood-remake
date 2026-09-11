@@ -3302,79 +3302,8 @@ impl EngineInner {
                         });
                 }
 
-                // Precompute the nearby-friend facts consumed by
-                // battle planning. Do not update AiController::list_us here:
-                // The original game only rebuilds its persistent ally list at the
-                // specific AI routines that own that list (not during the
-                // per-frame detection snapshot).
-                const US_LIST_SQ_RADIUS: f32 = 500.0 * 500.0;
-                let my_company = enemy_ai.company_number;
-                let my_pride = enemy_ai.soldier_profile_pride;
-                tick_data.friends_lower_company = 0;
-                tick_data.soldiers_lower_pride = false;
-                // Battle predecisions: self contributes 100 + own pride.
-                tick_data.us_battle_points = 100 + my_pride as u32;
-                tick_data.has_officer_nearby = false;
-                tick_data.simple_soldiers_near = false;
-
-                // Also add visible PCs to us-list (they fight on our
-                // side when the NPC is Royalist, but for Lacklandists
-                // PCs are enemies — skip). For now, only add NPCs.
-                for ss in soldier_snapshots {
-                    if ss.id == npc_id || !diplomacy.is_allied(ss.camp, my_camp) {
-                        continue;
-                    }
-                    if !ss.able_to_fight {
-                        continue;
-                    }
-                    if ss.layer != layer {
-                        continue;
-                    }
-                    // Distance check
-                    let fdx = ss.position.x - eye.x;
-                    let fdy =
-                        (ss.position.y - eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    let friend_sq_dist = fdx * fdx + fdy * fdy;
-                    if friend_sq_dist > US_LIST_SQ_RADIUS {
-                        continue;
-                    }
-                    // Only count soldiers in active states
-                    match ss.ai_state {
-                        AiState::Default
-                        | AiState::Wondering
-                        | AiState::Seeking
-                        | AiState::Attacking => {}
-                        _ => continue,
-                    }
-                    // Company number tracking.
-                    if my_company > ss.company_number
-                        && (enemy_ai.base.current_substate
-                            == crate::ai::Substate::AttackingReactiontime
-                            || ss.ai_state == AiState::Attacking)
-                    {
-                        tick_data.friends_lower_company += 1;
-                    }
-
-                    // Pride tracking.
-                    if my_pride > ss.pride {
-                        tick_data.soldiers_lower_pride = true;
-                    }
-
-                    // Friend battle points.
-                    tick_data.us_battle_points += 100 + ss.pride as u32;
-
-                    // Simple soldiers near (for officer alert decision).
-                    if ss.rank == crate::profiles::ProfileRank::Soldier {
-                        tick_data.simple_soldiers_near = true;
-                    }
-
-                    // Officer nearby.
-                    if ss.rank == crate::profiles::ProfileRank::Officer {
-                        tick_data.has_officer_nearby = true;
-                    }
-                }
-
-                // Primary target multiplicity
+                // Keep the owner-ordered multiplicity snapshot. Ally battle
+                // aggregates are computed only at the live decision boundary.
                 tick_data.primary_target_multiplicity.clear();
                 for (&target, &mult) in &primary_target_multiplicity {
                     tick_data.primary_target_multiplicity.push((target, mult));

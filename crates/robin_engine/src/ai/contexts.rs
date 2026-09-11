@@ -1075,15 +1075,6 @@ pub struct AiPerTickData {
     pub patrol_chief_state: AiState,
     pub enemy_sq_distances: Vec<(HumanHandle, i32)>,
     pub min_sq_enemy_distance: i32,
-    pub friends_lower_company: u16,
-    pub soldiers_lower_pride: bool,
-    /// Sum of battle points for our side — 100 + pride per soldier, 100
-    /// per PC. Used by battle predecisions.
-    pub us_battle_points: u32,
-    /// True if any friend (not self) in `list_us` has officer rank.
-    pub has_officer_nearby: bool,
-    /// True if any friend in `list_us` has RANK_SOLDIER.
-    pub simple_soldiers_near: bool,
     pub primary_target_multiplicity: Vec<(HumanHandle, u32)>,
     /// Complete fighter-registry snapshot for direct pointer dereferences.
     ///
@@ -1395,11 +1386,6 @@ impl AiPerTickData {
             patrol_chief_state: AiState::Default,
             enemy_sq_distances: Vec::new(),
             min_sq_enemy_distance: i32::MAX,
-            friends_lower_company: 0,
-            soldiers_lower_pride: false,
-            us_battle_points: 0,
-            has_officer_nearby: false,
-            simple_soldiers_near: false,
             primary_target_multiplicity: Vec::new(),
             fighter_registry: Vec::new(),
             nearby_fighters: Vec::new(),

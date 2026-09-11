@@ -1213,61 +1213,6 @@ impl EngineInner {
             .map(|(&target, &count)| (target, count))
             .collect();
 
-        {
-            let my_company = enemy_ai.company_number;
-            let my_pride = enemy_ai.soldier_profile_pride;
-            tick.us_battle_points = 100 + my_pride as u32;
-
-            for friend in &tick.nearby_fighters {
-                if !friend.is_friendly || friend.handle == me_handle || !friend.is_able_to_fight {
-                    continue;
-                }
-
-                if friend.is_pc {
-                    tick.us_battle_points += 100;
-                    if my_company > 0 {
-                        tick.friends_lower_company = tick.friends_lower_company.saturating_add(1);
-                    }
-                    continue;
-                }
-
-                if !matches!(
-                    friend.ai_state,
-                    crate::ai::AiState::Default
-                        | crate::ai::AiState::Wondering
-                        | crate::ai::AiState::Seeking
-                        | crate::ai::AiState::Attacking
-                ) {
-                    continue;
-                }
-
-                let friend_company = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == friend.handle)
-                    .map(|cs| cs.company_number)
-                    .unwrap_or(u16::MAX);
-                if my_company > friend_company
-                    && (ai.current_substate == crate::ai::Substate::AttackingReactiontime
-                        || friend.ai_state == crate::ai::AiState::Attacking)
-                {
-                    tick.friends_lower_company = tick.friends_lower_company.saturating_add(1);
-                }
-
-                if my_pride > friend.soldier_profile_pride {
-                    tick.soldiers_lower_pride = true;
-                }
-                tick.us_battle_points += 100 + friend.soldier_profile_pride as u32;
-
-                if friend.rank == crate::profiles::ProfileRank::Soldier {
-                    tick.simple_soldiers_near = true;
-                }
-                if friend.rank == crate::profiles::ProfileRank::Officer {
-                    tick.has_officer_nearby = true;
-                }
-            }
-        }
-
         // Friend-swap candidates for enemy approach reconsideration.
         tick.friend_swap_candidates = build_friend_swap_candidates(
             &self.world.entities,

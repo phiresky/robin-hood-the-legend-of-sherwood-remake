@@ -622,15 +622,12 @@ impl EnemyAi {
         // scans the complete same-camp fighter registry and gates each entry
         // with the owner's omnidirectional detection (whose radius is profile /
         // posture dependent and may exceed the 500-unit swordfight radius).
-        // Rebuild the decision-only aggregate fields from that complete camp
-        // snapshot, leaving `nearby_fighters` radius semantics untouched for
-        // combat-position and swordfight callers.
-        let mut battle_tick = tick.clone();
-        battle_tick.friends_lower_company = 0;
-        battle_tick.soldiers_lower_pride = false;
-        battle_tick.us_battle_points = 100 + self.soldier_profile_pride as u32;
-        battle_tick.has_officer_nearby = false;
-        battle_tick.simple_soldiers_near = false;
+        // Compute decision-local aggregates in this registry scan. They are
+        // not caller inputs: nearby-fighter geometry keeps its separate
+        // combat-position and swordfight semantics, without cloning the tick.
+        let mut friends_lower_company = 0_u16;
+        let mut soldiers_lower_pride = false;
+        let mut simple_soldiers_near = false;
         let debug_them = super::them_lifecycle_debug_matches(ctx);
 
         self.base.list_us.clear();
@@ -639,7 +636,7 @@ impl EnemyAi {
         // registry. PCs and soldiers therefore have to remain interleaved:
         // every admitted candidate performs an opaque visibility query, and
         // changing that query order changes the spatial visibility cache.
-        for fighter in battle_fighter_candidates(&battle_tick.fighter_registry, self.base.me) {
+        for fighter in battle_fighter_candidates(&tick.fighter_registry, self.base.me) {
             let target = ctx.entity_view(fighter.handle).unwrap_or_else(|| {
                 panic!(
                     "battle-planning camp fighter {} is absent from the AI entity view",
@@ -647,7 +644,7 @@ impl EnemyAi {
                 )
             });
             let (position_world, direction) = if fighter.is_soldier {
-                let friend = battle_tick
+                let friend = tick
                     .camp_soldiers
                     .iter()
                     .find(|friend| friend.handle == fighter.handle)
@@ -681,12 +678,11 @@ impl EnemyAi {
             if fighter.is_pc {
                 self.base.list_us.push(fighter.handle);
                 if self.company_number > 0 {
-                    battle_tick.friends_lower_company =
-                        battle_tick.friends_lower_company.saturating_add(1);
+                    friends_lower_company = friends_lower_company.saturating_add(1);
                 }
                 continue;
             }
-            let friend = battle_tick
+            let friend = tick
                 .camp_soldiers
                 .iter()
                 .find(|friend| friend.handle == fighter.handle)
@@ -714,15 +710,11 @@ impl EnemyAi {
                 && (self.base.current_substate == Substate::AttackingReactiontime
                     || friend.ai_state == AiState::Attacking)
             {
-                battle_tick.friends_lower_company =
-                    battle_tick.friends_lower_company.saturating_add(1);
+                friends_lower_company = friends_lower_company.saturating_add(1);
             }
-            battle_tick.soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
-            battle_tick.us_battle_points += 100 + friend.pride as u32;
-            battle_tick.simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
-            battle_tick.has_officer_nearby |= friend.rank == ProfileRank::Officer;
+            soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
+            simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
         }
-        let tick = &battle_tick;
 
         // The original game's battle decision snapshots the current substate into a
         // stack-local `oldSubstate` before performing any decision work.
@@ -1205,8 +1197,8 @@ impl EnemyAi {
             let predecision = self.make_battle_predecisions(sim, ctx, tick);
 
             // Use engine-populated cached values for battle context.
-            let friends_with_lower_company = tick.friends_lower_company;
-            let soldiers_with_lower_pride = tick.soldiers_lower_pride;
+            let friends_with_lower_company = friends_lower_company;
+            let soldiers_with_lower_pride = soldiers_lower_pride;
 
             if self.combat_trainer {
                 decision = Decision::Observe;
@@ -1303,7 +1295,7 @@ impl EnemyAi {
                         decision = Decision::TowerGuardObserve;
                     }
                 } else if self.get_rank() == ProfileRank::Officer
-                    && tick.simple_soldiers_near
+                    && simple_soldiers_near
                     && !self.base.friends_are_alerted
                     && self.base.blood_alcohol == 0
                 {
@@ -1402,8 +1394,8 @@ impl EnemyAi {
             primary_target = ?self.base.primary_target,
             num_enemies_i_can_see,
             friends_nearer_to_enemy,
-            soldiers_lower_pride = tick.soldiers_lower_pride,
-            friends_lower_company = tick.friends_lower_company,
+            soldiers_lower_pride = soldiers_lower_pride,
+            friends_lower_company = friends_lower_company,
             "battle_decisions: chose decision"
         );
         if crate::ai_enemy::battle_decision_debug_enabled() {
