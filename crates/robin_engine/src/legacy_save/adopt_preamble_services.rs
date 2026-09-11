@@ -68,11 +68,6 @@ impl LegacyPreambleServicesPlan {
         ui.start_mission_enabled = self.game.start_mission_enabled;
         ui.quit_mission_enabled = self.game.quit_mission_enabled;
 
-        // The game flag is authoritative at this point in the original game
-        // load. Rust's mission-script lifecycle consumes the equivalent flag.
-        if let Some(script) = engine.scripts.mission.as_mut() {
-            script.post_initialized = self.game.post_initialized;
-        }
         self.host
     }
 }
@@ -521,5 +516,20 @@ mod tests {
         assert!(engine.script_domains.mission_ui.campaign_map);
         assert!(engine.script_domains.mission_ui.start_mission_disabled_temp);
         assert_eq!(engine.feedback.sound_sim.sources.num_sources(), 2);
+        assert!(engine.script_domains.mission_ui.game_post_initialized);
+        assert!(engine.scripts.mission.is_none());
+
+        // Import is authoritative even without a VM and in both directions.
+        LegacyPreambleServicesPlan {
+            sound: None,
+            messenger,
+            game: LegacyGameState {
+                post_initialized: false,
+                ..game
+            },
+            host,
+        }
+        .apply(&mut engine);
+        assert!(!engine.script_domains.mission_ui.game_post_initialized);
     }
 }

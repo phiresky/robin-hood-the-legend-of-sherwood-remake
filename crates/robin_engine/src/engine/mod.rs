@@ -5626,13 +5626,15 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        let Some(script) = self.scripts.mission.as_mut() else {
-            return;
-        };
-        if script.post_initialized {
+        if !sim.config().script_enabled || self.script_domains.mission_ui.game_post_initialized {
             return;
         }
-        script.post_initialized = true;
+        // Original RHGame owns this latch, setting it before the optional
+        // callback. A missing VM/function must not leave the game uninitialized.
+        self.script_domains.mission_ui.game_post_initialized = true;
+        if self.scripts.mission.is_none() {
+            return;
+        }
 
         let result = self
             .call_script_vm(

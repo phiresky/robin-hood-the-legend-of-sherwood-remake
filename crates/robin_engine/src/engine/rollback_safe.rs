@@ -5219,6 +5219,43 @@ mod tests {
     }
 
     #[test]
+    fn post_initialize_without_vm_records_the_stage_for_replay() {
+        let (mut live, assets) = frame_api_fixture();
+        assert!(live.inner.scripts.mission.is_none());
+        live.inner.control.sim_config.script_enabled = true;
+        let mut replay = live.clone();
+        let output = live
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_post_initialize(true),
+            )
+            .unwrap();
+        let recorded_stage = output.post_initialize_events.is_some();
+        assert!(
+            recorded_stage,
+            "the latch mutation must be recorded even without VM effects"
+        );
+        assert_eq!(live.parity_game_ui_state()["post_initialized"], true);
+        let replay_output = replay
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_post_initialize(recorded_stage),
+            )
+            .unwrap();
+        assert_eq!(replay_output.state_hash, output.state_hash);
+        assert_eq!(replay.parity_game_ui_state(), live.parity_game_ui_state());
+        assert!(
+            live.advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_post_initialize(true)
+            )
+            .unwrap()
+            .post_initialize_events
+            .is_none()
+        );
+    }
+
+    #[test]
     fn bootstrap_accepts_an_imported_nonzero_initial_frame() {
         let (mut engine, _) = frame_api_fixture();
         let mut imported = engine.inner.clone_authoritative_state();

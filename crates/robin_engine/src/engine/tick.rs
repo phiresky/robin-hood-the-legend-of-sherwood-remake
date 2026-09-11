@@ -2789,13 +2789,22 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
     ) -> Option<super::SideEffects> {
-        let needs_post_initialize = self
-            .scripts
-            .mission
-            .as_ref()
-            .is_some_and(|script| !script.post_initialized);
-        if !needs_post_initialize {
+        if !self.control.sim_config.script_enabled
+            || self.script_domains.mission_ui.game_post_initialized
+        {
             return None;
+        }
+
+        // The game latch advances even without a mission callback. Preserve
+        // the no-VM boundary: no refresh, RNG lease, or effects are consumed.
+        if self.scripts.mission.is_none() {
+            self.script_domains.mission_ui.game_post_initialized = true;
+            // Completion is authoritative even with no callback effects:
+            // the host records Some as the replay's post-initialize stage bit.
+            return Some(super::SideEffects {
+                code: GameCode::LevelInProgress,
+                ..Default::default()
+            });
         }
 
         // PostInitialize can call randomising natives, so keep it on the same

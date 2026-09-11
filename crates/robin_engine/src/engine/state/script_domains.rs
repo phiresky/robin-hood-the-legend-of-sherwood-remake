@@ -104,6 +104,8 @@ pub(crate) struct MissionUiState {
     /// state here; rendering and widget mutation are host-side consequences.
     pub(crate) campaign_map: bool,
     pub(crate) campaign_map_displayed: bool,
+    /// RHGame's serialized one-shot latch, set after refresh/sound and before
+    /// the optional PostInitialize callback. Independent of VM presence.
     pub(crate) game_post_initialized: bool,
     pub(crate) start_mission_disabled_temp: bool,
     pub(crate) quit_mission_disabled_temp: bool,

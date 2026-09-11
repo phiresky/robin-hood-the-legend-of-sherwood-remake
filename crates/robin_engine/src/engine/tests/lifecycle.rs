@@ -8181,13 +8181,25 @@ fn post_initialize_waits_for_post_refresh_stage() {
         "the first simulation frame ran"
     );
     assert!(
-        !engine.scripts.mission.as_ref().unwrap().post_initialized,
+        !engine.script_domains.mission_ui.game_post_initialized,
         "PostInitialize must not run before the first host refresh and sound hourglass"
     );
 
     let rng_seed_before_post_initialize = engine.rng_seed();
+    engine.control.sim_config.script_enabled = false;
+    engine.control.arrow_refresh_pending = true;
+    assert!(
+        engine
+            .perform_post_initialize(&mut display, &assets)
+            .is_none()
+    );
+    assert!(!engine.script_domains.mission_ui.game_post_initialized);
+    assert!(engine.control.arrow_refresh_pending);
+    assert_eq!(engine.rng_seed(), rng_seed_before_post_initialize);
+    engine.control.sim_config.script_enabled = true;
     let first_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
     assert!(first_post_initialize_effects.is_some());
+    assert!(!engine.control.arrow_refresh_pending);
     assert_eq!(
         engine.rng_seed(),
         rng_seed_before_post_initialize,
@@ -8198,14 +8210,14 @@ fn post_initialize_waits_for_post_refresh_stage() {
         "the post-refresh stage must not advance simulation time"
     );
     assert!(
-        engine.scripts.mission.as_ref().unwrap().post_initialized,
+        engine.script_domains.mission_ui.game_post_initialized,
         "the post-refresh stage must dispatch PostInitialize exactly at the frame-one boundary"
     );
 
     let second_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
     assert!(second_post_initialize_effects.is_none());
     assert_eq!(engine.control.frame_counter, 1);
-    assert!(engine.scripts.mission.as_ref().unwrap().post_initialized);
+    assert!(engine.script_domains.mission_ui.game_post_initialized);
 }
 #[test]
 fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
