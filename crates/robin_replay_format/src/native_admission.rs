@@ -55,8 +55,7 @@ const ADMISSION_WORKER_ERROR_LIMIT: usize = (ADMISSION_WORKER_REPLY_LIMIT - 128)
 fn decoder_identity() -> String {
     use sha2::Digest as _;
     let mut digest = sha2::Sha256::new();
-    digest.update(include_bytes!("native_admission.rs"));
-    digest.update(include_bytes!("lib.rs"));
+    digest.update(env!("ROBIN_ADMISSION_SOURCE_SHA256"));
     digest.update(env!("ROBIN_CARGO_LOCK_SHA256"));
     hex::encode(digest.finalize())
 }
