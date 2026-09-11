@@ -6,11 +6,8 @@ No process launch of its own: reuse the bounded, isolated exact-binary harness.
 
 import copy
 import json
-import os
-from pathlib import Path
 import re
-import subprocess
-import sys
+from input_worker import client_key
 
 
 def restored_authority(saved, restored):
@@ -81,8 +78,7 @@ def recording_bounds(directory):
 
 def exercise_save_load(request, wait, display, evidence, summary):
     def key(name):
-        subprocess.run([sys.executable, str(Path(__file__).with_name("client_x11.py")), "key", name],
-                       env={**os.environ, "DISPLAY": display}, check=True, timeout=10)
+        client_key(display, name, evidence)
 
     saved_frame = request("/state")["frame"]
     saved = request("/engine-dump")

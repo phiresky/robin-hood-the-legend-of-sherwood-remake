@@ -6,7 +6,6 @@ Every process gets an unused private runtime root. No player saves are touched.
 """
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +16,8 @@ import time
 import traceback
 import urllib.request
 
-from multiplayer_live import dismiss_briefings
+from input_worker import dismiss_briefings
+from runtime_evidence import DriverInterrupted, failure, finish_children, snapshot_client, stop_process_group, verify_client
 
 
 def main():
@@ -38,23 +38,14 @@ def main():
         parser.error("--save-load requires complete playback, not a bootstrap probe")
     if args.capture_isolation and (args.replay_file or args.bootstrap_probe):
         parser.error("--capture-isolation requires a fresh live session and complete playback")
-    binary = args.binary.resolve(strict=True)
-    data = args.data.resolve(strict=True)
     evidence = args.evidence.resolve()
     evidence.mkdir(parents=True, exist_ok=False)
-    (evidence / "driver.py").write_bytes(Path(__file__).read_bytes())
-    (evidence / "multiplayer_live.py").write_bytes(Path(__file__).with_name("multiplayer_live.py").read_bytes())
-    interfaces = json.loads(subprocess.check_output(["ip", "-j", "link", "show"]))
-    if sorted(interface["ifname"] for interface in interfaces) != ["lo"]:
-        raise RuntimeError("refusing non-isolated network namespace")
-    subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
-    summary = {"snapshot": args.snapshot, "binary": str(binary), "checks": {}}
-    with binary.open("rb") as stream:
-        summary["binary_sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+    summary = {"snapshot": args.snapshot, "binary_source": str(args.binary), "checks": {}, "completed": False}
+    (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
     children, streams = [], []
 
     def interrupted(signum, _frame):
-        raise TimeoutError(f"bounded driver interrupted by signal {signum}")
+        raise DriverInterrupted(f"bounded driver interrupted by signal {signum}")
 
     def wait(description, predicate, seconds=90):
         deadline = time.monotonic() + seconds
@@ -79,24 +70,25 @@ def main():
             raise RuntimeError(f"{path}: {result}")
         return result
 
-    def stop(child):
-        if child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait(timeout=5)
+    stop = stop_process_group
 
+    signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGALRM, interrupted)
     signal.alarm(300)
     try:
+        binary = snapshot_client(args.binary.resolve(strict=True), evidence, summary)
+        data = args.data.resolve(strict=True)
+        (evidence / "driver.py").write_bytes(Path(__file__).read_bytes())
+        interfaces = json.loads(subprocess.check_output(["ip", "-j", "link", "show"], timeout=10))
+        if sorted(interface["ifname"] for interface in interfaces) != ["lo"]:
+            raise RuntimeError("refusing non-isolated network namespace")
+        subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=10)
         read_fd, write_fd = os.pipe()
         xlog = (evidence / "xvfb.log").open("w")
         streams.append(xlog)
         xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0",
-            "1280x1024x24", "-nolisten", "tcp", "-ac"], pass_fds=(write_fd,),
+            "1280x1024x24", "-nolisten", "tcp", "-ac"], start_new_session=True, pass_fds=(write_fd,),
             stdout=xlog, stderr=subprocess.STDOUT)
         children.append(xvfb)
         os.close(write_fd)
@@ -122,7 +114,8 @@ def main():
             logfile = (evidence / f"{name}.log").open("w")
             streams.append(logfile)
             argv = [str(binary), "--no-sound", "--http-server", "7782", *extra]
-            child = subprocess.Popen(argv, cwd=root / "cwd", env=env,
+            verify_client(binary, summary)
+            child = subprocess.Popen(argv, start_new_session=True, cwd=root / "cwd", env=env,
                 stdout=logfile, stderr=subprocess.STDOUT)
             children.append(child)
             summary[name + "_argv"] = argv
@@ -139,13 +132,13 @@ def main():
                 # The initial briefing precedes mission RPC draining. Dismiss
                 # actual setup UI before waiting on its first engine response.
                 try:
-                    dismiss_briefings(display)
+                    dismiss_briefings(display, evidence)
                 except RuntimeError as error:
                     if "no real Robin windows" not in str(error):
                         raise
                 return request("/state", timeout=1)
             wait("live engine RPC", live_state)
-            summary["windows"] = dismiss_briefings(display)
+            summary["windows"] = dismiss_briefings(display, evidence)
             last_dismissal = time.monotonic()
             def ordinary_ticks():
                 nonlocal last_dismissal
@@ -154,7 +147,7 @@ def main():
                 if request("/state")["frame"] >= 5:
                     return True
                 if time.monotonic() - last_dismissal > 1:
-                    dismiss_briefings(display)
+                    dismiss_briefings(display, evidence)
                     last_dismissal = time.monotonic()
                 return False
             wait("ordinary graphical ticks", ordinary_ticks)
@@ -169,7 +162,6 @@ def main():
             if args.save_load:
                 from save_load_live import exercise_save_load
                 (evidence / "save_load_live.py").write_bytes(Path(__file__).with_name("save_load_live.py").read_bytes())
-                (evidence / "client_x11.py").write_bytes(Path(__file__).with_name("client_x11.py").read_bytes())
                 exercise_save_load(request, wait, display, evidence, summary)
             summary["live_state"] = request("/state")
             if args.capture_isolation:
@@ -191,10 +183,7 @@ def main():
             replay.write_text(content)
             summary["checks"]["canonical_compact_export"] = True
             stop(live)
-        if args.save_load:
-            with binary.open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != summary["binary_sha256"]:
-                    raise RuntimeError("binary changed between save/load recording and playback")
+            children.remove(live)
         playback = launch("playback", ["--replay", str(replay),
             "--fast-forward" if args.graphical_replay else "--headless",
             *(["--start-paused"] if args.bootstrap_probe else [])])
@@ -215,7 +204,7 @@ def main():
                 raise RuntimeError(f"replay exited {playback.returncode}; inspect {logpath}")
             if args.graphical_replay and time.monotonic() - last_dismissal > 1:
                 try:
-                    dismiss_briefings(display)
+                    dismiss_briefings(display, evidence)
                 except RuntimeError as error:
                     if "no real Robin windows" not in str(error):
                         raise
@@ -233,15 +222,16 @@ def main():
         summary["checks"]["post_bootstrap_hash_verified"] = True
         summary["completed"] = True
     except Exception as error:
-        summary["error"] = str(error)
+        failure(summary, error)
         summary["traceback"] = traceback.format_exc()
     finally:
         signal.alarm(0)
-        for child in reversed(children):
-            stop(child)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        finish_children(children, summary)
+        (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
         for stream in streams:
             stream.close()
-        (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
         print(json.dumps(summary, indent=2), flush=True)
     return 0 if summary.get("completed") else 1
 

@@ -8,12 +8,11 @@ It never edits game data or reuses a player's save/identity directory.
 
 import argparse
 import concurrent.futures
-import ctypes as c
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -21,66 +20,12 @@ import traceback
 import urllib.request
 
 
+from input_worker import dismiss_briefings
+from runtime_evidence import DriverInterrupted, failure, finish_children, snapshot_client, stop_process_group, verify_client
+
+
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
-
-def dismiss_briefings(display):
-    """Synthetic Return on each real Robin window (not physical input).
-
-    Based on the parallel native-client diagnostic's libX11 injector.
-    """
-    x = c.CDLL("libX11.so.6")
-    ptr, window = c.c_void_p, c.c_ulong
-    x.XOpenDisplay.argtypes, x.XOpenDisplay.restype = [c.c_char_p], ptr
-    x.XDefaultRootWindow.argtypes, x.XDefaultRootWindow.restype = [ptr], window
-    x.XQueryTree.argtypes = [ptr, window, c.POINTER(window), c.POINTER(window), c.POINTER(c.POINTER(window)), c.POINTER(c.c_uint)]
-    x.XFetchName.argtypes = [ptr, window, c.POINTER(c.c_char_p)]
-    x.XStringToKeysym.argtypes, x.XStringToKeysym.restype = [c.c_char_p], c.c_ulong
-    x.XKeysymToKeycode.argtypes, x.XKeysymToKeycode.restype = [ptr, c.c_ulong], c.c_uint
-    x.XSendEvent.argtypes = [ptr, window, c.c_int, c.c_long, ptr]
-    x.XFlush.argtypes = [ptr]
-    x.XSetInputFocus.argtypes = [ptr, window, c.c_int, c.c_ulong]
-    x.XCloseDisplay.argtypes = [ptr]
-    x.XFree.argtypes = [ptr]
-    class InputEvent(c.Structure):
-        _fields_ = [("type", c.c_int), ("serial", c.c_ulong), ("send_event", c.c_int),
-                    ("display", ptr), ("window", window), ("root", window),
-                    ("subwindow", window), ("time", c.c_ulong), ("x", c.c_int),
-                    ("y", c.c_int), ("x_root", c.c_int), ("y_root", c.c_int),
-                    ("state", c.c_uint), ("detail", c.c_uint), ("same_screen", c.c_int)]
-    connection = x.XOpenDisplay(display.encode())
-    if not connection:
-        raise RuntimeError("cannot open diagnostic X display")
-    targets = []
-    try:
-        root = x.XDefaultRootWindow(connection)
-        children, count = c.POINTER(window)(), c.c_uint()
-        parent, returned_root = window(), window()
-        if not x.XQueryTree(connection, root, c.byref(returned_root), c.byref(parent), c.byref(children), c.byref(count)):
-            raise RuntimeError("cannot query diagnostic X display")
-        for index in range(count.value):
-            name = c.c_char_p()
-            if x.XFetchName(connection, children[index], c.byref(name)) and name.value:
-                if "robin" in name.value.decode(errors="replace").lower():
-                    targets.append(children[index])
-                x.XFree(name)
-        x.XFree(children)
-        if not targets:
-            raise RuntimeError("no real Robin windows for briefing dismissal")
-        detail = x.XKeysymToKeycode(connection, x.XStringToKeysym(b"Return"))
-        for target in targets:
-            x.XSetInputFocus(connection, target, 1, 0)
-            for kind, mask in ((2, 1), (3, 2)):
-                event = InputEvent(kind, 0, 1, connection, target, root, 0, 0, 640, 480, 640, 480, 0, detail, 1)
-                backing = (c.c_long * 24)()
-                c.memmove(backing, c.byref(event), c.sizeof(event))
-                if not x.XSendEvent(connection, target, 1, mask, backing):
-                    raise RuntimeError("briefing XSendEvent failed")
-                x.XFlush(connection)
-                time.sleep(0.15)
-    finally:
-        x.XCloseDisplay(connection)
-    return targets
 
 
 def main():
@@ -97,24 +42,13 @@ def main():
     parser.add_argument("--restart-process", action="store_true",
                         help="also diagnose process restart (native transport identity is not durable)")
     args = parser.parse_args()
-    binary = args.binary.resolve(strict=True)
-    data = args.data.resolve(strict=True)
     evidence = args.evidence.resolve()
     evidence.mkdir(parents=True, exist_ok=False)
-    (evidence / "driver.py").write_bytes(Path(__file__).read_bytes())
-    # /sys may retain the mounting namespace's interfaces after unshare;
-    # rtnetlink queries the caller's actual network namespace.
-    interfaces = json.loads(subprocess.check_output(["ip", "-j", "link", "show"]))
-    if sorted(interface["ifname"] for interface in interfaces) != ["lo"]:
-        raise RuntimeError("refusing non-isolated network namespace")
-    subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
     transcript = (evidence / "events.jsonl").open("w", buffering=1)
-    children = []
-    opened = [transcript]
-    summary = {"snapshot": args.snapshot, "binary": str(binary), "data": str(data),
-               "headless": args.headless, "network_interfaces": ["lo"], "checks": {}}
-    with binary.open("rb") as handle:
-        summary["binary_sha256"] = hashlib.file_digest(handle, "sha256").hexdigest()
+    children, opened = [], [transcript]
+    summary = {"snapshot": args.snapshot, "binary_source": str(args.binary), "data": str(args.data),
+               "headless": args.headless, "checks": {}, "completed": False}
+    (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
     started = time.monotonic()
 
     def event(kind, **fields):
@@ -177,18 +111,27 @@ def main():
 
     display = None
     def interrupted(signum, _frame):
-        raise TimeoutError(f"bounded driver interrupted by signal {signum}")
+        raise DriverInterrupted(f"bounded driver interrupted by signal {signum}")
+    signal.signal(signal.SIGINT, interrupted)
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGALRM, interrupted)
     signal.alarm(540)
     try:
+        binary = snapshot_client(args.binary.resolve(strict=True), evidence, summary)
+        data = args.data.resolve(strict=True)
+        (evidence / "driver.py").write_bytes(Path(__file__).read_bytes())
+        interfaces = json.loads(subprocess.check_output(["ip", "-j", "link", "show"], timeout=10))
+        if sorted(interface["ifname"] for interface in interfaces) != ["lo"]:
+            raise RuntimeError("refusing non-isolated network namespace")
+        subprocess.run(["ip", "link", "set", "lo", "up"], check=True, timeout=10)
+        summary["network_interfaces"] = ["lo"]
         if not args.headless:
             read_fd, write_fd = os.pipe()
             logfile = (evidence / "xvfb.log").open("w")
             opened.append(logfile)
             xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0",
                                      "1280x1024x24", "-nolisten", "tcp", "-ac"],
-                                    pass_fds=(write_fd,), stdout=logfile, stderr=subprocess.STDOUT)
+                                    start_new_session=True, pass_fds=(write_fd,), stdout=logfile, stderr=subprocess.STDOUT)
             children.append(xvfb)
             os.close(write_fd)
             with os.fdopen(read_fd) as handle:
@@ -200,6 +143,8 @@ def main():
             peer_root.mkdir(exist_ok=True)
             for directory in ("save", "config", "cache", "data", "runtime", "cwd"):
                 (peer_root / directory).mkdir(exist_ok=True, mode=0o700)
+            shutil.copytree(Path(__file__).resolve().parents[2] / "assets/core-datadir",
+                            peer_root / "cwd/assets/core-datadir", dirs_exist_ok=True)
             env = os.environ.copy()
             for key in ("ROBINHOOD_OVERLAY_DATA_DIRS", "ROBIN_WAIT_FOR_COMMAND", "WAYLAND_DISPLAY"):
                 env.pop(key, None)
@@ -224,7 +169,8 @@ def main():
             logpath = evidence / ("peer-restarted.log" if restart else f"{name}.log")
             logfile = logpath.open("w")
             opened.append(logfile)
-            process = subprocess.Popen(argv, cwd=peer_root / "cwd", env=env,
+            verify_client(binary, summary)
+            process = subprocess.Popen(argv, start_new_session=True, cwd=peer_root / "cwd", env=env,
                                        stdout=logfile, stderr=subprocess.STDOUT)
             children.append(process)
             event("launch", peer=name, pid=process.pid, argv=argv, log=str(logpath))
@@ -266,7 +212,7 @@ def main():
                 raise RuntimeError(f"{name} exited during admission")
         summary["checks"]["two_production_processes_admitted"] = True
         if display:
-            event("synthetic_briefing_return", windows=dismiss_briefings(display))
+            event("synthetic_briefing_return", windows=dismiss_briefings(display, evidence))
         # BeginSim advertises a future wall-clock release; ConnectSeat is a
         # scheduled authoritative input, not guaranteed installed at receipt.
         for port in (7780, 7781):
@@ -312,14 +258,14 @@ def main():
 
         restarted_log = peer_log
         if args.restart_process:
-            peer.terminate()
-            peer.wait(timeout=10)
+            stop_process_group(peer)
+            children.remove(peer)
             event("peer_process_stopped", returncode=peer.returncode)
             time.sleep(0.5)
             peer, restarted_log = launch("renamed-peer", 7781, connect, restart=True)
             wait_for("replacement process BeginSim", lambda: "begin-sim barrier released" in log(restarted_log), 60)
             if display:
-                event("synthetic_replacement_briefing_return", windows=dismiss_briefings(display))
+                event("synthetic_replacement_briefing_return", windows=dismiss_briefings(display, evidence))
 
         start_offset = len(log(restarted_log))
         result = request(7780, "/step-forward", {"n": 4, "synchronized_multiplayer": True}, timeout=20)
@@ -356,26 +302,20 @@ def main():
         if not all(summary["checks"].values()):
             raise RuntimeError("one or more live coverage checks were not established")
     except Exception as error:
-        summary["error"] = str(error)
+        failure(summary, error)
         summary["traceback"] = traceback.format_exc()
         event("failure", error=str(error))
     finally:
         signal.alarm(0)
-        for process in reversed(children):
-            if process.poll() is None:
-                process.send_signal(signal.SIGCONT)
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        finish_children(children, summary)
         summary["elapsed_s"] = round(time.monotonic() - started, 3)
         (evidence / "summary.json").write_text(json.dumps(summary, indent=2))
         event("summary", summary=summary)
         for handle in opened:
             handle.close()
-    return 1 if "error" in summary else 0
+    return 0 if summary.get("completed") else 1
 
 
 if __name__ == "__main__":

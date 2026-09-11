@@ -18,6 +18,7 @@ from pathlib import Path
 import shutil
 import subprocess
 from parity_result import exact_eof, read_result
+from validation.runtime_evidence import snapshot_executable
 
 
 def digest(path: Path) -> str:
@@ -34,11 +35,7 @@ def safe_relative(value: str) -> Path:
 
 def snapshot_runner(source: Path, target: Path) -> str:
     """Pin one executable across the batch even if Cargo replaces its output."""
-    runner_sha = digest(source)
-    shutil.copy2(source, target)
-    if digest(target) != runner_sha:
-        raise ValueError("runner changed while creating isolated executable snapshot")
-    return runner_sha
+    return snapshot_executable(source, target)
 
 
 def main() -> int:

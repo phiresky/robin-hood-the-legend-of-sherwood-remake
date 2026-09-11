@@ -33,7 +33,7 @@ class ResultTests(unittest.TestCase):
             source.write_bytes(b"replacement build")
             self.assertEqual(digest(snapshot), expected)
             self.assertNotEqual(digest(source), expected)
-            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o555)
 
     def test_success_does_not_depend_on_human_wording(self):
         self.assertTrue(exact_eof("new human wording\n" + result_log()))

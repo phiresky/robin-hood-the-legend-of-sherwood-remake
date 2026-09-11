@@ -13,6 +13,8 @@ import sys
 import tempfile
 import tomllib
 
+from runtime_evidence import stop_process_group
+
 ROOT = Path(__file__).resolve().parents[2]
 REPLAY_CHECKS = {"native_playback_finished", "post_bootstrap_hash_verified"}
 LIVE_CHECKS = {"normal_frame_and_manual_steps", "paused_manual_steps",
@@ -88,30 +90,22 @@ def run(argv, *, env=None, timeout=None, log=None):
     """Own the entire runtime process group, including timeout/failure cleanup."""
     print("+ " + " ".join(map(str, argv)), flush=True)
     output = log.open("w") if log else None
-    child = subprocess.Popen(list(map(str, argv)), cwd=ROOT, env=env,
-                             start_new_session=True, stdout=output,
-                             stderr=subprocess.STDOUT if output else None)
+    child = None
     try:
+        child = subprocess.Popen(list(map(str, argv)), cwd=ROOT, env=env,
+                                 start_new_session=True, stdout=output,
+                                 stderr=subprocess.STDOUT if output else None)
         code = child.wait(timeout=timeout)
         if code:
             raise subprocess.CalledProcessError(code, argv)
     finally:
         try:
-            os.killpg(child.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        child.wait()
-        if output:
-            output.close()
-            print(log.read_text(), flush=True)
+            if child is not None:
+                stop_process_group(child)
+        finally:
+            if output:
+                output.close()
+                print(log.read_text(errors="replace"), flush=True)
 
 
 def lock_bindgen_version():
