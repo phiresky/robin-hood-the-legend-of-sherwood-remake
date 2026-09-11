@@ -90,6 +90,11 @@ class QualitySuitesTests(unittest.TestCase):
             assert_boundary("", "robin_assets", {"robin_engine"})
         assert_boundary("robin_assets v0.1.0\nrobin_engine_adapter_fixture v0.1.0", "robin_assets", {"robin_engine"})
 
+    def test_offline_tools_boundary_rejects_client(self):
+        with self.assertRaisesRegex(RuntimeError, "contains"):
+            assert_boundary("robin_modding_tools v0.1.0\nrobin_rs v0.1.0", "robin_modding_tools", {"robin_rs"})
+        assert_boundary("robin_modding_tools v0.1.0\nrobin_assets v0.1.0", "robin_modding_tools", {"robin_rs"})
+
     def test_signer_workspace_dependency_boundary_including_target_and_build_edges(self):
         workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]
         manifests = {}

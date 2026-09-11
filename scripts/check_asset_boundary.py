@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assert the resolved pure-content dependency graph, including target edges."""
+"""Assert content and offline-tool dependency boundaries, including target edges."""
 from pathlib import Path
 import subprocess
 
@@ -12,13 +12,14 @@ def assert_boundary(output, package, forbidden):
         raise RuntimeError(f"Cargo tree did not include selected package {package}")
     unexpected = packages & forbidden
     if unexpected:
-        raise RuntimeError(f"{package} pure codec graph contains {sorted(unexpected)}")
+        raise RuntimeError(f"{package} dependency graph contains {sorted(unexpected)}")
 
 
 def main():
     for package, forbidden in (
         ("robin_assets", {"robin_engine"}),
         ("robin_content", {"robin_engine", "robin_util", "robin_state_hash_derive", "bitcode"}),
+        ("robin_modding_tools", {"robin_rs"}),
     ):
         command = ["cargo", "tree", "--locked", "-p", package,
                    "--no-default-features", "--edges", "normal,build",
