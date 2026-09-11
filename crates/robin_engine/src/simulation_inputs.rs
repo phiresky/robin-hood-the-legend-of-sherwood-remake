@@ -30,7 +30,7 @@ use crate::level_data::LoadedLevel;
 pub const SIMULATION_CONTENT_DOCUMENT_SCHEMA_V1: u32 = 1;
 pub const SIMULATION_CONTENT_COMPONENT_SCHEMA_V1: u32 = 1;
 pub const PREPARED_MISSION_RUN_PROJECTION_SCHEMA_V1: u32 = 2;
-const _: () = assert!(crate::replay::REPLAY_SCHEMA_VERSION == 36);
+const _: () = assert!(crate::replay::REPLAY_SCHEMA_VERSION == 37);
 
 /// Decode the exact canonical official projection SimConfig and prove that no
 /// missing or unknown field was normalized away. Operator tooling and the
@@ -1700,17 +1700,17 @@ mod tests {
             .unwrap()
             .to_string()
         });
-        // Release pins cover replay schema 36 and the exhaustive current
+        // Release pins cover replay schema 37 and the exhaustive current
         // SimConfig, including the default-off background-patch reversal rule.
         assert_eq!(
             observed,
             [
-                "88e67ae5779b73cc30b647831fdb910c4de8a6d7fdab23dae677c0ef006a2bcb",
-                "3d937cb10f4c30dbd5c1298cc3e767e5d890a836f1363f6253410f255510c0a0",
-                "a3f3a80f38c66d1a675ce2747b1e41cdc2ceea0ddb1b3356c5176d5d708a3826",
-                "376b0fcefa25f3c28775524be96dca32320517b257c1ef2667589c33c3d2969a",
-                "602ee5d701f19f9be6ca722ce8f20668c527a101c42b313dad2d9ba84ec137f4",
-                "0caf6a22cac2c5d29e3fccb8e0b797c449903b1ef362e7463bb57f3c3b6efd44",
+                "88158bae34868b6ef085e21bf9d342e21995bde5932a845ebedfb31eb42d4c9e",
+                "8e2628b49f36e3610e66fa848a4d3b7d718400177e40d15c4233c46bd3b8495f",
+                "339386a00ab48a3b2b805c87dcfa64a34a69f9b28f43038ead47529d96fbf72c",
+                "ad521694d5dd09846c8aa0d361a710239336d4418ef9b0f141a74e6319961cc2",
+                "b60ce28d71d2bc0b14ced0e657ff72d34679e1225636916bc4eb76de46eba4a3",
+                "7bd3babeda862f84f5ac32763dc86368e08333a7a2bbcc77499f445e752c33ed",
             ]
         );
     }

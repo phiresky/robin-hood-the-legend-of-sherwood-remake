@@ -73,7 +73,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// snapshots and state hashes (save 77 / replay 35).
 /// Protocol 44 carries one game-owned PostInitialize latch and no unused
 /// imported Messenger copies in native snapshots (save 78 / replay 36).
-pub const NET_PROTOCOL_VERSION: u32 = 44;
+/// Protocol 45 removes unused imported sound and same-frame AI target-claim
+/// snapshot state (save 79 / replay 37).
+pub const NET_PROTOCOL_VERSION: u32 = 45;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1823,7 +1825,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_includes_single_post_initialize_and_no_stale_messenger() {
+    fn protocol_version_excludes_unused_sound_and_ai_claim_state() {
         // Version 38 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
@@ -1844,7 +1846,9 @@ mod tests {
         // script-global storage with one canonical vector in snapshots and hashes.
         // Version 44 removes the duplicate PostInitialize flag and stale
         // imported Messenger blob from native snapshots.
-        assert_eq!(NET_PROTOCOL_VERSION, 44);
+        // Version 45 removes unused imported sound and same-frame AI target
+        // claims from snapshots and state hashes.
+        assert_eq!(NET_PROTOCOL_VERSION, 45);
     }
 
     #[test]

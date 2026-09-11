@@ -707,7 +707,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   PostInitialize is owned by game state, not a duplicate mission-script
 ///   flag; snapshots no longer retain the unused imported Messenger blob.
 ///   Older native snapshot layouts are rejected. Original-game import is unchanged.
-pub const SAVE_FORMAT_VERSION: u32 = 78;
+/// - **v79** (discard unconsumed imported sound and AI claim state): native
+///   snapshots no longer retain the unused imported sound blob or the
+///   unconsumed same-frame AI target claims. Original-game import is unchanged.
+pub const SAVE_FORMAT_VERSION: u32 = 79;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1320,8 +1323,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_single_post_initialize_and_no_stale_messenger() {
-        assert_eq!(SAVE_FORMAT_VERSION, 78);
+    fn save_format_version_excludes_unused_sound_and_ai_claim_state() {
+        assert_eq!(SAVE_FORMAT_VERSION, 79);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -2095,6 +2098,24 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 77")
+        );
+    }
+
+    #[test]
+    fn read_rejects_unused_sound_and_ai_claim_layout_before_engine_decode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pre_sound_and_ai_claim_cleanup_save.json");
+        let old_save = serde_json::json!({
+            "header": { "magic": SAVE_MAGIC, "version": 78 },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("obsolete sound/AI claim snapshots must fail at the header");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 78")
         );
     }
 
