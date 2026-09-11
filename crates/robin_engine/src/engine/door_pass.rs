@@ -750,24 +750,20 @@ impl<'a> PassDoorLaunchContext<'a> {
             self.sequence_manager
                 .set_action_recursive(seq_id, elem_idx, override_action);
         }
-        let mut translated_order_ids: VecDeque<_> = built
+        built.pass.preallocate_pending_order_ids(self.next_order_id);
+        let (initial_step, initial_order_id) = built
             .pass
-            .steps
-            .iter()
-            .map(|_| Some(crate::order::alloc_order_id(self.next_order_id)))
-            .collect();
-        let initial_order_id = translated_order_ids
-            .pop_front()
-            .flatten()
-            .expect("PassDoor translation has no initial order identity");
-        built.pass.preallocated_order_ids = translated_order_ids;
-        let Some(DoorPassStep::Walk {
+            .pop_pending_step()
+            .expect("PassDoor translation has no initial step");
+        let initial_order_id =
+            initial_order_id.expect("fresh PassDoor translation has no initial order identity");
+        let DoorPassStep::Walk {
             destination,
             action,
             reverse,
             compute_direction,
             tolerance,
-        }) = built.pass.steps.pop_front()
+        } = initial_step
         else {
             panic!(
                 "PassDoor translation for owner {entity_id:?}, door {door_index} did not start with a Walk step"

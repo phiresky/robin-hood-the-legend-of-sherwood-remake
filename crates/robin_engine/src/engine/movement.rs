@@ -1710,8 +1710,7 @@ fn synchronize_selected_door_pass_walk_action(
 /// zero-destination `PASSING_DOOR` action point will be materialized again.
 fn discard_lazy_door_pass_following_orders(pass: Option<&mut ActiveDoorPass>) {
     if let Some(pass) = pass {
-        pass.steps.clear();
-        pass.preallocated_order_ids.clear();
+        pass.clear_pending_steps();
     }
 }
 
@@ -1727,40 +1726,34 @@ fn materialize_door_action_point_prefix(
     pass: &mut ActiveDoorPass,
     next_order_id: &mut u32,
 ) -> Vec<crate::order::Order> {
-    assert!(
-        pass.preallocated_order_ids.len() <= pass.steps.len(),
-        "door-pass order identity queue exceeds its translated step queue"
-    );
-    pass.preallocated_order_ids.resize(pass.steps.len(), None);
+    pass.align_pending_order_ids();
     let mut orders = Vec::new();
-    while let Some(step) = pass.steps.front() {
+    while matches!(
+        pass.steps.front(),
+        Some(
+            crate::element::DoorPassStep::Select { .. } | crate::element::DoorPassStep::PassingDoor
+        )
+    ) {
+        let (step, reserved_id) = pass
+            .pop_pending_step()
+            .expect("inspected door action point disappeared");
+        let order_id = reserved_id.unwrap_or_else(|| crate::order::alloc_order_id(next_order_id));
         let mut order = match step {
             crate::element::DoorPassStep::Select { speed } => {
-                let order_id = pass
-                    .preallocated_order_ids
-                    .pop_front()
-                    .flatten()
-                    .unwrap_or_else(|| crate::order::alloc_order_id(next_order_id));
                 let mut order = crate::order::Order::new(OrderType::Select, 0.0, 0.0, order_id);
                 order.compute_direction = true;
-                order.tolerance = *speed;
+                order.tolerance = speed;
                 order
             }
             crate::element::DoorPassStep::PassingDoor => {
-                let order_id = pass
-                    .preallocated_order_ids
-                    .pop_front()
-                    .flatten()
-                    .unwrap_or_else(|| crate::order::alloc_order_id(next_order_id));
                 crate::order::Order::new(OrderType::PassingDoor, 0.0, 0.0, order_id)
             }
-            _ => break,
+            _ => unreachable!("only inspected door action points are consumed"),
         };
         // These action points now have concrete successors in the same order
         // list, so generic order advancement owns their completion. Door-pass resumption
         // would incorrectly materialize another lazy step alongside them.
         order.completion = crate::order::OrderCompletion::AdvanceElement;
-        pass.steps.pop_front();
         orders.push(order);
     }
     orders
@@ -2286,6 +2279,8 @@ mod door_pass_posture_tests {
             current_reverse: false,
             saved_action_state: None,
         };
+        let mut restored = pass.clone();
+        restored.preallocated_order_ids.truncate(1);
         let mut next_order_id = 99;
 
         let orders = materialize_door_action_point_prefix(&mut pass, &mut next_order_id);
@@ -2329,6 +2324,25 @@ mod door_pass_posture_tests {
         assert_eq!(
             next_order_id, 99,
             "reserved action points allocate no new IDs"
+        );
+        let restored_orders =
+            materialize_door_action_point_prefix(&mut restored, &mut next_order_id);
+        assert_eq!(
+            restored_orders
+                .iter()
+                .map(|order| order.order_id.get())
+                .collect::<Vec<_>>(),
+            [10, 99]
+        );
+        assert_eq!(
+            next_order_id, 100,
+            "only the consumed unreserved action point allocates an ID"
+        );
+        assert_eq!(restored.steps.len(), 2);
+        assert_eq!(restored.preallocated_order_ids, [None, None]);
+        assert_eq!(
+            restored.triggers_fired, 0,
+            "materialization must not execute callbacks"
         );
     }
 }
@@ -11057,20 +11071,14 @@ impl EngineInner {
                 return DoorPassAdvance::NoActive;
             }
         };
-        assert!(
-            dp.preallocated_order_ids.len() <= dp.steps.len(),
-            "door-pass order identity queue exceeds its translated step queue"
-        );
-        dp.preallocated_order_ids.resize(dp.steps.len(), None);
-        let step = match dp.steps.pop_front() {
-            Some(s) => s,
+        let (step, preallocated_order_id) = match dp.pop_pending_step() {
+            Some(pending) => pending,
             None => {
                 let completed = Some((dp.door_index, dp.direct));
                 actor.active_door_pass = None;
                 return DoorPassAdvance::Done { completed };
             }
         };
-        let preallocated_order_id = dp.preallocated_order_ids.pop_front().flatten();
         let mut order_id =
             || preallocated_order_id.unwrap_or_else(|| crate::order::alloc_order_id(next_order_id));
 

@@ -908,6 +908,161 @@ pub struct ActiveDoorPass {
     pub saved_action_state: Option<ActionState>,
 }
 
+impl ActiveDoorPass {
+    /// Restored passes may omit some trailing reserved identities. Preserve
+    /// those as unallocated slots; extra identities have no corresponding step
+    /// and are an invariant error. This does not allocate any order IDs.
+    pub(crate) fn align_pending_order_ids(&mut self) {
+        assert!(
+            self.preallocated_order_ids.len() <= self.steps.len(),
+            "door-pass order identity queue exceeds its translated step queue"
+        );
+        self.preallocated_order_ids.resize(self.steps.len(), None);
+    }
+
+    /// Fresh translation reserves the complete route before installing its
+    /// first order, including steps which will only materialize later.
+    pub(crate) fn preallocate_pending_order_ids(&mut self, next_order_id: &mut u32) {
+        self.preallocated_order_ids = self
+            .steps
+            .iter()
+            .map(|_| Some(crate::order::alloc_order_id(next_order_id)))
+            .collect();
+    }
+
+    /// Consume one lazy step together with its reserved identity. The caller
+    /// allocates an ID only when it materializes an unreserved step.
+    pub(crate) fn pop_pending_step(
+        &mut self,
+    ) -> Option<(DoorPassStep, Option<std::num::NonZeroU32>)> {
+        self.align_pending_order_ids();
+        let step = self.steps.pop_front()?;
+        let identity = self
+            .preallocated_order_ids
+            .pop_front()
+            .expect("aligned door-pass step lost its identity slot");
+        Some((step, identity))
+    }
+
+    /// Insert a newly translated step without displacing existing identities.
+    pub(crate) fn insert_pending_step(
+        &mut self,
+        index: usize,
+        step: DoorPassStep,
+        order_id: std::num::NonZeroU32,
+    ) {
+        assert!(
+            index <= self.steps.len(),
+            "door-pass insertion index exceeds its step queue"
+        );
+        self.align_pending_order_ids();
+        self.steps.insert(index, step);
+        self.preallocated_order_ids.insert(index, Some(order_id));
+    }
+
+    /// Discard both halves when concrete order truncation removes the lazy tail.
+    pub(crate) fn clear_pending_steps(&mut self) {
+        self.steps.clear();
+        self.preallocated_order_ids.clear();
+    }
+}
+
+#[cfg(test)]
+mod door_pass_pending_tests {
+    use super::*;
+    use std::num::NonZeroU32;
+
+    fn pass() -> ActiveDoorPass {
+        ActiveDoorPass {
+            door_index: crate::gate::DoorIndex::new(67).unwrap(),
+            direct: false,
+            position_direct: true,
+            steps: [
+                DoorPassStep::Select { speed: 0.5 },
+                DoorPassStep::PassingDoor,
+            ]
+            .into(),
+            preallocated_order_ids: [NonZeroU32::new(41)].into(),
+            triggers_fired: 1,
+            current_action: crate::order::OrderType::WalkingUpright,
+            current_reverse: false,
+            saved_action_state: None,
+        }
+    }
+
+    #[test]
+    fn restored_partial_ids_stay_paired_through_insertion_and_consumption() {
+        let mut pass = pass();
+        pass.insert_pending_step(
+            1,
+            DoorPassStep::Select { speed: 0.75 },
+            NonZeroU32::new(42).unwrap(),
+        );
+        assert_eq!(pass.steps.len(), 3);
+        assert_eq!(
+            pass.preallocated_order_ids,
+            [NonZeroU32::new(41), NonZeroU32::new(42), None]
+        );
+        let (step, id) = pass.pop_pending_step().unwrap();
+        assert!(matches!(step, DoorPassStep::Select { speed } if speed == 0.5));
+        assert_eq!(id, NonZeroU32::new(41));
+        let (step, id) = pass.pop_pending_step().unwrap();
+        assert!(matches!(step, DoorPassStep::Select { speed } if speed == 0.75));
+        assert_eq!(id, NonZeroU32::new(42));
+        let (step, id) = pass.pop_pending_step().unwrap();
+        assert!(matches!(step, DoorPassStep::PassingDoor));
+        assert_eq!(
+            id, None,
+            "the restored unreserved step must not invent an ID"
+        );
+        assert!(pass.pop_pending_step().is_none());
+        assert!(pass.preallocated_order_ids.is_empty());
+        assert_eq!(
+            pass.triggers_fired, 1,
+            "queue changes cannot run door callbacks"
+        );
+        assert!(!pass.direct);
+        assert!(pass.position_direct);
+    }
+
+    #[test]
+    fn fresh_translation_reserves_ids_before_consuming_any_step() {
+        let mut pass = pass();
+        pass.preallocated_order_ids.clear();
+        let mut next = 100;
+        pass.preallocate_pending_order_ids(&mut next);
+        assert_eq!(next, 102);
+        assert_eq!(pass.pop_pending_step().unwrap().1, NonZeroU32::new(100));
+        assert_eq!(pass.pop_pending_step().unwrap().1, NonZeroU32::new(101));
+        assert_eq!(next, 102, "consumption must not allocate a second identity");
+    }
+
+    #[test]
+    #[should_panic(expected = "door-pass order identity queue exceeds its translated step queue")]
+    fn malformed_identity_tail_is_rejected_before_consumption() {
+        let mut pass = pass();
+        pass.preallocated_order_ids = [NonZeroU32::new(41); 3].into();
+        pass.pop_pending_step();
+    }
+
+    #[test]
+    fn discarded_route_clears_both_queues_without_allocating() {
+        let mut pass = pass();
+        pass.preallocated_order_ids = [NonZeroU32::new(41); 3].into();
+        // Discard is intentionally unconditional, matching order truncation.
+        pass.clear_pending_steps();
+        assert!(pass.steps.is_empty());
+        assert!(pass.preallocated_order_ids.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "door-pass insertion index exceeds its step queue")]
+    fn invalid_insertion_is_rejected() {
+        let mut pass = pass();
+        pass.insert_pending_step(3, DoorPassStep::PassingDoor, NonZeroU32::new(42).unwrap());
+    }
+}
+
 /// Exact representation of the original game's installed actor order.
 ///
 /// Sequence-manager selection is deliberately not sufficient: an element can

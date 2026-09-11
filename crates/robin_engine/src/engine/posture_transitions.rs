@@ -42,22 +42,14 @@ use super::EngineInner;
 /// door-pass tail. The original game stores these sub-orders directly in the
 /// movement sequence; the port retains them separately until launch.
 fn insert_door_pass_start_transition(
-    steps: &mut VecDeque<DoorPassStep>,
-    preallocated_order_ids: &mut VecDeque<Option<std::num::NonZeroU32>>,
+    pass: &mut crate::element::ActiveDoorPass,
     next_order_id: &mut u32,
     point_start: MapPoint,
     animation_to_replace: OrderType,
     animation_transition: OrderType,
     distance_transition: f32,
 ) {
-    assert!(
-        preallocated_order_ids.len() <= steps.len(),
-        "door-pass order identity queue exceeds its translated step queue"
-    );
-    if preallocated_order_ids.len() < steps.len() {
-        preallocated_order_ids.resize(steps.len(), None);
-    }
-    debug_assert_eq!(preallocated_order_ids.len(), steps.len());
+    pass.align_pending_order_ids();
     let mut distance_remaining = if distance_transition == 0.0 {
         0.01
     } else {
@@ -66,13 +58,13 @@ fn insert_door_pass_start_transition(
     let mut point = point_start;
     let mut index = 0;
 
-    while index < steps.len() {
+    while index < pass.steps.len() {
         let mut insert_destination = None;
         if let DoorPassStep::Walk {
             destination,
             action,
             ..
-        } = &mut steps[index]
+        } = &mut pass.steps[index]
         {
             if *action == animation_to_replace {
                 let movement = *destination - point;
@@ -96,7 +88,7 @@ fn insert_door_pass_start_transition(
         }
 
         if let Some(destination) = insert_destination {
-            steps.insert(
+            pass.insert_pending_step(
                 index,
                 DoorPassStep::Walk {
                     destination,
@@ -105,9 +97,8 @@ fn insert_door_pass_start_transition(
                     compute_direction: true,
                     tolerance: 0.0,
                 },
+                crate::order::alloc_order_id(next_order_id),
             );
-            preallocated_order_ids.insert(index, Some(crate::order::alloc_order_id(next_order_id)));
-            debug_assert_eq!(preallocated_order_ids.len(), steps.len());
             return;
         }
         index += 1;
@@ -365,8 +356,7 @@ impl EngineInner {
             return;
         };
         insert_door_pass_start_transition(
-            &mut pass.steps,
-            &mut pass.preallocated_order_ids,
+            pass,
             next_order_id,
             tail_start,
             OrderType::RunningUpright,
