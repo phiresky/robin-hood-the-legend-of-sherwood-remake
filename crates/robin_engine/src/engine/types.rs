@@ -1973,12 +1973,6 @@ pub struct MissionScript {
     /// even when the companion class intentionally has no SCB equivalent.
     spellforge_virtual_instances: BTreeSet<ScriptVmKey>,
     spellforge_virtual_bindings_enabled: bool,
-
-    /// Has the script's `PostInitialize` entry point run yet?  The host's
-    /// first post-refresh stage flips this after rendering and sound.
-    /// Serialized so rollback replay reproduces the same frame boundary
-    /// without a host-owned companion bool.
-    pub post_initialized: bool,
 }
 
 /// Explicit save-owned projection; process-local state is reconstructed here,
@@ -2011,8 +2005,6 @@ pub(crate) struct PersistedMissionScript {
 
     #[serde(default)]
     spellforge_virtual_bindings_enabled: bool,
-
-    post_initialized: bool,
 }
 
 impl PersistedMissionScript {
@@ -2035,7 +2027,6 @@ impl PersistedMissionScript {
             waypoint_instances: _,
             spellforge_virtual_instances: _,
             spellforge_virtual_bindings_enabled: _,
-            post_initialized: _,
         } = value;
         Ok(Self {
             script_name: value.script_name.clone(),
@@ -2050,7 +2041,6 @@ impl PersistedMissionScript {
             waypoint_instances: value.waypoint_instances.clone(),
             spellforge_virtual_instances: value.spellforge_virtual_instances.clone(),
             spellforge_virtual_bindings_enabled: value.spellforge_virtual_bindings_enabled,
-            post_initialized: value.post_initialized,
         })
     }
 
@@ -2070,7 +2060,6 @@ impl PersistedMissionScript {
             waypoint_instances: self.waypoint_instances,
             spellforge_virtual_instances: self.spellforge_virtual_instances,
             spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
-            post_initialized: self.post_initialized,
         }
     }
 }
@@ -2090,7 +2079,6 @@ struct MissionScriptSnapshotRef<'a> {
     waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
     spellforge_virtual_instances: &'a BTreeSet<ScriptVmKey>,
     spellforge_virtual_bindings_enabled: bool,
-    post_initialized: bool,
 }
 
 impl Serialize for MissionScript {
@@ -2116,7 +2104,6 @@ impl Serialize for MissionScript {
             waypoint_instances: self.waypoint_instances.clone(),
             spellforge_virtual_instances: &self.spellforge_virtual_instances,
             spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
-            post_initialized: self.post_initialized,
         }
         .serialize(serializer)
     }
@@ -2139,7 +2126,6 @@ pub struct MissionScriptSnapshot {
     spellforge_virtual_instances: BTreeSet<ScriptVmKey>,
     #[serde(default)]
     spellforge_virtual_bindings_enabled: bool,
-    post_initialized: bool,
 }
 
 impl crate::bitcode_adapters::NativeBitcode for MissionScript {
@@ -2163,7 +2149,6 @@ impl crate::bitcode_adapters::NativeBitcode for MissionScript {
             waypoint_instances: self.waypoint_instances.clone(),
             spellforge_virtual_instances: self.spellforge_virtual_instances.clone(),
             spellforge_virtual_bindings_enabled: self.spellforge_virtual_bindings_enabled,
-            post_initialized: self.post_initialized,
         }
     }
 
@@ -2191,7 +2176,6 @@ impl MissionScript {
             waypoint_instances: snapshot.waypoint_instances,
             spellforge_virtual_instances: snapshot.spellforge_virtual_instances,
             spellforge_virtual_bindings_enabled: snapshot.spellforge_virtual_bindings_enabled,
-            post_initialized: snapshot.post_initialized,
         }
     }
 }
@@ -2454,7 +2438,6 @@ impl MissionScript {
             waypoint_instances: BTreeMap::new(),
             spellforge_virtual_instances: BTreeSet::new(),
             spellforge_virtual_bindings_enabled: false,
-            post_initialized: false,
         })
     }
 

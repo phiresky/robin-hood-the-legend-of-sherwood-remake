@@ -703,7 +703,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v77** (canonical script-global vector): replaces parallel imported-vector
 ///   and live ID/value-map storage with one ID-indexed vector. Older native snapshots
 ///   are rejected rather than interpreting their old layout as current state.
-pub const SAVE_FORMAT_VERSION: u32 = 77;
+/// - **v78** (single PostInitialize latch and no stale Messenger copies):
+///   PostInitialize is owned by game state, not a duplicate mission-script
+///   flag; snapshots no longer retain the unused imported Messenger blob.
+///   Older native snapshot layouts are rejected. Original-game import is unchanged.
+pub const SAVE_FORMAT_VERSION: u32 = 78;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1316,8 +1320,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_canonical_script_global_vector() {
-        assert_eq!(SAVE_FORMAT_VERSION, 77);
+    fn save_format_version_includes_single_post_initialize_and_no_stale_messenger() {
+        assert_eq!(SAVE_FORMAT_VERSION, 78);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -2071,6 +2075,26 @@ mod tests {
         assert_eq!(
             format!("{error:#}"),
             format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 76")
+        );
+    }
+
+    #[test]
+    fn read_rejects_duplicate_post_initialize_and_stale_messenger_before_engine_decode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pre_single_post_initialize_save.json");
+        // Reject the obsolete native layout before attempting to decode this
+        // incomplete engine, regardless of the old flag/blob contents.
+        let old_save = serde_json::json!({
+            "header": { "magic": SAVE_MAGIC, "version": 77 },
+            "engine": {}
+        });
+        fs::write(&path, serde_json::to_vec(&old_save).unwrap()).unwrap();
+        let error = GameSaveFile::read_from(&path)
+            .err()
+            .expect("duplicate PostInitialize/stale Messenger snapshots must fail at the header");
+        assert_eq!(
+            format!("{error:#}"),
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 77")
         );
     }
 

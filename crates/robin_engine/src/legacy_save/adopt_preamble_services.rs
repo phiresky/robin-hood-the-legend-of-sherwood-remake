@@ -8,7 +8,6 @@ use thiserror::Error;
 use crate::{
     coordinates::MapPoint,
     engine::EngineInner,
-    messenger::LegacyV48MessengerState,
     profiles::Action,
     sound::{LegacyV48SoundState, MusicMode, SoundSimState},
     sound_geometry::SoundSourceAltitude,
@@ -18,7 +17,7 @@ use crate::{
 use super::{
     LegacySaveAbiProfile,
     engine::{
-        LegacyEnginePreamble, LegacyGameState, LegacyMessenger, LegacySerializedSound, LegacySound,
+        LegacyEnginePreamble, LegacyGameState, LegacySerializedSound, LegacySound,
         LegacySoundSource,
     },
 };
@@ -30,6 +29,10 @@ pub struct LegacyPreambleHostState {
     pub sound_active: Option<bool>,
     pub dummy_channel: Option<i16>,
     pub stream_position: Option<u32>,
+    /// Original presentation flag, not simulation state. Native persistence
+    /// belongs to Host/GamePersistent.
+    /// TODO: consume this Original-import host handoff; returning it does not
+    /// currently apply the flag to the live host.
     pub draw_hidden: bool,
     pub campaign_map_displayed: bool,
     pub start_mission_widget_enabled: bool,
@@ -39,7 +42,8 @@ pub struct LegacyPreambleHostState {
 #[derive(Debug)]
 pub(crate) struct LegacyPreambleServicesPlan {
     sound: Option<SoundSimState>,
-    messenger: LegacyV48MessengerState,
+    view_locked: bool,
+    selected_action: Action,
     game: LegacyGameState,
     host: LegacyPreambleHostState,
 }
@@ -49,9 +53,10 @@ impl LegacyPreambleServicesPlan {
         if let Some(sound) = self.sound {
             engine.feedback.sound_sim = sound;
         }
-        engine.players.view_locked = self.messenger.lock_view;
-        engine.players.seats[0].selected_action = self.messenger.action;
-        engine.orders.messenger.restore_v48_state(self.messenger);
+        engine.players.view_locked = self.view_locked;
+        engine.players.seats[0].selected_action = self.selected_action;
+        // Original messenger restoration clears pending messages at this boundary.
+        engine.orders.messenger.clear();
 
         let ui = &mut engine.script_domains.mission_ui;
         ui.men_to_blazon_conversion_mode = self.game.men_to_blazon_conversion;
@@ -63,11 +68,6 @@ impl LegacyPreambleServicesPlan {
         ui.start_mission_enabled = self.game.start_mission_enabled;
         ui.quit_mission_enabled = self.game.quit_mission_enabled;
 
-        // The game flag is authoritative at this point in the original game
-        // load. Rust's mission-script lifecycle consumes the equivalent flag.
-        if let Some(script) = engine.scripts.mission.as_mut() {
-            script.post_initialized = self.game.post_initialized;
-        }
         self.host
     }
 }
@@ -106,7 +106,7 @@ pub(crate) fn preflight_v48_preamble_services(
     _abi: LegacySaveAbiProfile,
     preamble: &LegacyEnginePreamble,
 ) -> Result<LegacyPreambleServicesPlan, LegacyPreambleServicesError> {
-    let messenger = convert_messenger(preamble.messenger)?;
+    let selected_action = convert_messenger_action(preamble.messenger.action)?;
     let sound = convert_sound(&preamble.sound)?;
     let host = LegacyPreambleHostState {
         sound_system_ready: preamble
@@ -140,27 +140,16 @@ pub(crate) fn preflight_v48_preamble_services(
 
     Ok(LegacyPreambleServicesPlan {
         sound,
-        messenger,
+        view_locked: preamble.messenger.lock_view,
+        selected_action,
         game: preamble.game,
         host,
     })
 }
 
-fn convert_messenger(
-    saved: LegacyMessenger,
-) -> Result<LegacyV48MessengerState, LegacyPreambleServicesError> {
-    let action = Action::try_from(u32::from(saved.action)).map_err(|_| {
-        LegacyPreambleServicesError::InvalidMessengerAction {
-            value: saved.action,
-        }
-    })?;
-    Ok(LegacyV48MessengerState {
-        lock_view: saved.lock_view,
-        setting_watch: saved.setting_watch,
-        watch_timer: saved.watch_timer,
-        action,
-        draw_hidden: saved.draw_hidden,
-    })
+fn convert_messenger_action(value: u16) -> Result<Action, LegacyPreambleServicesError> {
+    Action::try_from(u32::from(value))
+        .map_err(|_| LegacyPreambleServicesError::InvalidMessengerAction { value })
 }
 
 fn convert_sound(
@@ -439,20 +428,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_messenger_action() {
+        assert_eq!(
+            convert_messenger_action(u16::MAX),
+            Err(LegacyPreambleServicesError::InvalidMessengerAction { value: u16::MAX })
+        );
+    }
+
+    #[test]
     fn apply_is_atomic_and_returns_host_only_output() {
         let mut engine = EngineInner::new();
         engine
             .orders
             .messenger
             .send(Message::new(MessageType::Simple(SimpleMessage::Pause)));
-        let messenger = convert_messenger(LegacyMessenger {
+        let messenger = super::super::engine::LegacyMessenger {
             lock_view: true,
             setting_watch: true,
             watch_timer: 19,
             action: Action::Bow as u16,
             draw_hidden: true,
-        })
-        .unwrap();
+        };
         let game = LegacyGameState {
             men_to_blazon_conversion: true,
             campaign_map: true,
@@ -476,7 +472,8 @@ mod tests {
         };
         let plan = LegacyPreambleServicesPlan {
             sound: Some(convert_serialized_sound(&sound()).unwrap()),
-            messenger,
+            view_locked: messenger.lock_view,
+            selected_action: convert_messenger_action(messenger.action).unwrap(),
             game,
             host: host.clone(),
         };
@@ -484,11 +481,32 @@ mod tests {
         let returned = plan.apply(&mut engine);
         assert_eq!(returned, host);
         assert_eq!(engine.orders.messenger.count(), 0);
-        let restored = engine.orders.messenger.v48_state().unwrap();
-        assert_eq!(restored.action, Action::Bow);
         assert_eq!(engine.players.seats[0].selected_action, Action::Bow);
-        assert!(restored.lock_view);
         assert!(engine.players.view_locked);
+        // Live changes after import must be the only action/view state captured
+        // by native saves and rollback snapshots, not a second imported copy.
+        engine.players.seats[0].selected_action = Action::Stone;
+        engine.players.view_locked = false;
+        let players_json = serde_json::to_vec(
+            &crate::engine::state::PersistedPlayerRuntime::capture(&engine.players),
+        )
+        .unwrap();
+        let persisted: crate::engine::state::PersistedPlayerRuntime =
+            serde_json::from_slice(&players_json).unwrap();
+        let snapshot: crate::engine::state::PlayerRuntime =
+            bitcode::decode(&bitcode::encode(&engine.players)).unwrap();
+        for restored in [persisted.into_runtime(), snapshot] {
+            assert_eq!(restored.seats[0].selected_action, Action::Stone);
+            assert!(!restored.view_locked);
+            assert_eq!(
+                robin_util::state_hash::compute(&restored),
+                robin_util::state_hash::compute(&engine.players)
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(&engine.orders.messenger).unwrap(),
+            serde_json::json!({ "queue": [] })
+        );
         assert!(
             engine
                 .script_domains
@@ -498,5 +516,21 @@ mod tests {
         assert!(engine.script_domains.mission_ui.campaign_map);
         assert!(engine.script_domains.mission_ui.start_mission_disabled_temp);
         assert_eq!(engine.feedback.sound_sim.sources.num_sources(), 2);
+        assert!(engine.script_domains.mission_ui.game_post_initialized);
+        assert!(engine.scripts.mission.is_none());
+
+        // Import is authoritative even without a VM and in both directions.
+        LegacyPreambleServicesPlan {
+            sound: None,
+            view_locked: messenger.lock_view,
+            selected_action: convert_messenger_action(messenger.action).unwrap(),
+            game: LegacyGameState {
+                post_initialized: false,
+                ..game
+            },
+            host,
+        }
+        .apply(&mut engine);
+        assert!(!engine.script_domains.mission_ui.game_post_initialized);
     }
 }

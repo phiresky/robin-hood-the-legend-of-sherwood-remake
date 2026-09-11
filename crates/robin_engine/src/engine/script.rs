@@ -7866,6 +7866,94 @@ mod script_context_tests {
     }
 
     #[test]
+    fn post_initialize_game_latch_covers_disabled_missing_vm_and_missing_function() {
+        let assets = LevelAssets::new();
+        for with_mission in [false, true] {
+            for script_enabled in [false, true] {
+                for already_initialized in [false, true] {
+                    let mut engine = EngineInner::new();
+                    if with_mission {
+                        engine.scripts.mission = Some(empty_mission_script());
+                        engine.attach_script_bindings(&assets);
+                    }
+                    engine.control.sim_config.script_enabled = script_enabled;
+                    engine.script_domains.mission_ui.game_post_initialized = already_initialized;
+                    engine.control.arrow_refresh_pending = true;
+                    engine.feedback.pending_side_effects.set_draw_hidden = Some(true);
+                    let before_rng = engine.rng_seed();
+                    let runs_vm_stage = script_enabled && !already_initialized && with_mission;
+                    let effects = engine.perform_frame_post_initialize(&assets);
+                    assert_eq!(effects.is_some(), script_enabled && !already_initialized);
+                    assert_eq!(
+                        engine.script_domains.mission_ui.game_post_initialized,
+                        already_initialized || script_enabled
+                    );
+                    assert_eq!(engine.control.arrow_refresh_pending, !runs_vm_stage);
+                    assert_eq!(engine.rng_seed(), before_rng);
+                    if runs_vm_stage {
+                        assert_eq!(effects.unwrap().set_draw_hidden, Some(true));
+                    } else {
+                        if let Some(effects) = effects {
+                            assert_eq!(effects.set_draw_hidden, None);
+                        }
+                        assert_eq!(
+                            engine.feedback.pending_side_effects.set_draw_hidden,
+                            Some(true)
+                        );
+                    }
+                    assert!(engine.perform_frame_post_initialize(&assets).is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn post_initialize_game_latch_survives_snapshots_without_a_script_mirror() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let assets = LevelAssets::new();
+                for with_mission in [false, true] {
+                    let mut engine = EngineInner::new();
+                    if with_mission {
+                        engine.scripts.mission = Some(empty_mission_script());
+                        engine.attach_script_bindings(&assets);
+                    }
+                    let rollback = engine.clone();
+                    let before = crate::replay::state_hash(&engine);
+                    engine.perform_frame_post_initialize(&assets);
+                    let after = crate::replay::state_hash(&engine);
+                    assert_ne!(before, after);
+                    let json = serde_json::to_value(&engine).unwrap();
+                    assert_eq!(
+                        json["script_domains"]["mission_ui"]["game_post_initialized"],
+                        true
+                    );
+                    if with_mission {
+                        assert!(json["scripts"]["mission"].get("post_initialized").is_none());
+                    }
+                    let restored_json: EngineInner = serde_json::from_value(json).unwrap();
+                    let bytes = crate::engine::snapshot::encode_native_engine_inner(&engine);
+                    let restored_native =
+                        crate::engine::snapshot::decode_native_engine_inner(&bytes).unwrap();
+                    for mut restored in [restored_json, restored_native] {
+                        assert_eq!(crate::replay::state_hash(&restored), after);
+                        assert!(restored.perform_frame_post_initialize(&assets).is_none());
+                        assert_eq!(crate::replay::state_hash(&restored), after);
+                    }
+                    engine = rollback;
+                    assert_eq!(crate::replay::state_hash(&engine), before);
+                    assert!(!engine.script_domains.mission_ui.game_post_initialized);
+                    engine.perform_frame_post_initialize(&assets);
+                    assert_eq!(crate::replay::state_hash(&engine), after);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
     fn native_globals_are_canonical_across_json_native_snapshots_and_rollback() {
         // The native engine codec requires more than libtest's default stack.
         std::thread::Builder::new()

@@ -71,7 +71,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// in authoritative snapshots and state hashes (save 76 / replay 34).
 /// Protocol 43 uses one canonical script-global vector in authoritative
 /// snapshots and state hashes (save 77 / replay 35).
-pub const NET_PROTOCOL_VERSION: u32 = 43;
+/// Protocol 44 carries one game-owned PostInitialize latch and no unused
+/// imported Messenger copies in native snapshots (save 78 / replay 36).
+pub const NET_PROTOCOL_VERSION: u32 = 44;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1821,7 +1823,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_includes_canonical_script_global_vector() {
+    fn protocol_version_includes_single_post_initialize_and_no_stale_messenger() {
         // Version 38 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
@@ -1840,7 +1842,9 @@ mod tests {
         // mutations in authoritative FIFO order in snapshots and state hashes.
         // Version 43 replaces parallel imported-vector and live ID/value-map
         // script-global storage with one canonical vector in snapshots and hashes.
-        assert_eq!(NET_PROTOCOL_VERSION, 43);
+        // Version 44 removes the duplicate PostInitialize flag and stale
+        // imported Messenger blob from native snapshots.
+        assert_eq!(NET_PROTOCOL_VERSION, 44);
     }
 
     #[test]

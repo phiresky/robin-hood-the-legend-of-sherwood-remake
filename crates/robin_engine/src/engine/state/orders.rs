@@ -204,6 +204,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn persisted_messenger_contains_only_the_live_queue() {
+        use crate::messenger::{Message, MessageType, SimpleMessage};
+
+        let mut orders = OrderRuntime::new();
+        let message = Message::new(MessageType::Simple(SimpleMessage::Pause));
+        orders.messenger.send(message.clone());
+        let json = serde_json::to_value(PersistedOrderRuntime::capture(&orders)).unwrap();
+        assert_eq!(
+            json["messenger"],
+            serde_json::json!({ "queue": [message.clone()] })
+        );
+        let persisted: PersistedOrderRuntime = serde_json::from_value(json).unwrap();
+        let mut restored = persisted.into_runtime();
+        let mut snapshot: Messenger = bitcode::decode(&bitcode::encode(&orders.messenger)).unwrap();
+        for messenger in [&mut restored.messenger, &mut snapshot] {
+            assert_eq!(
+                robin_util::state_hash::compute(messenger),
+                robin_util::state_hash::compute(&orders.messenger)
+            );
+            assert_eq!(messenger.poll(), Some(message.clone()));
+            assert_eq!(messenger.poll(), None);
+        }
+    }
+
+    #[test]
     fn new_runtime_starts_with_empty_barrier_queues() {
         let mut orders = OrderRuntime::new();
 
