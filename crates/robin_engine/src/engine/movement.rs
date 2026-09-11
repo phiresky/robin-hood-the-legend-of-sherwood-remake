@@ -5950,19 +5950,11 @@ impl EngineInner {
         // the Turn to be inherited by QuitSwordfight.
         let selected_priority = {
             let resolver = Self::priority_resolver(&self.world.entities);
-            let element = self
-                .orders
-                .sequence_manager
-                .get_element_mut(selected.seq_id, selected.elem_idx)
-                .expect("selected orphan sword movement disappeared before Stop");
-            if element.priority == crate::sequence::SequencePriority::NotYetSet {
-                let mut resolved = resolver(element);
-                if resolved == crate::sequence::SequencePriority::None {
-                    resolved = crate::sequence::SequencePriority::Normal;
-                }
-                element.priority = resolved;
-            }
-            element.priority
+            self.orders.sequence_manager.resolve_element_stop_priority(
+                selected.seq_id,
+                selected.elem_idx,
+                &resolver,
+            )
         };
         if selected_priority >= crate::sequence::SequencePriority::Injury {
             let owner_pos = self

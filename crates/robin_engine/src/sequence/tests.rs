@@ -180,6 +180,112 @@ fn postponed_shoulder_climb_resumes_only_for_its_completed_helper() {
 /// the same variant to feed `force_animation`.  Verify the
 /// round-trip end-to-end.
 #[test]
+fn lazy_stop_priority_updates_cached_summary_like_a_rebuild() {
+    let owner = EntityId::Pc(crate::entity_id::PcId(1));
+    for resolved in [
+        SequencePriority::None,
+        SequencePriority::Script,
+        SequencePriority::NonInterruptable,
+    ] {
+        let mut manager = SequenceManager::new();
+        let root = manager.launch_element(movement_elem(owner, OrderType::WalkingUpright));
+        assert_eq!(
+            manager.actor_stop_summary(owner).unwrap().weakest_priority,
+            SequencePriority::NotYetSet
+        );
+        let expected = if resolved == SequencePriority::None {
+            SequencePriority::Normal
+        } else {
+            resolved
+        };
+        assert_eq!(
+            manager.resolve_element_stop_priority(root, 0, &|_| resolved),
+            expected
+        );
+        let mut rebuilt = manager.clone();
+        rebuilt.rebuild_indices();
+        let cached = manager.actor_stop_summary(owner).unwrap();
+        let fresh = rebuilt.actor_stop_summary(owner).unwrap();
+        assert_eq!(cached.weakest_priority, expected);
+        assert_eq!(cached.weakest_priority, fresh.weakest_priority);
+        assert_eq!(cached.cross_only, fresh.cross_only);
+        for candidate in [&mut manager, &mut rebuilt] {
+            candidate.stop_owner_current_from_root(
+                owner,
+                Some((root, 0)),
+                SequencePriority::Preference,
+                &|_| panic!("priority was already resolved"),
+            );
+        }
+        assert_eq!(
+            manager.get_element(root, 0).unwrap().state,
+            rebuilt.get_element(root, 0).unwrap().state
+        );
+        assert_eq!(
+            robin_util::state_hash::compute(&manager),
+            robin_util::state_hash::compute(&rebuilt)
+        );
+    }
+}
+
+#[test]
+fn lazy_stop_priority_preserves_already_resolved_none_and_other_priorities() {
+    let mut manager = SequenceManager::new();
+    for priority in [
+        SequencePriority::None,
+        SequencePriority::Normal,
+        SequencePriority::Script,
+    ] {
+        let mut element = SequenceElement::new(1, Command::Wait, None);
+        element.priority = priority;
+        let sequence = manager.launch_element(element);
+        assert_eq!(
+            manager.resolve_element_stop_priority(sequence, 0, &|_| panic!(
+                "resolved priorities must not call the resolver"
+            )),
+            priority
+        );
+    }
+}
+
+#[test]
+fn movement_stop_priority_refreshes_live_actor_summary_even_when_too_strong_to_rewrite() {
+    let owner = EntityId::Pc(crate::entity_id::PcId(1));
+    let mut manager = SequenceManager::new();
+    let mut movement = movement_elem(owner, OrderType::WalkingUpright);
+    movement.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
+    let sequence = manager.launch_element(movement);
+    manager.element_in_progress(sequence, 0);
+    assert_eq!(
+        manager.actor_stop_summary(owner).unwrap().weakest_priority,
+        SequencePriority::NotYetSet
+    );
+    assert!(!manager.stop_movement_from_root(
+        owner,
+        (sequence, 0),
+        crate::coordinates::MapPoint::new(0.0, 0.0),
+        SequencePriority::Preference,
+        &|_| SequencePriority::Script,
+        &mut 100,
+        &mut |_| panic!("strong movement must not cancel its path")
+    ));
+    assert_eq!(
+        manager.actor_stop_summary(owner).unwrap().weakest_priority,
+        SequencePriority::Script
+    );
+    assert_eq!(
+        manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders
+            .front()
+            .unwrap()
+            .order_type,
+        OrderType::WalkingUpright
+    );
+}
+
+#[test]
 fn animation_id_property_roundtrip() {
     use crate::order::OrderType;
 

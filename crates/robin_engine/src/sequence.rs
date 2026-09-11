@@ -5402,6 +5402,29 @@ impl SequenceManager {
         self.process_effects(seq_id, effects, "element_impossible_from_execute");
     }
 
+    /// Resolve a retained element's priority for Stop without bypassing the
+    /// manager's priority-dependent caches. Stop promotes a resolver's `None`
+    /// to `Normal`; ordinary instruction-time resolution deliberately does not.
+    pub(crate) fn resolve_element_stop_priority(
+        &mut self,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
+    ) -> SequencePriority {
+        let element = self.get_element(seq_id, elem_idx).unwrap_or_else(|| {
+            panic!("cannot resolve Stop priority for missing element {seq_id:?}/{elem_idx}")
+        });
+        if element.priority != SequencePriority::NotYetSet {
+            return element.priority;
+        }
+        let resolved = match resolver(element) {
+            SequencePriority::None => SequencePriority::Normal,
+            priority => priority,
+        };
+        self.set_element_priority(seq_id, elem_idx, resolved);
+        resolved
+    }
+
     /// Set the priority of a specific sequence element.
     ///
     /// Used by the falling-pushed / rolling / ladder-wall / landing
@@ -7497,13 +7520,13 @@ impl SequenceManager {
             refs.iter().copied().collect()
         };
         for elem_ref in refs {
-            let Some(seq) = self.sequences.get_mut(&elem_ref.sequence_id) else {
+            let Some(seq) = self.sequences.get(&elem_ref.sequence_id) else {
                 debug_assert!(false, "actor_in_progress contains stale sequence ref");
                 continue;
             };
             let seq_id = seq.id;
             let elem_idx = elem_ref.element_index;
-            let Some(elem) = seq.elements.get_mut(elem_idx) else {
+            let Some(elem) = seq.elements.get(elem_idx) else {
                 debug_assert!(false, "actor_in_progress contains stale element ref");
                 continue;
             };
@@ -7518,16 +7541,12 @@ impl SequenceManager {
             // stronger `Script`-priority movement, causing a visual
             // stutter even though `SequenceManager::stop_owner` will
             // then refuse to actually interrupt the element.
-            if elem.priority == SequencePriority::NotYetSet {
-                let mut resolved = resolver(elem);
-                if resolved == SequencePriority::None {
-                    resolved = SequencePriority::Normal;
-                }
-                elem.priority = resolved;
-            }
-            if elem.priority < stop_priority {
+            if self.resolve_element_stop_priority(seq_id, elem_idx, resolver) < stop_priority {
                 continue;
             }
+            let elem = self
+                .get_element_mut(seq_id, elem_idx)
+                .expect("selected movement disappeared after priority resolution");
             // Clear SEEK bit; rewrite first order's animation to the
             // matching waiting-transition variant.
             if let SequenceElementData::Movement { flags, .. } = &mut elem.data {
