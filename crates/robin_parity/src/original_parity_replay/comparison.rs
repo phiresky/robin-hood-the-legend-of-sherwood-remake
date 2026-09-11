@@ -1,21 +1,6 @@
-//! Extracted comparison boundary; wire layouts remain in the parent.
+//! Comparison policy over admitted trace data and reconstructed identities.
 use super::*;
 
-/// Stable reporting shape; diagnostic sentences remain available to humans.
-pub(super) fn structured_divergences(
-    first_by_field: &BTreeMap<String, (u64, String)>,
-) -> Vec<crate::result::FieldDivergence> {
-    first_by_field
-        .iter()
-        .map(
-            |(field, (frame, description))| crate::result::FieldDivergence {
-                field: field.clone(),
-                frame: *frame,
-                description: description.clone(),
-            },
-        )
-        .collect()
-}
 pub(super) fn trace_entity_kind_name(name: &str) -> Option<TraceEntityKind> {
     Some(match name {
         "pc" => TraceEntityKind::Pc,

@@ -1,4 +1,4 @@
-//! Extracted runner boundary; wire layouts remain in the parent.
+//! Single runner entry: orchestrates admitted traces, reconstruction, comparison and reporting.
 use super::*;
 
 pub fn main() {

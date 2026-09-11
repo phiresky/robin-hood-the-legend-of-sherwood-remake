@@ -1,6 +1,6 @@
 //! Trace codec and lossless-conversion boundary.
 //!
-//! The parent owns current wire layouts; `v66`, `v67`, and `v67_late` own
+//! `trace_model` and `native_model` own current wire layouts; `v66`, `v67`, and `v67_late` own
 //! frozen historical layouts and their explicit conversion into current data.
 use super::*;
 
