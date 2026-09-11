@@ -11,8 +11,8 @@ use thiserror::Error;
 use crate::{
     coordinates::{WorldPoint3D, WorldVec3D},
     element::{
-        Entity, EntityId, LegacyV48ObjectRepulsivePointState, ObjectData, ObjectType,
-        ProjectileData, TrajectoryPoint, TrajectoryPointRuntime,
+        Entity, EntityId, ObjectData, ObjectType, ProjectileData, TrajectoryPoint,
+        TrajectoryPointRuntime,
     },
     engine::{EngineInner, LevelAssets},
     natives::{ComputedScriptLocation, ScriptHandleCodec},
@@ -27,7 +27,7 @@ use super::{
     adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_base::{LegacyElementRef, LegacyFxPayload},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
-    payload_nonactors::{LegacyObjectPayload, LegacyRepulsivePointPayload},
+    payload_nonactors::LegacyObjectPayload,
     payload_objects::{LegacyObjectItemPayload, LegacyProjectilePayload},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
 };
@@ -41,9 +41,11 @@ const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 /// object's current position/radius immediately before collision avoidance
 /// uses it. The register number
 /// is serialized but has no post-construction reader in the Original object
-/// branch. The repulsive-point storage is retained bit-exactly in a dormant
-/// sidecar because its default constructor leaves the four force scalars
-/// uninitialized; it must not be treated as live numeric geometry.
+/// branch. Repulsive-point bytes remain available in the raw decoded payload,
+/// not in runtime snapshots; its constructor can leave force scalars uninitialized.
+/// TODO: Original SetForce does not reset affects flags, concavity, or ID.
+/// If support for nondefault object repulsion metadata is needed, implement
+/// its live collision semantics rather than retaining another unread copy.
 pub const OVERWRITTEN_OR_UNUSED_OBJECT_FIELDS: &[&str] =
     &["object register number", "object repulsive point"];
 
@@ -270,7 +272,6 @@ struct PlannedObject {
     associated_action: Action,
     belongs_to_beggar: bool,
     taken: bool,
-    legacy_v48_repulsive_point: LegacyV48ObjectRepulsivePointState,
 }
 
 #[derive(Debug)]
@@ -1041,7 +1042,6 @@ fn preflight_object(
         })?,
         belongs_to_beggar: saved.belongs_to_beggar,
         taken: saved.taken,
-        legacy_v48_repulsive_point: retain_dormant_object_repulsive_point(&saved.repulsive_point),
     })
 }
 
@@ -1053,7 +1053,6 @@ fn apply_object(runtime: &mut ObjectData, saved: PlannedObject) {
     runtime.associated_action = saved.associated_action;
     runtime.belongs_to_beggar = saved.belongs_to_beggar;
     runtime.taken = saved.taken;
-    runtime.legacy_v48_repulsive_point = Some(saved.legacy_v48_repulsive_point);
 }
 
 fn preflight_fx(
@@ -1407,26 +1406,6 @@ fn entity_kind(entity: &Entity) -> &'static str {
     }
 }
 
-fn retain_dormant_object_repulsive_point(
-    saved: &LegacyRepulsivePointPayload,
-) -> LegacyV48ObjectRepulsivePointState {
-    LegacyV48ObjectRepulsivePointState {
-        position_bits: [saved.position.x.to_bits(), saved.position.y.to_bits()],
-        concave: saved.concave,
-        limit_left_bits: [saved.limit_left.x.to_bits(), saved.limit_left.y.to_bits()],
-        limit_right_bits: [saved.limit_right.x.to_bits(), saved.limit_right.y.to_bits()],
-        action_radius_bits: saved.action_radius.to_bits(),
-        force_a_bits: saved.force_a.to_bits(),
-        force_b_bits: saved.force_b.to_bits(),
-        radius_bits: saved.radius.to_bits(),
-        id: saved.id,
-        affects_pcs: saved.affects_pcs,
-        affects_soldiers: saved.affects_soldiers,
-        affects_civilians: saved.affects_civilians,
-        affects_animals: saved.affects_animals,
-    }
-}
-
 fn finite(
     value: f32,
     creation_order: u32,
@@ -1506,6 +1485,7 @@ fn object_type(value: u32, creation_order: u32) -> Result<ObjectType, LegacyObje
 mod tests {
     use super::*;
     use crate::legacy_save::payload_base::LegacyPoint2;
+    use crate::legacy_save::payload_nonactors::LegacyRepulsivePointPayload;
     use crate::profiles::{BowProfile, BowShootMode};
 
     #[test]
@@ -1574,21 +1554,6 @@ mod tests {
                 associated_action: Action::Apple,
                 belongs_to_beggar: true,
                 taken: true,
-                legacy_v48_repulsive_point: LegacyV48ObjectRepulsivePointState {
-                    position_bits: [1.0f32.to_bits(), 2.0f32.to_bits()],
-                    concave: false,
-                    limit_left_bits: [0; 2],
-                    limit_right_bits: [0; 2],
-                    action_radius_bits: 10.0f32.to_bits(),
-                    force_a_bits: 0.1f32.to_bits(),
-                    force_b_bits: (-1.0f32).to_bits(),
-                    radius_bits: 1.0f32.to_bits(),
-                    id: 7,
-                    affects_pcs: true,
-                    affects_soldiers: true,
-                    affects_civilians: true,
-                    affects_animals: true,
-                },
             },
         );
         assert!(runtime.terminate);
@@ -1598,17 +1563,66 @@ mod tests {
         assert_eq!(runtime.associated_action, Action::Apple);
         assert!(runtime.belongs_to_beggar);
         assert!(runtime.taken);
-        assert_eq!(
-            runtime
-                .legacy_v48_repulsive_point
-                .expect("dormant point storage")
-                .id,
-            7
+        assert!(
+            serde_json::to_value(&runtime)
+                .unwrap()
+                .get("legacy_v48_repulsive_point")
+                .is_none()
         );
     }
 
     #[test]
-    fn dormant_object_repulsive_payload_retains_non_finite_bits_exactly() {
+    fn adopted_object_snapshots_use_live_repulsive_geometry() {
+        use crate::coordinates::MapPoint;
+        use crate::element::{ElementBonus, ElementData, ElementKind};
+        for (object_type, radius) in [(ObjectType::Ale, 5.0), (ObjectType::Purse, 7.0)] {
+            let mut object = ObjectData::default();
+            apply_object(
+                &mut object,
+                PlannedObject {
+                    terminate: false,
+                    quantity: 1,
+                    animation: OrderType::WaitingUpright,
+                    object_type,
+                    associated_action: Action::NoAction,
+                    belongs_to_beggar: false,
+                    taken: false,
+                },
+            );
+            let json = serde_json::to_vec(&object).unwrap();
+            let native = bitcode::encode(&object);
+            let json_restored: ObjectData = serde_json::from_slice(&json).unwrap();
+            let native_restored: ObjectData = bitcode::decode(&native).unwrap();
+            for restored in [json_restored, native_restored] {
+                assert_eq!(
+                    robin_util::state_hash::compute(&restored),
+                    robin_util::state_hash::compute(&object)
+                );
+                let mut element = ElementData::default();
+                element.kind = ElementKind::ObjectOther;
+                element.active = true;
+                let mut entity = Entity::Bonus(ElementBonus {
+                    element,
+                    object: restored,
+                });
+                for position in [MapPoint::new(12.0, 34.0), MapPoint::new(56.0, 78.0)] {
+                    entity.element_data_mut().set_position_map(position);
+                    assert_eq!(
+                        crate::engine::anti_collision::entity_repulsive_point(
+                            &entity,
+                            &ProfileManager::default()
+                        ),
+                        Some(crate::repulsive::RepulsivePoint::new(
+                            position, radius, 10.0
+                        ))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn raw_object_repulsive_payload_retains_non_finite_bits_exactly() {
         let point = LegacyRepulsivePointPayload {
             position: LegacyPoint2 {
                 x: f32::from_bits(0x7fc0_0001),
@@ -1633,29 +1647,59 @@ mod tests {
             affects_civilians: true,
             affects_animals: true,
         };
-        let retained = retain_dormant_object_repulsive_point(&point);
-        assert_eq!(retained.position_bits, [0x7fc0_0001, (-0.0f32).to_bits()]);
-        assert!(retained.concave);
-        assert_eq!(
-            retained.limit_left_bits,
-            [f32::INFINITY.to_bits(), f32::NEG_INFINITY.to_bits()]
-        );
-        assert_eq!(retained.limit_right_bits, [1.0f32.to_bits(), 0xffc0_1234]);
-        assert_eq!(retained.action_radius_bits, 0x7fc0_0101);
-        assert_eq!(retained.force_a_bits, 0x7fc0_0202);
-        assert_eq!(retained.force_b_bits, 0xffc0_0303);
-        assert_eq!(retained.radius_bits, 0x7fc0_0404);
-        assert_eq!(retained.id, 8);
-        assert!(retained.affects_pcs);
-        assert!(!retained.affects_soldiers);
-        assert!(retained.affects_civilians);
-        assert!(retained.affects_animals);
-
-        let json = serde_json::to_string(&retained).expect("raw-bit sidecar must be JSON-safe");
-        assert!(!json.contains("NaN"));
-        assert!(!json.contains("Infinity"));
-        let round_trip: LegacyV48ObjectRepulsivePointState =
-            serde_json::from_str(&json).expect("raw-bit sidecar must round-trip through JSON");
-        assert_eq!(round_trip, retained);
+        // Exercise the unchanged narrow object decoder, not a runtime sidecar.
+        let mut bytes = Vec::new();
+        for value in [point.position.x, point.position.y] {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        bytes.push(u8::from(point.concave));
+        for value in [
+            point.limit_left.x,
+            point.limit_left.y,
+            point.limit_right.x,
+            point.limit_right.y,
+            point.action_radius,
+            point.force_a,
+            point.force_b,
+            point.radius,
+        ] {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        bytes.extend_from_slice(&point.id.to_le_bytes());
+        bytes.extend([
+            u8::from(point.affects_pcs),
+            u8::from(point.affects_soldiers),
+            u8::from(point.affects_civilians),
+            u8::from(point.affects_animals),
+        ]);
+        let expected_len = bytes.len() as u64;
+        let mut file = crate::sbfile::SbFile::from_owned_bytes(bytes, "object-repulsion-test");
+        let mut reader = crate::legacy_io::LegacyReader::new(&mut file);
+        let decoded = LegacyRepulsivePointPayload::read(
+            &mut reader,
+            crate::legacy_save::LegacySaveAbiProfile::PortLinuxI386V48,
+        )
+        .unwrap();
+        assert_eq!(reader.offset(), expected_len);
+        for (actual, expected) in [
+            (decoded.position.x, point.position.x),
+            (decoded.position.y, point.position.y),
+            (decoded.limit_left.x, point.limit_left.x),
+            (decoded.limit_left.y, point.limit_left.y),
+            (decoded.limit_right.x, point.limit_right.x),
+            (decoded.limit_right.y, point.limit_right.y),
+            (decoded.action_radius, point.action_radius),
+            (decoded.force_a, point.force_a),
+            (decoded.force_b, point.force_b),
+            (decoded.radius, point.radius),
+        ] {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        assert_eq!(decoded.id, point.id);
+        assert_eq!(decoded.concave, point.concave);
+        assert_eq!(decoded.affects_pcs, point.affects_pcs);
+        assert_eq!(decoded.affects_soldiers, point.affects_soldiers);
+        assert_eq!(decoded.affects_civilians, point.affects_civilians);
+        assert_eq!(decoded.affects_animals, point.affects_animals);
     }
 }
