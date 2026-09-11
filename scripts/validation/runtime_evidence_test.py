@@ -5,18 +5,56 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
+import briefing_x11
 import frame_steps_live as frame
 import input_worker
+import namespace_x11
 import runtime_evidence as evidence
 
 
 class RuntimeEvidenceTests(unittest.TestCase):
+    def test_briefing_targets_every_robin_window_through_confined_adapter(self):
+        windows = [Mock(id=11), Mock(id=22), Mock(id=33)]
+        for window, title in zip(windows, ("Robin host", "not the game", "Robin peer")):
+            window.get_wm_name.return_value = title
+        connection = Mock()
+        connection.screen.return_value.root.query_tree.return_value.children = windows
+        xlib = SimpleNamespace(X=SimpleNamespace(RevertToPointerRoot=1, CurrentTime=0,
+            NONE=0, KeyPressMask=1, KeyReleaseMask=2), XK=Mock(), protocol=Mock())
+        with patch.dict(sys.modules, {"Xlib": xlib}), \
+             patch.object(briefing_x11, "open_display", return_value=connection) as opened, \
+             patch.object(briefing_x11.time, "sleep"):
+            self.assertEqual(briefing_x11.dismiss_briefings(":77"), [11, 33])
+        opened.assert_called_once_with(":77")
+        self.assertEqual(windows[0].send_event.call_count, 2)
+        windows[1].send_event.assert_not_called()
+        self.assertEqual(windows[2].send_event.call_count, 2)
+        self.assertEqual(connection.sync.call_count, 4)
+        connection.close.assert_called_once()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux abstract sockets")
+    def test_confined_transport_connects_real_abstract_socket_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            number = Path(temporary).name + "-diagnostic"
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind("\0/tmp/.X11-unix/X" + number)
+                server.listen(1)
+                connection = namespace_x11._namespace_socket(":" + number, None, "", number)
+                accepted, _ = server.accept()
+                with connection, accepted:
+                    connection.sendall(b"confined")
+                    self.assertEqual(accepted.recv(8), b"confined")
+            with self.assertRaises(OSError):
+                namespace_x11._namespace_socket(":" + number, None, "", number)
+
     def test_retained_client_and_helper_do_not_follow_rebuilt_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

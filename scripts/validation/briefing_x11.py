@@ -1,67 +1,41 @@
 #!/usr/bin/env python3
-"""Disposable all-window Xlib input worker: a fatal X error cannot kill its parent."""
-import ctypes as c
+"""Disposable all-window input worker, confined to the local X namespace."""
 import json
 import sys
 import time
 
-def dismiss_briefings(display):
-    """Synthetic Return on each real Robin window (not physical input).
+from namespace_x11 import open_display
 
-    Based on the parallel native-client diagnostic's libX11 injector.
-    """
-    x = c.CDLL("libX11.so.6")
-    ptr, window = c.c_void_p, c.c_ulong
-    x.XOpenDisplay.argtypes, x.XOpenDisplay.restype = [c.c_char_p], ptr
-    x.XDefaultRootWindow.argtypes, x.XDefaultRootWindow.restype = [ptr], window
-    x.XQueryTree.argtypes = [ptr, window, c.POINTER(window), c.POINTER(window), c.POINTER(c.POINTER(window)), c.POINTER(c.c_uint)]
-    x.XFetchName.argtypes = [ptr, window, c.POINTER(c.c_char_p)]
-    x.XStringToKeysym.argtypes, x.XStringToKeysym.restype = [c.c_char_p], c.c_ulong
-    x.XKeysymToKeycode.argtypes, x.XKeysymToKeycode.restype = [ptr, c.c_ulong], c.c_uint
-    x.XSendEvent.argtypes = [ptr, window, c.c_int, c.c_long, ptr]
-    x.XFlush.argtypes = [ptr]
-    x.XSetInputFocus.argtypes = [ptr, window, c.c_int, c.c_ulong]
-    x.XCloseDisplay.argtypes = [ptr]
-    x.XFree.argtypes = [ptr]
-    class InputEvent(c.Structure):
-        _fields_ = [("type", c.c_int), ("serial", c.c_ulong), ("send_event", c.c_int),
-                    ("display", ptr), ("window", window), ("root", window),
-                    ("subwindow", window), ("time", c.c_ulong), ("x", c.c_int),
-                    ("y", c.c_int), ("x_root", c.c_int), ("y_root", c.c_int),
-                    ("state", c.c_uint), ("detail", c.c_uint), ("same_screen", c.c_int)]
-    connection = x.XOpenDisplay(display.encode())
-    if not connection:
-        raise RuntimeError("cannot open diagnostic X display")
-    targets = []
+
+def dismiss_briefings(display):
+    """Synthetic Return on every real Robin window, not merely the last one."""
+    from Xlib import X, XK, protocol
+
+    connection = open_display(display)
+    def failed(error, _request):
+        raise RuntimeError(f"briefing X input failed: {error}")
+    connection.set_error_handler(failed)
     try:
-        root = x.XDefaultRootWindow(connection)
-        children, count = c.POINTER(window)(), c.c_uint()
-        parent, returned_root = window(), window()
-        if not x.XQueryTree(connection, root, c.byref(returned_root), c.byref(parent), c.byref(children), c.byref(count)):
-            raise RuntimeError("cannot query diagnostic X display")
-        for index in range(count.value):
-            name = c.c_char_p()
-            if x.XFetchName(connection, children[index], c.byref(name)) and name.value:
-                if "robin" in name.value.decode(errors="replace").lower():
-                    targets.append(children[index])
-                x.XFree(name)
-        x.XFree(children)
+        root = connection.screen().root
+        targets = [window for window in root.query_tree().children
+                   if "robin" in (window.get_wm_name() or "").lower()]
         if not targets:
             raise RuntimeError("no real Robin windows for briefing dismissal")
-        detail = x.XKeysymToKeycode(connection, x.XStringToKeysym(b"Return"))
+        detail = connection.keysym_to_keycode(XK.string_to_keysym("Return"))
         for target in targets:
-            x.XSetInputFocus(connection, target, 1, 0)
-            for kind, mask in ((2, 1), (3, 2)):
-                event = InputEvent(kind, 0, 1, connection, target, root, 0, 0, 640, 480, 640, 480, 0, detail, 1)
-                backing = (c.c_long * 24)()
-                c.memmove(backing, c.byref(event), c.sizeof(event))
-                if not x.XSendEvent(connection, target, 1, mask, backing):
-                    raise RuntimeError("briefing XSendEvent failed")
-                x.XFlush(connection)
+            target.set_input_focus(X.RevertToPointerRoot, X.CurrentTime)
+            for event_type, mask in ((protocol.event.KeyPress, X.KeyPressMask),
+                                     (protocol.event.KeyRelease, X.KeyReleaseMask)):
+                event = event_type(time=X.CurrentTime, root=root, window=target,
+                                   child=X.NONE, root_x=640, root_y=480,
+                                   event_x=640, event_y=480, state=0,
+                                   detail=detail, same_screen=1)
+                target.send_event(event, propagate=True, event_mask=mask)
+                connection.sync()
                 time.sleep(0.15)
+        return [window.id for window in targets]
     finally:
-        x.XCloseDisplay(connection)
-    return targets
+        connection.close()
 
 
 if __name__ == "__main__":

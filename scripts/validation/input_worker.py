@@ -34,6 +34,7 @@ def run_input(name, arguments, evidence, *, env=None, timeout=10):
 
 
 def dismiss_briefings(display, evidence, *, timeout=10):
+    retained_script("namespace_x11.py", evidence)
     log = run_input("briefing_x11.py", [display], evidence, timeout=timeout)
     # A successful worker reports every matched window, not just the last one.
     windows = json.loads(log.read_text())
