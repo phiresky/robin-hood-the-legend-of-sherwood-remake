@@ -97,13 +97,15 @@ sha256sum target/debug/robin target/debug/robin-replay-admission
 ```
 
 This builds both the game and its required adjacent native replay-admission
-helper. Record that exact source and both binary digests; do not rebuild or
-replace either executable during acceptance. Supply the game digest below;
-each driver also records and verifies its retained helper digest:
+helper. Record that exact source and both binary digests. Do not replace either
+executable before admission. Supply both digests below; the suite pins one pair
+before its first scenario, so subsequent build-output replacement does not
+change the executables being validated:
 
 ```sh
 ROBIN_LIFECYCLE_BINARY=/absolute/path/to/checkout/target/debug/robin \
 ROBIN_LIFECYCLE_BINARY_SHA256=RECORDED_SHA256 \
+ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256=RECORDED_HELPER_SHA256 \
 ROBIN_LIFECYCLE_SNAPSHOT=RECORDED_SOURCE_COMMIT \
 ROBINHOOD_DATA_DIR=/absolute/path/to/leicester-demo \
 bash scripts/check-quality.sh native-lifecycle
@@ -113,9 +115,18 @@ The supplied binary source is a caller's build-provenance assertion, not
 inferred from the current checkout. The summary distinguishes it from the
 harness checkout commit. Preserve the adjacent built-in `mods` installation if
 copying a binary out of target. Preserve the exact tested binary separately if
-the checkout will later be deleted. Each live driver pins the game executable
-and any installed sibling `robin-replay-admission` helper into its evidence
-`bin/` directory, records their hashes, and checks those copies before launch.
+the checkout will later be deleted. The lifecycle suite requires and pins both
+executables in its evidence `bin/` directory, checks their supplied hashes,
+passes only that frozen pair to all four drivers, and verifies retained hashes
+before/after each scenario. Each driver retains its own copy; its reported game
+and helper hashes must both match the suite's admitted pair. Direct standalone
+drivers retain their existing per-run snapshots.
+
+The summary records initial and final observations of both original build-tree
+paths, including replacement or deletion. Such later changes are diagnostic,
+not a failure of an unchanged retained pair. Admission mismatch, missing helper,
+retained-copy mutation, or a mismatched scenario hash is still a hard failure.
+The independent clean/frozen harness-source identity guard remains unchanged.
 
 Each of four runs receives a fresh loopback-only network namespace and isolated
 save/config/cache/data/runtime roots via the existing `frame_steps_live.py`:
@@ -132,7 +143,7 @@ connects only to the namespace-local abstract socket and fails without fallback.
 4. Graphical EOF on the save/load export, verifying post-load hashes again.
 
 Each driver has a 300-second internal alarm and a 330-second outer process-group
-bound. A changed binary, missing summary or incomplete driver is an error. No
+bound. A changed retained binary, missing summary or incomplete driver is an error. No
 licensed assets are downloaded and no existing saves/replays/goldens are edited.
 The gate does not exercise native multiplayer; that remains its own scenario.
 

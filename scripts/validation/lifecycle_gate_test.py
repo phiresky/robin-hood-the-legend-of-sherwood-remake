@@ -25,10 +25,13 @@ class LifecycleGateTests(unittest.TestCase):
         self.evidence.mkdir()
         self.binary = self.root / "robin"
         self.binary.write_bytes(b"immutable fixture, not executable")
+        self.helper = self.root / "robin-replay-admission"
+        self.helper.write_bytes(b"immutable decoder fixture")
         (self.root / "Data").mkdir()
         self.env = dict(ROBIN_LIFECYCLE_BINARY=str(self.binary),
                         ROBINHOOD_DATA_DIR=str(self.root),
                         ROBIN_LIFECYCLE_BINARY_SHA256=gate.digest(self.binary),
+                        ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256=gate.digest(self.helper),
                         ROBIN_LIFECYCLE_SNAPSHOT="fixture-source")
 
     def test_missing_executable_is_an_error(self):
@@ -100,7 +103,10 @@ class LifecycleGateTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["PYTHONOPTIMIZE"], "0")
         destination = Path(argv[argv.index("--evidence") + 1])
         destination.mkdir()
-        result = {"completed": True, "binary_sha256": gate.digest(self.binary),
+        binary = Path(argv[argv.index("--binary") + 1])
+        self.assertNotEqual(binary, self.binary)
+        result = {"completed": True, "binary_sha256": gate.digest(binary),
+                  "admission_helper_sha256": gate.digest(gate.client_helper_path(binary)),
                   "snapshot": "fixture-source",
                   "checks": dict.fromkeys(gate.REPLAY_CHECKS | gate.LIVE_CHECKS | gate.SAVE_CHECKS, True),
                   "save_load": {"load_record_frame": 149, "final_record_frame": 259}}
@@ -124,15 +130,81 @@ class LifecycleGateTests(unittest.TestCase):
         verify.assert_called_once_with("fixture log", 149, 259)
         self.assertEqual(len(summary["checks"]), 4)
 
-    def test_native_rejects_binary_change_between_phases(self):
+    def test_native_keeps_frozen_pair_when_build_tree_changes_between_phases(self):
         def mutate(argv, **kwargs):
             self.fake_native_run(argv, **kwargs)
             self.binary.write_bytes(b"changed")
+            self.helper.write_bytes(b"changed helper")
+        summary = {}
         with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
-                patch.object(gate, "run", side_effect=mutate) as run:
-            with self.assertRaisesRegex(RuntimeError, "binary changed"):
-                gate.native(self.evidence, {})
-        self.assertEqual(run.call_count, 1)
+                patch.object(gate, "run", side_effect=mutate) as run, \
+                patch("save_load_live.verify_replay"):
+            gate.native(self.evidence, summary)
+        self.assertEqual(run.call_count, 4)
+        self.assertTrue(summary["source_pair_changed"])
+        self.assertEqual(summary["binary_sha256"], self.env["ROBIN_LIFECYCLE_BINARY_SHA256"])
+        self.assertEqual(summary["admission_helper_sha256"], self.env["ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256"])
+        self.assertNotEqual(summary["source_pair_initial"], summary["source_pair_final"])
+
+    def test_native_records_deleted_build_tree_without_reopening_it(self):
+        def remove(argv, **kwargs):
+            self.fake_native_run(argv, **kwargs)
+            self.binary.unlink(missing_ok=True)
+            self.helper.unlink(missing_ok=True)
+        summary = {}
+        with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
+                patch.object(gate, "run", side_effect=remove), patch("save_load_live.verify_replay"):
+            gate.native(self.evidence, summary)
+        self.assertEqual(summary["source_pair_final"]["game"]["error_type"], "FileNotFoundError")
+        self.assertEqual(summary["source_pair_final"]["admission_helper"]["error_type"], "FileNotFoundError")
+        self.assertEqual(len(summary["checks"]), 4)
+
+    def test_native_rejects_missing_or_wrong_helper_before_launch(self):
+        for scenario in ("wrong", "missing", "no-digest"):
+            with self.subTest(scenario=scenario):
+                self.helper.write_bytes(b"immutable decoder fixture")
+                with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
+                        patch.object(gate, "run") as run:
+                    if scenario == "missing":
+                        self.helper.unlink()
+                    elif scenario == "wrong":
+                        self.helper.write_bytes(b"wrong build")
+                    else:
+                        del os.environ["ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256"]
+                    with self.assertRaisesRegex(RuntimeError, "helper|HELPER_SHA256"):
+                        gate.native(self.evidence, {})
+                    run.assert_not_called()
+
+    def test_native_rejects_changed_retained_game_or_helper_after_scenario(self):
+        for helper in (False, True):
+            with self.subTest(helper=helper):
+                destination = self.root / ("retained-" + str(helper))
+                destination.mkdir()
+                def mutate(argv, **kwargs):
+                    self.fake_native_run(argv, **kwargs)
+                    binary = Path(argv[argv.index("--binary") + 1])
+                    target = gate.client_helper_path(binary) if helper else binary
+                    target.chmod(0o755)
+                    target.write_bytes(b"changed retained executable")
+                with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
+                        patch.object(gate, "run", side_effect=mutate) as run:
+                    with self.assertRaisesRegex(RuntimeError, "retained .* changed"):
+                        gate.native(destination, {})
+                self.assertEqual(run.call_count, 1)
+
+    def test_native_rejects_helper_replaced_while_admitting_pair(self):
+        original = gate.snapshot_client
+        def replace(source, evidence, summary):
+            self.helper.write_bytes(b"replacement during admission")
+            return original(source, evidence, summary)
+        summary = {}
+        with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
+                patch.object(gate, "snapshot_client", side_effect=replace), \
+                patch.object(gate, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "pair changed while admitting"):
+                gate.native(self.evidence, summary)
+        run.assert_not_called()
+        self.assertIn("source_pair_final", summary)
 
     def test_native_rejects_incomplete_summary(self):
         def incomplete(argv, **kwargs):
@@ -146,7 +218,8 @@ class LifecycleGateTests(unittest.TestCase):
 
     def test_native_rejects_completed_summary_missing_evidence_or_wrong_source(self):
         for change in ({"checks": {}}, {"checks": {"native_playback_finished": False}},
-                       {"snapshot": "different-source"}):
+                       {"snapshot": "different-source"}, {"admission_helper_sha256": "forged"},
+                       {"admission_helper_sha256": None}):
             with self.subTest(change=change):
                 destination = self.root / ("case-" + str(len(list(self.root.iterdir()))))
                 destination.mkdir()

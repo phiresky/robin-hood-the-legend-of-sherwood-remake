@@ -14,7 +14,7 @@ import sys
 import tempfile
 import tomllib
 
-from runtime_evidence import stop_process_group
+from runtime_evidence import client_helper_path, observe_client_sources, snapshot_client, stop_process_group, verify_client
 
 ROOT = Path(__file__).resolve().parents[2]
 REPLAY_CHECKS = {"native_playback_finished", "post_bootstrap_hash_verified"}
@@ -212,26 +212,51 @@ def native(evidence, summary):
     expected = os.environ["ROBIN_LIFECYCLE_BINARY_SHA256"]
     if digest(binary) != expected:
         raise RuntimeError("prebuilt binary does not match supplied SHA256")
+    helper = client_helper_path(binary)
+    if not helper.is_file():
+        raise RuntimeError(f"required adjacent replay admission helper is missing: {helper}")
+    helper_expected = os.environ.get("ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256")
+    if not helper_expected:
+        raise RuntimeError("set ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256 to the recorded helper digest")
+    if digest(helper) != helper_expected:
+        raise RuntimeError("prebuilt replay admission helper does not match supplied SHA256")
     snapshot = os.environ["ROBIN_LIFECYCLE_SNAPSHOT"]
-    summary.update(binary=str(binary), binary_sha256=expected,
-                   binary_source_snapshot=snapshot, data=str(data), checks={})
+    source_binary = binary
+    summary.update(binary_source_snapshot=snapshot, data=str(data), checks={},
+                   source_pair_initial=observe_client_sources(source_binary))
+    try:
+        # The suite, not each scenario, admits one immutable executable pair.
+        binary = snapshot_client(source_binary, evidence, summary)
+        if (summary["binary_sha256"] != expected
+                or summary.get("admission_helper_sha256") != helper_expected):
+            raise RuntimeError("game/helper pair changed while admitting supplied SHA256 identities")
+        _native_scenarios(binary, data, snapshot, evidence, summary)
+    finally:
+        summary["source_pair_final"] = observe_client_sources(source_binary)
+        summary["source_pair_changed"] = summary["source_pair_initial"] != summary["source_pair_final"]
+
+
+def _native_scenarios(binary, data, snapshot, evidence, summary):
+    expected = summary["binary_sha256"]
+    helper_expected = summary["admission_helper_sha256"]
     driver = ROOT / "scripts/validation/frame_steps_live.py"
     for name, extra in (("ordinary", []), ("save-load", ["--save-load"])):
         live = evidence / name
         for suffix, destination, flags in (("headless", live, extra),
                 ("graphical", evidence / (name + "-graphical"),
                  ["--replay-file", live / "export.rhrec", "--graphical-replay"])):
-            if digest(binary) != expected:
-                raise RuntimeError("binary changed during acceptance")
+            verify_client(binary, summary)
             run(["unshare", "--user", "--map-root-user", "--net", sys.executable,
                  driver, "--binary", binary, "--data", data, "--snapshot", snapshot,
                  "--evidence", destination, *flags], timeout=330,
                 env=dict(os.environ, PYTHONOPTIMIZE="0"))
+            verify_client(binary, summary)
             result = json.loads((destination / "summary.json").read_text())
             required = REPLAY_CHECKS | (LIVE_CHECKS if suffix == "headless" else set())
             if name == "save-load" and suffix == "headless":
                 required |= SAVE_CHECKS
             if (result.get("completed") is not True or result.get("binary_sha256") != expected
+                    or result.get("admission_helper_sha256") != helper_expected
                     or result.get("snapshot") != snapshot
                     or any(result.get("checks", {}).get(key) is not True for key in required)):
                 raise RuntimeError(f"invalid acceptance summary: {destination}")
@@ -243,8 +268,7 @@ def native(evidence, summary):
                 result["checks"]["save_load_post_restore_replay_hashes"] = True
             summary["checks"][name + "-" + suffix] = result
         summary[name + "_replay_sha256"] = digest(live / "export.rhrec")
-    if digest(binary) != expected:
-        raise RuntimeError("binary changed during acceptance")
+    verify_client(binary, summary)
 
 
 def main():
