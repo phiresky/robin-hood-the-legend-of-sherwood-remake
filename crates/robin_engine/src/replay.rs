@@ -89,7 +89,10 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 35 uses one canonical script-global
+/// On-disk replay schema version. Version 36 retains one game-owned
+/// PostInitialize latch and removes unused imported Messenger copies from
+/// snapshots. The separate Original-game trace format is unchanged.
+/// Version 35 uses one canonical script-global
 /// vector in authoritative snapshots and state hashes instead of parallel
 /// imported-vector and live ID/value-map storage. Version 34 makes the ordered pending AI
 /// detectable-mutation FIFO authoritative snapshot and state-hash data.
@@ -134,7 +137,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 35;
+pub const REPLAY_SCHEMA_VERSION: u32 = 36;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -835,8 +838,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_includes_canonical_script_global_vector() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 35);
+    fn replay_schema_version_includes_single_post_initialize_and_no_stale_messenger() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 36);
     }
 
     #[test]
