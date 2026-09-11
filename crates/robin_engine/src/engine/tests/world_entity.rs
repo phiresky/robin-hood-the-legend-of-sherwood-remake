@@ -5897,6 +5897,12 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         exact_target_world.z,
     ));
     target.element.set_position(exact_target_world);
+    let expected_optical_point = crate::stealth::detection_point_world(
+        exact_target_world,
+        target.element.posture(),
+        target.element.direction(),
+        target.soldier.rider,
+    );
 
     engine.script_domains.interactables.doors = vec![Door {
         door_type: DoorType::Default,
@@ -5936,14 +5942,23 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     for (id, entity) in engine.world.entities.occupied() {
         positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
     }
-    let (optical_ai_position, optical_world) =
+    let (optical_ai_position, optical_point) =
         engine.enemy_optical_geometry_at_owner_for_test(&assets, self_id, &positions, target_id);
     assert_eq!(optical_ai_position.x, 120.0);
     assert_eq!(optical_ai_position.y, 5.0);
     assert_eq!(optical_ai_position.level, 3);
-    assert_eq!(optical_world.x.to_bits(), exact_target_world.x.to_bits());
-    assert_eq!(optical_world.y.to_bits(), exact_target_world.y.to_bits());
-    assert_eq!(optical_world.z.to_bits(), exact_target_world.z.to_bits());
+    assert_eq!(
+        optical_point.x.to_bits(),
+        expected_optical_point.x.to_bits()
+    );
+    assert_eq!(
+        optical_point.y.to_bits(),
+        expected_optical_point.y.to_bits()
+    );
+    assert_eq!(
+        optical_point.z.to_bits(),
+        expected_optical_point.z.to_bits()
+    );
 
     let fighters = engine.build_nearby_fighters_for(self_id, &assets);
     let target = fighters
@@ -6386,7 +6401,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
 }
 
 #[test]
-fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
+fn optical_ai_position_uses_carrier_boundary_but_detects_the_target_world_point() {
     use crate::coordinates::{MapPoint, WorldPoint3D};
 
     let mut engine = EngineInner::new();
@@ -6418,6 +6433,12 @@ fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
         exact_target_world.z,
     ));
     target_pc.element.set_position(exact_target_world);
+    let expected_optical_point = crate::stealth::detection_point_world(
+        exact_target_world,
+        target_pc.element.posture(),
+        target_pc.element.direction(),
+        false,
+    );
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -6435,13 +6456,22 @@ fn optical_ai_position_uses_carrier_boundary_but_keeps_target_world_bits() {
         .element
         .set_position_map(MapPoint::new(999.0, 999.0));
 
-    let (ai_position, optical_world) =
+    let (ai_position, optical_point) =
         engine.enemy_optical_geometry_at_owner_for_test(&assets, owner, &positions, target);
     assert_eq!(ai_position.x, 321.25);
     assert_eq!(ai_position.y, 640.0);
-    assert_eq!(optical_world.x.to_bits(), exact_target_world.x.to_bits());
-    assert_eq!(optical_world.y.to_bits(), exact_target_world.y.to_bits());
-    assert_eq!(optical_world.z.to_bits(), exact_target_world.z.to_bits());
+    assert_eq!(
+        optical_point.x.to_bits(),
+        expected_optical_point.x.to_bits()
+    );
+    assert_eq!(
+        optical_point.y.to_bits(),
+        expected_optical_point.y.to_bits()
+    );
+    assert_eq!(
+        optical_point.z.to_bits(),
+        expected_optical_point.z.to_bits()
+    );
 }
 
 fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInner {

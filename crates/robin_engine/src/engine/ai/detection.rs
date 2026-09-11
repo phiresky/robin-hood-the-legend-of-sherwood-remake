@@ -4098,7 +4098,7 @@ impl EngineInner {
                         building_sector: self.entity_building_sector(soldier.element.sector()),
                         detection_point: (!dead).then(|| {
                             crate::stealth::detection_point_world(
-                                position_world,
+                                boundary.world,
                                 posture,
                                 soldier.element.direction(),
                                 is_rider,
@@ -4152,15 +4152,12 @@ impl EngineInner {
             .into_iter()
             .find(|entry| entry.id == target)
             .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
-        // The unused optical world-position copy is gone; test the actual
-        // owner-boundary source directly without retaining dead runtime state.
-        let boundary = self.boundary_position(
-            target,
-            owner,
-            positions_before_movement,
-            crate::engine::ai::OwnerActorPhase::AfterActor,
-        );
-        (optical.ai_position, boundary.world)
+        (
+            optical.ai_position,
+            optical
+                .detection_point
+                .expect("test optical target must be alive"),
+        )
     }
 
     /// Live positive visibility for one NPC viewer and one human
