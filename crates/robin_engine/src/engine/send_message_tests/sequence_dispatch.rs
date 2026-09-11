@@ -14,6 +14,7 @@ fn nested_sequence_actions_finish_before_parent_tail() {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine
@@ -40,14 +41,13 @@ fn nested_sequence_actions_finish_before_parent_tail() {
         )
         .expect("nested sequence stack should drain depth-first");
 
-    let script = engine.scripts.mission.as_ref().expect("script installed");
     assert_eq!(
-        script.state.globals.get(&904),
+        engine.scripts.globals.get(904),
         Some(&0),
         "nested ProcessMessage ran before the parent's later Unblip"
     );
     assert_eq!(
-        script.state.globals.get(&907),
+        engine.scripts.globals.get(907),
         Some(&0),
         "nested LockAI sequence completed and resumed before parent Unblip"
     );
@@ -160,6 +160,7 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine
@@ -257,6 +258,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine
@@ -330,6 +332,7 @@ fn scroll_send_message_preserves_this_scroll_through_child_and_resume() {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     let script = engine.scripts.mission.as_mut().expect("script installed");
     assert!(script.bind_actor(
@@ -359,15 +362,9 @@ fn scroll_send_message_preserves_this_scroll_through_child_and_resume() {
         )
         .expect("scroll→actor message should preserve the caller frame");
 
-    let globals = &engine
-        .scripts
-        .mission
-        .as_ref()
-        .expect("script installed")
-        .state
-        .globals;
-    assert_eq!(globals.get(&905), Some(&scroll_handle));
-    assert_eq!(globals.get(&906), Some(&scroll_handle));
+    let globals = &engine.scripts.globals;
+    assert_eq!(globals.get(905), Some(&scroll_handle));
+    assert_eq!(globals.get(906), Some(&scroll_handle));
 }
 
 #[test]
@@ -381,6 +378,7 @@ fn scroll_ownerless_send_message_preserves_this_scroll_in_global_and_parent() {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     engine
         .scripts
@@ -406,8 +404,8 @@ fn scroll_ownerless_send_message_preserves_this_scroll_in_global_and_parent() {
             frame,
         )
         .expect("scroll→global message should preserve caller frame");
-    let globals = &engine.scripts.mission.as_ref().unwrap().state.globals;
-    assert_eq!(globals.get(&902), Some(&66));
-    assert_eq!(globals.get(&908), Some(&scroll_handle));
-    assert_eq!(globals.get(&909), Some(&scroll_handle));
+    let globals = &engine.scripts.globals;
+    assert_eq!(globals.get(902), Some(&66));
+    assert_eq!(globals.get(908), Some(&scroll_handle));
+    assert_eq!(globals.get(909), Some(&scroll_handle));
 }

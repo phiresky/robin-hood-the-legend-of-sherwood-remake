@@ -230,6 +230,7 @@ pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     if let Some(ref mut script) = engine.scripts.mission {
         assert!(
@@ -251,9 +252,9 @@ pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
 pub(crate) fn host_global(engine: &EngineInner, id: i32) -> i32 {
     engine
         .scripts
-        .mission
-        .as_ref()
-        .and_then(|script| script.state.globals.get(&id).copied())
+        .globals
+        .get(usize::try_from(id).expect("non-negative global ID"))
+        .copied()
         .unwrap_or(0)
 }
 

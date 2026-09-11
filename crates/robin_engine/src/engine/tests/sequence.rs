@@ -4944,12 +4944,14 @@ fn bind_waypoint_inserts_instance() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
 
     assert!(script.bind_waypoint(
@@ -4974,12 +4976,14 @@ fn bind_waypoint_rejects_missing_referenced_class() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     script.bind_waypoint(
         crate::ai::PathId::new(4).unwrap(),
@@ -5228,12 +5232,14 @@ fn waypoint_script_heap_round_trips_through_serde() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     assert!(script.bind_waypoint(
         crate::ai::PathId::new(3).unwrap(),

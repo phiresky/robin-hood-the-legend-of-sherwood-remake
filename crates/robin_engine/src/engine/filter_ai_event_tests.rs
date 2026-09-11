@@ -304,6 +304,7 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     if let Some(ref mut s) = engine.scripts.mission {
         assert!(s.bind_actor(
@@ -883,6 +884,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     let mission = engine
         .scripts
@@ -1423,12 +1425,14 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     let inner_handle = 22;
     assert!(script.bind_actor(
@@ -1474,12 +1478,14 @@ fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     let scroll_handle = 23;
     assert!(script.bind_scroll(
@@ -1530,12 +1536,14 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     let outer_handle = 11;
     let prototype_handle = 22;
@@ -1602,12 +1610,14 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
 
     // Bind two synthetic actor instances. Their entity handles don't need to
@@ -1658,12 +1668,14 @@ fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     let actor_a = 1;
     let actor_b = 2;
@@ -1754,12 +1766,14 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     let outer_handle = 1;
     let prototype_handle = 2;
@@ -1810,12 +1824,14 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     ]);
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     assert!(script.bind_actor(
         outer_handle,
@@ -1877,11 +1893,13 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
     let mut entities = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim_context,
         &mut entities,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
     assert!(script.bind_actor(
         outer_handle,
@@ -1938,12 +1956,14 @@ fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
     let mut entity_store = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
     let capabilities = crate::natives::NativeSessionCapabilities::new(
         &sim,
         &mut entity_store,
         &mut ai_global,
         &mut fast_grid,
+        &mut globals,
     );
 
     let outer_handle = 1;
@@ -5532,6 +5552,7 @@ fn bind_state_change_actor(engine: &mut EngineInner, actor: EntityId, class_name
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine

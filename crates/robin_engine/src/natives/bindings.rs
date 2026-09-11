@@ -81,12 +81,14 @@ mod tests {
         let mut entities = crate::entities::Entities::new();
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let mut globals = Vec::new();
         let sim = crate::sim_rng::test_context();
         let capabilities = crate::natives::NativeSessionCapabilities::new(
             &sim,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,
+            &mut globals,
         );
         let mut state = ScriptState::default();
         let mut script_domains = crate::engine::ScriptDomains::default();
@@ -108,12 +110,14 @@ mod tests {
         let mut entities = crate::entities::Entities::new();
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let mut globals = Vec::new();
         let sim = crate::sim_rng::test_context();
         let capabilities = crate::natives::NativeSessionCapabilities::new(
             &sim,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,
+            &mut globals,
         );
         let mut state = ScriptState::default();
         let mut script_domains = crate::engine::ScriptDomains::default();

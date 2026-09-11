@@ -131,6 +131,7 @@ fn call_host_native_with_queries(
             &mut host.entities,
             &mut host.ai_global,
             &mut host.fast_grid,
+            &mut host.globals,
         )
         .with_pc_registry(&pc_registry),
     );
@@ -162,6 +163,7 @@ fn call_bound_host_native(
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_pc_registry(&pc_registry);
     let mut context = NativeContext::with_bindings(
@@ -185,10 +187,16 @@ fn with_campaign_context<R>(
     let mut entities = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let sim = crate::sim_rng::test_context();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_campaign(campaign, mission_stat);
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut globals,
+    )
+    .with_campaign(campaign, mission_stat);
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
     let mut context = NativeContext::with_bindings(
@@ -214,6 +222,7 @@ fn with_bound_campaign_context<R>(
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_campaign(campaign, mission_stat);
     let mut context = NativeContext::with_bindings(
@@ -250,6 +259,7 @@ struct CampaignScriptEffects {
     entities: crate::entities::Entities,
     ai_global: crate::ai::AiGlobalState,
     fast_grid: crate::fast_find_grid::FastFindGrid,
+    globals: Vec<i32>,
     state: ScriptState,
     script_domains: crate::engine::ScriptDomains,
     campaign: crate::campaign::Campaign,
@@ -265,6 +275,7 @@ impl HostFunctions for CampaignScriptEffects {
             &mut self.entities,
             &mut self.ai_global,
             &mut self.fast_grid,
+            &mut self.globals,
         )
         .with_campaign(&mut self.campaign, &mut self.mission_stat)
         .with_short_briefings(&mut self.short_briefings);
@@ -285,6 +296,7 @@ struct BoundScriptEffects {
     entities: crate::entities::Entities,
     ai_global: crate::ai::AiGlobalState,
     fast_grid: crate::fast_find_grid::FastFindGrid,
+    globals: Vec<i32>,
     state: ScriptState,
     script_domains: crate::engine::ScriptDomains,
     bindings: AttachedScriptBindings,
@@ -309,6 +321,7 @@ impl BoundScriptEffects {
             entities: crate::entities::Entities::new(),
             ai_global: crate::ai::AiGlobalState::default(),
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
+            globals: Vec::new(),
             state: ScriptState::default(),
             script_domains: crate::engine::ScriptDomains::default(),
             bindings: AttachedScriptBindings::default(),
@@ -387,6 +400,7 @@ impl HostFunctions for BoundScriptEffects {
             &mut self.entities,
             &mut self.ai_global,
             &mut self.fast_grid,
+            &mut self.globals,
         )
         .with_pc_registry(&pc_registry)
         .with_world_views(&[], &[], &[])
@@ -544,6 +558,58 @@ fn thanx_returns_true_for_an_empty_active_recording() {
         1
     );
     assert_eq!(host.sequence_manager.sequences_iter().count(), 0);
+}
+
+#[test]
+fn global_natives_share_allocated_slots_across_sessions() {
+    let mut host = BoundScriptEffects::new();
+    let mut stack = NativeStack::default();
+    stack.push_i32(0);
+    stack.push_i32(7);
+    call_host_native(&mut host, NativeFn::InitGlobal, &mut stack);
+    assert_eq!(host.globals.len(), 16);
+    assert_eq!(host.globals[0], 7);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::GetGlobal, &mut stack),
+        0
+    );
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(15);
+    stack.push_i32(9);
+    call_host_native(&mut host, NativeFn::SetGlobal, &mut stack);
+    assert_eq!(host.globals[15], 9);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(16);
+    stack.push_i32(11);
+    call_host_native(&mut host, NativeFn::InitGlobal, &mut stack);
+    assert_eq!(host.globals.len(), 32);
+    assert_eq!(host.globals[15], 9);
+    assert_eq!(host.globals[16], 11);
+    assert_eq!(&host.globals[17..], &[0; 15]);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(0);
+    stack.push_i32(13);
+    call_host_native(&mut host, NativeFn::InitGlobal, &mut stack);
+    assert_eq!(host.globals.len(), 32);
+    assert_eq!(host.globals[0], 13);
+
+    for id in [-1, 32] {
+        let before = host.globals.clone();
+        let mut stack = NativeStack::default();
+        stack.push_i32(id);
+        stack.push_i32(99);
+        call_host_native(&mut host, NativeFn::SetGlobal, &mut stack);
+        assert_eq!(
+            host.globals, before,
+            "invalid SetGlobal({id}) must not grow storage"
+        );
+    }
 }
 
 #[test]
@@ -804,6 +870,7 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
             &mut host.entities,
             &mut host.ai_global,
             &mut host.fast_grid,
+            &mut host.globals,
         );
         let mut context = NativeContext::with_bindings(
             &mut host.host,
@@ -910,6 +977,7 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
             &mut host.entities,
             &mut host.ai_global,
             &mut host.fast_grid,
+            &mut host.globals,
         );
         let mut context = NativeContext::with_bindings(
             &mut host.host,
@@ -1127,6 +1195,7 @@ fn recorded_move_retains_exact_four_gate_pointer_route_with_numeric_legacy_contr
                 &mut host.entities,
                 &mut host.ai_global,
                 &mut host.fast_grid,
+                &mut host.globals,
             );
             let context = NativeContext::with_bindings(
                 &mut host.host,
@@ -2200,6 +2269,7 @@ fn campaign_values_set_get() {
         entities: crate::entities::Entities::new(),
         ai_global: crate::ai::AiGlobalState::default(),
         fast_grid: crate::fast_find_grid::FastFindGrid::default(),
+        globals: Vec::new(),
         state: ScriptState::default(),
         script_domains: crate::engine::ScriptDomains::default(),
         campaign: crate::campaign::Campaign::default(),
@@ -2441,6 +2511,7 @@ fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_world_views(&[], &[], &[])
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
@@ -2490,6 +2561,7 @@ fn assign_path_yields_until_return_to_duty_finishes() {
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_world_views(&[], &[], &[])
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
@@ -2727,6 +2799,7 @@ fn thanx_launches_into_the_live_sequence_manager_before_returning() {
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_queries(
         &mut host.sequence_manager,
@@ -2802,6 +2875,7 @@ fn set_view_radius_updates_live_ai_and_every_npc_before_returning() {
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_standard_view_radius(&mut host.standard_view_radius);
     let mut context = NativeContext::with_bindings(
@@ -2845,6 +2919,7 @@ fn briefing_and_objective_writes_share_the_live_canonical_model() {
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_short_briefings(&mut host.short_briefings);
     let mut context = NativeContext::with_bindings(
@@ -2906,6 +2981,7 @@ fn honolulu_location_native_yields_canonical_engine_action() {
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
+        &mut host.globals,
     )
     .with_world_views(&[], &[], &[])
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
@@ -3300,13 +3376,19 @@ fn sight_query_view_borrows_canonical_world_arrays() {
     let mut entities = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let static_obstacles = vec![crate::sight_obstacle::SightObstacle::new_default(0)];
     let dynamic_obstacles = vec![crate::sight_obstacle::SightObstacle::new_default(1)];
     let static_active = vec![false];
     let sim = crate::sim_rng::test_context();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_world_views(&static_obstacles, &dynamic_obstacles, &static_active);
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut globals,
+    )
+    .with_world_views(&static_obstacles, &dynamic_obstacles, &static_active);
     let context = NativeContext::with_bindings(
         &mut host,
         &mut state,
@@ -3575,12 +3657,18 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let mut entities = crate::entities::Entities::new();
     let mut ai_global = crate::ai::AiGlobalState::default();
     let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    let mut globals = Vec::new();
     let mut selected = Vec::new();
     let sim = crate::sim_rng::test_context();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame)
-            .with_campaign(&mut campaign, &mut mission_stat);
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut globals,
+    )
+    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame)
+    .with_campaign(&mut campaign, &mut mission_stat);
     let mut context = NativeContext::with_bindings(
         &mut host,
         &mut state,

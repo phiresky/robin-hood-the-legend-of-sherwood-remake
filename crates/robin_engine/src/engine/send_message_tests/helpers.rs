@@ -1029,6 +1029,7 @@ pub(super) fn bind_script_actor(
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine
@@ -1062,25 +1063,9 @@ pub(super) fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.scripts.mission = Some(message_script());
-    engine
-        .scripts
-        .mission
-        .as_mut()
-        .expect("script installed")
-        .state
-        .globals
-        .extend([
-            (900, 0),
-            (901, 0),
-            (902, 0),
-            (903, 0),
-            (904, -1),
-            (905, 0),
-            (906, 0),
-            (907, -1),
-            (908, 0),
-            (909, 0),
-        ]);
+    engine.scripts.globals.resize(916, 0);
+    engine.scripts.globals[904] = -1;
+    engine.scripts.globals[907] = -1;
     engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());
     let handle = ScriptHandleCodec::actor_handle(receiver);
@@ -1090,6 +1075,7 @@ pub(super) fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, 
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine

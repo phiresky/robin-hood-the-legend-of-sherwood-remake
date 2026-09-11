@@ -560,17 +560,7 @@ fn ownerless_send_message_routes_to_global_process_message() {
         )
         .expect("ownerless SendMessage should use engine message processing");
 
-    assert_eq!(
-        engine
-            .scripts
-            .mission
-            .as_ref()
-            .expect("script installed")
-            .state
-            .globals
-            .get(&902),
-        Some(&2718)
-    );
+    assert_eq!(engine.scripts.globals.get(902), Some(&2718));
 }
 
 #[test]
@@ -646,14 +636,7 @@ fn every_script_vm_flavor_drives_yields_through_the_shared_engine_boundary() {
         ),
     ];
     for (key, function, params, frame, expected_message) in calls {
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .unwrap()
-            .state
-            .globals
-            .insert(902, 0);
+        engine.scripts.globals[902] = 0;
         engine
             .call_script_vm(
                 &crate::sim_rng::test_context(),
@@ -665,14 +648,7 @@ fn every_script_vm_flavor_drives_yields_through_the_shared_engine_boundary() {
             )
             .unwrap_or_else(|error| panic!("{key:?}.{function} failed: {error}"));
         assert_eq!(
-            engine
-                .scripts
-                .mission
-                .as_ref()
-                .unwrap()
-                .state
-                .globals
-                .get(&902),
+            engine.scripts.globals.get(902),
             Some(&expected_message),
             "{key:?}.{function} did not synchronously resume after ownerless ProcessMessage"
         );
@@ -695,16 +671,10 @@ fn shared_driver_preserves_same_actor_outer_activation() {
         )
         .expect("A→A callback should resume its outer activation");
 
-    let globals = &engine
-        .scripts
-        .mission
-        .as_ref()
-        .expect("script installed")
-        .state
-        .globals;
-    assert_eq!(globals.get(&900), Some(&314), "nested callback completed");
+    let globals = &engine.scripts.globals;
+    assert_eq!(globals.get(900), Some(&314), "nested callback completed");
     assert_eq!(
-        globals.get(&901),
+        globals.get(901),
         Some(&2),
         "outer callback resumed after child"
     );
@@ -730,11 +700,11 @@ fn self_reentrant_driver_preserves_and_shares_the_instance_member_heap() {
 
     let script = engine.scripts.mission.as_ref().unwrap();
     assert_eq!(
-        script.state.globals.get(&905),
+        engine.scripts.globals.get(905),
         Some(&20),
         "heap={}, globals={:?}",
         script_instance_heap_word(script, handle),
-        script.state.globals
+        engine.scripts.globals
     );
     assert_eq!(script_instance_heap_word(script, handle), 3);
 }
@@ -770,14 +740,7 @@ fn completed_reentrant_continuation_round_trips_as_an_idle_snapshot() {
         .expect("restored mission")
         .attach_program(program);
     restored.attach_script_bindings(&assets);
-    restored
-        .scripts
-        .mission
-        .as_mut()
-        .unwrap()
-        .state
-        .globals
-        .insert(901, 0);
+    restored.scripts.globals[901] = 0;
 
     restored
         .call_script_vm(
@@ -789,17 +752,7 @@ fn completed_reentrant_continuation_round_trips_as_an_idle_snapshot() {
             crate::natives::ScriptCallFrame::actor(handle),
         )
         .expect("restored instance accepts another self-reentrant callback");
-    assert_eq!(
-        restored
-            .scripts
-            .mission
-            .as_ref()
-            .unwrap()
-            .state
-            .globals
-            .get(&901),
-        Some(&2)
-    );
+    assert_eq!(restored.scripts.globals.get(901), Some(&2));
 }
 
 #[test]
@@ -840,6 +793,7 @@ fn shared_driver_preserves_a_b_a_activation_stack() {
         &mut engine.world.entities,
         &mut engine.ai.global,
         std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        &mut engine.scripts.globals,
     );
     assert!(
         engine
@@ -866,15 +820,9 @@ fn shared_driver_preserves_a_b_a_activation_stack() {
         )
         .expect("A→B→A callback stack should fully unwind");
 
-    let globals = &engine
-        .scripts
-        .mission
-        .as_ref()
-        .expect("script installed")
-        .state
-        .globals;
-    assert_eq!(globals.get(&900), Some(&20), "B re-entered A");
-    assert_eq!(globals.get(&903), Some(&3), "outer A resumed last");
+    let globals = &engine.scripts.globals;
+    assert_eq!(globals.get(900), Some(&20), "B re-entered A");
+    assert_eq!(globals.get(903), Some(&3), "outer A resumed last");
 }
 
 #[test]
@@ -899,12 +847,12 @@ fn a_b_a_driver_preserves_each_instances_member_heap() {
 
     let script = engine.scripts.mission.as_ref().unwrap();
     assert_eq!(
-        script.state.globals.get(&906),
+        engine.scripts.globals.get(906),
         Some(&20),
         "A heap={}, B heap={}, globals={:?}",
         script_instance_heap_word(script, a_handle),
         script_instance_heap_word(script, b_handle),
-        script.state.globals
+        engine.scripts.globals
     );
     assert_eq!(script_instance_heap_word(script, a_handle), 30);
     assert_eq!(script_instance_heap_word(script, b_handle), 12);

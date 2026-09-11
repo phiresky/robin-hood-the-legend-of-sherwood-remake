@@ -201,14 +201,7 @@ fn script_send_message_callback_completes_before_sequence_launch_returns() {
         .expect("SendMessage should complete synchronously");
 
     assert_eq!(
-        engine
-            .scripts
-            .mission
-            .as_ref()
-            .expect("script installed")
-            .state
-            .globals
-            .get(&900),
+        engine.scripts.globals.get(900),
         Some(&314),
         "the nested ProcessMessage mutation must be visible when sequence launch returns"
     );
@@ -243,14 +236,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
 
     assert_eq!(engine.control.frame_counter, frame_before);
     assert_eq!(
-        engine
-            .scripts
-            .mission
-            .as_ref()
-            .expect("script installed")
-            .state
-            .globals
-            .get(&900),
+        engine.scripts.globals.get(900),
         Some(&72),
         "ProcessMessage callbacks must run in SendMessage launch order"
     );
@@ -293,14 +279,7 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
         .drain_pending_immediate_actions_sync(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     assert_eq!(
-        engine
-            .scripts
-            .mission
-            .as_ref()
-            .expect("script installed")
-            .state
-            .globals
-            .get(&904),
+        engine.scripts.globals.get(904),
         Some(&0),
         "ProcessMessage must observe state before the later Unblip sibling"
     );
@@ -406,14 +385,7 @@ fn send_message_callback_precedes_later_move_translation() {
     );
 
     assert_eq!(
-        engine
-            .scripts
-            .mission
-            .as_ref()
-            .expect("script installed")
-            .state
-            .globals
-            .get(&909),
+        engine.scripts.globals.get(909),
         Some(&(crate::order::OrderType::NonanimationEnd as i32)),
         "ProcessMessage must observe the no-installed-order sentinel before the later FIFO Move is translated"
     );
@@ -514,14 +486,7 @@ fn recorded_actor_message_closes_ready_before_parent_vm_resumes() {
         .expect("recorded SendMessage successor should finish before Thanx resumes");
 
     assert_eq!(
-        engine
-            .scripts
-            .mission
-            .as_ref()
-            .expect("script installed")
-            .state
-            .globals
-            .get(&908),
+        engine.scripts.globals.get(908),
         Some(&1),
         "the parent VM must observe the next-level Unblip successor"
     );
