@@ -253,7 +253,10 @@ mod tests {
             titbit_row_frame_counts: Vec::new(),
             rng_seed: 0,
             original_rng_replay: Some(vec![1; 10_000]),
-            sim_config: SimConfig::default(),
+            sim_config: SimConfig {
+                script_enabled: false,
+                ..SimConfig::default()
+            },
         })
         .unwrap();
         let mut save =
