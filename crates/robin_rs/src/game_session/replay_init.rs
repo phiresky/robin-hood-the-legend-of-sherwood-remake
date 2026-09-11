@@ -476,10 +476,17 @@ mod tests {
     fn replay_attachment_rejects_raw_input_before_recording_or_file_access() {
         let directory = tempfile::tempdir().unwrap();
         let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Replay Attachment Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
         let application_context = crate::host::ApplicationContext::complete(
             crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
             Default::default(),
-            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone()),
+            players,
             crate::key_config_store::KeyConfigStore::new(save_root),
             None,
         )
