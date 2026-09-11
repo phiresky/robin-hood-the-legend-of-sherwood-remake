@@ -371,7 +371,7 @@ impl SpriteInfo {
 // Binary format helpers (packed structs from the .rhs file)
 // ---------------------------------------------------------------------------
 
-/// Read a profile header from the file (40 bytes packed).
+/// Read a profile header from the file (46 bytes packed).
 ///
 /// Layout (pack 2):
 /// - `profile_name`: 32 bytes (null-terminated ASCII)
@@ -394,6 +394,7 @@ impl ProfileHeader {
     const PACKED_SIZE: usize = 32 + 2 + 2 + 2 + 4 + 4; // = 46
 
     fn read(file: &mut SbFile) -> Result<Self, String> {
+        let name_offset = file.tell();
         let mut name_buf = [0u8; 32];
         LegacyReader::new(file)
             .read_bytes("ProfileHeader.name", &mut name_buf)
@@ -402,7 +403,16 @@ impl ProfileHeader {
         // terminator.
         let name = std::ffi::CStr::from_bytes_until_nul(&name_buf)
             .map(|cs| cs.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_err(|_| {
+                LegacyReader::new(file)
+                    .invalid_value(
+                        name_offset,
+                        "ProfileHeader.name",
+                        "32 bytes without a NUL terminator",
+                        "a NUL-terminated profile name",
+                    )
+                    .to_string()
+            })?;
 
         let num_rows = LegacyReader::new(file)
             .read_u16("ProfileHeader.num_rows")
@@ -734,39 +744,40 @@ impl SpriteScriptor {
             .read_u16("profile count")
             .map_err(|error| error.to_string())?;
 
-        let mut header = ProfileHeader::read(file)?;
-
-        let mut current = 0u16;
-
-        while header.name != profile_name && current < num_profiles.saturating_sub(1) {
+        for _ in 0..num_profiles {
+            let header = ProfileHeader::read(file)?;
+            if header.name == profile_name {
+                // Rewind to the start of this profile header.
+                LegacyReader::new(file)
+                    .skip(
+                        -(ProfileHeader::PACKED_SIZE as i64),
+                        "rewind profile header",
+                    )
+                    .map_err(|error| error.to_string())?;
+                return Ok(true);
+            }
             // Skip all rows and frames of this non-matching profile
             for _ in 0..header.num_rows {
                 let row = RowHeader::read(file)?;
                 // Skip all frame headers for this row
+                let frame_bytes = u64::from(row.num_frames) * FrameHeader::PACKED_SIZE as u64;
+                let offset = file.tell();
+                if frame_bytes > file.get_size().saturating_sub(offset) {
+                    return Err(LegacyReader::new(file)
+                        .invalid_value(
+                            offset,
+                            "skip profile frames",
+                            format!("{} frame headers ({frame_bytes} bytes)", row.num_frames),
+                            "frame headers contained within the file",
+                        )
+                        .to_string());
+                }
                 LegacyReader::new(file)
-                    .skip(
-                        (row.num_frames as u64 * FrameHeader::PACKED_SIZE as u64) as i64,
-                        "skip profile frames",
-                    )
+                    .skip(frame_bytes as i64, "skip profile frames")
                     .map_err(|error| error.to_string())?;
             }
-
-            header = ProfileHeader::read(file)?;
-            current += 1;
         }
-
-        if header.name == profile_name {
-            // Rewind to the start of this profile header
-            LegacyReader::new(file)
-                .skip(
-                    -(ProfileHeader::PACKED_SIZE as i64),
-                    "rewind profile header",
-                )
-                .map_err(|error| error.to_string())?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        Ok(false)
     }
 
     /// Dump **every** profile from an `.rhs` file.
@@ -926,6 +937,95 @@ impl SpriteScriptor {
 
 #[cfg(test)]
 mod tests {
+    fn profile_header(name: &[u8], num_rows: u16) -> Vec<u8> {
+        let mut bytes = vec![0; super::ProfileHeader::PACKED_SIZE];
+        bytes[..name.len()].copy_from_slice(name);
+        bytes[32..34].copy_from_slice(&num_rows.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn profile_names_require_a_terminator_and_ignore_bytes_after_it() {
+        let mut bytes = vec![0; 5];
+        bytes.extend(profile_header(&[b'x'; 32], 0));
+        let mut file = super::SbFile::from_owned_bytes(bytes, "unterminated.rhs");
+        assert_eq!(file.skip(5, 0), 0);
+        let error = super::ProfileHeader::read(&mut file).err().unwrap();
+        for context in ["unterminated.rhs", "byte 5", "ProfileHeader.name", "NUL"] {
+            assert!(error.contains(context), "{error}");
+        }
+
+        for (name, expected) in [
+            (&b"Robin\0garbage"[..], "Robin".to_owned()),
+            (&[b'x'; 31][..], "x".repeat(31)),
+        ] {
+            let mut file = super::SbFile::from_owned_bytes(profile_header(name, 0), "valid.rhs");
+            let header = super::ProfileHeader::read(&mut file).ok().unwrap();
+            assert_eq!(header.name, expected);
+        }
+    }
+
+    #[test]
+    fn profile_search_respects_zero_count_even_with_trailing_header() {
+        for trailing in [vec![], profile_header(b"Robin", 0)] {
+            let mut bytes = 0u16.to_le_bytes().to_vec();
+            bytes.extend(trailing);
+            let mut file = super::SbFile::from_owned_bytes(bytes, "empty.rhs");
+            assert!(!super::SpriteScriptor::find_profile(&mut file, "Robin").unwrap());
+            assert_eq!(file.tell(), 2);
+        }
+    }
+
+    #[test]
+    fn profile_search_skips_rows_and_frames_and_rewinds_matching_header() {
+        let mut bytes = 2u16.to_le_bytes().to_vec();
+        bytes.extend(profile_header(b"First", 1));
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // One frame in this row.
+        bytes.extend_from_slice(&[0; 12]); // Remaining row fields.
+        bytes.extend(vec![0; super::FrameHeader::PACKED_SIZE]);
+        let matching_offset = bytes.len() as u64;
+        bytes.extend(profile_header(b"Second", 0));
+        let mut file = super::SbFile::from_owned_bytes(bytes, "profiles.rhs");
+        assert!(super::SpriteScriptor::find_profile(&mut file, "Second").unwrap());
+        assert_eq!(file.tell(), matching_offset);
+        assert_eq!(
+            super::ProfileHeader::read(&mut file).ok().unwrap().name,
+            "Second"
+        );
+    }
+
+    #[test]
+    fn absent_profile_search_does_not_read_beyond_declared_count() {
+        let mut bytes = 1u16.to_le_bytes().to_vec();
+        bytes.extend(profile_header(b"First", 0));
+        let declared_end = bytes.len() as u64;
+        bytes.extend(profile_header(b"Undeclared", 0));
+        let mut file = super::SbFile::from_owned_bytes(bytes, "profiles.rhs");
+        assert!(!super::SpriteScriptor::find_profile(&mut file, "Undeclared").unwrap());
+        assert_eq!(file.tell(), declared_end);
+    }
+
+    #[test]
+    fn absent_profile_search_rejects_truncated_skipped_frames() {
+        let mut bytes = 1u16.to_le_bytes().to_vec();
+        bytes.extend(profile_header(b"First", 1));
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&[0; 12]);
+        let frame_offset = bytes.len() as u64;
+        bytes.extend(vec![0; super::FrameHeader::PACKED_SIZE - 1]);
+        let mut file = super::SbFile::from_owned_bytes(bytes, "truncated-frames.rhs");
+        let error = super::SpriteScriptor::find_profile(&mut file, "Missing").unwrap_err();
+        for context in [
+            "truncated-frames.rhs",
+            "skip profile frames",
+            "contained within the file",
+        ] {
+            assert!(error.contains(context), "{error}");
+        }
+        assert!(error.contains(&format!("byte {frame_offset}")), "{error}");
+        assert_eq!(file.tell(), frame_offset);
+    }
+
     #[test]
     fn truncated_profile_headers_report_path_offset_and_field() {
         let mut file = super::SbFile::from_owned_bytes(vec![0; 33], "fixture.rhs");
