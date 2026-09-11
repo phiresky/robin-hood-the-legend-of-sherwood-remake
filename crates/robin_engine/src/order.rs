@@ -1,14 +1,7 @@
 //! Order system — movement/action commands given to characters.
 
+use serde::Deserialize;
 use std::num::NonZeroU32;
-
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    serde::Deserialize::deserialize(deserializer)
-}
 
 // ---------------------------------------------------------------------------
 // OrderType
@@ -747,26 +740,26 @@ pub struct AiOrderIntent {
     pub target_y: f32,
     /// Authored movement topology. `None` means this is a local positional
     /// order rather than a full AI destination position.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub target_sector: Option<crate::position_interface::SectorHandle>,
     /// Exact live sector analogue for the destination. The public
     /// handle above is intentionally retained because scripts and authored
     /// data address sectors by number, while route construction compares
     /// arena object identity.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub target_sector_index: Option<crate::fast_find_grid::SectorIndex>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub target_layer: Option<u16>,
     /// Actor sector before movement construction applies the live-door
     /// source adaptation. Original chooses the simple-Move versus
     /// movement-construction branch from this identity.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub raw_source_sector: Option<crate::position_interface::SectorHandle>,
     /// Exact live arena companion for [`Self::raw_source_sector`].
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub raw_source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     /// Actor layer before live-door source adaptation.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub raw_source_layer: Option<u16>,
     /// Actor topology captured when the AI's synchronous movement request reaches
     /// the engine boundary, after movement construction's live-door source
@@ -774,14 +767,14 @@ pub struct AiOrderIntent {
     /// non-interruptible element yields, but Original constructs the route
     /// against this adapted call-time source rather than the actor's later
     /// position.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub source_position: Option<crate::coordinates::MapPoint>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub source_sector: Option<crate::position_interface::SectorHandle>,
     /// Exact live arena sector captured with `source_sector`.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub source_layer: Option<u16>,
     /// The original game compares the raw actor-sector identity, not the public
     /// sector number, when deciding whether movement must use
@@ -790,7 +783,7 @@ pub struct AiOrderIntent {
     /// vector-derived phalanx slots when the compact position alone cannot
     /// express it.
     pub source_target_sector_identity_differs: bool,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub target_actor: Option<u32>,
     pub compute_direction: bool,
     /// Keep this ordinary actor command on `SequenceManager`'s deferred
@@ -807,7 +800,7 @@ pub struct AiOrderIntent {
     /// be promoted to a sequence. Runtime-authored intents normally leave
     /// this unset; synchronous continuations use it to preserve a manager
     /// boundary that has already passed in the current frame.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub not_before_frame: Option<u32>,
     /// This facing request was authored after a same-call state change changed attentive
     /// mode. The engine must apply that attentive transition before
@@ -818,7 +811,7 @@ pub struct AiOrderIntent {
     pub fast_turn: bool,
     /// Authored sector for facing by 16-bit sector index. Positional facing leaves this
     /// unset and derives the sector from `target_x/y` instead.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub explicit_direction: Option<i16>,
     pub tolerance: f32,
     /// Inert legacy AI-lock value carried through order intents for
@@ -862,9 +855,9 @@ pub struct AiOrderIntent {
     pub append_special_action_tail: bool,
     /// Cached selected-movement goal that survives an implicit movement
     /// replacement until the new movement installs a concrete order.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub antagonist: Option<crate::element::EntityId>,
     /// When set, the engine drain runs
     /// `FastFindGrid::find_authorized_position` against the actor's

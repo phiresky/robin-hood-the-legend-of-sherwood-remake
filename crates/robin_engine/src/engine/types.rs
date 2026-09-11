@@ -568,14 +568,6 @@ impl BackgroundTransform {
 const DIRECTOR_CAMERA_VIEW_WIDTH: f32 = 1024.0;
 const DIRECTOR_CAMERA_VIEW_HEIGHT: f32 = 768.0;
 
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
-
 /// Read-only camera motion for a host to apply to its own viewport.
 /// Positions use the director's fixed virtual view, independent of canvas size.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -667,7 +659,7 @@ pub struct CameraState {
     /// is not mechanized. `None` = no mouse recentering. The value is
     /// consumed after the command boundary and therefore belongs to the
     /// deterministic camera snapshot while pending.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub pending_zoom_mouse_screen: Option<ScreenPoint>,
 }
 

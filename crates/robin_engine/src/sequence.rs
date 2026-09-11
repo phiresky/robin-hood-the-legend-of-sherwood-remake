@@ -41,13 +41,6 @@ use crate::order::{Order, OrderType};
 ///
 /// Serde otherwise maps an absent `Option<T>` field to `None`, which would
 /// silently admit an obsolete or truncated Rust snapshot.
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
 
 // ═══════════════════════════════════════════════════════════════════
 //  IDs and references
@@ -836,7 +829,7 @@ pub enum SequenceElementData<P: robin_util::state_hash::StateHash = Option<PostS
         /// sequence-manager phase so the victim's final facing can be read
         /// after damage translation. Runtime projectiles remain as
         /// tombstones long enough for this reference to stay valid.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         projectile: Option<EntityId>,
         /// Raw damage value (for generic/arrow/stone).
         damage: u16,
@@ -1058,7 +1051,7 @@ pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSee
 
     /// Replay-only authoritative gate-search result retained until a point
     /// Seek reaches its cross-sector expansion boundary.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub recorded_gate_path: Option<crate::gate::RecordedGatePath>,
 
     /// Selects who owns gate-path resolution for this point Seek.
@@ -3267,7 +3260,7 @@ pub(crate) struct PersistedSequenceManager {
     actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     actor_translating: Option<(EntityId, SequenceElementRef)>,
 
     elements_to_go: VecDeque<(SequenceId, usize)>,
@@ -3388,7 +3381,7 @@ pub struct PendingCondolation {
     /// `MOVE_WAITING` element. The engine removes this owner's pending and
     /// failed requests immediately before this card's callback. This can
     /// differ from `owner` when a movement interrupts its linked Seek first.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub cancel_path_request_owner: Option<EntityId>,
 }
 

@@ -3107,7 +3107,7 @@ pub struct DoorSeekInfo {
     /// Exact arena half of the original game's outside-door sector identity.
     /// Current Rust snapshots must carry this field explicitly; older Rust
     /// layouts are rejected by their outer schema version.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
     /// Sector on the inside of the door (the building).
     pub sector_in: u16,
@@ -3120,14 +3120,6 @@ pub struct DoorSeekInfo {
     /// building capacity available. Runtime capacity and rider state are
     /// applied by [`Self::is_npc_villain_authorized_direct`].
     pub npc_villain_authorized_direct: bool,
-}
-
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
 }
 
 impl DoorSeekInfo {

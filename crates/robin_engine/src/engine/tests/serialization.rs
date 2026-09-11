@@ -1,5 +1,82 @@
 use super::*;
 
+#[test]
+fn required_options_reject_omission_but_preserve_null_and_populated_values() {
+    fn check<T: serde::Serialize + serde::de::DeserializeOwned>(
+        fixture: T,
+        object_pointer: &str,
+        field: &str,
+        populated: serde_json::Value,
+    ) {
+        let baseline = serde_json::to_value(fixture).unwrap();
+        for value in [serde_json::Value::Null, populated] {
+            let mut encoded = baseline.clone();
+            encoded.pointer_mut(object_pointer).unwrap()[field] = value;
+            let restored: T = serde_json::from_value(encoded.clone()).unwrap();
+            assert_eq!(encoded, serde_json::to_value(restored).unwrap());
+        }
+        let mut missing = baseline;
+        missing
+            .pointer_mut(object_pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        let error = match serde_json::from_value::<T>(missing) {
+            Ok(_) => panic!("missing required option {field} was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains(field), "{error}");
+    }
+
+    let actor = EntityId::new(3, EntityIdKind::Pc);
+    check(
+        crate::sequence::SequenceManager::new(),
+        "",
+        "actor_translating",
+        serde_json::to_value((
+            actor,
+            crate::sequence::SequenceElementRef::new(crate::sequence::SequenceId(7), 2),
+        ))
+        .unwrap(),
+    );
+    check(
+        crate::macro_store::QaReplayCommand::SwordStrike {
+            target: actor,
+            command: Command::SwordstrikeThrustA,
+            composite: None,
+            gesture_quality: crate::player_command::GestureQuality::PERFECT,
+            with_seek: true,
+            seek_distance: None,
+        },
+        "/SwordStrike",
+        "seek_distance",
+        serde_json::json!(63.0),
+    );
+    check(
+        super::super::seat::SeatState::default(),
+        "",
+        "planned_shield_target",
+        serde_json::to_value((actor, actor)).unwrap(),
+    );
+    check(
+        crate::ai::DoorSeekInfo {
+            door_index: crate::gate::DoorIndex::new(0).unwrap(),
+            door_type: crate::gate::DoorType::Default,
+            point_out: MapPoint::ZERO,
+            position_in: crate::ai::Position::default(),
+            sector_out: 0,
+            sector_out_index: None,
+            sector_in: 0,
+            layer_out: 0,
+            npc_villain_authorized_direct: false,
+        },
+        "",
+        "sector_out_index",
+        serde_json::to_value(crate::fast_find_grid::SectorIndex::new(41)).unwrap(),
+    );
+}
+
 /// Serialize the engine to JSON, deserialize it back, advance the
 /// re-hydrated copy, and check it keeps in sync with an equivalent
 /// Clone-only copy. This proves the serde audit is complete enough for

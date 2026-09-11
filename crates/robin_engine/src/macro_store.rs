@@ -200,11 +200,11 @@ pub enum QaReplayCommand {
         target_pos: MapPoint,
         running: bool,
         already_authorized: bool,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     },
     /// Enter-swordfight engagement on a target.
@@ -219,7 +219,7 @@ pub enum QaReplayCommand {
         /// Exact seek tolerance captured with the resolved player command.
         /// Explicitly null for a direct strike and required in every current
         /// Rust macro payload.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         seek_distance: Option<f32>,
     },
     /// Shield two-click completion. Original records the concrete
@@ -236,14 +236,6 @@ pub enum QaReplayCommand {
     /// the stand-up message value, which is 1 for the down-arrow widget
     /// and 0 for the up-arrow.
     PostureToggle { to_crouch: bool },
-}
-
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
 }
 
 /// One recorded action inside a macro slot.  One entry per appended
