@@ -228,7 +228,8 @@ fn read_picture(reader: &mut Reader<'_>, context: &str) -> Result<Picture> {
     reader.take(packed_size, format!("{context} Sixteen payload"))?;
     let length = reader.position() - start;
     let bytes = reader.range(start, length, format!("{context} Sixteen frame"))?;
-    Picture::load_sixteen_from_bytes(bytes).with_context(|| format!("{context} Sixteen frame"))
+    Picture::load_original_sixteen_from_bytes(bytes)
+        .with_context(|| format!("{context} Sixteen frame"))
 }
 
 /// Read a single-picture resource (`PIC `).

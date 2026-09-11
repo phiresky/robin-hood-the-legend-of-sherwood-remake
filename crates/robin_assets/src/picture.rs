@@ -492,6 +492,15 @@ impl Picture {
     /// Inline Sixteen-format decoder for an in-memory blob, to support
     /// the shipping `dd.raw` path without needing an `SbFile` cursor type.
     pub fn load_sixteen_from_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::load_sixteen_bytes(bytes, false)
+    }
+
+    /// Original RES pictures can retain the exporter's pre-conversion RGB24 size.
+    pub(crate) fn load_original_sixteen_from_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::load_sixteen_bytes(bytes, true)
+    }
+
+    fn load_sixteen_bytes(bytes: &[u8], original_format: bool) -> Result<Self> {
         let mut reader = Reader::new(bytes);
         let x_size = reader.u16("Sixteen frame width")?;
         let y_size = reader.u16("Sixteen frame height")?;
@@ -499,7 +508,7 @@ impl Picture {
         let packed_size = reader.u32("Sixteen frame packed size")? as usize;
         let packing = SixteenPacking::from_u32(packing_raw)?;
         let payload = reader.take(packed_size, "Sixteen frame payload")?;
-        Self::decode_sixteen_payload(x_size, y_size, packing, payload)
+        Self::decode_sixteen_payload(x_size, y_size, packing, payload, original_format)
     }
 
     fn rgb565_layout(width: u16, height: u16) -> Result<(u16, usize)> {
@@ -527,9 +536,23 @@ impl Picture {
         height: u16,
         packing: SixteenPacking,
         payload: &[u8],
+        original_format: bool,
     ) -> Result<Self> {
         let (pitch, expected) = Self::rgb565_layout(width, height)?;
-        let data = match packing {
+        // SBPicture::ConvertRGB24ToRGB16 changed the pixels and pitch, but not
+        // mulDataSize. Some original exports consequently compressed 3 bytes
+        // per pixel, with stale memory after the valid RGB565 prefix. The game
+        // decoded into a 2-byte-per-pixel buffer and ignored the overflow status.
+        // Admit only that known size, not arbitrary trailing decompressed data;
+        // read through EOF/checksum while retaining a dimension-derived bound.
+        let decoded_limit = if original_format {
+            expected
+                .checked_add(expected / 2)
+                .context("Sixteen RGB24 export size overflow")?
+        } else {
+            expected
+        };
+        let mut data = match packing {
             SixteenPacking::None => {
                 if payload.len() != expected {
                     bail!(
@@ -542,13 +565,20 @@ impl Picture {
             SixteenPacking::Zip => {
                 let mut out = Vec::new();
                 flate2::read::ZlibDecoder::new(payload)
-                    .take(expected as u64 + 1)
+                    .take(decoded_limit as u64 + 1)
                     .read_to_end(&mut out)
                     .context("zlib decompression of Sixteen picture failed")?;
                 out
             }
-            SixteenPacking::Bzip => decompress_sixteen_bzip(payload, expected)?,
+            SixteenPacking::Bzip => decompress_sixteen_bzip(payload, decoded_limit)?,
         };
+        if original_format && data.len() > expected && data.len() == decoded_limit {
+            tracing::warn!(
+                "Original Sixteen picture {width}x{height} retains RGB24 export length; discarding {} trailing bytes",
+                data.len() - expected
+            );
+            data.truncate(expected);
+        }
         if data.len() != expected {
             bail!(
                 "Sixteen pixel payload: expected {expected} bytes, got {}",
@@ -804,7 +834,7 @@ impl Picture {
             bail!("Sixteen packed payload exceeds remaining stream bytes");
         }
         let payload = read_bytes(file, packed_size)?;
-        Self::decode_sixteen_payload(x_size, y_size, packing, &payload)
+        Self::decode_sixteen_payload(x_size, y_size, packing, &payload, true)
     }
 
     // =======================================================================
@@ -894,6 +924,105 @@ mod tests {
         assert_eq!(PixelFormat::Rgb16.bits_per_pixel(), 16);
         assert_eq!(PixelFormat::Rgb24.bits_per_pixel(), 24);
         assert_eq!(PixelFormat::Rgb32.bits_per_pixel(), 32);
+    }
+
+    #[test]
+    fn original_sixteen_accepts_only_the_stale_rgb24_export_length() {
+        use std::io::Write;
+
+        let packings = [
+            SixteenPacking::Zip,
+            #[cfg(not(target_arch = "wasm32"))]
+            SixteenPacking::Bzip,
+        ];
+        for packing in packings {
+            for length in [3, 4, 5, 6, 7, 4096] {
+                let raw: Vec<u8> = (0..length).map(|i| i as u8).collect();
+                let compressed = match packing {
+                    SixteenPacking::Zip => {
+                        let mut encoder = flate2::write::ZlibEncoder::new(
+                            Vec::new(),
+                            flate2::Compression::default(),
+                        );
+                        encoder.write_all(&raw).unwrap();
+                        encoder.finish().unwrap()
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    SixteenPacking::Bzip => compress_sixteen_bzip(&raw).unwrap(),
+                    _ => unreachable!(),
+                };
+                let mut bytes = Vec::new();
+                bytes.extend_from_slice(&2u16.to_le_bytes());
+                bytes.extend_from_slice(&1u16.to_le_bytes());
+                bytes.extend_from_slice(&(packing as u32).to_le_bytes());
+                bytes.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(&compressed);
+                let original = Picture::load_original_sixteen_from_bytes(&bytes);
+                assert_eq!(original.is_ok(), matches!(length, 4 | 6), "length {length}");
+                assert_eq!(
+                    Picture::load_sixteen_from_bytes(&bytes).is_ok(),
+                    length == 4
+                );
+                if let Ok(picture) = original {
+                    assert_eq!(picture.data, [0, 1, 2, 3]);
+                    // Re-exporting writes canonical RGB565, never the stale suffix.
+                    let canonical = picture.write_sixteen_to_bytes(packing).unwrap();
+                    assert_eq!(
+                        Picture::load_sixteen_from_bytes(&canonical).unwrap().data,
+                        picture.data
+                    );
+                }
+                let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+                let mut stream = bytes.clone();
+                stream.extend_from_slice(&42u32.to_le_bytes());
+                vfs.install_preloaded_asset("original-picture", stream)
+                    .unwrap();
+                let files = robin_data_io::sbfile::SbFileSystem::new(vfs);
+                let mut file = files.open("original-picture", 0).unwrap();
+                assert_eq!(
+                    Picture::load_sixteen_from_stream(&mut file).is_ok(),
+                    matches!(length, 4 | 6)
+                );
+                assert_eq!(read_u32(&mut file).unwrap(), 42);
+                if length == 6 && matches!(packing, SixteenPacking::Zip) {
+                    *bytes.last_mut().unwrap() ^= 1;
+                    assert!(
+                        Picture::load_original_sixteen_from_bytes(&bytes).is_err(),
+                        "checksum must still be checked"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires original demo data in ROBINHOOD_DATA_DIR"]
+    fn original_demo_dialogue_portraits() {
+        let root = std::env::var("ROBINHOOD_DATA_DIR")
+            .expect("set ROBINHOOD_DATA_DIR to demo_leicester_ecoste");
+        let bytes =
+            std::fs::read(std::path::Path::new(&root).join("DATA/Interface/DEFAULT.RES")).unwrap();
+        let marker = [b'P', b'I', b'C', b'C', 11, 1, 0, 0];
+        let start = bytes
+            .windows(marker.len())
+            .position(|window| window == marker)
+            .expect("resource 267");
+        let mut reader = Reader::new(&bytes[start + 8..]);
+        assert_eq!(reader.u32("flags").unwrap(), 1);
+        assert_eq!(reader.u32("count").unwrap(), 5);
+        for _ in 0..5 {
+            let start = reader.position();
+            let header = reader.take(12, "header").unwrap();
+            let packed = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
+            reader.take(packed, "payload").unwrap();
+            let frame = reader.range(start, 12 + packed, "frame").unwrap();
+            let picture = Picture::load_original_sixteen_from_bytes(frame).unwrap();
+            assert_eq!(
+                (picture.width, picture.height, picture.data.len()),
+                (120, 160, 38_400)
+            );
+            assert!(Picture::load_sixteen_from_bytes(frame).is_err());
+        }
     }
 
     #[test]
