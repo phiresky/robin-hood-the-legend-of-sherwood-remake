@@ -444,24 +444,115 @@ mod tests {
         assert!(error.contains("not found"), "{error}");
     }
 
-    #[test]
-    fn optional_minimap_setup_accepts_absent_and_empty_picture_collections() {
-        assert!(extract_minimap_widget_setup(&mut ResourceManager::new()).is_none());
+    fn minimap_archive(kind: &[u8; 4], body: &[u8]) -> ResourceManager {
         let mut bytes = b"SRES".to_vec();
         bytes.extend_from_slice(&0x0100u32.to_le_bytes());
         bytes.extend_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(b"PICC");
+        bytes.extend_from_slice(kind);
         bytes.extend_from_slice(&resource_ids::RHMAP_CORNER.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // picture count
+        bytes.extend_from_slice(body);
         let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
-        vfs.install_preloaded_asset("empty-corner.res", bytes)
-            .unwrap();
+        vfs.install_preloaded_asset("corner.res", bytes).unwrap();
         let files = std::sync::Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
         let mut cursor = ResourceManager::with_files(files);
-        cursor.attach_resource_file("empty-corner.res").unwrap();
+        cursor.attach_resource_file("corner.res").unwrap();
+        cursor
+    }
+
+    fn minimap_pictures(slots: &[Option<(u16, u16)>]) -> ResourceManager {
+        let present = slots.iter().enumerate().fold(0u32, |mask, (index, slot)| {
+            mask | (u32::from(slot.is_some()) << index)
+        });
+        let mut body = present.to_le_bytes().to_vec();
+        for &(width, height) in slots.iter().flatten() {
+            let mut data = vec![0xff; usize::from(width) * usize::from(height) * 2];
+            if let Some(first) = data.get_mut(..2) {
+                first.copy_from_slice(
+                    &robin_assets::frame_holder::TRANSPARENT_COLOR_16.to_le_bytes(),
+                );
+            }
+            let picture = robin_assets::picture::Picture {
+                width,
+                height,
+                pitch: width * 2,
+                pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+                data,
+                palette: None,
+            };
+            body.extend(
+                picture
+                    .write_sixteen_to_bytes(robin_assets::picture::SixteenPacking::None)
+                    .unwrap(),
+            );
+        }
+        minimap_archive(b"BTTN", &body)
+    }
+
+    #[test]
+    fn optional_minimap_setup_accepts_absent_and_empty_picture_collections() {
+        assert!(extract_minimap_widget_setup(&mut ResourceManager::new()).is_none());
+        let mut cursor = minimap_archive(b"PICC", &0u32.to_le_bytes());
         assert!(cursor.has_picture_resource(resource_ids::RHMAP_CORNER));
         assert!(extract_minimap_widget_setup(&mut cursor).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "minimap engine picture metadata")]
+    fn minimap_setup_rejects_present_wrong_type() {
+        let mut cursor = minimap_archive(b"TEXT", &0u16.to_le_bytes());
+        extract_minimap_widget_setup(&mut cursor);
+    }
+
+    #[test]
+    fn minimap_setup_preserves_independent_maxima_and_original_mask_slot() {
+        let mut cursor = minimap_pictures(&[None, Some((9, 1)), None, Some((2, 7))]);
+        let setup = extract_minimap_widget_setup(&mut cursor).unwrap();
+        assert_eq!(
+            setup.corner_size,
+            robin_engine::coordinates::ScreenSize::new(9.0, 7.0)
+        );
+        let mask = setup.button_hit_mask.unwrap();
+        assert!(!mask.is_opaque(0, 0));
+        assert!(mask.is_opaque(8, 0));
+        assert!(!mask.is_opaque(0, 1));
+
+        let mut cursor = minimap_pictures(&[Some((9, 1)), None, Some((2, 7))]);
+        let setup = extract_minimap_widget_setup(&mut cursor).unwrap();
+        assert_eq!(
+            setup.corner_size,
+            robin_engine::coordinates::ScreenSize::new(9.0, 7.0)
+        );
+        assert!(setup.button_hit_mask.is_none());
+
+        // Historical get_dimension rejects only when both maxima are zero.
+        for (width, height) in [(0, 7), (9, 0)] {
+            let mut cursor = minimap_pictures(&[Some((width, height))]);
+            let setup = extract_minimap_widget_setup(&mut cursor).unwrap();
+            assert_eq!(
+                setup.corner_size,
+                robin_engine::coordinates::ScreenSize::new(width as f32, height as f32)
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "no valid sub-pictures")]
+    fn minimap_setup_rejects_present_zero_dimensions() {
+        let mut cursor = minimap_pictures(&[Some((0, 0))]);
+        extract_minimap_widget_setup(&mut cursor);
+    }
+
+    #[test]
+    #[should_panic(expected = "minimap engine picture metadata")]
+    fn minimap_setup_rejects_malformed_encoded_picture() {
+        let mut cursor = minimap_pictures(&[None, Some((2, 1))]);
+        cursor
+            .encode_pictures_for_shipping(|_| {
+                Ok(robin_assets::resource_manager::EncodedPicture::jxl_rgba565_keyed(vec![1]))
+            })
+            .unwrap();
+        extract_minimap_widget_setup(&mut cursor);
     }
 
     #[test]

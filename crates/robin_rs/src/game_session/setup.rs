@@ -714,7 +714,7 @@ pub(super) fn load_mission_sprites(
 pub(super) fn extract_minimap_widget_setup(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::MinimapWidgetSetup> {
-    if !cursor_res.has_picture_resource(resource_ids::RHMAP_CORNER) {
+    if !cursor_res.has_resource(resource_ids::RHMAP_CORNER) {
         return None;
     }
     let metadata = cursor_res
@@ -725,11 +725,18 @@ pub(super) fn extract_minimap_widget_setup(
     if metadata.iter().all(Option::is_none) {
         return None;
     }
-    let (btn_w, btn_h) = cursor_res
-        .get_dimension(resource_ids::RHMAP_CORNER)
-        .unwrap_or_else(|error| {
-            panic!("Data/Interface/DEFAULT.RES minimap corner dimensions: {error:#}")
+    // Metadata already validates the image dimensions. Keep independent maxima
+    // across the original slots without reading shipping image headers again.
+    let (btn_w, btn_h) = metadata
+        .iter()
+        .flatten()
+        .fold((0u16, 0u16), |(w, h), picture| {
+            (w.max(picture.width), h.max(picture.height))
         });
+    assert!(
+        btn_w != 0 || btn_h != 0,
+        "Data/Interface/DEFAULT.RES minimap corner dimensions: no valid sub-pictures"
+    );
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
     let button_hit_mask = metadata.into_iter().nth(1).flatten().map(|metadata| {
         metadata
