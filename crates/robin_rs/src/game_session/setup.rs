@@ -1398,8 +1398,24 @@ pub(super) fn prepare_mission(
     // this single call.  Mission script was already loaded inside
     // `load_level()` → `load_mission_script()` so the level loader
     // does not re-load it.
-    (assets.peasant_firstnames, assets.peasant_surnames) = load_peasant_name_pool(text_res);
-    assets.fixed_vip_names = load_fixed_vip_name_map(text_res);
+    (assets.peasant_firstnames, assets.peasant_surnames) = match load_peasant_name_pool(text_res) {
+        Ok(names) => names,
+        Err(error) => {
+            return Err(MissionLoadError::new(
+                campaign,
+                format!("Localized names: {error:#}"),
+            ));
+        }
+    };
+    assets.fixed_vip_names = match load_fixed_vip_name_map(text_res) {
+        Ok(names) => names,
+        Err(error) => {
+            return Err(MissionLoadError::new(
+                campaign,
+                format!("Localized VIP names: {error:#}"),
+            ));
+        }
+    };
 
     // Run the single-threaded wasm fallback decode here — the exact point
     // the old synchronous branch used — so the loading bar behaves the same

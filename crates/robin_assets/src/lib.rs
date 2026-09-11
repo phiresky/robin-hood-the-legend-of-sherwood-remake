@@ -33,6 +33,8 @@ pub mod decompile;
 pub mod disasm;
 pub mod frame_holder;
 pub mod late_sprites;
+#[cfg(feature = "engine-adapters")]
+pub mod original_text;
 pub mod packed_sprite;
 pub mod picture;
 #[cfg(feature = "engine-adapters")]

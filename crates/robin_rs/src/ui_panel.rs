@@ -224,12 +224,6 @@ const RHID_MIDDLE_1024: ResourceId = resource_ids::RHID_MIDDLE_1024;
 
 // ─── Localized name string resource IDs ────────────────────────
 
-/// Resource ID for the menu text string table (campaign version).
-pub(crate) const MENU_TEXT_TABLE_ID: ResourceId = 1000507;
-/// Alternate menu text table IDs for demo versions.
-pub(crate) const MENU_TEXT_TABLE_ID_DEMO: ResourceId = 1000040;
-pub(crate) const MENU_TEXT_TABLE_ID_DEMO2: ResourceId = 1000034;
-
 // ─── Portrait cache ───────────────────────────────────────────────
 
 /// Pre-loaded portrait renderer surfaces and action button icons, keyed by [`CharacterKind`].
@@ -1960,55 +1954,19 @@ pub fn load_localized_character_names(
     out
 }
 
-/// String ids whose position shifted between the original retail demo's
-/// menu-text table and the final layout (see [`menu_text_string`]).
-const MENU_TEXT_OLD_DEMO_SHIFT_RANGE: std::ops::RangeInclusive<usize> = 54..=166;
-
-/// True when the attached full-game menu-text table uses the original
-/// retail demo's layout.
-///
-/// That build predates the "3D sound" audio option: its table
-/// (`MENU_TEXT_TABLE_ID`) is missing that entry at index 53, so every
-/// string id in `54..=166` sits one position lower than in the final
-/// layout (the window closes at 167 because the final layout in turn
-/// dropped the old "Display entrances to houses" entry — the tables have
-/// equal length). The probe keys on the "3D" substring, which appears in
-/// the option label in every shipped localization.
-fn menu_text_old_demo_layout(res: &mut ResourceManager) -> bool {
-    match res.get_string(MENU_TEXT_TABLE_ID, 53) {
-        Ok(s) => !s.contains("3D"),
-        Err(_) => false,
-    }
-}
-
-/// Fetch a menu-text string by final-layout id, trying the full-game
-/// table first and falling back to the two demo tables.  Old-demo
-/// full-game tables (see [`menu_text_old_demo_layout`]) get the shifted
-/// id transparently remapped.  Returns the string plus the table id and
-/// sub id it was actually read from (for logging).
+/// Resolve Original text; presentation-only callers log malformed tables and
+/// retain their existing optional-label policy.
 pub(crate) fn menu_text_string(
     res: &mut ResourceManager,
     sub_id: usize,
 ) -> Option<(String, ResourceId, usize)> {
-    let table_ids = [
-        MENU_TEXT_TABLE_ID,
-        MENU_TEXT_TABLE_ID_DEMO,
-        MENU_TEXT_TABLE_ID_DEMO2,
-    ];
-    for &table_id in &table_ids {
-        let effective_sub_id = if table_id == MENU_TEXT_TABLE_ID
-            && MENU_TEXT_OLD_DEMO_SHIFT_RANGE.contains(&sub_id)
-            && menu_text_old_demo_layout(res)
-        {
-            sub_id - 1
-        } else {
-            sub_id
-        };
-        if let Ok(s) = res.get_string(table_id, effective_sub_id) {
-            return Some((s.to_string(), table_id, effective_sub_id));
+    match robin_assets::original_text::menu_text_string(res, sub_id) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(sub_id, "Cannot resolve Original menu text: {error:#}");
+            None
         }
     }
-    None
 }
 
 /// Render the health gauge (two-parchment composite) at the given position.

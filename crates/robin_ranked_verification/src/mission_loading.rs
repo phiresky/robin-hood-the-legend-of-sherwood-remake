@@ -114,8 +114,17 @@ pub(crate) fn load_raw_mission_inputs(
         ),
     )]));
 
-    (assets.peasant_firstnames, assets.peasant_surnames) = load_peasant_name_pool(&mut text);
-    assets.fixed_vip_names = load_fixed_vip_name_map(&mut text);
+    (assets.peasant_firstnames, assets.peasant_surnames) =
+        robin_assets::original_text::load_peasant_name_pool(&mut text)
+            .map_err(|error| RankedVerifierLoadError::ResourceArchive {
+                path: "Data/Text/Level.res",
+                message: format!("{error:#}"),
+            })?;
+    assets.fixed_vip_names = robin_assets::original_text::load_fixed_vip_name_map(&mut text)
+        .map_err(|error| RankedVerifierLoadError::ResourceArchive {
+            path: "Data/Text/Level.res",
+            message: format!("{error:#}"),
+        })?;
 
     let level_directory = options.level_directory.clone();
     let loaded = robin_engine::engine::level_loading::load_mission_for_campaign_with_files(
@@ -270,61 +279,6 @@ fn extract_titbit_row_frame_counts(resources: &mut ResourceManager) -> Vec<u16> 
         counts[row as usize] = count;
     }
     counts
-}
-
-const MENU_TEXT_TABLE_ID: i32 = 1_000_507;
-const MENU_TEXT_TABLE_ID_DEMO: i32 = 1_000_040;
-const MENU_TEXT_TABLE_ID_DEMO2: i32 = 1_000_034;
-
-fn menu_text_string(resources: &mut ResourceManager, sub_id: usize) -> Option<String> {
-    let old_demo = resources
-        .get_string(MENU_TEXT_TABLE_ID, 53)
-        .map(|value| !value.contains("3D"))
-        .unwrap_or(false);
-    for table_id in [
-        MENU_TEXT_TABLE_ID,
-        MENU_TEXT_TABLE_ID_DEMO,
-        MENU_TEXT_TABLE_ID_DEMO2,
-    ] {
-        let effective =
-            if table_id == MENU_TEXT_TABLE_ID && (54..=166).contains(&sub_id) && old_demo {
-                sub_id - 1
-            } else {
-                sub_id
-            };
-        if let Ok(value) = resources.get_string(table_id, effective) {
-            return Some(value.to_owned());
-        }
-    }
-    None
-}
-
-fn load_peasant_name_pool(resources: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
-    let firstnames = (100..122)
-        .filter_map(|id| menu_text_string(resources, id))
-        .collect();
-    let surnames = (122..144)
-        .filter_map(|id| menu_text_string(resources, id))
-        .collect();
-    (firstnames, surnames)
-}
-
-fn load_fixed_vip_name_map(resources: &mut ResourceManager) -> BTreeMap<String, String> {
-    [
-        "Robin des bois",
-        "Robin des villes",
-        "Will Ecarlate",
-        "Petit Jean",
-        "Frere Tuck",
-        "Lady Marianne",
-        "Stutely",
-    ]
-    .into_iter()
-    .enumerate()
-    .filter_map(|(offset, profile)| {
-        menu_text_string(resources, 144 + offset).map(|localized| (profile.to_owned(), localized))
-    })
-    .collect()
 }
 
 fn decode_background_map(

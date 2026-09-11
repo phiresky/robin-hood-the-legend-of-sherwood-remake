@@ -163,13 +163,10 @@ impl InitError {
 /// German, "neutral" (2047 — used by some French builds), French, Italian,
 /// Brazilian Portuguese, Mexican Spanish, Russian, Japanese, Czech, Polish,
 /// Portuguese, Traditional Chinese, Korean, Simplified Chinese, Thai.
-pub const LANGUAGE_FOLDERS: &[&str] = &[
-    "1031", "2047", "1036", "1040", "2070", "3082", "1049", "1041", "1029", "1045", "1046", "1028",
-    "1042", "2052", "1054",
-];
+pub use robin_assets::original_text::LANGUAGE_FOLDERS;
 
 /// English fallback locale folder, always added first in the international build.
-pub const FALLBACK_LOCALE_FOLDER: &str = "1033";
+pub use robin_assets::original_text::FALLBACK_LOCALE_FOLDER;
 
 /// Environment variable containing additional datadir roots to overlay on top
 /// of the primary `ROBINHOOD_DATA_DIR`.  Native builds use the platform path

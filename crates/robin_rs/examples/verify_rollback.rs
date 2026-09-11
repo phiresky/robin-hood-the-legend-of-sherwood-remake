@@ -63,8 +63,10 @@ fn main() {
         .attach_resource_file("Data/Text/Level.res")
         .expect("load localized mission names");
     (assets.peasant_firstnames, assets.peasant_surnames) =
-        robin_rs::game_session::load_peasant_name_pool(&mut text_res);
-    assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res);
+        robin_rs::game_session::load_peasant_name_pool(&mut text_res)
+            .expect("decode localized peasant names");
+    assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res)
+        .expect("decode localized VIP names");
     let mut host = Host::scratch(1024.0, 768.0);
     if let Err(e) = host
         .frontend

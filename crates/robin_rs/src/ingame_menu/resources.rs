@@ -26,12 +26,9 @@ use serde::{Deserialize, Serialize};
 // Menu text string table
 // ═══════════════════════════════════════════════════════════════════
 
-/// Campaign menu text table ID.
-pub const MENU_TEXT_TABLE_ID: i32 = 1000507;
-/// Demo 1 menu text table ID.
-pub const MENU_TEXT_TABLE_ID_DEMO: i32 = 1000040;
-/// Demo 2 menu text table ID.
-pub const MENU_TEXT_TABLE_ID_DEMO2: i32 = 1000034;
+pub use robin_assets::original_text::{
+    MENU_TEXT_TABLE_ID, MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2,
+};
 
 // ── Menu text IDs ───────────────────────────────────────────────────
 //
@@ -421,31 +418,16 @@ impl MenuText {
     /// the [`ResourceManager`] that already has whichever file is
     /// available attached.
     pub fn load(res: &mut ResourceManager) -> Self {
-        let tables = [
-            MENU_TEXT_TABLE_ID,
-            MENU_TEXT_TABLE_ID_DEMO,
-            MENU_TEXT_TABLE_ID_DEMO2,
-        ];
-
-        let mut strings: Vec<String> = Vec::new();
-        for &id in &tables {
-            if let Ok(table) = res.get_strings(id) {
-                strings = table.to_vec();
-                tracing::info!(
-                    "MenuText: loaded table {} with {} entries",
-                    id,
-                    strings.len()
-                );
-                break;
+        let strings = match robin_assets::original_text::load_menu_strings(res) {
+            Ok(strings) => strings,
+            Err(error) => {
+                tracing::warn!("MenuText: malformed Original text table: {error:#}");
+                Vec::new()
             }
-        }
+        };
         if strings.is_empty() {
-            tracing::warn!(
-                "MenuText: none of the known text tables ({:?}) were found",
-                tables
-            );
+            tracing::warn!("MenuText: no Original menu text loaded; using English fallbacks");
         }
-
         Self {
             strings,
             fallbacks: Some(default_fallbacks()),

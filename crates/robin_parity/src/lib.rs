@@ -16,14 +16,11 @@ use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile::SbFile;
 
 /// Locale-specific directories searched by the Original international build.
-pub const LANGUAGE_FOLDERS: &[&str] = &[
-    "1031", "2047", "1036", "1040", "2070", "3082", "1049", "1041", "1029", "1045", "1046", "1028",
-    "1042", "2052", "1054",
-];
+pub use robin_assets::original_text::LANGUAGE_FOLDERS;
 
 /// Register localized data paths after a replay tool has entered its datadir.
 pub fn register_language_data_paths() {
-    let _ = SbFile::add_alternate_path("1033");
+    let _ = SbFile::add_alternate_path(robin_assets::original_text::FALLBACK_LOCALE_FOLDER);
     for &folder in LANGUAGE_FOLDERS {
         if SbFile::exists(folder) {
             tracing::info!(folder, "detected parity replay language folder");
@@ -34,35 +31,6 @@ pub fn register_language_data_paths() {
     tracing::info!("no locale folder found; using the 1033 fallback path");
 }
 
-const MENU_TEXT_TABLE_ID: i32 = 1_000_507;
-const MENU_TEXT_TABLE_ID_DEMO: i32 = 1_000_040;
-const MENU_TEXT_TABLE_ID_DEMO2: i32 = 1_000_034;
-
-fn menu_text_string(resources: &mut ResourceManager, sub_id: usize) -> Option<String> {
-    // The first demo's full table is missing entry 53, shifting the following
-    // strings by one. This is the same probe used by the interactive client.
-    let old_demo = resources
-        .get_string(MENU_TEXT_TABLE_ID, 53)
-        .map(|value| !value.contains("3D"))
-        .unwrap_or(false);
-    for table_id in [
-        MENU_TEXT_TABLE_ID,
-        MENU_TEXT_TABLE_ID_DEMO,
-        MENU_TEXT_TABLE_ID_DEMO2,
-    ] {
-        let effective_sub_id =
-            if table_id == MENU_TEXT_TABLE_ID && (54..=166).contains(&sub_id) && old_demo {
-                sub_id - 1
-            } else {
-                sub_id
-            };
-        if let Ok(value) = resources.get_string(table_id, effective_sub_id) {
-            return Some(value.to_owned());
-        }
-    }
-    None
-}
-
 /// Populate localized names consumed by deterministic civilian construction.
 pub fn populate_localized_names(assets: &mut LevelAssets) -> Result<(), String> {
     let mut resources = ResourceManager::legacy_tool();
@@ -70,28 +38,11 @@ pub fn populate_localized_names(assets: &mut LevelAssets) -> Result<(), String> 
         .attach_resource_file("Data/Text/Level.res")
         .map_err(|error| format!("load Data/Text/Level.res: {error}"))?;
 
-    assets.peasant_firstnames = (100..122)
-        .filter_map(|id| menu_text_string(&mut resources, id))
-        .collect();
-    assets.peasant_surnames = (122..144)
-        .filter_map(|id| menu_text_string(&mut resources, id))
-        .collect();
-    assets.fixed_vip_names = [
-        "Robin des bois",
-        "Robin des villes",
-        "Will Ecarlate",
-        "Petit Jean",
-        "Frere Tuck",
-        "Lady Marianne",
-        "Stutely",
-    ]
-    .into_iter()
-    .enumerate()
-    .filter_map(|(offset, profile)| {
-        menu_text_string(&mut resources, 144 + offset)
-            .map(|localized| (profile.to_owned(), localized))
-    })
-    .collect();
+    (assets.peasant_firstnames, assets.peasant_surnames) =
+        robin_assets::original_text::load_peasant_name_pool(&mut resources)
+            .map_err(|error| format!("{error:#}"))?;
+    assets.fixed_vip_names = robin_assets::original_text::load_fixed_vip_name_map(&mut resources)
+        .map_err(|error| format!("{error:#}"))?;
     Ok(())
 }
 

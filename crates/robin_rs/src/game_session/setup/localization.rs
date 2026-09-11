@@ -69,51 +69,7 @@ fn validate_patched_descriptors(
     Ok(())
 }
 
-/// Load the 22-firstname / 22-surname peasant name pool from
-/// `Level.res` — the civilian display-name branch.  Sub-IDs 100-121
-/// hold firstnames, 122-143 surnames, under one of three menu text
-/// tables (full / demo / demo2).
-pub fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
-    use crate::ui_panel::menu_text_string;
-    const FIRSTNAME_BASE: usize = 100;
-    const SURNAME_BASE: usize = 122;
-    const NAME_COUNT: usize = 22;
-    let firstnames: Vec<String> = (0..NAME_COUNT)
-        .filter_map(|i| menu_text_string(text_res, FIRSTNAME_BASE + i).map(|(s, _, _)| s))
-        .collect();
-    let surnames: Vec<String> = (0..NAME_COUNT)
-        .filter_map(|i| menu_text_string(text_res, SURNAME_BASE + i).map(|(s, _, _)| s))
-        .collect();
-    (firstnames, surnames)
-}
-
-/// Load the fixed localized VIP names selected by
-/// Original-game name generation. Keys are the canonical French profile
-/// identities stored in CPF and mission data.
-pub fn load_fixed_vip_name_map(
-    text_res: &mut ResourceManager,
-) -> std::collections::BTreeMap<String, String> {
-    use crate::ui_panel::menu_text_string;
-    const VIP_NAME_BASE: usize = 144;
-    const PROFILE_NAMES: [&str; 7] = [
-        "Robin des bois",
-        "Robin des villes",
-        "Will Ecarlate",
-        "Petit Jean",
-        "Frere Tuck",
-        "Lady Marianne",
-        "Stutely",
-    ];
-
-    PROFILE_NAMES
-        .into_iter()
-        .enumerate()
-        .filter_map(|(offset, profile_name)| {
-            menu_text_string(text_res, VIP_NAME_BASE + offset)
-                .map(|(localized, _, _)| (profile_name.to_owned(), localized))
-        })
-        .collect()
-}
+pub use robin_assets::original_text::{load_fixed_vip_name_map, load_peasant_name_pool};
 
 pub(super) fn resolve_short_briefings(
     text_res: &mut ResourceManager,

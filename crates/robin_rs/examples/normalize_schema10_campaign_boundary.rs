@@ -177,7 +177,8 @@ fn main() {
     let mut text = ResourceManager::legacy_tool();
     text.attach_resource_file("Data/Text/Level.res")
         .expect("load Level.res");
-    let (firstnames, surnames) = robin_rs::game_session::load_peasant_name_pool(&mut text);
+    let (firstnames, surnames) = robin_rs::game_session::load_peasant_name_pool(&mut text)
+        .expect("decode localized peasant names");
     assert_eq!((firstnames.len(), surnames.len()), (22, 22));
     let draws = prefix["draws"]["values"]
         .as_array()
