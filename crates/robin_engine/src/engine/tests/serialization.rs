@@ -29,7 +29,7 @@ fn required_options_reject_omission_but_preserve_null_and_populated_values() {
         assert!(error.to_string().contains(field), "{error}");
     }
 
-    let actor = EntityId::new(3, EntityIdKind::Pc);
+    let actor = EntityId::new(3, crate::entity_id::EntityIdKind::Pc);
     check(
         crate::sequence::SequenceManager::new(),
         "",
@@ -43,7 +43,7 @@ fn required_options_reject_omission_but_preserve_null_and_populated_values() {
     check(
         crate::macro_store::QaReplayCommand::SwordStrike {
             target: actor,
-            command: Command::SwordstrikeThrustA,
+            command: crate::element_kinds::Command::SwordstrikeThrustA,
             composite: None,
             gesture_quality: crate::player_command::GestureQuality::PERFECT,
             with_seek: true,
