@@ -1196,7 +1196,7 @@ impl EnemyAi {
             // (1) Predecision: Offensive or defensive?
             let predecision = self.make_battle_predecisions(sim, ctx, tick);
 
-            // Use engine-populated cached values for battle context.
+            // Use the aggregates computed by this decision's camp scan.
             let friends_with_lower_company = friends_lower_company;
             let soldiers_with_lower_pride = soldiers_lower_pride;
 
