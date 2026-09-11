@@ -112,8 +112,6 @@ fn ai_global_state_scalar_projection_matrix() {
             green_alert_soldiers: (1u32 + seed) as u16,
             yellow_alert_soldiers: (2u32 + seed) as u16,
             red_alert_soldiers: (3u32 + seed) as u16,
-            there_are_royalist_soldiers: seed & (1 << 3) != 0,
-            there_are_lacklandist_soldiers: seed & (1 << 0) != 0,
             stupid_soldiers_cheat: seed & (1 << 2) != 0,
             freeze: seed & (1 << 3) != 0,
             saved_random_seed: (14u32 + seed) as i64,

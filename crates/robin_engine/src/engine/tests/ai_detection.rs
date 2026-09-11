@@ -3727,8 +3727,11 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
 
     fn observe(waker_before_observer: bool, natural: bool) -> (BlinkState, BlinkState) {
         let mut engine = EngineInner::new();
-        engine.ai.global.there_are_royalist_soldiers = true;
-        engine.ai.global.there_are_lacklandist_soldiers = true;
+        engine
+            .ai
+            .global
+            .soldier_camps
+            .extend([Camp::Royalists, Camp::Lacklandists]);
         let waker = make_test_ai_soldier(Camp::Royalists);
         let observer = make_test_ai_soldier(Camp::Lacklandists);
         let (waker_id, observer_id) = if waker_before_observer {

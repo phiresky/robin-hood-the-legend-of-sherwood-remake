@@ -4445,8 +4445,11 @@ fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
     use crate::element::Camp;
 
     let mut engine = EngineInner::new();
-    engine.ai.global.there_are_royalist_soldiers = true;
-    engine.ai.global.there_are_lacklandist_soldiers = true;
+    engine
+        .ai
+        .global
+        .soldier_camps
+        .extend([Camp::Royalists, Camp::Lacklandists]);
     let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
