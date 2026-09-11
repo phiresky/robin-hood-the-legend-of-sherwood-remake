@@ -45,6 +45,7 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 Feature choices are deliberate. Do not substitute `--all-features`; video,
 Android, browser threads, and shader tooling have distinct dependencies.
 The assets gate checks resolved normal/build dependencies across all targets:
+offline `robin_modding_tools` must not pull in the `robin_rs` client;
 pure `robin_assets` must not pull in `robin_engine`; pure `robin_content` also
 excludes `robin_util`, `robin_state_hash_derive` and `bitcode`. The checker prints
 the complete Cargo tree and rejects an empty or unexpected graph.
