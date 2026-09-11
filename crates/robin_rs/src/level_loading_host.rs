@@ -417,11 +417,22 @@ pub fn probe_background_map_dims_with_files(
         }
     }
     let disk_candidates = candidate_paths(level_directory, ambiance_dir, map_name, "map");
+    let open_for_probe = |path: &str| {
+        open_candidate(path, files)
+            .map_err(|error| {
+                tracing::warn!(
+                    path,
+                    %error,
+                    "Terrain dimension probe unavailable; deferring to full decode"
+                );
+            })
+            .ok()
+    };
     for path in &disk_candidates {
         // Hackable PNG overlays take priority in `load_terrain_candidate`;
         // their pixel dimensions come straight from the PNG header.
         let png_path = format!("{path}.png");
-        if let Some(file) = open_candidate(&png_path, files).ok()? {
+        if let Some(file) = open_for_probe(&png_path)? {
             let bytes = file.into_shared_bytes();
             let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
             let reader = decoder.read_info().ok()?;
@@ -431,7 +442,7 @@ pub fn probe_background_map_dims_with_files(
                 u16::try_from(info.height).ok()?,
             ));
         }
-        if let Some(file) = open_candidate(path, files).ok()? {
+        if let Some(file) = open_for_probe(path)? {
             return Picture::terrain_dimensions(&file.into_shared_bytes()).ok();
         }
     }
