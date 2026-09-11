@@ -187,7 +187,7 @@ impl EngineInner {
             let scratch = if policy.without_forecast() {
                 self.build_owner_context_scratch_without_forecast(assets)
             } else {
-                self.build_sim_scratch(sim, assets)
+                self.build_sim_scratch(assets)
             };
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -221,7 +221,7 @@ impl EngineInner {
             if policy.without_forecast() {
                 match self.world.entities.get(npc_id) {
                     Some(entity) if entity.enemy_ai().is_some() => {
-                        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+                        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
                         self.dispatch_filtered_stimulus_without_forecast(
                             sim, assets, npc_id, &stimulus, &ctx, &tick_data,
                         );
@@ -242,7 +242,7 @@ impl EngineInner {
                     ),
                 };
             } else {
-                let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+                let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
                 self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
             }
 
@@ -448,7 +448,7 @@ impl EngineInner {
 
         // The script may have spawned or deactivated entities, so rebuild the
         // context only after its VM call returns.
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_sim_scratch(assets);
         let frame = self.control.frame_counter;
         let is_forest_level = self.world.weather.is_forest_level;
         let ambiance = self.world.weather.ambiance;
@@ -483,7 +483,7 @@ impl EngineInner {
             )
         };
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
-        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
         self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         self.dispatch_synchronous_owner_moves(sim, assets, npc_id, &mut Vec::new())
             .unwrap_or_else(|error| {
@@ -667,7 +667,7 @@ impl EngineInner {
             .get(npc_id)
             .is_some_and(|entity| entity.enemy_ai().is_some());
         if is_enemy {
-            let tick = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            let tick = self.build_npc_tick_data(sim, npc_id, assets);
             self.world
                 .entities
                 .get_mut(npc_id)
@@ -1258,7 +1258,7 @@ impl EngineInner {
         // would consume unrelated BuildingExitGate RNG merely because an
         // idle soldier reached its staggered periodic slot.
         let tick_data = if entity.enemy_ai().is_some() {
-            self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets)
+            self.build_npc_tick_data_without_forecasts(sim, npc_id, assets)
         } else {
             crate::ai::AiPerTickData::stub()
         };
@@ -1928,7 +1928,7 @@ impl EngineInner {
         // the specialized AI to complete the response. Build the
         // ctx + tick data the way `tick_periodic_ai` does.
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let building_sector = self

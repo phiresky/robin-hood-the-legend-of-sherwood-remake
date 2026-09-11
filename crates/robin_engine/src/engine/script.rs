@@ -1476,7 +1476,7 @@ impl EngineInner {
                     // The original game returns the actor to duty directly here,
                     // rather than routing through Think and FilterAIEvent.
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick_data = self.build_npc_tick_data(sim, owner, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, owner, assets);
                     let frame = self.control.frame_counter;
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
                     let building_sector = self.entity_building_sector(
@@ -4020,9 +4020,10 @@ impl EngineInner {
             self.refresh_selected_default_wait_identity(entity_id, &mut fresh_ctx);
             fresh_ctx.in_uninterruptible_command = self.is_very_very_busy(entity_id);
             fresh_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-            let fresh_enemy_tick = fresh_entity.enemy_ai().is_some().then(|| {
-                self.build_npc_tick_data_without_forecasts(sim, entity_id, &fresh_scratch, assets)
-            });
+            let fresh_enemy_tick = fresh_entity
+                .enemy_ai()
+                .is_some()
+                .then(|| self.build_npc_tick_data_without_forecasts(sim, entity_id, assets));
             let fresh_friendly_tick = fresh_entity
                 .friendly_ai()
                 .is_some()
@@ -4322,8 +4323,7 @@ impl EngineInner {
                     // the successful remark in the original statement order.
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
                     let mut ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -4371,8 +4371,7 @@ impl EngineInner {
                     // route result before decision-tick completion may surface an event.
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
                     let mut ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -4423,8 +4422,7 @@ impl EngineInner {
                     // after the officer alert's synchronous approach result.
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
                     let mut ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -4556,8 +4554,7 @@ impl EngineInner {
                     // The ordinary drain policy consumes all owner-work
                     // before cross-NPC work, so stage these boundaries here.
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
                             panic!("brawl-hitting owner {} disappeared", owner.index())
@@ -4596,8 +4593,7 @@ impl EngineInner {
                     self.process_synchronous_reentrant_actions_for(sim, owner, assets);
 
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
                             panic!(
@@ -5005,8 +5001,7 @@ impl EngineInner {
                 crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty => {
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
                     let mut ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -5311,8 +5306,7 @@ impl EngineInner {
                 crate::ai::AiOwnerWork::ResumeBattleFightAfterReconsider => {
                     let frame = self.control.frame_counter;
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick =
-                        self.build_npc_tick_data_without_forecasts(sim, owner, &scratch, assets);
+                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
                     let mut ctx = {
                         let entity = self.world.entities.get(owner).unwrap_or_else(|| {

@@ -1011,7 +1011,7 @@ impl EngineInner {
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             let tick_data =
-                self.build_npc_tick_data_for_target(sim, npc_id, &scratch, assets, Some(target_id));
+                self.build_npc_tick_data_for_target(sim, npc_id, assets, Some(target_id));
             let stimulus = crate::ai::Stimulus::with_human(
                 crate::ai::StimulusType::EventEnemyNear,
                 target_handle,
@@ -1857,7 +1857,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
             self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }

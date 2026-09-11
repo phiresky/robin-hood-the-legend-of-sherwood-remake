@@ -292,10 +292,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
-    ) -> (
-        EntitySlots<Option<crate::entities::BoundaryPosition>>,
-        Vec<crate::engine::movement::TerminalMovementOrderPop>,
-    ) {
+    ) -> Vec<crate::engine::movement::TerminalMovementOrderPop> {
         // Preserve the position each element exposed before the globally
         // batched movement pass. The original does not have this batch:
         // The NPC update calls the human-actor update
@@ -375,19 +372,13 @@ impl EngineInner {
         // mixed pre/post inputs required at an individual creation slot.
 
         finish_entity_system_detail_frame();
-        (positions_before_movement, terminal_movement_order_pops)
+        terminal_movement_order_pops
     }
 
-    /// Run the NPC update tail and its immediately adjacent notification
-    /// passes in the exact order established by the original game.
-    ///
-    /// Mirrors the original game's NPC update phase.
-    pub(super) fn hourglass_phase_npcs(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
-        _positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-    ) {
+    /// Preserve the coarse NPC observations, validate closed owner boundaries,
+    /// and decay screen remarks after the live owner pass. Position-snapshot
+    /// reads stay inside `hourglass_phase_entity_systems`.
+    pub(super) fn hourglass_phase_npcs(&mut self) {
         // Listen/object reveal and Target Heard are actor-owned Execute work.
         // ── Creation-ordered pre-detection boundary ──────────────
         // These observations remain coarse labels for the original nested

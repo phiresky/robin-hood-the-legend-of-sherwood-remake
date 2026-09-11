@@ -310,11 +310,7 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn build_sim_scratch(
-        &self,
-        _sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) -> SimScratch {
+    pub(crate) fn build_sim_scratch(&self, assets: &LevelAssets) -> SimScratch {
         self.build_ai_observation(assets, AiObservationMode::Current)
     }
 
@@ -492,35 +488,25 @@ impl EngineInner {
         &self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
-        scratch: &SimScratch,
         assets: &LevelAssets,
     ) -> crate::ai::AiPerTickData {
-        self.build_npc_tick_data_for_target_mode(sim, npc_id, scratch, assets, None, true)
+        self.build_npc_tick_data_for_target_mode(sim, npc_id, assets, None, true)
     }
 
     pub(in crate::engine) fn build_npc_tick_data_for_target(
         &self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
-        scratch: &SimScratch,
         assets: &LevelAssets,
         target_override: Option<crate::element::EntityId>,
     ) -> crate::ai::AiPerTickData {
-        self.build_npc_tick_data_for_target_mode(
-            sim,
-            npc_id,
-            scratch,
-            assets,
-            target_override,
-            true,
-        )
+        self.build_npc_tick_data_for_target_mode(sim, npc_id, assets, target_override, true)
     }
 
     pub(in crate::engine) fn build_npc_tick_data_without_forecasts(
         &self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
-        scratch: &SimScratch,
         assets: &LevelAssets,
     ) -> crate::ai::AiPerTickData {
         match self.world.entities.get(npc_id) {
@@ -539,7 +525,7 @@ impl EngineInner {
                 npc_id.index()
             ),
         }
-        self.build_npc_tick_data_for_target_mode(sim, npc_id, scratch, assets, None, false)
+        self.build_npc_tick_data_for_target_mode(sim, npc_id, assets, None, false)
     }
 
     /// Build the typed live value consumed by Friendly AI. The narrow type
@@ -600,7 +586,6 @@ impl EngineInner {
         &self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
-        scratch: &SimScratch,
         assets: &LevelAssets,
         target_override: Option<crate::element::EntityId>,
         build_forecasts: bool,
@@ -843,8 +828,7 @@ impl EngineInner {
                 tick.friend_seek_clears_help_flag,
             );
         }
-        tick.camp_soldiers =
-            self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch, build_forecasts);
+        tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, build_forecasts);
         // Sequence/timer callbacks run outside detection refresh, but still
         // need the live camp registry at their AI decision boundaries.
         // Keep the parallel KO list live as well: money-fight victim scans
@@ -919,8 +903,7 @@ impl EngineInner {
         // phalanx encirclement, nearby archers needing protection,
         // phalanx geometry, friendly-presence polygon checks)
         // observe an empty list outside swordfight substates.
-        tick.nearby_fighters =
-            self.build_nearby_fighters_for(npc_id, assets, &scratch.ai_sight_obstacles);
+        tick.nearby_fighters = self.build_nearby_fighters_for(npc_id, assets);
         tick.fighter_registry = self.build_fighter_snapshots_for(npc_id, assets, None);
         tick.reconsider_swordfight_observation_fighters = tick
             .fighter_registry
@@ -1416,7 +1399,6 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
-        _scratch: &SimScratch,
         forecast_destinations: bool,
     ) -> Vec<crate::ai_enemy::CampSoldierInfo> {
         let mut camp_soldiers =
@@ -1578,7 +1560,6 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        _sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
     ) -> Vec<crate::ai_enemy::FighterSnapshot> {
         self.build_fighter_snapshots_for(npc_id, assets, Some(500.0))
     }

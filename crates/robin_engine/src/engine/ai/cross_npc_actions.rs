@@ -96,7 +96,7 @@ impl EngineInner {
                 )
             };
             self.refresh_selected_default_wait_identity(member, &mut ctx);
-            let tick_data = self.build_npc_tick_data(sim, member, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, member, assets);
             {
                 let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
                     panic!(
@@ -369,7 +369,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
-            let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
             self.dispatch_think_with_drain_mode(
                 sim,
                 npc_id,
@@ -508,11 +508,10 @@ impl EngineInner {
             return;
         }
 
-        // Building the full AI view resolves prepared building-exit forecasts
-        // and therefore consumes authoritative RNG.  The original only builds
-        // target context while actually delivering a cross-NPC action, so do
-        // not speculate before the empty fast path above.
-        let scratch = self.build_sim_scratch(sim, assets);
+        // Preparing the AI view does not draw RNG; resolving a prepared
+        // building-exit forecast does. Keep this allocation after the empty
+        // fast path so a drain without cross-NPC actions avoids unused work.
+        let scratch = self.build_sim_scratch(assets);
         let frame = self.control.frame_counter;
 
         for action in all_actions {
@@ -619,7 +618,7 @@ impl EngineInner {
                     // is an enemy soldier.  Build rich tick data so a
                     // subsequent AI-decision-triggered battle planning
                     // sees the target snapshot.
-                    let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, target_id, assets);
                     let stimulus = crate::ai::Stimulus::new(StimulusType::CallInstruction);
                     self.dispatch_filtered_stimulus(
                         sim, assets, target_id, &stimulus, &ctx, &tick_data,
@@ -677,7 +676,7 @@ impl EngineInner {
                                     self.control.sim_config.difficulty,
                                 );
                                 let fallback_tick =
-                                    self.build_npc_tick_data(sim, sender_id, &scratch, assets);
+                                    self.build_npc_tick_data(sim, sender_id, assets);
                                 self.dispatch_filtered_stimulus(
                                     sim,
                                     assets,
@@ -712,7 +711,7 @@ impl EngineInner {
                     // SendStimulus → enemy soldier target: the
                     // stimulus may be EVENT_VIEW / EVENT_REPORT /
                     // alert-forwarding which feeds battle planning.
-                    let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, target_id, assets);
                     let handled = self.dispatch_filtered_stimulus(
                         sim, assets, target_id, &stimulus, &ctx, &tick_data,
                     );
@@ -747,8 +746,7 @@ impl EngineInner {
                                 self.control.sim_config.difficulty,
                             )
                         };
-                        let fallback_tick =
-                            self.build_npc_tick_data(sim, sender_id, &scratch, assets);
+                        let fallback_tick = self.build_npc_tick_data(sim, sender_id, assets);
                         self.dispatch_filtered_stimulus(
                             sim,
                             assets,
@@ -1652,7 +1650,7 @@ impl EngineInner {
         // in the same frame, so bracket the direct AI call with the same
         // cache handoff as the Think wrapper.
         ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-        let mut tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+        let mut tick_data = self.build_npc_tick_data(sim, target_id, assets);
         let previous_target_depth = self.replace_cross_npc_logical_think_depth(
             target_id,
             logical_think_depth,
@@ -1718,7 +1716,7 @@ impl EngineInner {
             }
             // Battle planning reads friends' live primary targets through its
             // tick snapshot. Rebuild it after the synchronous member writes.
-            tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+            tick_data = self.build_npc_tick_data(sim, target_id, assets);
         }
 
         // Keep the borrowed static depth installed through the immediate
@@ -1855,7 +1853,7 @@ impl EngineInner {
             )
         };
         self.refresh_selected_default_wait_identity(source_id, &mut ctx);
-        let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
+        let tick = self.build_npc_tick_data(sim, source_id, assets);
         let global = &mut self.ai.global;
         let grid = &self.world.fast_grid;
         self.world
@@ -1948,7 +1946,7 @@ impl EngineInner {
             )
         };
         self.refresh_selected_default_wait_identity(source_id, &mut ctx);
-        let tick = self.build_npc_tick_data(sim, source_id, &scratch, assets);
+        let tick = self.build_npc_tick_data(sim, source_id, assets);
         let global = &mut self.ai.global;
         let grid = use_formation.then_some(&*self.world.fast_grid);
         self.world
@@ -2117,8 +2115,7 @@ impl EngineInner {
             }
             _ => None,
         };
-        let tick =
-            self.build_npc_tick_data_for_target(sim, source_id, &scratch, assets, target_override);
+        let tick = self.build_npc_tick_data_for_target(sim, source_id, assets, target_override);
         let global = &mut self.ai.global;
         let grid = &self.world.fast_grid;
         self.world
@@ -2207,7 +2204,7 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
-        let tick = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+        let tick = self.build_npc_tick_data(sim, target_id, assets);
         self.dispatch_think_with_drain_without_forecast(
             sim,
             target_id,
@@ -2288,7 +2285,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
-            let tick_data = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+            let tick_data = self.build_npc_tick_data(sim, target_id, assets);
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             stimulus.to_whole_patrol = to_whole_patrol;
@@ -2342,7 +2339,7 @@ impl EngineInner {
                         self.control.sim_config.difficulty,
                     )
                 };
-                let sender_tick = self.build_npc_tick_data(sim, sender_id, &scratch, assets);
+                let sender_tick = self.build_npc_tick_data(sim, sender_id, assets);
                 self.dispatch_think_with_drain_mode(
                     sim,
                     sender_id,

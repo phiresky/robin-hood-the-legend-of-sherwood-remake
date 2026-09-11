@@ -123,7 +123,7 @@ impl EngineInner {
                         self.control.sim_config.difficulty,
                     )
                 };
-                let tick_data = self.build_npc_tick_data(sim, member_id, &scratch, assets);
+                let tick_data = self.build_npc_tick_data(sim, member_id, assets);
                 self.dispatch_think_with_drain_mode(
                     sim,
                     member_id,
@@ -215,7 +215,7 @@ impl EngineInner {
                 )
             };
             self.refresh_selected_default_wait_identity(chief_id, &mut chief_ctx);
-            let chief_tick = self.build_npc_tick_data(sim, chief_id, &scratch, assets);
+            let chief_tick = self.build_npc_tick_data(sim, chief_id, assets);
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             chief_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
@@ -282,7 +282,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
-            let caller_tick = self.build_npc_tick_data(sim, source_id, &caller_scratch, assets);
+            let caller_tick = self.build_npc_tick_data(sim, source_id, assets);
             stimulus.to_whole_patrol = true;
             self.dispatch_think_with_drain_mode(
                 sim,
@@ -383,7 +383,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
-            let target_tick = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+            let target_tick = self.build_npc_tick_data(sim, target_id, assets);
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
             let accepted = self.dispatch_think_with_drain_without_forecast(
@@ -425,7 +425,7 @@ impl EngineInner {
                 )
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
-            let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
+            let source_tick = self.build_npc_tick_data(sim, source_id, assets);
             let global = &mut self.ai.global;
             let grid = &self.world.fast_grid;
             self.world
@@ -545,7 +545,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
-            let target_tick = self.build_npc_tick_data(sim, target_id, &scratch, assets);
+            let target_tick = self.build_npc_tick_data(sim, target_id, assets);
             let accepted = self.dispatch_think_with_drain_without_forecast(
                 sim,
                 target_id,
@@ -585,7 +585,7 @@ impl EngineInner {
                 )
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
-            let source_tick = self.build_npc_tick_data(sim, source_id, &source_scratch, assets);
+            let source_tick = self.build_npc_tick_data(sim, source_id, assets);
             match continuation {
                 crate::ai::AlertContinuation::CivilianReachedSoldier
                 | crate::ai::AlertContinuation::CivilianSawSoldier => self
@@ -668,7 +668,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 )
             };
-            let officer_tick = self.build_npc_tick_data(sim, officer_id, &scratch, assets);
+            let officer_tick = self.build_npc_tick_data(sim, officer_id, assets);
             let officer_stimulus = crate::ai::Stimulus::with_human(
                 crate::ai::StimulusType::CallMrOfficerIAmBack,
                 charly,
@@ -711,7 +711,7 @@ impl EngineInner {
                 )
             };
             self.refresh_selected_default_wait_identity(charly_id, &mut charly_ctx);
-            let charly_tick = self.build_npc_tick_data(sim, charly_id, &scratch, assets);
+            let charly_tick = self.build_npc_tick_data(sim, charly_id, assets);
             let entity = self
                 .world
                 .entities

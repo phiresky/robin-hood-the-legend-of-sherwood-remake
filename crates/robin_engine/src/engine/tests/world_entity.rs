@@ -4679,11 +4679,7 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     };
     other_soldier.element.publish_order_posture(Posture::Tied);
 
-    let fighters = engine.build_nearby_fighters_for(
-        self_id,
-        &assets,
-        &crate::sight_obstacle::SharedSightObstacles::default(),
-    );
+    let fighters = engine.build_nearby_fighters_for(self_id, &assets);
     assert_eq!(fighters.len(), 1);
     assert_eq!(fighters[0].handle, self_id.index());
     assert!(!fighters[0].is_able_to_fight);
@@ -4725,11 +4721,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let nearby = engine.build_nearby_fighters_for(
-        self_id,
-        &assets,
-        &crate::sight_obstacle::SharedSightObstacles::default(),
-    );
+    let nearby = engine.build_nearby_fighters_for(self_id, &assets);
     assert!(
         !nearby
             .iter()
@@ -5268,8 +5260,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     owner.base.when_does_timer_ring = 30;
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&sim, &assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     assert_eq!(
         tick.avenger_wait_position_for(target_id.index()),
         Some(wait),
@@ -5374,8 +5365,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     owner.base.timer_is_running = true;
     owner.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
     owner.base.when_does_timer_ring = 30;
-    let scratch = engine.build_sim_scratch(&sim, &assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     assert!(
         tick.avenger_wait_position_for(target_id.index()).is_none(),
         "pending lift provenance must preserve the no-blocking-gate control"
@@ -5955,11 +5945,7 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     assert_eq!(optical_world.y.to_bits(), exact_target_world.y.to_bits());
     assert_eq!(optical_world.z.to_bits(), exact_target_world.z.to_bits());
 
-    let fighters = engine.build_nearby_fighters_for(
-        self_id,
-        &assets,
-        &crate::sight_obstacle::SharedSightObstacles::default(),
-    );
+    let fighters = engine.build_nearby_fighters_for(self_id, &assets);
     let target = fighters
         .iter()
         .find(|fighter| fighter.handle == target_id.index())
@@ -6089,7 +6075,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine
             .get_entity(owner_id)
@@ -6107,7 +6093,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
 
     assert!(
         !tick
@@ -6254,8 +6240,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&sim, &assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     assert_eq!(tick.visible_seeking_friends, 0);
     assert!(!tick.friend_seek_clears_help_flag);
     let tick_owner = tick
@@ -6268,8 +6253,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
         .orders
         .sequence_manager
         .element_terminated(sequence_id, 0);
-    let scratch = engine.build_sim_scratch(&sim, &assets);
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     assert_eq!(tick.visible_seeking_friends, 1);
     assert!(tick.friend_seek_clears_help_flag);
 }
@@ -6335,7 +6319,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine.get_entity(owner_id).expect("owner exists"),
         engine.control.frame_counter,
@@ -6351,7 +6335,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     let stale_friend = tick
         .camp_soldiers
         .iter()
@@ -6532,7 +6516,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         officer.set_state(officer_state, officer_substate);
     }
 
-    let scratch = engine.build_sim_scratch(sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = {
         let entity = engine
             .get_entity(charly_id)
@@ -6554,7 +6538,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         )
     };
     assert!(ctx.is_night_or_fog);
-    let tick = engine.build_npc_tick_data(sim, charly_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(sim, charly_id, &assets);
     engine.dispatch_think_with_drain(
         sim,
         charly_id,
@@ -6699,7 +6683,7 @@ fn run_synchronous_civilian_alert(
 
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let scratch = engine.build_sim_scratch(sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = {
         let entity = engine
             .get_entity(civilian_id)
@@ -6720,7 +6704,7 @@ fn run_synchronous_civilian_alert(
             engine.control.sim_config.difficulty,
         )
     };
-    let tick = engine.build_npc_tick_data(sim, civilian_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(sim, civilian_id, &assets);
     if direct_owner_self_stimulus {
         engine
             .get_entity_mut(civilian_id)
@@ -6809,7 +6793,7 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
         .push(crate::profiles::CivilianProfile::default());
     complete_test_runtime_fixture(&mut accepted, &mut assets);
     let sim_context = crate::sim_rng::test_context();
-    let scratch = accepted.build_sim_scratch(&sim_context, &assets);
+    let scratch = accepted.build_sim_scratch(&assets);
     let ctx = {
         let entity = accepted
             .get_entity(EntityId::Civilian(civilian_id))
@@ -6831,7 +6815,7 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
         )
     };
     let civilian_entity_id = EntityId::Civilian(civilian_id);
-    let tick = accepted.build_npc_tick_data(&sim_context, civilian_entity_id, &scratch, &assets);
+    let tick = accepted.build_npc_tick_data(&sim_context, civilian_entity_id, &assets);
     accepted.dispatch_think_with_drain(
         &sim_context,
         civilian_entity_id,
@@ -6982,7 +6966,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         .antagonist = Some(crate::ai::AiEntityHandle::new(soldier_id.index()));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine.get_entity(officer_id).expect("officer exists"),
         engine.control.frame_counter,
@@ -6998,7 +6982,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(&sim, officer_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
@@ -7041,7 +7025,7 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         enemy.set_state(AiState::Default, Substate::DefaultOnPost);
     }
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine.get_entity(officer_id).expect("officer exists"),
         engine.control.frame_counter,
@@ -7057,7 +7041,7 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(&sim, officer_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     engine.dispatch_think_with_drain(
         &sim,
         officer_id,
@@ -7135,7 +7119,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             to_whole_patrol: false,
         });
 
-    let scratch = engine.build_sim_scratch(sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = {
         let entity = engine
             .get_entity(reporter_id)
@@ -7156,7 +7140,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             engine.control.sim_config.difficulty,
         )
     };
-    let tick = engine.build_npc_tick_data(sim, reporter_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(sim, reporter_id, &assets);
     engine.dispatch_think_with_drain(
         sim,
         reporter_id,
@@ -7245,7 +7229,7 @@ fn review2_context_and_tick(
     assets: &LevelAssets,
     id: EntityId,
 ) -> (crate::ai::AiContext, crate::ai::AiPerTickData) {
-    let scratch = engine.build_sim_scratch(sim, assets);
+    let scratch = engine.build_sim_scratch(assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine.get_entity(id).expect("review2 context owner exists"),
         engine.control.frame_counter,
@@ -7261,7 +7245,7 @@ fn review2_context_and_tick(
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(sim, id, &scratch, assets);
+    let tick = engine.build_npc_tick_data(sim, id, assets);
     (ctx, tick)
 }
 
@@ -9747,8 +9731,6 @@ fn review2_go_to_officer_to_civilian_panics_contextually() {
 
 #[test]
 fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = EngineInner::new();
     let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
@@ -9759,7 +9741,7 @@ fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
     };
     soldier.element.active = false;
 
-    let scratch = engine.build_sim_scratch(sim, &LevelAssets::new());
+    let scratch = engine.build_sim_scratch(&LevelAssets::new());
     let view = scratch
         .ai_entity_views
         .get(&soldier_id.index())

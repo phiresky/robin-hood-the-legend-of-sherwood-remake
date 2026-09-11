@@ -1033,7 +1033,7 @@ impl EngineInner {
                     // each surviving arm samples the view radius and runs
                     // opaque LOS, both of which are observable and may affect
                     // whether CALL_CHARLY_IS_BACK is delivered.
-                    let scratch = self.build_sim_scratch(sim, assets);
+                    let scratch = self.build_sim_scratch(assets);
                     let other_ctx = {
                         let Some(entity) = self.world.entities.get(other_id) else {
                             continue;
@@ -1095,7 +1095,7 @@ impl EngineInner {
                     // may have synchronously changed entity state. The
                     // recipient context above was built at this exact Think
                     // boundary and is also the one used for dispatch.
-                    let tick_data = self.build_npc_tick_data(sim, other_id, &scratch, assets);
+                    let tick_data = self.build_npc_tick_data(sim, other_id, assets);
                     self.dispatch_think_with_drain_without_forecast(
                         sim, other_id, &stimulus, &other_ctx, &tick_data, assets,
                     );
@@ -1667,7 +1667,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
             let grid = &self.world.fast_grid;
             let global = &mut self.ai.global;
             self.world
@@ -1759,8 +1759,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            let tick_for_seek =
-                self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+            let tick_for_seek = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
             self.process_pending_script_seek_area_for(sim, assets, npc_id, &ctx, &tick_for_seek);
         }
 
@@ -1792,7 +1791,7 @@ impl EngineInner {
                 self.control.sim_config.difficulty,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets);
+            let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
             self.world
                 .entities
                 .get_mut(npc_id)

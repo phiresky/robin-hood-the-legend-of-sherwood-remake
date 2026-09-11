@@ -2884,14 +2884,12 @@ impl EngineInner {
 
         let manager_fifo_before_entity_phase =
             self.orders.sequence_manager.deferred_elements_to_go();
-        let (positions_before_movement, terminal_movement_order_pops) =
+        let terminal_movement_order_pops =
             time_hourglass_phase(HourglassPhase::EntitySystems, || {
                 self.hourglass_phase_entity_systems(sim, display, assets)
             });
 
-        time_hourglass_phase(HourglassPhase::Npcs, || {
-            self.hourglass_phase_npcs(sim, assets, &positions_before_movement)
-        });
+        time_hourglass_phase(HourglassPhase::Npcs, || self.hourglass_phase_npcs());
 
         time_hourglass_phase(HourglassPhase::GameplaySystems, || {
             self.hourglass_phase_gameplay_systems(sim, display, assets)

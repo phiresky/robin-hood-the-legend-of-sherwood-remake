@@ -2335,7 +2335,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     // prepared forecast defers the gate selection draw until an AI statement
     // actually resolves it. Prove the fixture is armed by resolving the
     // door-passing actor's prepared forecast directly.
-    let control_scratch = engine.build_sim_scratch(sim, &assets);
+    let control_scratch = engine.build_sim_scratch(&assets);
     let (_, control_trace) = with_draw_trace(|| {
         control_scratch
             .ai_entity_views
@@ -3061,8 +3061,7 @@ fn enemy_tick_data_populates_live_patrol_chief_without_a_primary_target() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     crate::sim_rng::with_seed(0xA013_0469, |sim| {
-        let scratch = engine.build_sim_scratch(sim, &assets);
-        let tick = engine.build_npc_tick_data(sim, minion_id, &scratch, &assets);
+        let tick = engine.build_npc_tick_data(sim, minion_id, &assets);
         assert_eq!(tick.patrol_chief_position.x, 1042.0);
         assert_eq!(tick.patrol_chief_position.y, 1783.0);
         assert_eq!(tick.patrol_chief_position.level, 2);
@@ -3126,17 +3125,13 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
         unreachable!("PassDoor fixture must be a movement element")
     }
     crate::sim_rng::with_seed(0xA013_0518, |sim| {
-        // This minimal fixture has no installed mission, so entity-view
-        // construction intentionally has no canonical door table. Build its
-        // otherwise-unrelated scratch snapshot before selecting PassDoor;
-        // build_npc_tick_data below must resolve the chief from live state.
-        let scratch = engine.build_sim_scratch(sim, &assets);
+        // Tick data resolves the chief from live committed PassDoor state.
         let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
         engine
             .orders
             .sequence_manager
             .element_in_progress(pass_sequence, 0);
-        let tick = engine.build_npc_tick_data(sim, minion_id, &scratch, &assets);
+        let tick = engine.build_npc_tick_data(sim, minion_id, &assets);
         assert_eq!(tick.patrol_chief_position.x, 821.0);
         assert_eq!(tick.patrol_chief_position.y, 1124.0);
         assert_eq!(tick.patrol_chief_position.level, 2);
@@ -3249,7 +3244,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         ordinary_ko.index(),
     ]);
     engine.ai.standard_view_polygon_radius = 400;
-    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine.get_entity(owner_id).expect("owner exists"),
         engine.control.frame_counter,
@@ -3265,7 +3260,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(&sim, owner_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
 
     assert_eq!(
         tick.camp_unconscious_soldiers

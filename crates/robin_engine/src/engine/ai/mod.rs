@@ -5027,7 +5027,7 @@ impl EngineInner {
         civ_id: EntityId,
         runs: u8,
     ) {
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_sim_scratch(assets);
         let mut ctx = {
             let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
@@ -5364,7 +5364,7 @@ impl EngineInner {
         assets: &LevelAssets,
         npc_id: EntityId,
     ) {
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_sim_scratch(assets);
         // Re-check the gate (state may have changed between the
         // native pushing the deferred command and us draining it).
         let (has_path, substate) = {
@@ -6164,7 +6164,7 @@ impl EngineInner {
             .entities
             .get(npc_id)
             .is_some_and(|entity| entity.enemy_ai().is_some())
-            .then(|| self.build_npc_tick_data_without_forecasts(sim, npc_id, &scratch, assets));
+            .then(|| self.build_npc_tick_data_without_forecasts(sim, npc_id, assets));
         let stimulus_depth = self
             .world
             .entities

@@ -78,7 +78,7 @@ impl EngineInner {
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
         // mostly just reads self position).
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_sim_scratch(assets);
         // For "get soldier from all by id" in the AI tick: copy the
         // level's soldier load-order array onto AiGlobalState so
         // AiContext can resolve script-baked friend IDs.

@@ -1822,8 +1822,7 @@ impl EngineInner {
                     self.control.sim_config.difficulty,
                 );
                 self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
-                let tick =
-                    self.build_npc_tick_data_without_forecasts(sim, victim_id, &scratch, assets);
+                let tick = self.build_npc_tick_data_without_forecasts(sim, victim_id, assets);
                 let stimulus = crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventSwordStrike,
                     attacker_id.index(),

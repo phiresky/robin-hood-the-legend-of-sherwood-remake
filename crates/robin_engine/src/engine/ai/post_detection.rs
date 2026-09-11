@@ -337,7 +337,7 @@ impl EngineInner {
         // candidates, avenger-on-roof wait position, and seeded
         // enemy_sq_distances.  Matches (and supersedes) the
         // bespoke hand-roll this block used to do.
-        let tick_data = self.build_npc_tick_data(sim, npc_id, &scratch, assets);
+        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
 
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -657,13 +657,8 @@ impl EngineInner {
                         npc_id.index()
                     ),
                 };
-                let mut live = self.build_npc_tick_data_for_target(
-                    sim,
-                    npc_id,
-                    &scratch,
-                    assets,
-                    Some(target_id),
-                );
+                let mut live =
+                    self.build_npc_tick_data_for_target(sim, npc_id, assets, Some(target_id));
                 overlay_final_detection_scan(&mut live, &aggregate);
                 if let Some(positions) = positions_before_movement {
                     self.apply_owner_relative_tick_positions(
@@ -695,13 +690,8 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                let mut live = self.build_npc_tick_data_for_target(
-                    sim,
-                    npc_id,
-                    &scratch,
-                    assets,
-                    target_override,
-                );
+                let mut live =
+                    self.build_npc_tick_data_for_target(sim, npc_id, assets, target_override);
                 if let Some(positions) = positions_before_movement {
                     self.apply_owner_relative_tick_positions(
                         npc_id,
@@ -966,7 +956,7 @@ impl EngineInner {
                 _ => None,
             };
             let mut tick_data =
-                self.build_npc_tick_data_for_target(sim, npc_id, &scratch, assets, target_override);
+                self.build_npc_tick_data_for_target(sim, npc_id, assets, target_override);
             if matches!(
                 stimulus.stimulus_type,
                 crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView

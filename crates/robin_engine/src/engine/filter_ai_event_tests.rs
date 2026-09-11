@@ -898,7 +898,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         ));
     }
 
-    let scratch = engine.build_sim_scratch(&sim, &assets);
+    let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine
             .get_entity(officer_id)
@@ -916,7 +916,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
-    let tick = engine.build_npc_tick_data(&sim, officer_id, &scratch, &assets);
+    let tick = engine.build_npc_tick_data(&sim, officer_id, &assets);
     assert_eq!(tick.camp_soldiers.len(), candidates.len());
     let global = engine.ai.global.clone();
     assert!(
@@ -6279,7 +6279,7 @@ fn set_ai_state_seeking_and_fleeing_do_not_draw_unrelated_building_exit_gate_rng
     // Scratch construction prepares forecasts without drawing; only an AI
     // statement that resolves the door actor's alternatives would draw. The
     // control proves the fixture really carries a resolvable multi-exit gate.
-    let control_scratch = seeking_engine.build_sim_scratch(&sim, &seeking_assets);
+    let control_scratch = seeking_engine.build_sim_scratch(&seeking_assets);
     let (_, control_trace) = with_draw_trace(|| {
         control_scratch
             .ai_entity_views
@@ -6349,7 +6349,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
 
     // Scratch construction prepares forecasts without drawing; the control
     // proves the unrelated door actor's alternatives would draw if resolved.
-    let control_scratch = engine.build_sim_scratch(&sim, &assets);
+    let control_scratch = engine.build_sim_scratch(&assets);
     let (_, control_trace) = with_draw_trace(|| {
         control_scratch
             .ai_entity_views

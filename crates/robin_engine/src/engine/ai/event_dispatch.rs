@@ -143,7 +143,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let scratch = self.build_sim_scratch(sim, assets);
+        let scratch = self.build_sim_scratch(assets);
         let current_frame = self.control.frame_counter;
         let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
             panic!("rider {entity_id:?} disappeared before its synchronous GALOPP Execute callback")
@@ -176,7 +176,7 @@ impl EngineInner {
         // primary target. Think and every order/script callback it creates
         // close here, before the actor update can complete this movement or
         // the mutable legacy walk can advance to the next owner.
-        let tick_data = self.build_npc_tick_data(sim, entity_id, &scratch, assets);
+        let tick_data = self.build_npc_tick_data(sim, entity_id, assets);
         self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
         #[cfg(test)]
         GALOPP_DISPATCH_OBSERVER.with(|observer| {
@@ -517,7 +517,7 @@ impl EngineInner {
                 ) else {
                     continue;
                 };
-                let scratch = engine.build_sim_scratch(sim, assets);
+                let scratch = engine.build_sim_scratch(assets);
                 let in_uninterruptible_command = engine.is_very_very_busy(owner);
                 let entity =
                     engine.world.entities.get(owner).unwrap_or_else(|| {
@@ -540,7 +540,7 @@ impl EngineInner {
                     engine.control.sim_config.difficulty,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
-                let tick_data = engine.build_npc_tick_data(sim, owner, &scratch, assets);
+                let tick_data = engine.build_npc_tick_data(sim, owner, assets);
                 let stimulus = crate::ai::Stimulus::new(stimulus_type);
                 engine.dispatch_think_with_drain(sim, owner, &stimulus, &ctx, &tick_data, assets);
             }

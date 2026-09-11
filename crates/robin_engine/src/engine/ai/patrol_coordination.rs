@@ -542,7 +542,7 @@ impl EngineInner {
             // populated — patrol minions can be alerted mid-patrol
             // and dispatched into battle decisions without losing
             // their primary target snapshot.
-            let mut tick_data = self.build_npc_tick_data(sim, minion_id, &scratch, assets);
+            let mut tick_data = self.build_npc_tick_data(sim, minion_id, assets);
             if let Some(&(chief_pos, chief_state)) = patrol_tick_map.get(&cmd.minion) {
                 tick_data.patrol_chief_position = chief_pos;
                 tick_data.patrol_chief_state = chief_state;
