@@ -319,3 +319,11 @@ required-features = ["projection-export"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "run_script"
+test = true
+
+[[example]]
+name = "batch_run"
+test = true
