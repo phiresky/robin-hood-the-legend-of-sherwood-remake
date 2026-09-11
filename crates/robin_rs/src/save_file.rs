@@ -713,8 +713,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v80** (canonical recording session): replaces the recorder wrapper and
 ///   its write-only sequence ID with the optional recording session itself.
 ///   Older native layouts are rejected; Original-game import is unchanged.
-/// - **v81** (discard unused imported location/object fields): removes the
-///   computed-location dummy and object repulsive-point copy from snapshots.
+/// - **v81** (discard unused location/object/camera state): removes the
+///   computed-location dummy and object repulsive-point copy from snapshots,
+///   and removes the unused engine-camera scratch fields. Removing hash-skipped
+///   fields also removes their markers from the state-hash stream.
 ///   Older native layouts are rejected; Original-game import is unchanged.
 pub const SAVE_FORMAT_VERSION: u32 = 81;
 

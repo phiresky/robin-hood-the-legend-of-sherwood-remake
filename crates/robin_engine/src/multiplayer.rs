@@ -77,8 +77,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// snapshot state (save 79 / replay 37).
 /// Protocol 46 stores the optional recording session directly instead of a
 /// recorder wrapper with a write-only sequence ID (save 80 / replay 38).
-/// Protocol 47 removes unused computed-location dummy and object repulsive-point
-/// snapshot fields (save 81 / replay 39).
+/// Protocol 47 removes unused computed-location dummy, object repulsive-point,
+/// and engine-camera scratch fields (save 81 / replay 39). Removing hash-skipped
+/// fields also removes their markers from the state-hash stream.
 pub const NET_PROTOCOL_VERSION: u32 = 47;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
@@ -1854,8 +1855,9 @@ mod tests {
         // claims from snapshots and state hashes.
         // Version 46 replaces the recorder wrapper and write-only sequence
         // ID with the optional recording session in snapshots and hashes.
-        // Version 47 removes the unused computed-location dummy from snapshots
-        // and hashes, and the already hash-excluded object repulsive-point copy.
+        // Version 47 removes the unused computed-location dummy, object
+        // repulsive-point copy, and engine-camera scratch fields. Hash-skipped
+        // fields emitted markers, so removing them also changes state hashes.
         assert_eq!(NET_PROTOCOL_VERSION, 47);
     }
 

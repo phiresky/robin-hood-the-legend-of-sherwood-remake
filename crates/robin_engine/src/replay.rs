@@ -90,8 +90,9 @@ pub struct ReplayHeader {
 }
 
 /// On-disk replay schema version. Version 39 removes the unused computed-location
-/// dummy from snapshots and hashes, and the unused object repulsive-point
-/// snapshot copy (already excluded from hashes). Version 38 stores the optional recording
+/// dummy, object repulsive-point snapshot copy, and engine-camera scratch fields.
+/// Hash-skipped values still emitted markers; removing those fields changes the
+/// state-hash stream too. Version 38 stores the optional recording
 /// session directly, without the recorder wrapper and its write-only
 /// sequence ID, in snapshots and state hashes. Version 37 removes the unused imported
 /// sound blob and unconsumed same-frame AI target claims from snapshots
