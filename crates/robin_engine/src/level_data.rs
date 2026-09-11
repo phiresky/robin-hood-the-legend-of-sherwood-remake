@@ -533,6 +533,8 @@ struct ChunkInfo {
     position_after_header: u64,
     /// Size field from the chunk header (includes version + payload).
     expected_size: u32,
+    /// Validated exclusive end, contained in both the file and enclosing chunk.
+    end: u64,
     /// Tag (for error messages).
     tag: [u8; 4],
 }
@@ -554,6 +556,40 @@ impl ChunkReader {
         }
     }
 
+    fn ensure_available(&mut self, count: u64, field: &str) -> Result<(), LevelError> {
+        let offset = self.file.tell();
+        let end = self
+            .chunk_stack
+            .last()
+            .map_or_else(|| self.file.get_size(), |info| info.end);
+        if offset > end || count > end - offset {
+            return Err(LegacyReader::new(&mut self.file)
+                .invalid_value(
+                    offset,
+                    field,
+                    format_args!("{count} bytes at {offset}, boundary at {end}"),
+                    "a read or skip contained in the current chunk and file",
+                )
+                .into());
+        }
+        Ok(())
+    }
+
+    fn validate_chunk_size(&mut self, size: u32) -> Result<(), LevelError> {
+        if size < 4 {
+            let offset = self.file.tell() - 4;
+            return Err(LegacyReader::new(&mut self.file)
+                .invalid_value(
+                    offset,
+                    "chunk size",
+                    size,
+                    "at least 4 bytes for the version",
+                )
+                .into());
+        }
+        Ok(())
+    }
+
     /// Open a chunk: read and validate tag + size + version, push onto stack.
     pub fn chunk_start(
         &mut self,
@@ -561,11 +597,16 @@ impl ChunkReader {
         expected_version: u32,
     ) -> Result<(), LevelError> {
         let mut tag = [0u8; 4];
+        self.ensure_available(4, "chunk tag")?;
         LegacyReader::new(&mut self.file).read_bytes("chunk tag", &mut tag)?;
 
+        self.ensure_available(4, "chunk size")?;
         let size = LegacyReader::new(&mut self.file).read_u32("chunk size")?;
 
+        self.validate_chunk_size(size)?;
+        self.ensure_available(4, "chunk version")?;
         let version = LegacyReader::new(&mut self.file).read_u32("chunk version")?;
+        self.ensure_available(u64::from(size - 4), "chunk payload")?;
 
         if tag != *expected_tag {
             return Err(LevelError::ChunkTagMismatch {
@@ -586,6 +627,7 @@ impl ChunkReader {
         self.chunk_stack.push(ChunkInfo {
             position_after_header: pos,
             expected_size: size,
+            end: pos + u64::from(size - 4),
             tag,
         });
 
@@ -596,12 +638,13 @@ impl ChunkReader {
     pub fn chunk_end(&mut self) -> Result<(), LevelError> {
         let info = self
             .chunk_stack
-            .pop()
+            .last()
             .expect("chunk_end called without matching chunk_start");
 
         let current_pos = self.file.tell();
         // Real size = bytes read since header + sizeof(version u32).
-        let consumed = (current_pos - info.position_after_header) as u32 + 4;
+        let consumed = u32::try_from(current_pos - info.position_after_header + 4)
+            .expect("reads are bounded by the validated u32 chunk size");
 
         if consumed != info.expected_size {
             return Err(LevelError::ChunkSizeMismatch {
@@ -610,12 +653,14 @@ impl ChunkReader {
                 consumed,
             });
         }
+        self.chunk_stack.pop();
         Ok(())
     }
 
     /// Peek at the next chunk's 4-byte tag without consuming it.
     pub fn peek_next_chunk(&mut self) -> Result<[u8; 4], LevelError> {
         let mut tag = [0u8; 4];
+        self.ensure_available(4, "chunk tag")?;
         LegacyReader::new(&mut self.file).read_bytes("chunk tag", &mut tag)?;
         LegacyReader::new(&mut self.file).skip(-4, "rewind peeked tag")?;
         Ok(tag)
@@ -625,8 +670,12 @@ impl ChunkReader {
     ///
     /// File pointer must be at the start of the tag (e.g. after `peek_next_chunk`).
     pub fn skip_chunk(&mut self) -> Result<(), LevelError> {
-        LegacyReader::new(&mut self.file).skip(4, "skip chunk tag")?;
+        self.ensure_available(4, "chunk tag")?;
+        LegacyReader::new(&mut self.file).read_bytes("chunk tag", &mut [0; 4])?;
+        self.ensure_available(4, "chunk size")?;
         let size = LegacyReader::new(&mut self.file).read_u32("chunk size")?;
+        self.validate_chunk_size(size)?;
+        self.ensure_available(u64::from(size), "skip chunk payload")?;
         LegacyReader::new(&mut self.file).skip(size as i64, "skip chunk payload")?;
         Ok(())
     }
@@ -635,9 +684,7 @@ impl ChunkReader {
     pub fn at_end_of_chunk(&mut self) -> bool {
         if let Some(info) = self.chunk_stack.last() {
             let current_pos = self.file.tell();
-            // End of payload = position_after_header + (expected_size - 4)
-            let end_pos = info.position_after_header + (info.expected_size as u64) - 4;
-            current_pos >= end_pos
+            current_pos == info.end
         } else {
             self.file.tell() >= self.file.get_size()
         }
@@ -647,8 +694,7 @@ impl ChunkReader {
     pub fn remaining_in_chunk(&mut self) -> usize {
         if let Some(info) = self.chunk_stack.last() {
             let current_pos = self.file.tell();
-            let end_pos = info.position_after_header + (info.expected_size as u64) - 4;
-            end_pos.saturating_sub(current_pos) as usize
+            (info.end - current_pos) as usize
         } else {
             0
         }
@@ -657,38 +703,53 @@ impl ChunkReader {
     // ── Typed binary readers ───────────────────────────────────
 
     pub fn read_u8(&mut self) -> Result<u8, LevelError> {
+        self.ensure_available(1, "chunk payload u8")?;
         Ok(LegacyReader::new(&mut self.file).read_u8("chunk payload u8")?)
     }
 
     pub fn read_i16(&mut self) -> Result<i16, LevelError> {
+        self.ensure_available(2, "chunk payload i16")?;
         Ok(LegacyReader::new(&mut self.file).read_i16("chunk payload i16")?)
     }
 
     pub fn read_u16(&mut self) -> Result<u16, LevelError> {
+        self.ensure_available(2, "chunk payload u16")?;
         Ok(LegacyReader::new(&mut self.file).read_u16("chunk payload u16")?)
     }
 
     pub fn read_u32(&mut self) -> Result<u32, LevelError> {
+        self.ensure_available(4, "chunk payload u32")?;
         Ok(LegacyReader::new(&mut self.file).read_u32("chunk payload u32")?)
     }
 
     pub fn read_bool(&mut self) -> Result<bool, LevelError> {
+        self.ensure_available(1, "chunk payload bool")?;
         Ok(LegacyReader::new(&mut self.file).read_bool("chunk payload bool")?)
     }
 
     pub fn read_i32(&mut self) -> Result<i32, LevelError> {
+        self.ensure_available(4, "chunk payload i32")?;
         Ok(LegacyReader::new(&mut self.file).read_i32("chunk payload i32")?)
     }
 
     pub fn read_f32(&mut self) -> Result<f32, LevelError> {
+        self.ensure_available(4, "chunk payload f32")?;
         Ok(LegacyReader::new(&mut self.file).read_f32("chunk payload f32")?)
     }
 
     pub fn read_string(&mut self) -> Result<String, LevelError> {
-        Ok(LegacyReader::new(&mut self.file).read_string("chunk payload string")?)
+        // Validate the declared byte length against this chunk before allocating;
+        // the general legacy string reader only knows the underlying file.
+        self.ensure_available(2, "chunk payload string.length")?;
+        let length = LegacyReader::new(&mut self.file).read_u16("chunk payload string.length")?;
+        self.ensure_available(u64::from(length), "chunk payload string.bytes")?;
+        let mut bytes = vec![0; usize::from(length)];
+        LegacyReader::new(&mut self.file).read_bytes("chunk payload string.bytes", &mut bytes)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     pub fn read_bytes(&mut self, count: usize) -> Result<Vec<u8>, LevelError> {
+        self.ensure_available(count as u64, "chunk payload bytes")?;
         let mut buf = vec![0u8; count];
         LegacyReader::new(&mut self.file).read_bytes("chunk payload bytes", &mut buf)?;
         Ok(buf)
@@ -5395,6 +5456,130 @@ mod tests {
             assert_eq!(error.offset, expected_offset);
             assert_eq!(error.field, expected_field);
         }
+    }
+
+    #[test]
+    #[ignore = "requires original demo data via ROBINHOOD_DATA_DIR"]
+    fn chunk_reader_loads_original_demo_proto_level() {
+        let datadir =
+            std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR to demo data");
+        let path = std::path::Path::new(&datadir).join("DATA/Levels/leicester.rhp");
+        let bytes = fs::read(&path).unwrap();
+        let mut reader = ChunkReader::new(SbFile::from_owned_bytes(bytes, path.to_str().unwrap()));
+        let format = LevelFormat::detect(&reader.peek_next_chunk().unwrap()).unwrap();
+        load_proto_level(&mut reader, format).unwrap();
+        assert!(reader.chunk_stack.is_empty());
+        assert!(reader.at_end_of_chunk());
+    }
+
+    #[test]
+    fn chunk_reader_rejects_invalid_sizes_on_open_and_skip() {
+        for size in [0, 1, 3, 5, u32::MAX] {
+            let mut bytes = build_chunk(b"TEST", 1, &[]);
+            bytes[4..8].copy_from_slice(&size.to_le_bytes());
+            for skip in [false, true] {
+                let mut reader =
+                    ChunkReader::new(SbFile::from_owned_bytes(bytes.clone(), "size.rhm"));
+                let result = if skip {
+                    reader.skip_chunk()
+                } else {
+                    reader.chunk_start(b"TEST", 1)
+                };
+                assert!(
+                    matches!(result, Err(LevelError::Legacy(_))),
+                    "size={size}, skip={skip}"
+                );
+                assert!(reader.chunk_stack.is_empty());
+                assert!(reader.file.tell() <= bytes.len() as u64);
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_reader_rejects_child_payload_beyond_parent_even_when_file_has_bytes() {
+        let mut child = build_chunk(b"CHLD", 1, &[]);
+        child[4..8].copy_from_slice(&8u32.to_le_bytes());
+        let mut bytes = build_chunk(b"ROOT", 1, &child);
+        bytes.extend_from_slice(&[0; 4]);
+        for skip in [false, true] {
+            let mut reader =
+                ChunkReader::new(SbFile::from_owned_bytes(bytes.clone(), "nested.rhm"));
+            reader.chunk_start(b"ROOT", 1).unwrap();
+            let result = if skip {
+                reader.skip_chunk()
+            } else {
+                reader.chunk_start(b"CHLD", 1)
+            };
+            assert!(matches!(result, Err(LevelError::Legacy(_))));
+            assert_eq!(reader.chunk_stack.len(), 1);
+        }
+    }
+
+    #[test]
+    fn chunk_reader_rejects_child_headers_crossing_parent() {
+        for length in [0, 2, 4, 6, 8, 10] {
+            let child = build_chunk(b"CHLD", 1, &[]);
+            let mut bytes = build_chunk(b"ROOT", 1, &child[..length]);
+            bytes.extend_from_slice(&child[length..]);
+            let mut reader = ChunkReader::new(SbFile::from_owned_bytes(bytes, "header.rhm"));
+            reader.chunk_start(b"ROOT", 1).unwrap();
+            assert!(
+                reader.chunk_start(b"CHLD", 1).is_err(),
+                "header length={length}"
+            );
+            assert!(reader.file.tell() <= 12 + length as u64);
+        }
+    }
+
+    #[test]
+    fn chunk_reader_payload_reads_do_not_consume_sibling_bytes() {
+        let mut bytes = build_chunk(b"TEST", 1, &[]);
+        bytes.extend_from_slice(&[0; 32]);
+        let mut reader = ChunkReader::new(SbFile::from_owned_bytes(bytes, "payload.rhm"));
+        reader.chunk_start(b"TEST", 1).unwrap();
+        assert!(reader.read_u8().is_err());
+        assert!(reader.read_bool().is_err());
+        assert!(reader.read_i16().is_err());
+        assert!(reader.read_u16().is_err());
+        assert!(reader.read_u32().is_err());
+        assert!(reader.read_i32().is_err());
+        assert!(reader.read_f32().is_err());
+        assert!(reader.read_string().is_err());
+        assert!(reader.read_bytes(usize::MAX).is_err());
+        assert!(reader.peek_next_chunk().is_err());
+        assert_eq!(reader.file.tell(), 12);
+        assert_eq!(reader.remaining_in_chunk(), 0);
+        reader.chunk_end().unwrap();
+    }
+
+    #[test]
+    fn chunk_reader_string_payload_cannot_cross_boundary() {
+        let mut bytes = build_chunk(b"TEST", 1, &100u16.to_le_bytes());
+        bytes.extend_from_slice(&[b'a'; 100]);
+        let mut reader = ChunkReader::new(SbFile::from_owned_bytes(bytes, "string.rhm"));
+        reader.chunk_start(b"TEST", 1).unwrap();
+        let LevelError::Legacy(error) = reader.read_string().unwrap_err() else {
+            panic!("expected contextual boundary error");
+        };
+        assert_eq!(error.field, "chunk payload string.bytes");
+        assert_eq!(reader.file.tell(), 14);
+    }
+
+    #[test]
+    fn chunk_reader_underread_keeps_chunk_open() {
+        let bytes = build_chunk(b"TEST", 1, &42u32.to_le_bytes());
+        let mut reader = ChunkReader::new(SbFile::from_owned_bytes(bytes, "underread.rhm"));
+        reader.chunk_start(b"TEST", 1).unwrap();
+        assert!(matches!(
+            reader.chunk_end(),
+            Err(LevelError::ChunkSizeMismatch {
+                consumed: 4,
+                expected: 8,
+                ..
+            })
+        ));
+        assert_eq!(reader.read_u32().unwrap(), 42);
+        reader.chunk_end().unwrap();
     }
 
     #[test]
