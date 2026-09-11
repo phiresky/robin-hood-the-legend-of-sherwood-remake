@@ -1,6 +1,5 @@
 //! Order system — movement/action commands given to characters.
 
-use serde::Deserialize;
 use std::num::NonZeroU32;
 
 // ---------------------------------------------------------------------------
