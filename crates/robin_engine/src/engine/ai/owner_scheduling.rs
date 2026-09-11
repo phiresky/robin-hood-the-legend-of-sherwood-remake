@@ -592,7 +592,7 @@ impl EngineInner {
         // Original-game AI updates change which side of the
         // formation equally-close members occupy because later legacy slots
         // have moved by then.
-        self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
+        self.initialize_patrol_for_npc(assets, npc_id);
     }
 
     /// Invoke the enemy/friendly return-to-duty behavior requested
@@ -731,7 +731,7 @@ impl EngineInner {
         // This is an inline original-game call, not a future update request. It must
         // settle before common return-to-duty processing checks `patrol_chief` and may
         // issue the reciprocal visibility query.
-        self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
+        self.initialize_patrol_for_npc(assets, npc_id);
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -798,7 +798,7 @@ impl EngineInner {
             }
         }
 
-        self.initialize_patrol_for_npc_from_owner_views(assets, npc_id, &scratch.ai_entity_views);
+        self.initialize_patrol_for_npc(assets, npc_id);
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -841,11 +841,10 @@ impl EngineInner {
     /// tick and later slots before theirs; Rust's entity table is at that same
     /// owner boundary. The views captured when the stimulus was queued can be
     /// older than that boundary and must not drive patrol ordering.
-    pub(in crate::engine) fn initialize_patrol_for_npc_from_owner_views(
+    pub(in crate::engine) fn initialize_patrol_for_npc(
         &mut self,
         assets: &LevelAssets,
         chief_id: EntityId,
-        views: &crate::ai_entity_view::AiEntityViewMap,
     ) {
         let theoretical = self
             .world
@@ -860,7 +859,7 @@ impl EngineInner {
             })
             .theoretical_patrol
             .clone();
-        self.initialize_patrol_for_npc_over_members(assets, chief_id, views, &theoretical);
+        self.initialize_patrol_for_npc_over_members(assets, chief_id, &theoretical);
     }
 
     /// Patrol initialization restricted to an explicit slice of theoretical
@@ -871,7 +870,6 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         chief_id: EntityId,
-        _views: &crate::ai_entity_view::AiEntityViewMap,
         theoretical: &[EntityId],
     ) {
         #[derive(Clone, Copy)]

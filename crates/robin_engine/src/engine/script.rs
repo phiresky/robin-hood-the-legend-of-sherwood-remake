@@ -2250,11 +2250,9 @@ impl EngineInner {
                             );
                         }
                         let end = member_count.min(theoretical.len());
-                        let scratch = self.build_owner_context_scratch_without_forecast(assets);
                         self.initialize_patrol_for_npc_over_members(
                             assets,
                             chief_id,
-                            &scratch.ai_entity_views,
                             &theoretical[..end],
                         );
                     }
