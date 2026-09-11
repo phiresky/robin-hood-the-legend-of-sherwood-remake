@@ -474,7 +474,18 @@ mod tests {
         expected = "raw replay input must be decoded before mission Engine construction"
     )]
     fn replay_attachment_rejects_raw_input_before_recording_or_file_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let application_context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            Default::default(),
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone()),
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
         let args = crate::main_entry::MissionLaunch {
+            global_options: application_context,
             config: crate::main_entry::CliArgs {
                 replay: Some("must-not-be-read.rhrec.jsonl".into()),
                 ..Default::default()
