@@ -49,7 +49,7 @@ export class AssetLibrary {
     }
     try {
       const indexPath = path.join(this.directory, "index.json");
-      const entries = (await readIndex(indexPath)).filter(
+      const entries = (await readLibraryIndex(this.directory)).filter(
         (entry) => entry.id !== desc.id,
       );
       entries.push(next);
@@ -143,7 +143,12 @@ function validateIndex(value: unknown): asserts value is LibraryIndexEntry[] {
   }
 }
 
-async function readIndex(file: string): Promise<LibraryIndexEntry[]> {
+/** Atomic index replacement lets readers take a validated snapshot without
+ * holding the writer lease across expensive extraction/provider work. */
+export async function readLibraryIndex(
+  directory = libraryDir,
+): Promise<LibraryIndexEntry[]> {
+  const file = path.join(directory, "index.json");
   let text: string;
   try {
     text = await fs.readFile(file, "utf8");

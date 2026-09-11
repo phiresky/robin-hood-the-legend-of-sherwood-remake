@@ -8,11 +8,34 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { LibraryIndexEntry, ProtoLevel } from "@rle/shared";
+import type { ProtoLevel } from "@rle/shared";
 import { libraryDir, workDir } from "./env.ts";
 import { segment, type SamMask } from "./sam.ts";
 import type { Bbox } from "./clip.ts";
 import { loadProtoLevel, mapImageSource, writeMaskedAsset } from "./asset-writer.ts";
+import { readLibraryIndex } from "./library.ts";
+
+/** Explicit I/O boundary for extraction; tests supply providers rather than
+ * credentials or real library/game-data directories. */
+export interface ExtractionRuntime {
+  loadProtoLevel: typeof loadProtoLevel;
+  mapImageSource: typeof mapImageSource;
+  segment: typeof segment;
+  writeMaskedAsset: (
+    ...args: Parameters<typeof writeMaskedAsset>
+  ) => Promise<unknown>;
+  libraryDirectory: string;
+  workDirectory: string;
+}
+
+const defaultRuntime: ExtractionRuntime = {
+  loadProtoLevel,
+  mapImageSource,
+  segment,
+  writeMaskedAsset,
+  libraryDirectory: libraryDir,
+  workDirectory: workDir,
+};
 
 export interface ExtractOptions {
   map: string;
@@ -130,17 +153,21 @@ function bboxIou(a: Bbox, b: Bbox): number {
   return inter / (a[2] * a[3] + b[2] * b[3] - inter);
 }
 
-async function loadLibraryIndex(): Promise<LibraryIndexEntry[]> {
-  try {
-    return JSON.parse(await fs.readFile(path.join(libraryDir, "index.json"), "utf8"));
-  } catch {
-    return [];
-  }
-}
-
-export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummary> {
-  const level: ProtoLevel = await loadProtoLevel(opts.map);
-  const daySrc = await mapImageSource(opts.map, "Day", opts.applyPatches ?? false, level);
+export async function runExtraction(
+  opts: ExtractOptions,
+  runtime: ExtractionRuntime = defaultRuntime,
+): Promise<ExtractSummary> {
+  // Fail before invoking a potentially paid provider if the library is already
+  // unreadable. Re-read after segmentation for the existing dedupe snapshot:
+  // another process may publish while that long-running operation is in flight.
+  await readLibraryIndex(runtime.libraryDirectory);
+  const level: ProtoLevel = await runtime.loadProtoLevel(opts.map);
+  const daySrc = await runtime.mapImageSource(
+    opts.map,
+    "Day",
+    opts.applyPatches ?? false,
+    level,
+  );
   if (!daySrc) throw new Error(`no Day/${opts.map}.map.png in the datadir`);
 
   const meta = await sharp(daySrc).metadata();
@@ -173,7 +200,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
     console.log(
       `SAM 3: ${opts.prompt ? `"${opts.prompt}"` : "(geometric prompts)"} on ${cw}x${ch} crop of ${opts.map} @ ${cx},${cy}`,
     );
-    masks = await segment({
+    masks = await runtime.segment({
       imagePng: cropPng,
       width: cw,
       height: ch,
@@ -190,20 +217,20 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
     return {
       written: [],
       skipped: [{ index: -1, reason: "no masks for prompt" }],
-      reviewDir: path.join(workDir, opts.id),
+      reviewDir: path.join(runtime.workDirectory, opts.id),
     };
   }
 
   // fx/patch sprites legitimately overlap building cutouts — never dedupe
   // against them
-  const existing = (await loadLibraryIndex()).filter(
+  const existing = (await readLibraryIndex(runtime.libraryDirectory)).filter(
     (e) => e.source_map === opts.map && !e.tags.includes("fx") && !e.tags.includes("patch"),
   );
 
   const summary: ExtractSummary = {
     written: [],
     skipped: [],
-    reviewDir: path.join(workDir, opts.id),
+    reviewDir: path.join(runtime.workDirectory, opts.id),
   };
 
   async function writeAssetForMask(mask: SamMask, assetId: string, assetName: string) {
@@ -248,7 +275,7 @@ export async function runExtraction(opts: ExtractOptions): Promise<ExtractSummar
     for (let y = 0; y < ah; y++) {
       assetMask.set(cropMask.data.subarray((b.minY + y) * cw + b.minX, (b.minY + y) * cw + b.minX + aw), y * aw);
     }
-    await writeMaskedAsset({
+    await runtime.writeMaskedAsset({
       map: opts.map,
       level,
       applyPatches: opts.applyPatches ?? false,
