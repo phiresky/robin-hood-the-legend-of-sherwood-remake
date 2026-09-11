@@ -17,7 +17,7 @@ use robin_engine::campaign::Campaign;
 use robin_engine::engine::{Ambiance, GroundMarkSpriteData, LevelAssets, SimConfig};
 use robin_engine::profiles::ProfileManager;
 use robin_engine::resource_ids::*;
-use robin_engine::sbfile::{SB_FILE_READ, SbFileSystem};
+use robin_engine::sbfile::SbFileSystem;
 use robin_engine::sprite_variant::SpriteVariant;
 use robin_engine::titbit::SpriteRow;
 use robin_run_protocol::SpeechTimingAuthorityV1;
@@ -291,14 +291,15 @@ fn decode_background_map(
     if map_name.is_empty() {
         return Ok(None);
     }
-    let candidates = [
-        format!("{level_directory}/{ambiance_dir}/{map_name}.map"),
-        format!("{level_directory}/Day/{map_name}.map"),
-        format!("{level_directory}/{map_name}.map"),
-    ];
+    let candidates = robin_assets::terrain_source::candidate_paths(
+        level_directory,
+        ambiance_dir,
+        map_name,
+        "map",
+    );
     let mut picture = None;
     for path in &candidates {
-        let Ok(mut file) = files.open(path, SB_FILE_READ) else {
+        let Some(mut file) = robin_assets::terrain_source::open_candidate(path, files)? else {
             continue;
         };
         picture = Some(
@@ -487,6 +488,41 @@ fn initialize_sprite_variants_for_ambiance(
 #[cfg(test)]
 mod resource_tests {
     use super::*;
+
+    #[test]
+    fn ranked_terrain_rejects_bad_first_candidate_and_does_not_accept_png_overlays() {
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let picture = Picture {
+            width: 1,
+            height: 1,
+            pitch: 2,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: vec![0, 0],
+            palette: None,
+        };
+        let bytes = picture
+            .write_sixteen_to_bytes(robin_assets::picture::SixteenPacking::None)
+            .unwrap();
+        vfs.install_preloaded_asset("Levels/Day/Test.map", bytes.clone())
+            .unwrap();
+        vfs.install_preloaded_asset("Levels/Night/Test.map.png", vec![1])
+            .unwrap();
+        let files = SbFileSystem::new(vfs.clone());
+        assert!(
+            decode_background_map("Test", "Night", "Levels", &files)
+                .unwrap()
+                .is_some()
+        );
+        vfs.install_preloaded_asset("Levels/Night/Test.map", vec![1])
+            .unwrap();
+        assert!(decode_background_map("Test", "Night", "Levels", &files).is_err());
+        assert!(
+            decode_background_map("Test", "Night", "../Levels", &files)
+                .err()
+                .unwrap()
+                .contains("failed to probe")
+        );
+    }
 
     #[test]
     fn concurrent_ranked_readers_and_sample_loaders_keep_independent_roots() {

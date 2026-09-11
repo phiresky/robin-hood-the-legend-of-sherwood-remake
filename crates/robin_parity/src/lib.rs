@@ -55,16 +55,17 @@ pub fn background_dimensions(
     if map_name.is_empty() {
         return Err("mission has no background map".to_owned());
     }
-    let candidates = [
-        format!("{level_directory}/{ambiance_dir}/{map_name}.map"),
-        format!("{level_directory}/Day/{map_name}.map"),
-        format!("{level_directory}/{map_name}.map"),
-    ];
+    let candidates = robin_assets::terrain_source::candidate_paths(
+        level_directory,
+        ambiance_dir,
+        map_name,
+        "map",
+    );
+    let files = SbFile::snapshot_legacy_file_system();
     for path in &candidates {
         let png_path = format!("{path}.png");
-        if SbFile::exists(&png_path) {
-            let bytes = SbFile::read_all(&png_path)
-                .map_err(|status| format!("read terrain PNG {png_path}: status {status}"))?;
+        if let Some(file) = robin_assets::terrain_source::open_candidate(&png_path, &files)? {
+            let bytes = file.into_shared_bytes();
             let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
             let reader = decoder
                 .read_info()
@@ -76,9 +77,10 @@ pub fn background_dimensions(
                 .map_err(|_| format!("terrain PNG {png_path} height exceeds u16"))?;
             return Ok((f32::from(width), f32::from(height)));
         }
-        let Ok(bytes) = SbFile::read_all(path) else {
+        let Some(file) = robin_assets::terrain_source::open_candidate(path, &files)? else {
             continue;
         };
+        let bytes = file.into_shared_bytes();
         let (width, height) = Picture::terrain_dimensions(&bytes)
             .map_err(|error| format!("read terrain dimensions from {path}: {error}"))?;
         return Ok((f32::from(width), f32::from(height)));

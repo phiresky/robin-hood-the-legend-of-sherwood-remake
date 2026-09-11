@@ -14,6 +14,7 @@ use robin_assets::frame_holder as assets_frame_holder;
 use robin_assets::frame_holder::ProgressUpdate;
 use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_assets::terrain_source::{candidate_paths, open_candidate};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{MapPoint, MinimapSize};
 use robin_engine::engine::level_loading::{
@@ -146,25 +147,13 @@ fn load_terrain_candidate(
     files: &sbfile::SbFileSystem,
 ) -> Result<Option<Picture>, String> {
     let png_path = format!("{path}.png");
-    if files
-        .try_exists(&png_path)
-        .map_err(|error| format!("failed to probe terrain PNG '{png_path}': {error}"))?
-    {
-        let bytes = files
-            .read_shared(&png_path)
-            .map_err(|error| format!("failed to read terrain PNG '{png_path}': {error}"))?;
+    if let Some(file) = open_candidate(&png_path, files)? {
         tracing::info!("Loading hackable terrain PNG: {png_path}");
-        return decode_hackable_terrain_png(&bytes, &png_path).map(Some);
+        return decode_hackable_terrain_png(&file.into_shared_bytes(), &png_path).map(Some);
     }
-    if !files
-        .try_exists(path)
-        .map_err(|error| format!("failed to probe terrain image '{path}': {error}"))?
-    {
+    let Some(mut file) = open_candidate(path, files)? else {
         return Ok(None);
-    }
-    let mut file = files
-        .open(path, sbfile::SB_FILE_READ)
-        .map_err(|error| format!("failed to open terrain image '{path}': {error}"))?;
+    };
     Picture::load_terrain_from_stream(&mut file)
         .map(Some)
         .map_err(|error| format!("failed to load terrain image '{path}': {error}"))
@@ -273,16 +262,9 @@ fn pre_decode_background_map_impl(
     // finally the bare level directory.  Raise a fatal error only when
     // none exist.  Same candidate list for both shipping (bundle) keys
     // and disk paths.
-    let shipping_keys = [
-        format!("levels/{}/{}.map", ambiance_dir, map_name).to_ascii_lowercase(),
-        format!("levels/day/{}.map", map_name).to_ascii_lowercase(),
-        format!("levels/{}.map", map_name).to_ascii_lowercase(),
-    ];
-    let disk_candidates = [
-        format!("{}/{}/{}.map", level_directory, ambiance_dir, map_name),
-        format!("{}/Day/{}.map", level_directory, map_name),
-        format!("{}/{}.map", level_directory, map_name),
-    ];
+    let shipping_keys = candidate_paths("levels", ambiance_dir, map_name, "map")
+        .map(|key| key.to_ascii_lowercase());
+    let disk_candidates = candidate_paths(level_directory, ambiance_dir, map_name, "map");
 
     progress(ProgressUpdate::Phase(
         "Decompressing background map...",
@@ -425,11 +407,8 @@ pub fn probe_background_map_dims_with_files(
     if map_name.is_empty() {
         return None;
     }
-    let shipping_keys = [
-        format!("levels/{}/{}.map", ambiance_dir, map_name).to_ascii_lowercase(),
-        format!("levels/day/{}.map", map_name).to_ascii_lowercase(),
-        format!("levels/{}.map", map_name).to_ascii_lowercase(),
-    ];
+    let shipping_keys = candidate_paths("levels", ambiance_dir, map_name, "map")
+        .map(|key| key.to_ascii_lowercase());
     if let Some(dd) = shipping {
         for key in &shipping_keys {
             if let Some(bytes) = dd.raw_asset(key) {
@@ -437,17 +416,13 @@ pub fn probe_background_map_dims_with_files(
             }
         }
     }
-    let disk_candidates = [
-        format!("{}/{}/{}.map", level_directory, ambiance_dir, map_name),
-        format!("{}/Day/{}.map", level_directory, map_name),
-        format!("{}/{}.map", level_directory, map_name),
-    ];
+    let disk_candidates = candidate_paths(level_directory, ambiance_dir, map_name, "map");
     for path in &disk_candidates {
         // Hackable PNG overlays take priority in `load_terrain_candidate`;
         // their pixel dimensions come straight from the PNG header.
         let png_path = format!("{path}.png");
-        if files.try_exists(&png_path).ok()? {
-            let bytes = files.read_shared(&png_path).ok()?;
+        if let Some(file) = open_candidate(&png_path, files).ok()? {
+            let bytes = file.into_shared_bytes();
             let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
             let reader = decoder.read_info().ok()?;
             let info = reader.info();
@@ -456,8 +431,8 @@ pub fn probe_background_map_dims_with_files(
                 u16::try_from(info.height).ok()?,
             ));
         }
-        if let Ok(bytes) = files.read_shared(path) {
-            return Picture::terrain_dimensions(&bytes).ok();
+        if let Some(file) = open_candidate(path, files).ok()? {
+            return Picture::terrain_dimensions(&file.into_shared_bytes()).ok();
         }
     }
     None
@@ -851,11 +826,8 @@ pub fn pre_decode_minimap_with_files(
 
     // Shipping datadir takes precedence (mirrors background_map).
     // Keys are lowercased per `robin_util::asset_fs::bundle_key`.
-    let shipping_keys = [
-        format!("levels/{}/{}.min", ambiance_dir, map_name).to_ascii_lowercase(),
-        format!("levels/day/{}.min", map_name).to_ascii_lowercase(),
-        format!("levels/{}.min", map_name).to_ascii_lowercase(),
-    ];
+    let shipping_keys = candidate_paths("levels", ambiance_dir, map_name, "min")
+        .map(|key| key.to_ascii_lowercase());
     if let Some(dd) = shipping {
         for (candidate_index, key) in shipping_keys.iter().enumerate() {
             if let Some(bytes) = dd.raw_asset(key) {
@@ -886,11 +858,7 @@ pub fn pre_decode_minimap_with_files(
         }
     }
 
-    let candidates = [
-        format!("{}/{}/{}.min", level_directory, ambiance_dir, map_name),
-        format!("{}/Day/{}.min", level_directory, map_name),
-        format!("{}/{}.min", level_directory, map_name),
-    ];
+    let candidates = candidate_paths(level_directory, ambiance_dir, map_name, "min");
 
     let mut picture = None;
     for (candidate_index, path) in candidates.iter().enumerate() {
@@ -1051,6 +1019,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn unreadable_ambiance_candidate_does_not_probe_or_decode_the_day_map() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("Night/Test.map")).unwrap();
+        std::fs::create_dir_all(root.path().join("Day")).unwrap();
+        std::fs::write(root.path().join("Day/Test.map"), [1, 0, 2, 0]).unwrap();
+        let files = sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(files.set_primary_path(root.path().to_str().unwrap()), 0);
+        assert_eq!(
+            probe_background_map_dims_with_files("Test", "Night", ".", None, &files),
+            None
+        );
+        assert!(load_terrain_candidate("Night/Test.map", &files).is_err());
+    }
 
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
