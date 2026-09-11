@@ -13,6 +13,7 @@ import {
 } from "./fs";
 import { scanDatadir, type DatadirIndex } from "./datadir";
 import Editor3D, { type LibraryRef } from "./Editor3D";
+import { connectionAttempts, connectLatest } from "./connection-attempt";
 
 export default function App() {
   const [index, setIndex] = createSignal<DatadirIndex | null>(null);
@@ -22,72 +23,102 @@ export default function App() {
   const [libraryNeedsReconnect, setLibraryNeedsReconnect] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [status, setStatus] = createSignal<string | null>(null);
-  let generation = 0;
-  let disposed = false;
+  const datadirAttempts = connectionAttempts();
+  const libraryAttempts = connectionAttempts();
   onCleanup(() => {
-    disposed = true;
-    generation++;
+    datadirAttempts.dispose();
+    libraryAttempts.dispose();
   });
 
-  async function openRoot(handle: FileSystemDirectoryHandle) {
-    const request = ++generation;
-    setError(null);
+  async function openRoot(
+    handle: FileSystemDirectoryHandle,
+    current: () => boolean,
+  ) {
+    if (!current()) return;
     setStatus("scanning datadir…");
-    try {
-      const next = await scanDatadir(handle);
-      if (disposed || request !== generation) return;
-      setIndex(next);
-      setNeedsReconnect(false);
-    } catch (e) {
-      if (!disposed && request === generation) setError(String(e));
-    } finally {
-      if (!disposed && request === generation) setStatus(null);
-    }
+    const next = await scanDatadir(handle);
+    if (!current()) return;
+    setIndex(next);
+    setNeedsReconnect(false);
   }
+
+  const connectDatadir = (operation: (current: () => boolean) => Promise<void>) =>
+    connectLatest(
+      datadirAttempts,
+      async (current) => {
+        setError(null);
+        setStatus(null);
+        await operation(current);
+      },
+      (error) => setError(String(error)),
+      () => setStatus(null),
+    );
+  const connectLibrary = (operation: (current: () => boolean) => Promise<void>) =>
+    connectLatest(
+      libraryAttempts,
+      async (current) => {
+        setError(null);
+        await operation(current);
+      },
+      (error) => setError(String(error)),
+    );
 
   // one-shot startup: restore previously granted handles
   createEffect(
     () => undefined,
     () => {
-      void (async () => {
+      void connectDatadir(async (current) => {
         const restored = await restoreDatadir();
-        if (restored) await openRoot(restored);
-        else if (await getStoredDatadirHandle()) setNeedsReconnect(true);
+        if (!current()) return;
+        if (restored) await openRoot(restored, current);
+        else {
+          const stored = await getStoredDatadirHandle();
+          if (current()) setNeedsReconnect(stored !== null);
+        }
+      });
+      void connectLibrary(async (current) => {
         const lib = await restoreLibrary();
+        if (!current()) return;
         if (lib) setLibrary({ handle: lib });
-        else if (await getStoredLibraryHandle()) setLibraryNeedsReconnect(true);
-      })().catch((error) => {
-        if (!disposed) setError(String(error));
+        else {
+          const stored = await getStoredLibraryHandle();
+          if (current()) setLibraryNeedsReconnect(stored !== null);
+        }
       });
     },
   );
 
-  async function onPick() {
-    try {
-      await openRoot(await pickDatadir());
-    } catch (e) {
-      if ((e as DOMException).name !== "AbortError") setError(String(e));
-    }
+  function onPick() {
+    return connectDatadir(async (current) => {
+      const handle = await pickDatadir(current);
+      if (current()) await openRoot(handle, current);
+    });
   }
-  async function onReconnect() {
-    const handle = await getStoredDatadirHandle();
-    if (handle && (await requestDatadirPermission(handle)))
-      await openRoot(handle);
+  function onReconnect() {
+    return connectDatadir(async (current) => {
+      const handle = await getStoredDatadirHandle();
+      if (!current() || !handle) return;
+      const granted = await requestDatadirPermission(handle);
+      if (current() && granted) await openRoot(handle, current);
+    });
   }
-  async function onPickLibrary() {
-    try {
-      setLibrary({ handle: await pickLibrary() });
-      setLibraryNeedsReconnect(false);
-    } catch (e) {
-      if ((e as DOMException).name !== "AbortError") setError(String(e));
-    }
-  }
-  async function onReconnectLibrary() {
-    const handle = await getStoredLibraryHandle();
-    if (handle && (await requestDatadirPermission(handle, "readwrite"))) {
+  function onPickLibrary() {
+    return connectLibrary(async (current) => {
+      const handle = await pickLibrary(current);
+      if (!current()) return;
       setLibrary({ handle });
       setLibraryNeedsReconnect(false);
-    }
+    });
+  }
+  function onReconnectLibrary() {
+    return connectLibrary(async (current) => {
+      const handle = await getStoredLibraryHandle();
+      if (!current() || !handle) return;
+      const granted = await requestDatadirPermission(handle, "readwrite");
+      if (!current() || !granted) return;
+      setLibrary({ handle });
+      setLibraryNeedsReconnect(false);
+    });
   }
 
   return (

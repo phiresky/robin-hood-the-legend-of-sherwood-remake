@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 import * as THREE from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import Editor3D from "../src/Editor3D";
+import { checkConnectionPersistence } from "./connections";
 import "../src/styles.css";
 
 // Browser acceptance fixture: no directory picker, disk writes or game data.
@@ -307,6 +308,7 @@ function button(label: string) {
 }
 
 async function main() {
+  await checkConnectionPersistence();
   const library = await fixtures();
   const replacement = await fixtures(["c", "d"]);
   const [activeLibrary, setActiveLibrary] = createSignal(library);

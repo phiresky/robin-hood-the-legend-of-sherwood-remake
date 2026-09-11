@@ -1,7 +1,7 @@
 // File System Access API helpers: pick the hackable datadir root, persist the
 // handle in IndexedDB, restore it on revisit (Chrome 122+ "allow on every
 // visit" makes this prompt-free after the first grant).
-import { get, set } from "idb-keyval";
+import { get, update } from "idb-keyval";
 
 const DATADIR_KEY = "datadir-handle";
 const LIBRARY_KEY = "library-handle";
@@ -9,10 +9,17 @@ const LIBRARY_KEY = "library-handle";
 async function pickDir(
   key: string,
   id: string,
+  current: () => boolean,
   mode: "read" | "readwrite" = "read",
 ): Promise<FileSystemDirectoryHandle> {
   const handle = await window.showDirectoryPicker({ id, mode });
-  await set(key, handle);
+  if (!current()) return handle;
+  // Check inside the serialized read/write transaction, after IndexedDB opens.
+  // Checking only before awaiting `set` lets a superseded picker overwrite a
+  // newer choice. A retired attempt must preserve the stored handle instead.
+  await update<FileSystemDirectoryHandle | undefined>(key, (previous) =>
+    current() ? handle : previous,
+  );
   return handle;
 }
 
@@ -27,8 +34,10 @@ async function restoreDir(
   return null; // needs a user gesture; App offers a "reconnect" button
 }
 
-export async function pickDatadir(): Promise<FileSystemDirectoryHandle> {
-  return pickDir(DATADIR_KEY, "hackable-datadir");
+export async function pickDatadir(
+  current: () => boolean,
+): Promise<FileSystemDirectoryHandle> {
+  return pickDir(DATADIR_KEY, "hackable-datadir", current);
 }
 
 export async function restoreDatadir(): Promise<FileSystemDirectoryHandle | null> {
@@ -40,8 +49,10 @@ export async function getStoredDatadirHandle(): Promise<FileSystemDirectoryHandl
 }
 
 /** the library is where the editor saves its documents, so it needs write access */
-export async function pickLibrary(): Promise<FileSystemDirectoryHandle> {
-  return pickDir(LIBRARY_KEY, "asset-library", "readwrite");
+export async function pickLibrary(
+  current: () => boolean,
+): Promise<FileSystemDirectoryHandle> {
+  return pickDir(LIBRARY_KEY, "asset-library", current, "readwrite");
 }
 
 export async function restoreLibrary(): Promise<FileSystemDirectoryHandle | null> {
