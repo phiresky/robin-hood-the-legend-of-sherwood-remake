@@ -1967,7 +1967,7 @@ impl TimelineRuntime {
                         } else {
                             self.replay.record_load_snapshot(
                                 self.replay_ordinal,
-                                snapshot.clone(),
+                                snapshot,
                                 timeline,
                                 is_continue,
                             );
