@@ -69,6 +69,122 @@ fn camera_snapshot_preserves_director_pose_without_host_interpolation_history() 
 }
 
 #[test]
+fn camera_serde_preserves_projection_field_order_and_native_state() {
+    let mut engine = EngineInner::new();
+    let camera = &mut engine.feedback.cutscene_camera;
+    camera.view_position = MapPoint::new(11.0, 22.0);
+    camera.zoom_factor = 0.5;
+    camera.zoom_init_done = true;
+    camera.mechanized_zoom = true;
+    camera.displacement = MapVec::new(3.0, 4.0);
+    camera.displacement_counter = 7;
+    camera.sequence_element = Some(crate::sequence::SequenceElementRef::new(
+        crate::sequence::SequenceId(3),
+        4,
+    ));
+    camera.external_completion_replay = true;
+    camera.pending_zoom_mouse_screen = Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
+    camera.display.display_op = DisplayOpCode::Scroll;
+
+    let native = bitcode::encode(camera);
+    let json = serde_json::to_string(camera).unwrap();
+    // Frozen field order of the removed PersistedCameraState projection.
+    // Building the expectation explicitly also detects added/omitted fields.
+    macro_rules! projection_json {
+        ($($field:ident),+ $(,)?) => {
+            format!("{{{}}}", [$(format!("\"{}\":{}", stringify!($field),
+                serde_json::to_string(&camera.$field).unwrap())),+].join(","))
+        };
+    }
+    let expected = projection_json!(
+        view_position,
+        camera_slide,
+        camera_wanted,
+        fixed_camera_speed,
+        zoom_factor,
+        desired_zoom_factor,
+        zoom_init_done,
+        mechanized_zoom,
+        level_size,
+        displacement,
+        displacement_counter,
+        position_saved,
+        sequence_element,
+        external_completion_replay,
+        display,
+        pending_zoom_mouse_screen,
+    );
+    assert_eq!(json, expected);
+    let restored: CameraState = serde_json::from_str(&json).unwrap();
+    assert_eq!(native, bitcode::encode(&restored));
+    let native_restored: CameraState = bitcode::decode(&native).unwrap();
+    assert_eq!(json, serde_json::to_string(&native_restored).unwrap());
+    let hash = crate::replay::state_hash(&engine);
+    engine.feedback.cutscene_camera = restored;
+    assert_eq!(hash, crate::replay::state_hash(&engine));
+}
+
+#[test]
+fn camera_optional_fields_keep_distinct_missing_and_null_rules() {
+    let baseline = serde_json::to_value(CameraState::default()).unwrap();
+    let restored: CameraState = serde_json::from_value(baseline.clone()).unwrap();
+    assert!(restored.pending_zoom_mouse_screen.is_none());
+    assert!(restored.sequence_element.is_none());
+    for field in ["sequence_element", "external_completion_replay"] {
+        let mut missing = baseline.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        let restored: CameraState = serde_json::from_value(missing).unwrap();
+        assert!(restored.sequence_element.is_none());
+        assert!(!restored.external_completion_replay);
+    }
+    let mut missing = baseline.clone();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("pending_zoom_mouse_screen");
+    assert!(
+        serde_json::from_value::<CameraState>(missing)
+            .unwrap_err()
+            .to_string()
+            .contains("pending_zoom_mouse_screen")
+    );
+    let mut invalid = baseline;
+    invalid["external_completion_replay"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<CameraState>(invalid).is_err());
+}
+
+#[test]
+fn feedback_capture_preserves_camera_but_resets_host_output_without_a_codec() {
+    let mut engine = EngineInner::new();
+    engine.feedback.cutscene_camera.external_completion_replay = true;
+    engine.feedback.cutscene_camera.pending_zoom_mouse_screen =
+        Some(crate::coordinates::ScreenPoint::new(12.0, 34.0));
+    engine
+        .feedback
+        .pending_side_effects
+        .pending_minimap_position = Some(crate::coordinates::ScreenPoint::new(56.0, 78.0));
+    engine.feedback.pending_side_effects.invalidate_background = true;
+    let camera = bitcode::encode(&engine.feedback.cutscene_camera);
+    let restored =
+        super::super::state::PersistedFeedbackRuntime::capture(&engine.feedback).into_runtime();
+    assert_eq!(camera, bitcode::encode(&restored.cutscene_camera));
+    assert!(
+        restored
+            .pending_side_effects
+            .pending_minimap_position
+            .is_none()
+    );
+    assert!(restored.pending_side_effects.invalidate_background);
+    assert!(
+        engine
+            .feedback
+            .pending_side_effects
+            .pending_minimap_position
+            .is_some()
+    );
+}
+
+#[test]
 fn camera_transition_inputs_are_serialized_and_hashed() {
     let baseline = EngineInner::new();
 

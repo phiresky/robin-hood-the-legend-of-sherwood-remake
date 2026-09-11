@@ -587,7 +587,17 @@ pub struct DirectorCameraFrame {
 }
 
 /// Script/director camera state.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+// Retain the former save projection's serde name; all camera fields now persist.
+#[serde(rename = "PersistedCameraState")]
 pub struct CameraState {
     /// Top-left corner of the view in map coordinates.
     pub view_position: MapPoint,
@@ -638,6 +648,7 @@ pub struct CameraState {
     /// `CameraGoto` and `ZoomLevel` sequence elements. The visual transition
     /// still advances normally, but reaching its target does not release the
     /// sequence until the replay applies the recorded director event.
+    #[serde(default)]
     pub external_completion_replay: bool,
 
     /// Display-op/zoom-transition state for the shared script camera.
@@ -656,117 +667,8 @@ pub struct CameraState {
     /// is not mechanized. `None` = no mouse recentering. The value is
     /// consumed after the command boundary and therefore belongs to the
     /// deterministic camera snapshot while pending.
-    pub pending_zoom_mouse_screen: Option<ScreenPoint>,
-}
-
-impl serde::Serialize for CameraState {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedCameraState::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for CameraState {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedCameraState::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedCameraState {
-    view_position: MapPoint,
-
-    camera_slide: MapPoint,
-
-    camera_wanted: MapPoint,
-
-    fixed_camera_speed: u16,
-
-    zoom_factor: f32,
-
-    desired_zoom_factor: f32,
-
-    zoom_init_done: bool,
-
-    mechanized_zoom: bool,
-
-    level_size: MapSize,
-
-    displacement: MapVec,
-
-    displacement_counter: u16,
-
-    position_saved: ScreenPoint,
-
-    sequence_element: Option<crate::sequence::SequenceElementRef>,
-    #[serde(default)]
-    external_completion_replay: bool,
-
-    display: super::CameraDisplayState,
     #[serde(deserialize_with = "deserialize_required_option")]
-    pending_zoom_mouse_screen: Option<ScreenPoint>,
-}
-
-impl PersistedCameraState {
-    pub(crate) fn capture(value: &CameraState) -> Self {
-        let CameraState {
-            view_position: _,
-            camera_slide: _,
-            camera_wanted: _,
-            fixed_camera_speed: _,
-            zoom_factor: _,
-            desired_zoom_factor: _,
-            zoom_init_done: _,
-            mechanized_zoom: _,
-            level_size: _,
-            displacement: _,
-            displacement_counter: _,
-            position_saved: _,
-            sequence_element: _,
-            external_completion_replay: _,
-            display: _,
-            pending_zoom_mouse_screen: _,
-        } = value;
-        Self {
-            view_position: value.view_position,
-            camera_slide: value.camera_slide,
-            camera_wanted: value.camera_wanted,
-            fixed_camera_speed: value.fixed_camera_speed,
-            zoom_factor: value.zoom_factor,
-            desired_zoom_factor: value.desired_zoom_factor,
-            zoom_init_done: value.zoom_init_done,
-            mechanized_zoom: value.mechanized_zoom,
-            level_size: value.level_size,
-            displacement: value.displacement,
-            displacement_counter: value.displacement_counter,
-            position_saved: value.position_saved,
-            sequence_element: value.sequence_element,
-            external_completion_replay: value.external_completion_replay,
-            display: value.display.clone(),
-            pending_zoom_mouse_screen: value.pending_zoom_mouse_screen,
-        }
-    }
-
-    pub(crate) fn into_runtime(self) -> CameraState {
-        CameraState {
-            view_position: self.view_position,
-            camera_slide: self.camera_slide,
-            camera_wanted: self.camera_wanted,
-            fixed_camera_speed: self.fixed_camera_speed,
-            zoom_factor: self.zoom_factor,
-            desired_zoom_factor: self.desired_zoom_factor,
-            zoom_init_done: self.zoom_init_done,
-            mechanized_zoom: self.mechanized_zoom,
-            level_size: self.level_size,
-            displacement: self.displacement,
-            displacement_counter: self.displacement_counter,
-            position_saved: self.position_saved,
-            sequence_element: self.sequence_element,
-            external_completion_replay: self.external_completion_replay,
-            display: self.display,
-            pending_zoom_mouse_screen: self.pending_zoom_mouse_screen,
-        }
-    }
+    pub pending_zoom_mouse_screen: Option<ScreenPoint>,
 }
 
 impl Default for CameraState {
