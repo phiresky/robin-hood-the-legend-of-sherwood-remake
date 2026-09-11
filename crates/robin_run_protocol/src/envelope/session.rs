@@ -269,26 +269,18 @@ pub struct ReplaySessionGenesisClaimV1 {
     /// Present exactly for fresh individual-level and campaign-genesis runs.
     /// Scope is rechecked when the server later authors an upload offer;
     /// continuations instead bind a verified predecessor.
-    #[serde(deserialize_with = "deserialize_explicit_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub fresh_run_preflight_grant: Option<FreshRunPreflightGrantV1>,
     /// Present exactly for campaign continuations. It proves that the active
     /// chain controller and the new host authorized this session before frame
     /// zero and that the service recognized the exact predecessor.
-    #[serde(deserialize_with = "deserialize_explicit_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub campaign_continuation_preflight_grant: Option<CampaignContinuationPreflightGrantV1>,
     /// Required exactly for scheduled competition sessions. The explicit
     /// `null` in ordinary sessions keeps the current schema unambiguous; a
     /// missing field is not an accepted older-schema compatibility lane.
-    #[serde(deserialize_with = "deserialize_explicit_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub competition_run_grant: Option<CompetitionRunGrantV1>,
-}
-
-fn deserialize_explicit_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
 }
 
 impl ReplaySessionGenesisClaimV1 {
