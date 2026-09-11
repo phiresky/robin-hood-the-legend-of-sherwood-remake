@@ -1668,8 +1668,7 @@ fn convert_res(src: &Path, out_dir: &Path) -> Result<()> {
         .context("resource file parse")?;
     fs::create_dir_all(out_dir)?;
 
-    let mut ids: Vec<_> = mgr.iter_entries().collect();
-    ids.sort_by_key(|(id, _)| *id);
+    let ids = mgr.resource_ids_with_types();
 
     let mut manifest = serde_json::Map::new();
     for (id, type_tag) in ids {

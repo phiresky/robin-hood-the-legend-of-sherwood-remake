@@ -1211,14 +1211,6 @@ impl ResourceManager {
             || self.data.waves.contains_key(&id)
     }
 
-    /// Iterate over all loaded resources. Yields `(id, type_tag)`.
-    pub fn iter_entries(&self) -> impl Iterator<Item = (ResourceId, [u8; 4])> + '_ {
-        self.lifetime
-            .file_entries
-            .iter()
-            .map(|(&id, e)| (id, e.resource_type))
-    }
-
     /// Sorted IDs of resident or encoded picture collections, independent of
     /// legacy archive metadata (which shipping manifests intentionally omit).
     pub fn picture_resource_ids(&self) -> Vec<ResourceId> {
@@ -1291,7 +1283,8 @@ impl ResourceManager {
         self.data.mouse_entries.get(&id)
     }
 
-    /// Sorted list of `(resource_id, type_tag)` for every loaded resource.
+    /// Sorted list of `(resource_id, type_tag)` for registered archive entries.
+    /// Resident shipping payloads without archive metadata are not included.
     /// Used by the shipping converter to walk the manager in a stable order
     /// when re-serializing as a `.res` byte blob.
     pub fn resource_ids_with_types(&self) -> Vec<(ResourceId, [u8; 4])> {
@@ -2020,6 +2013,44 @@ mod tests {
         assert!(manager.get_nonempty_picture_count(42).is_err());
         assert!(manager.get_dimension(42).is_err());
         assert!(manager.pictures_raw(42).is_none());
+    }
+
+    #[test]
+    fn mixed_archive_entries_have_one_stable_sorted_export_order() {
+        let mut text = 0u32.to_le_bytes().to_vec();
+        text.extend_from_slice(&1u16.to_le_bytes());
+        text.extend_from_slice(&1u16.to_le_bytes());
+        text.extend_from_slice(&(b'A' as u16).to_le_bytes());
+        let empty_waves = [0u8; 6]; // flags and u16 count
+        let empty_pictures = [0u8; 8]; // flags and u32 count
+        let entries = [
+            resource_file(b"TEXT", 90, &text),
+            resource_file(b"WAVE", 3, &empty_waves),
+            resource_file(b"PICC", 12, &empty_pictures),
+        ];
+        let mut bytes = entries[0][..12].to_vec();
+        bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
+        let header = bytes.clone();
+        for entry in &entries {
+            bytes.extend_from_slice(&entry[12..]);
+        }
+        let mut manager = ResourceManager::new();
+        manager.attach_resource_bytes(&bytes, "mixed.res").unwrap();
+        manager.data.strings.insert(1, vec!["resident-only".into()]);
+        assert_eq!(
+            manager.resource_ids_with_types(),
+            [(3, *b"WAVE"), (12, *b"PICC"), (90, *b"TEXT")]
+        );
+        let mut expected = header;
+        for index in [1, 2, 0] {
+            expected.extend_from_slice(&entries[index][12..]);
+        }
+        assert_eq!(
+            manager
+                .write_to_res_bytes(crate::picture::SixteenPacking::None)
+                .unwrap(),
+            expected
+        );
     }
 
     #[test]
