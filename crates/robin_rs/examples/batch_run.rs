@@ -19,7 +19,12 @@ struct Args {
 struct ScriptResult {
     script: String,
     status: String,
-    natives: usize,
+    execution: Option<ExecutionStats>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ExecutionStats {
+    deferred_commands: usize,
     ip: u32,
     frames: usize,
 }
@@ -101,9 +106,11 @@ fn run_initialize(file: scb::ScbFile) -> Result<Option<ScriptResult>, String> {
         // Report the actual stop. Yield, instruction budget, authored Empty,
         // and a nested return are not claims of completed initialization.
         status: format!("{stop:?}"),
-        natives: context.engine_commands().len(),
-        ip: activation.ip,
-        frames: activation.frames.len(),
+        execution: Some(ExecutionStats {
+            deferred_commands: context.engine_commands().len(),
+            ip: activation.ip,
+            frames: activation.frames.len(),
+        }),
     }))
 }
 
@@ -139,18 +146,14 @@ fn run_directory(directory: &Path) -> Result<BatchReport, String> {
             Ok(None) => report.results.push(ScriptResult {
                 script: path.display().to_string(),
                 status: "NO-INIT".into(),
-                natives: 0,
-                ip: 0,
-                frames: 0,
+                execution: None,
             }),
             Err(error) => {
                 let error = format!("{}: {error}", path.display());
                 report.results.push(ScriptResult {
                     script: path.display().to_string(),
                     status: format!("ERROR: {error}"),
-                    natives: 0,
-                    ip: 0,
-                    frames: 0,
+                    execution: None,
                 });
                 report.errors.push(error);
             }
@@ -170,14 +173,18 @@ fn main() -> std::process::ExitCode {
         }
     };
     for result in &report.results {
-        tracing::info!(
-            "{}: {} (deferred commands: {}, ip: {}, frames: {})",
-            result.script,
-            result.status,
-            result.natives,
-            result.ip,
-            result.frames
-        );
+        if let Some(execution) = &result.execution {
+            tracing::info!(
+                "{}: {} (deferred commands: {}, ip: {}, frames: {})",
+                result.script,
+                result.status,
+                execution.deferred_commands,
+                execution.ip,
+                execution.frames
+            );
+        } else {
+            tracing::info!("{}: {}", result.script, result.status);
+        }
     }
     for error in &report.errors {
         tracing::error!("{error}");
@@ -246,8 +253,11 @@ mod tests {
         assert!(report.results[0].status.contains("0xff"));
         assert!(report.results[0].status.contains("Probe"));
         assert!(report.results[0].status.contains("instruction 0"));
+        assert!(report.results[0].execution.is_none());
         assert_eq!(report.results[1].status, "HitEmpty");
+        assert!(report.results[1].execution.is_some());
         assert!(report.results[2].status.starts_with("ERROR:"));
+        assert!(report.results[2].execution.is_none());
     }
 
     #[test]
@@ -261,6 +271,7 @@ mod tests {
         let report = run_directory(directory.path()).unwrap();
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].status, "NO-INIT");
+        assert!(report.results[0].execution.is_none());
         assert_eq!(report.exit_code(), std::process::ExitCode::SUCCESS);
     }
 }
