@@ -62,5 +62,7 @@ pub struct ComputedScriptLocation {
     #[serde(default)]
     pub sector_handle: Option<crate::position_interface::SectorHandle>,
     /// Serialized script-point activation state. New runtime points are active.
+    /// TODO: audit Original point activation consumers; Rust currently retains
+    /// this flag in snapshots but does not interpret it at runtime.
     pub active: bool,
 }
