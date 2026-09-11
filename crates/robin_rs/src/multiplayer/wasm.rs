@@ -54,6 +54,8 @@ const CONTENT_DECISION_TIMEOUT_MS: u32 = 30 * 60 * 1_000;
 const CONTENT_TRANSFER_TIMEOUT_MS: u32 = 15 * 60 * 1_000;
 const CONTENT_READINESS_TIMEOUT_MS: u32 = 5 * 60 * 1_000;
 
+use super::ranked_client::BrowserAdmissionPhase;
+
 /// Browser-only ranking state that must survive a dropped relay stream. The
 /// shared gate owns the exact documents; the two cells retain transport facts
 /// needed to reject a Welcome that races ahead of admission or changes seats
@@ -61,9 +63,7 @@ const CONTENT_READINESS_TIMEOUT_MS: u32 = 5 * 60 * 1_000;
 struct BrowserRankedTransportState {
     join: SharedClientRankedJoinState,
     prepared_setup: RefCell<Option<OfficialRankedSessionSetupV1>>,
-    pending_host_decision: Cell<bool>,
-    host_admission_resolved: Cell<bool>,
-    reconnect_eligible: Cell<bool>,
+    admission: Cell<BrowserAdmissionPhase>,
     welcomed_seat: Cell<Option<PlayerId>>,
     admitted_seat: Cell<Option<PlayerId>>,
     last_admitted_claim: RefCell<Option<NamedSeatJoinClaimV1>>,
@@ -76,9 +76,7 @@ impl Default for BrowserRankedTransportState {
         Self {
             join: Arc::new(Default::default()),
             prepared_setup: RefCell::new(None),
-            pending_host_decision: Cell::new(false),
-            host_admission_resolved: Cell::new(false),
-            reconnect_eligible: Cell::new(false),
+            admission: Cell::new(BrowserAdmissionPhase::default()),
             welcomed_seat: Cell::new(None),
             admitted_seat: Cell::new(None),
             last_admitted_claim: RefCell::new(None),
@@ -503,7 +501,7 @@ async fn run_client_io(
         {
             SessionEnd::OutgoingClosed => break,
             SessionEnd::Drop(reason) => {
-                if ranked_state.reconnect_eligible.get() {
+                if ranked_state.admission.get().can_reconnect() {
                     if let Err(error) = ranked_state.join.begin_reconnect() {
                         let _ = incoming_tx.send(NetEvent::Fatal(format!(
                             "could not begin authenticated ranked reconnect: {error}"
@@ -511,9 +509,9 @@ async fn run_client_io(
                         endpoint.close().await;
                         return;
                     }
-                    ranked_state.pending_host_decision.set(false);
-                    ranked_state.host_admission_resolved.set(false);
-                    ranked_state.reconnect_eligible.set(false);
+                    ranked_state
+                        .admission
+                        .set(BrowserAdmissionPhase::AwaitingChallenge);
                 }
                 let discarded = discard_session_outbound(&mut outgoing_rx);
                 tracing::warn!(
@@ -711,10 +709,11 @@ async fn initial_handshake(
 fn reset_ranked_after_failed_handshake(
     ranked_state: &BrowserRankedTransportState,
 ) -> Result<(), String> {
-    if ranked_state.reconnect_eligible.get() {
+    if ranked_state.admission.get().can_reconnect() {
         ranked_state.join.begin_reconnect()?;
-        ranked_state.pending_host_decision.set(false);
-        ranked_state.reconnect_eligible.set(false);
+        ranked_state
+            .admission
+            .set(BrowserAdmissionPhase::AwaitingChallenge);
     }
     Ok(())
 }
@@ -1065,7 +1064,7 @@ async fn answer_ranked_join_challenge(
     ranked_state: &BrowserRankedTransportState,
     incoming_tx: &Sender<NetEvent>,
 ) -> Result<RankedJoinResponse, String> {
-    if ranked_state.pending_host_decision.get() {
+    if ranked_state.admission.get().pending() {
         return Err("host replayed or replaced a pending ranked join challenge".to_string());
     }
 
@@ -1204,8 +1203,9 @@ async fn answer_ranked_join_challenge(
         .map_err(|error| format!("wrap browser ranked join attestation: {error}"))?;
     let response = RankedJoinResponse::Attestation(attestation_document);
     ranked_state.join.authorize_response(&response)?;
-    ranked_state.reconnect_eligible.set(true);
-    ranked_state.pending_host_decision.set(true);
+    ranked_state
+        .admission
+        .set(BrowserAdmissionPhase::AwaitingRankedDecision);
     Ok(response)
 }
 
@@ -1215,8 +1215,9 @@ fn ranked_unavailable_response(
 ) -> Result<RankedJoinResponse, String> {
     let response = RankedJoinResponse::Unavailable(reason);
     ranked_state.join.authorize_response(&response)?;
-    ranked_state.pending_host_decision.set(true);
-    ranked_state.reconnect_eligible.set(false);
+    ranked_state
+        .admission
+        .set(BrowserAdmissionPhase::AwaitingBrowseDecision);
     Ok(response)
 }
 
@@ -1411,7 +1412,7 @@ async fn run_session(
                 continue;
             }
             if let Some(frame) = pending_ready_frame {
-                if ranked_state.host_admission_resolved.get() {
+                if ranked_state.admission.get().resolved() {
                     if let Err(error) = write_frame(&mut send, &NetMsg::ReadyToSim { frame }).await
                     {
                         return SessionEnd::Drop(error);
@@ -1424,7 +1425,7 @@ async fn run_session(
             }
             match outgoing_rx.try_recv() {
                 Ok(NetOutbound::ReadyToSim { frame })
-                    if !ranked_state.host_admission_resolved.get() =>
+                    if !ranked_state.admission.get().resolved() =>
                 {
                     pending_ready_frame = Some(frame);
                 }
@@ -1483,7 +1484,7 @@ fn handle_client_wire_msg(
             frame,
             start_epoch_ms,
         } => {
-            if !ranked_state.host_admission_resolved.get() {
+            if !ranked_state.admission.get().resolved() {
                 return Err(
                     "host began simulation before ranked admission or browse-only resolution"
                         .to_string(),
@@ -1506,9 +1507,9 @@ fn handle_client_wire_msg(
         NetMsg::RankedBrowseOnly { reason } => {
             if ranked_state.join.mark_browse_only(reason)? {
                 downgrade_ranked_lifecycle(ranked_lifecycle, ranked_browse_only_reason(reason))?;
-                ranked_state.pending_host_decision.set(false);
-                ranked_state.host_admission_resolved.set(true);
-                ranked_state.reconnect_eligible.set(false);
+                ranked_state
+                    .admission
+                    .set(BrowserAdmissionPhase::BrowseOnly);
                 incoming_tx
                     .send(NetEvent::RankedBrowseOnly { reason })
                     .map_err(|_| "browser ranked browse-only channel is closed".to_string())?;
@@ -1645,9 +1646,7 @@ fn handle_client_wire_msg(
             }
             ranked_state.admitted_seat.set(Some(admitted_seat));
             *ranked_state.last_admitted_claim.borrow_mut() = Some(attestation.claim);
-            ranked_state.pending_host_decision.set(false);
-            ranked_state.host_admission_resolved.set(true);
-            ranked_state.reconnect_eligible.set(true);
+            ranked_state.admission.set(BrowserAdmissionPhase::Ranked);
             incoming_tx
                 .send(NetEvent::RankedJoinAccepted(accepted))
                 .map_err(|_| "browser ranked admission channel is closed".to_string())?;
@@ -1976,7 +1975,9 @@ mod tests {
                 .contains("before ranked admission")
         );
         assert!(rx.try_recv().is_err());
-        ranked.host_admission_resolved.set(true);
+        ranked
+            .admission
+            .set(super::BrowserAdmissionPhase::BrowseOnly);
         super::handle_client_wire_msg(&tx, &cosign, &lifecycle, &ranked, begin()).unwrap();
         assert!(matches!(
             rx.try_recv().unwrap(),
