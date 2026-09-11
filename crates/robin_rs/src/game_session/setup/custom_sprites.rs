@@ -60,6 +60,13 @@ const HACKABLE_RHS_CACHE_VERSION: u32 = 2;
 // Retain the original filename so v1 caches can be repaired in place without
 // decoding hundreds of thousands of source PNGs again.
 const HACKABLE_RHS_CACHE_FILE: &str = ".robin-rhs-cache-v1.zst";
+// Per-family cache budgets, not limits on authored sprite content. Oversized
+// families still load from source; their disposable cache is simply not used.
+const HACKABLE_RHS_CACHE_COMPRESSED_LIMIT: u64 = 256 * 1024 * 1024;
+const HACKABLE_RHS_CACHE_DECODED_LIMIT: u64 = 512 * 1024 * 1024;
+// Our level-3 encoder needs far less than this. Bound decoder working memory
+// independently of the amount of output a compressed stream produces.
+const HACKABLE_RHS_CACHE_WINDOW_LOG_MAX: u32 = 27;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
 struct HackableRhsCache {
@@ -238,6 +245,8 @@ fn hackable_cache_sources_are_current(
     cache: &HackableRhsCache,
     manifest_hash: [u8; 32],
 ) -> bool {
+    // TODO: Support explicit content verification for tools that preserve source
+    // length and mtime. Avoid rehashing every PNG on ordinary cached startup.
     cache.manifest_hash == manifest_hash
         && cache.sources.iter().all(|source| {
             hackable_source_stamp(root, &source.relative_path).is_ok_and(|current| {
@@ -248,12 +257,41 @@ fn hackable_cache_sources_are_current(
         })
 }
 
+fn read_cache_bytes_limited(reader: impl std::io::Read, limit: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+
+    let mut bytes = Vec::new();
+    reader.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("sprite cache exceeds {limit}-byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn decompress_cache_limited(compressed: &[u8], limit: u64) -> std::io::Result<Vec<u8>> {
+    let mut decoder = zstd::stream::read::Decoder::new(compressed)?;
+    decoder.window_log_max(HACKABLE_RHS_CACHE_WINDOW_LOG_MAX)?;
+    read_cache_bytes_limited(decoder, limit)
+}
+
 fn read_hackable_cache(
     root: &std::path::Path,
     manifest_hash: [u8; 32],
 ) -> Option<HackableRhsCache> {
     let cache_path = root.join(HACKABLE_RHS_CACHE_FILE);
-    let compressed = match std::fs::read(&cache_path) {
+    let compressed = match std::fs::File::open(&cache_path).and_then(|file| {
+        if file.metadata()?.len() > HACKABLE_RHS_CACHE_COMPRESSED_LIMIT {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "sprite cache exceeds compressed size limit",
+            ));
+        }
+        // Enforce the limit while reading as well: the file can grow after stat.
+        read_cache_bytes_limited(file, HACKABLE_RHS_CACHE_COMPRESSED_LIMIT)
+    }) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(error) => {
@@ -261,7 +299,7 @@ fn read_hackable_cache(
             return None;
         }
     };
-    let encoded = match zstd::stream::decode_all(std::io::Cursor::new(compressed)) {
+    let encoded = match decompress_cache_limited(&compressed, HACKABLE_RHS_CACHE_DECODED_LIMIT) {
         Ok(bytes) => bytes,
         Err(error) => {
             tracing::warn!("Failed to decompress {}: {error}", cache_path.display());
@@ -311,8 +349,18 @@ fn write_hackable_cache(root: &std::path::Path, cache: &HackableRhsCache) -> Res
     use std::io::Write as _;
 
     let encoded = bitcode::encode(cache);
+    if encoded.len() as u64 > HACKABLE_RHS_CACHE_DECODED_LIMIT {
+        return Err(
+            "sprite cache exceeds decoded size limit; retaining source-only loading".into(),
+        );
+    }
     let compressed = zstd::stream::encode_all(std::io::Cursor::new(encoded), 3)
         .map_err(|error| format!("compress hackable sprite cache: {error}"))?;
+    if compressed.len() as u64 > HACKABLE_RHS_CACHE_COMPRESSED_LIMIT {
+        return Err(
+            "sprite cache exceeds compressed size limit; retaining source-only loading".into(),
+        );
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(root).map_err(|error| {
         format!(
             "create hackable sprite cache in {}: {error}",
@@ -1032,6 +1080,64 @@ mod tests {
 
         let minimal = hackable_animation_conversion(&[script(3), script(6)]);
         assert_eq!(minimal[10], 1, "minimal sprites may reuse walking");
+    }
+
+    #[test]
+    fn cache_byte_limits_accept_exact_boundary_and_reject_extra_bytes() {
+        assert_eq!(read_cache_bytes_limited(&b"abcd"[..], 4).unwrap(), b"abcd");
+        assert_eq!(
+            read_cache_bytes_limited(&b"abcde"[..], 4)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        let compressed = zstd::stream::encode_all(&b"abcd"[..], 3).unwrap();
+        assert_eq!(decompress_cache_limited(&compressed, 4).unwrap(), b"abcd");
+        assert_eq!(
+            decompress_cache_limited(&compressed, 3).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn cache_decompression_bounds_concatenated_frames_and_rejects_truncation() {
+        let compressed = zstd::stream::encode_all(&b"abcd"[..], 3).unwrap();
+        assert!(decompress_cache_limited(&compressed[..compressed.len() - 1], 8).is_err());
+        let concatenated = [compressed.as_slice(), compressed.as_slice()].concat();
+        assert_eq!(
+            decompress_cache_limited(&concatenated, 8).unwrap(),
+            b"abcdabcd"
+        );
+        assert_eq!(
+            decompress_cache_limited(&concatenated, 7)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn oversized_disposable_cache_rebuilds_from_authored_manifest() {
+        let directory = tempfile::tempdir().unwrap();
+        let character = directory.path().join("Data/Characters/Knight.rhs.d");
+        std::fs::create_dir_all(&character).unwrap();
+        let manifest = br#"{"pixel_format":"rgba","profiles":[]}"#;
+        std::fs::write(character.join("manifest.json"), manifest).unwrap();
+        // Sparse file exercises the production compressed limit without allocating it.
+        std::fs::File::create(character.join(HACKABLE_RHS_CACHE_FILE))
+            .unwrap()
+            .set_len(HACKABLE_RHS_CACHE_COMPRESSED_LIMIT + 1)
+            .unwrap();
+        assert!(read_hackable_cache(&character, hackable_manifest_hash(manifest)).is_none());
+        let files = isolated_files();
+        assert_eq!(
+            files.add_overlay_path(directory.path().to_str().unwrap()),
+            engine_sbfile::SBFILE_NO_ERROR
+        );
+        let prepared = prepare_overlay_characters(&files, None).unwrap();
+        assert_eq!(prepared.batches.len(), 1);
+        assert!(prepared.batches[0].1.frames.is_empty());
+        assert!(read_hackable_cache(&character, hackable_manifest_hash(manifest)).is_some());
     }
 
     #[test]
