@@ -110,11 +110,6 @@ impl Default for ScriptProgram {
     }
 }
 
-// Preserved from the shipped-bytecode corpus contract in
-// robin_assets/tests/vm_integration.rs. These values were already treated as
-// Q_EMPTY by preparation. TODO(parity): locate the original rewrite rationale.
-const LEGACY_Q_EMPTY_WORKAROUNDS: [u8; 4] = [58, 107, 208, 229];
-
 impl ScriptProgram {
     /// Read-only parsed source metadata corresponding to the decoded program.
     pub fn scb(&self) -> &ScbFile {
@@ -132,16 +127,13 @@ impl ScriptProgram {
                     .iter()
                     .enumerate()
                     .map(|(address, q)| {
-                        // Preserve only the named shipped-bytecode exceptions.
-                        if LEGACY_Q_EMPTY_WORKAROUNDS.contains(&q.operation) {
-                            return Ok(Instruction::Empty);
-                        }
-                        let instruction =
-                            vm::decode(*q).map_err(|_| ScriptError::InvalidInstruction {
+                        let instruction = vm::decode_for_preparation(*q).map_err(|_| {
+                            ScriptError::InvalidInstruction {
                                 class: class.class_name.clone(),
                                 address,
                                 opcode: q.operation,
-                            })?;
+                            }
+                        })?;
                         if let Instruction::NativeCall { index } = instruction
                             && crate::natives::native_definition_by_index(index).is_none()
                         {
