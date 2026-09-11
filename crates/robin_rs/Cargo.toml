@@ -327,3 +327,7 @@ test = true
 [[example]]
 name = "batch_run"
 test = true
+
+[[example]]
+name = "sprite_probe_rle_dict"
+test = true
