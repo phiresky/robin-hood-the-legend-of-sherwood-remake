@@ -528,7 +528,6 @@ fn convert_member(
                         .0
                         .map(|slot| super::adopt::retained_position_sector_handle(assets, slot)),
                     active: location.active,
-                    legacy_dummy: location.legacy_dummy,
                 }));
                 ScriptHandleCodec::location_handle_from_index(index) as u32
             } else {

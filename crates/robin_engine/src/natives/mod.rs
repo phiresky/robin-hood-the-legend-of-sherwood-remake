@@ -3002,7 +3002,6 @@ impl NativeContext<'_, '_> {
                 sector: layer_sector.map(|(_, sector)| sector.get()),
                 sector_handle: layer_sector.map(|(_, sector)| sector),
                 active: true,
-                legacy_dummy: false,
             }));
         ScriptHandleCodec::location_handle_from_index(
             self.bindings.script_location_count + self.script_state.computed_locations.len() - 1,

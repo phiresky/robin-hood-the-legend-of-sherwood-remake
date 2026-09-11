@@ -351,7 +351,6 @@ fn preflight_global_vm(
                             super::adopt::retained_position_sector_handle(assets, slot)
                         }),
                         active: location.active,
-                        legacy_dummy: location.legacy_dummy,
                     }));
                     ScriptHandleCodec::location_handle_from_index(handle_index) as u32
                 } else {

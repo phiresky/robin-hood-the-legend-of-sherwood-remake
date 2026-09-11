@@ -1770,7 +1770,6 @@ fn camera_commands_copy_static_and_vm_local_computed_points() {
             sector: Some(44),
             sector_handle: None,
             active: true,
-            legacy_dummy: false,
         }));
     let bindings = AttachedScriptBindings {
         script_location_count: 1,
@@ -2161,7 +2160,6 @@ fn record_move_rejects_mixed_exact_source_and_legacy_number_only_computed_goal()
             sector: Some(44),
             sector_handle: None,
             active: true,
-            legacy_dummy: false,
         }));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let location = ScriptHandleCodec::location_handle_from_index(0);
@@ -2925,7 +2923,6 @@ fn assign_post_rejects_number_only_computed_location() {
             sector: Some(97),
             sector_handle: None,
             active: true,
-            legacy_dummy: false,
         }));
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
     let point = ScriptHandleCodec::location_handle_from_index(0);
