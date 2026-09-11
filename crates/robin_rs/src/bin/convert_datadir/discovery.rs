@@ -83,7 +83,7 @@ pub(super) fn validate_web_content_edition(
 /// Windows LCID → BCP-47 / ISO locale string.  Used to rename the
 /// localized subfolders in the hackable output so they're readable
 /// (`1033` → `en-US`).  Unknown LCIDs fall through to the numeric name.
-pub(super) fn lcid_to_iso(lcid: &str) -> &'static str {
+pub(super) fn lcid_to_iso(lcid: &str) -> &str {
     match lcid {
         "1028" => "zh-TW",
         "1029" => "cs-CZ",
@@ -102,7 +102,7 @@ pub(super) fn lcid_to_iso(lcid: &str) -> &'static str {
         "2070" => "pt-PT",
         "3082" => "es-ES",
         // Unknown — keep numeric so the conversion is never lossy.
-        _ => Box::leak(lcid.to_string().into_boxed_str()),
+        _ => lcid,
     }
 }
 
@@ -168,4 +168,19 @@ pub(super) fn detect_locale_data_dirs(data_in: &Path) -> Vec<LocaleSource> {
         }
     }
     sources
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lcid_to_iso;
+
+    #[test]
+    fn locale_names_preserve_known_mappings_and_borrow_unknown_input() {
+        assert_eq!(lcid_to_iso("1033"), "en-US");
+        assert_eq!(lcid_to_iso("2047"), "und");
+        let unknown = String::from("9999");
+        let mapped = lcid_to_iso(&unknown);
+        assert_eq!(mapped, "9999");
+        assert_eq!(mapped.as_ptr(), unknown.as_ptr());
+    }
 }

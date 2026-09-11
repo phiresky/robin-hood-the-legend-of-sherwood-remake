@@ -38,7 +38,7 @@ pub(crate) struct PersistedFeedbackRuntime {
 
     titbit_manager: TitbitManager,
 
-    cutscene_camera: crate::engine::PersistedCameraState,
+    cutscene_camera: CameraState,
 
     pending_side_effects: crate::engine::PersistedSideEffects,
 }
@@ -56,7 +56,7 @@ impl PersistedFeedbackRuntime {
             sound_sim: value.sound_sim.clone(),
             ground_mark: value.ground_mark.clone(),
             titbit_manager: value.titbit_manager.clone(),
-            cutscene_camera: crate::engine::PersistedCameraState::capture(&value.cutscene_camera),
+            cutscene_camera: value.cutscene_camera.clone(),
             pending_side_effects: crate::engine::PersistedSideEffects::capture(
                 &value.pending_side_effects,
             ),
@@ -68,7 +68,7 @@ impl PersistedFeedbackRuntime {
             sound_sim: self.sound_sim,
             ground_mark: self.ground_mark,
             titbit_manager: self.titbit_manager,
-            cutscene_camera: self.cutscene_camera.into_runtime(),
+            cutscene_camera: self.cutscene_camera,
             pending_side_effects: self.pending_side_effects.into_runtime(),
         }
     }
