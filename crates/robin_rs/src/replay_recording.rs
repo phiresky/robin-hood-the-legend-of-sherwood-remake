@@ -154,7 +154,6 @@ impl SharedReplayRecorder {
         &self,
         save: &GameSaveFile,
         control: &crate::replay_service::ReplayRecordingControl,
-        _recording_index: &crate::mission_replays::RecordingIndex,
     ) -> Result<(u32, u32, Option<u32>)> {
         // Include signed participant events from abandoned gameplay before
         // adopting the original archive's authority.
@@ -197,7 +196,7 @@ impl SharedReplayRecorder {
             recording.archive = Some(opened);
         }
         let archive = recording.archive.as_mut().expect("checked archive");
-        archive.append_chunk(ordinal, link.cloned())?;
+        archive.stage_continuation(ordinal, link.cloned())?;
         let primary = archive.writer()?;
         let ranked_input = archive
             .read_ranked_input()
@@ -210,15 +209,6 @@ impl SharedReplayRecorder {
         recording.timeline = timeline;
         recording.captured.clear();
         control.restore_ranked_input(ranked_input);
-        #[cfg(not(target_arch = "wasm32"))]
-        _recording_index.recording_started(
-            &recording
-                .archive
-                .as_ref()
-                .expect("archive")
-                .directory()
-                .join(recording.archive.as_ref().expect("archive").current_chunk()),
-        );
         Ok((ordinal, timeline, target))
     }
 
@@ -232,7 +222,12 @@ impl SharedReplayRecorder {
 
     /// Persist the restore even when the caller exits or remains paused before
     /// admitting another gameplay frame. No chunk can be left with an orphan lb.
-    pub(crate) fn commit_restore_boundary(&self, timeline: u32, hash: u64) -> Result<u32> {
+    pub(crate) fn commit_restore_boundary(
+        &self,
+        timeline: u32,
+        hash: u64,
+        _recording_index: &crate::mission_replays::RecordingIndex,
+    ) -> Result<u32> {
         let mut recording = self.0.lock().expect("recording poisoned");
         let ordinal = recording.recorder.next_ordinal();
         ensure!(
@@ -251,9 +246,14 @@ impl SharedReplayRecorder {
         recording.recorder.flush()?;
         recording
             .archive
-            .as_ref()
+            .as_mut()
             .context("restore boundary requires a mission archive")?
-            .sync_current()?;
+            .publish_continuation()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let archive = recording.archive.as_ref().expect("committed archive");
+            _recording_index.recording_started(&archive.directory().join(archive.current_chunk()));
+        }
         Ok(recording.recorder.next_ordinal())
     }
     pub(crate) fn write_load_back(&self, ordinal: u32, target: u32, is_continue: bool) {

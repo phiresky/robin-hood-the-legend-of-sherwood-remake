@@ -1946,7 +1946,7 @@ impl TimelineRuntime {
             } => {
                 self.state_restored = true;
                 if let Some(bytes) = snapshot.as_ref() {
-                    match self.replay.restore_archive(bytes, recording_index) {
+                    match self.replay.restore_archive(bytes) {
                         Ok(Some((ordinal, timeline, target))) => {
                             self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
                             let timeline = TimelineFrame::from_wire(timeline);
@@ -1981,6 +1981,7 @@ impl TimelineRuntime {
                             match self.replay.commit_restore_boundary(
                                 timeline,
                                 robin_engine::replay::state_hash(engine),
+                                recording_index,
                             ) {
                                 Ok(next) => {
                                     self.replay_ordinal = ReplayFrameOrdinal::from_wire(next);
@@ -3896,10 +3897,7 @@ mod tests {
             }
             let error = live
                 .replay
-                .restore_archive(
-                    &serde_json::to_vec(&bad).unwrap(),
-                    &crate::mission_replays::RecordingIndex::disabled(),
-                )
+                .restore_archive(&serde_json::to_vec(&bad).unwrap())
                 .unwrap_err();
             assert!(
                 error.contains(if corrupt_digest {

@@ -1128,12 +1128,22 @@ mod tests {
         let (_, history, root) = archive.assembled_replay().unwrap();
         archive.validate_link(&link, &history, [7; 32]).unwrap();
         assert_eq!(history.frame_count(), 1);
-        archive.append_chunk(1, Some(link)).unwrap();
+        archive.stage_continuation(1, Some(link)).unwrap();
         let mut recorder =
             ReplayRecorder::continue_recording(archive.writer().unwrap(), root, 1).unwrap();
+        assert!(archive.publish_continuation().is_err());
+        assert_eq!(
+            crate::replay_archive::load_directory(&directory)
+                .unwrap()
+                .frame_count(),
+            1
+        );
         recorder.write_load_back(1, 0, false);
+        recorder.flush().unwrap();
+        assert!(archive.publish_continuation().is_err());
         recorder.write_frame(1, 0, 1, Default::default(), Vec::new(), None);
         recorder.flush().unwrap();
+        archive.publish_continuation().unwrap();
         drop(recorder);
         drop(archive);
         retire_mission().await.unwrap();
@@ -1141,6 +1151,42 @@ mod tests {
         let history = crate::replay_archive::load_directory(&directory).unwrap();
         assert_eq!(history.frame_count(), 2);
         assert_eq!(history.load_back_for_frame(1).unwrap().to_frame, 0);
+        retire_mission().await.unwrap();
+
+        // Browser failures remain sticky: a staged-file collision never
+        // overwrites its bytes, and reopening retains the published prefix.
+        prepare_directory(&directory).await.unwrap();
+        let mut archive = MissionArchive::open(&directory).unwrap();
+        let (_, _, root) = archive.assembled_replay().unwrap();
+        archive.stage_continuation(2, None).unwrap();
+        let recorder =
+            ReplayRecorder::continue_recording(archive.writer().unwrap(), root, 2).unwrap();
+        let staged_path = directory.join(archive.current_chunk());
+        let staged = read_bounded(&staged_path, MAX_BYTES).unwrap();
+        assert!(crate::replay_archive::reserve_unreferenced_chunk(&staged_path).is_err());
+        SESSION.with(|slot| {
+            assert_eq!(
+                slot.borrow().as_ref().unwrap().files[&staged_path].bytes,
+                staged
+            );
+        });
+        assert!(
+            flush_pending()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("recording failed")
+        );
+        drop(recorder);
+        drop(archive);
+        restart().await;
+        prepare_directory(&directory).await.unwrap();
+        assert_eq!(
+            crate::replay_archive::load_directory(&directory)
+                .unwrap()
+                .frame_count(),
+            2
+        );
         retire_mission().await.unwrap();
     }
 }

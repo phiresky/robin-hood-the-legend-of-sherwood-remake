@@ -41,7 +41,7 @@ struct ChunkHeader {
     chunk: Chunk,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     version: u32,
@@ -53,6 +53,9 @@ struct Manifest {
 pub(crate) struct MissionArchive {
     directory: PathBuf,
     manifest: Manifest,
+    // A continuation is invisible to archive readers until its header and
+    // complete first restore frame are durable. This is never serialized.
+    pending: Option<Chunk>,
     #[cfg(not(target_arch = "wasm32"))]
     _lock: std::fs::File,
     #[cfg(target_arch = "wasm32")]
@@ -110,8 +113,11 @@ impl MissionArchive {
                 version: 1,
                 chunks: Vec::new(),
             },
+            pending: None,
         };
-        archive.append_chunk(0, None)?;
+        let root = archive.reserve_next_chunk(0, None)?;
+        archive.manifest.chunks.push(root);
+        write_manifest(&archive.directory, &archive.manifest)?;
         Ok(archive)
     }
 
@@ -125,6 +131,7 @@ impl MissionArchive {
             _cache_lease: browser::pin_directory(&directory)?,
             directory,
             manifest,
+            pending: None,
             #[cfg(not(target_arch = "wasm32"))]
             _lock: lock,
         })
@@ -135,12 +142,14 @@ impl MissionArchive {
     }
 
     pub(crate) fn current_chunk(&self) -> &str {
-        &self
-            .manifest
-            .chunks
-            .last()
+        &self.active_chunk().file
+    }
+
+    fn active_chunk(&self) -> &Chunk {
+        self.pending
+            .as_ref()
+            .or_else(|| self.manifest.chunks.last())
             .expect("mission archive has a root chunk")
-            .file
     }
 
     pub(crate) fn marker_link(
@@ -159,11 +168,30 @@ impl MissionArchive {
         }
     }
 
-    pub(crate) fn append_chunk(
+    /// Reserve an unpublished continuation. Header and restore writes can fail
+    /// without changing the last valid mission manifest.
+    pub(crate) fn stage_continuation(
         &mut self,
         first_ordinal: u32,
         loaded_save: Option<SaveReplayLink>,
     ) -> Result<()> {
+        ensure!(
+            self.pending.is_none(),
+            "a replay continuation is already staged; finish publication or reopen the archive before retrying"
+        );
+        ensure!(
+            !self.manifest.chunks.is_empty(),
+            "continuation requires a root"
+        );
+        self.pending = Some(self.reserve_next_chunk(first_ordinal, loaded_save)?);
+        Ok(())
+    }
+
+    fn reserve_next_chunk(
+        &self,
+        first_ordinal: u32,
+        loaded_save: Option<SaveReplayLink>,
+    ) -> Result<Chunk> {
         let index = self.manifest.chunks.len();
         let chunk = Chunk {
             file: chunk_name(index),
@@ -171,18 +199,71 @@ impl MissionArchive {
             first_ordinal,
             loaded_save,
         };
-        // Reserve the file before publishing its name. A crash may leave an
-        // orphan, but cannot overwrite recorded gameplay on the next load.
-        create_chunk(&self.directory.join(&chunk.file))?;
-        self.manifest.chunks.push(chunk);
-        write_manifest(&self.directory, &self.manifest)?;
-        Ok(())
+        ensure!(
+            self.manifest
+                .chunks
+                .iter()
+                .all(|published| published.file != chunk.file),
+            "cannot reserve a referenced replay chunk"
+        );
+        reserve_unreferenced_chunk(&self.directory.join(&chunk.file))?;
+        Ok(chunk)
+    }
+
+    /// Called only after the recorder has successfully flushed its first
+    /// restore frame. Validate the candidate with the ordinary archive reader
+    /// before making it authoritative; do not weaken recovery parsing.
+    pub(crate) fn publish_continuation(&mut self) -> Result<()> {
+        self.publish_continuation_with(write_manifest)
+    }
+
+    fn publish_continuation_with(
+        &mut self,
+        publish: impl FnOnce(&Path, &Manifest) -> Result<()>,
+    ) -> Result<()> {
+        let pending = self
+            .pending
+            .as_ref()
+            .context("no staged replay continuation")?;
+        let mut candidate = self.manifest.clone();
+        candidate.chunks.push(pending.clone());
+        self.sync_current()
+            .context("sync staged replay continuation; previous manifest remains authoritative")?;
+        assemble_replay(&self.directory, &candidate)
+            .context("staged replay continuation is incomplete or invalid; reopen archive to retry while retaining staged bytes")?;
+        match publish(&self.directory, &candidate) {
+            Ok(()) => {
+                self.manifest = candidate;
+                self.pending = None;
+                Ok(())
+            }
+            Err(error) => {
+                // Atomic replacement can become visible before directory sync
+                // fails. Disk remains authoritative in either case; never
+                // roll back an already published, complete continuation.
+                let visible = read_manifest(&self.directory)
+                    .context("failed to determine replay publication visibility")?;
+                if visible == candidate {
+                    self.manifest = visible;
+                    self.pending = None;
+                    Err(error.context("replay continuation is visible but durability failed; reopen archive before retrying"))
+                } else {
+                    ensure!(
+                        visible == self.manifest,
+                        "replay manifest changed outside its owner"
+                    );
+                    Err(error.context(
+                        "replay continuation was not published; previous history remains valid",
+                    ))
+                }
+            }
+        }
     }
 
     pub(crate) fn writer(&self) -> Result<Box<dyn Write + Send>> {
         Ok(Box::new(ChunkHeaderWriter {
             writer: open_chunk_writer(&self.directory.join(self.current_chunk()))?,
-            chunk: self.manifest.chunks.last().expect("root chunk").clone(),
+            chunk: self.active_chunk().clone(),
             header: Some(Vec::new()),
         }))
     }
@@ -450,6 +531,57 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn reserve_unreferenced_chunk(path: &Path) -> Result<()> {
+    match create_chunk(path) {
+        Ok(()) => return Ok(()),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) => {}
+        Err(error) => return Err(error),
+    }
+    // Only reserve_next_chunk calls this, under the archive's exclusive lease
+    // and after proving the canonical name is absent from its manifest.
+    ensure!(
+        std::fs::symlink_metadata(path)?.file_type().is_file(),
+        "unpublished replay path {} is not a regular file; preserve it and repair manually",
+        path.display()
+    );
+    let parent = path.parent().context("replay chunk has no directory")?;
+    let quarantine = tempfile::Builder::new()
+        .prefix(".unpublished-replay-")
+        .tempdir_in(parent)?;
+    let retained = quarantine
+        .path()
+        .join(path.file_name().context("replay chunk has no filename")?);
+    std::fs::rename(path, &retained)
+        .with_context(|| format!("retain unpublished replay chunk {}", path.display()))?;
+    // From here onward the directory contains user history, not disposable
+    // scratch space. Preserve it even if durability or a later reserve fails.
+    let quarantine = quarantine.keep();
+    #[cfg(unix)]
+    {
+        std::fs::File::open(&quarantine)?.sync_all()?;
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    tracing::warn!(path = %retained.display(), "retained unpublished replay chunk before retry");
+    create_chunk(path).with_context(|| {
+        format!(
+            "reserve replay retry; previous bytes retained in {}",
+            quarantine.display()
+        )
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn reserve_unreferenced_chunk(path: &Path) -> Result<()> {
+    // Browser storage errors retire the session. Unlike native storage there
+    // is no synchronous directory-recovery API: an existing staged child is
+    // retained and an attempted collision fails explicitly, never overwrites.
+    create_chunk(path)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn create_chunk(path: &Path) -> Result<()> {
     std::fs::OpenOptions::new()
         .write(true)
@@ -537,3 +669,6 @@ pub use browser::{
 pub(crate) use browser::{
     prepare_directory as prepare_browser_directory, retire_mission as retire_browser_mission,
 };
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

@@ -116,18 +116,18 @@ impl ReplayLifecycle {
         &self,
         timeline: TimelineFrame,
         hash: u64,
+        recording_index: &crate::mission_replays::RecordingIndex,
     ) -> Result<u32, String> {
         self.recording
             .recorder()
             .expect("active archive restore")
-            .commit_restore_boundary(timeline.number(), hash)
+            .commit_restore_boundary(timeline.number(), hash, recording_index)
             .map_err(|error| format!("{error:#}"))
     }
 
     pub(super) fn restore_archive(
         &mut self,
         snapshot: &[u8],
-        recording_index: &crate::mission_replays::RecordingIndex,
     ) -> Result<Option<(u32, u32, Option<u32>)>, String> {
         let recorder = self
             .recording
@@ -140,7 +140,7 @@ impl ReplayLifecycle {
         let save: crate::save_file::GameSaveFile =
             serde_json::from_slice(snapshot).map_err(|error| error.to_string())?;
         let boundary = recorder
-            .restore(&save, &self.control, recording_index)
+            .restore(&save, &self.control)
             .map_err(|error| format!("{error:#}"))?;
         self.recording = RecordingState::Recording(recorder);
         self.saved_frames.clear();
