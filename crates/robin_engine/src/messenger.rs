@@ -317,30 +317,6 @@ impl Message {
 )]
 pub struct Messenger {
     queue: VecDeque<Message>,
-    /// Serialized Original singleton state. The queue itself is deliberately
-    /// cleared on v48 load because messenger restoration resets it
-    /// after reading these members.
-    legacy_v48: Option<LegacyV48MessengerState>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub(crate) struct LegacyV48MessengerState {
-    pub(crate) lock_view: bool,
-    pub(crate) setting_watch: bool,
-    pub(crate) watch_timer: u16,
-    pub(crate) action: crate::profiles::Action,
-    /// Presentation-only debug toggle. Retained here for save compatibility;
-    /// the host synchronizes its `robin_engine::engine::CursorFeedback::draw_hidden` after load.
-    pub(crate) draw_hidden: bool,
 }
 
 impl Default for Messenger {
@@ -353,18 +329,7 @@ impl Messenger {
     pub fn new() -> Self {
         Self {
             queue: VecDeque::new(),
-            legacy_v48: None,
         }
-    }
-
-    pub(crate) fn restore_v48_state(&mut self, state: LegacyV48MessengerState) {
-        self.queue.clear();
-        self.legacy_v48 = Some(state);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn v48_state(&self) -> Option<LegacyV48MessengerState> {
-        self.legacy_v48
     }
 
     /// Push a message onto the back of the queue.
