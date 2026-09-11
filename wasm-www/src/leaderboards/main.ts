@@ -1,5 +1,5 @@
 import { renderUsernameForm, renderDeletionForm, renderReportForm } from './account-forms.js';
-import { normalizeFilters, requireMission, requireCompetition } from './board-filters.js';
+import { compatibleRulesets, normalizeFilters, requireMission, requireCompetition } from './board-filters.js';
 import { participantView, aggregateParticipantView, appendAchievements, playerTables, campaignCompositionLabel } from './public-components.js';
 import { loadVerifiedRunView, loadVerifiedCampaignSession } from './run-controller.js';
 import { runContentDigest } from './subject-contract.js';
@@ -171,13 +171,7 @@ function renderFilters(metadata: BoardMetadata, filters: BoardFilters): HTMLElem
     }
 
     const mission = filters.subject === 'full_campaign' ? null : requireMission(filters.missionId, metadata);
-    const compatible = metadata.rulesets.filter(ruleset => ruleset.metrics.includes(filters.metric)
-        && (filters.subject === 'full_campaign'
-            ? ruleset.supportsFullCampaign && ruleset.content.kind === 'full_campaign'
-            : mission !== null
-                && ruleset.content.kind === 'mission'
-                && ruleset.content.contentManifestSha256 === mission.contentManifestSha256
-                && ruleset.categories.includes(filters.subject)));
+    const compatible = compatibleRulesets(metadata, filters.subject, filters.metric, mission);
     const presets = uniqueOptions(compatible.filter(item => item.presetId !== 'any').map(item => ({ id: item.presetId, label: item.presetName })));
     const presetRules = compatible.filter(item => item.presetId === filters.presetId);
     const difficulties = uniqueOptions(presetRules.map(item => ({ id: item.difficultyId, label: item.difficultyName })));

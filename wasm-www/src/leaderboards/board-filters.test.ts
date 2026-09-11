@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeFilters } from './board-filters.js';
+import { compatibleRulesets, normalizeFilters } from './board-filters.js';
 import { routeFromUrl } from './state.js';
 import type { BoardMetadata, Competition } from './types.js';
 
@@ -14,6 +14,33 @@ const metadata: BoardMetadata = {
         difficultyId: 'normal', difficultyName: 'Normal', content: { kind: 'mission', contentManifestSha256: digest('a') },
         categories: ['individual_level'], metrics: ['original_score'], supportsFullCampaign: false }],
 };
+
+test('controls and normalization share subject, metric and content compatibility', () => {
+    const standard = metadata.rulesets[0]!;
+    const full = { ...standard, id: digest('f'), content: { kind: 'full_campaign' as const, campaignContentManifestSha256: digest('a') }, supportsFullCampaign: true };
+    const candidates: BoardMetadata = { ...metadata, fullCampaign: { label: 'Full campaign', description: '' }, rulesets: [
+        standard,
+        { ...standard, id: digest('d'), content: { kind: 'mission', contentManifestSha256: digest('d') } },
+        { ...standard, id: digest('e'), categories: ['campaign'], metrics: ['fastest_success'] },
+        full,
+        { ...full, id: digest('9'), supportsFullCampaign: false },
+    ] };
+    const mission = metadata.missions[0]!;
+    assert.deepEqual(compatibleRulesets(candidates, 'individual_level', 'original_score', mission).map(item => item.id), [standard.id]);
+    assert.deepEqual(compatibleRulesets(candidates, 'campaign', 'fastest_success', mission).map(item => item.id), [digest('e')]);
+    assert.deepEqual(compatibleRulesets(candidates, 'full_campaign', 'original_score', null).map(item => item.id), [full.id]);
+    assert.deepEqual(compatibleRulesets(candidates, 'individual_level', 'fastest_success', mission), []);
+    assert.deepEqual(compatibleRulesets(candidates, 'individual_level', 'original_score', undefined), []);
+    for (const subject of ['individual_level', 'campaign', 'full_campaign'] as const) {
+        for (const metric of ['original_score', 'fastest_success'] as const) {
+            for (const ruleset of compatibleRulesets(candidates, subject, metric, mission)) {
+                const normalized = normalizeFilters({ ...defaults, subject, metric, missionId: mission.id,
+                    presetId: ruleset.presetId, difficultyId: ruleset.difficultyId, rulesetId: ruleset.id }, candidates);
+                assert.equal(normalized.rulesetId, ruleset.id);
+            }
+        }
+    }
+});
 
 test('board normalization derives exact published content/configuration instead of trusting URL identity fields', () => {
     const selected = normalizeFilters({ ...defaults, presetId: 'standard', contentIdentitySha256: digest('d'), rulesConfigSha256: digest('e') }, metadata);

@@ -3,6 +3,22 @@ import type { BoardMetadata, Competition } from './types.js';
 import { runContentDigest } from './subject-contract.js';
 import { selectionFromSubject } from './view-model.js';
 
+/** Shared subject/content policy for admission and the filter controls. */
+export function compatibleRulesets(
+    metadata: BoardMetadata,
+    subject: BoardFilters['subject'],
+    metric: BoardFilters['metric'],
+    mission: BoardMetadata['missions'][number] | null | undefined,
+): BoardMetadata['rulesets'] {
+    return metadata.rulesets.filter(ruleset => ruleset.metrics.includes(metric)
+        && (subject === 'full_campaign'
+            ? ruleset.supportsFullCampaign && ruleset.content.kind === 'full_campaign'
+            : mission !== null && mission !== undefined
+                && ruleset.content.kind === 'mission'
+                && ruleset.content.contentManifestSha256 === mission.contentManifestSha256
+                && ruleset.categories.includes(subject)));
+}
+
 export function normalizeFilters(input: BoardFilters, metadata: BoardMetadata): BoardFilters {
     const selectedCompetition = input.competitionManifestSha256 === null
         ? null
@@ -28,13 +44,7 @@ export function normalizeFilters(input: BoardFilters, metadata: BoardMetadata): 
         throw new Error('The selected mission is not published by this server.');
     }
 
-    const compatible = metadata.rulesets.filter(ruleset => ruleset.metrics.includes(metric)
-        && (subject === 'full_campaign'
-            ? ruleset.supportsFullCampaign && ruleset.content.kind === 'full_campaign'
-            : mission !== null && mission !== undefined
-                && ruleset.content.kind === 'mission'
-                && ruleset.content.contentManifestSha256 === mission.contentManifestSha256
-                && ruleset.categories.includes(subject)));
+    const compatible = compatibleRulesets(metadata, subject, metric, mission);
     if (compatible.length === 0) throw new Error('No published ruleset supports this subject and metric.');
 
     const competitionRuleset = selectedCompetition === null
