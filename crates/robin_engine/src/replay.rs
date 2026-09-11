@@ -89,7 +89,9 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 37 removes the unused imported
+/// On-disk replay schema version. Version 38 stores the optional recording
+/// session directly, without the recorder wrapper and its write-only
+/// sequence ID, in snapshots and state hashes. Version 37 removes the unused imported
 /// sound blob and unconsumed same-frame AI target claims from snapshots
 /// and state hashes. Version 36 retains one game-owned
 /// PostInitialize latch and removes unused imported Messenger copies from
@@ -139,7 +141,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 37;
+pub const REPLAY_SCHEMA_VERSION: u32 = 38;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -840,8 +842,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_excludes_unused_sound_and_ai_claim_state() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 37);
+    fn replay_schema_version_uses_canonical_recording_session() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 38);
     }
 
     #[test]
