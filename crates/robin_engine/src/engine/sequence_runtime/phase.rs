@@ -3423,9 +3423,9 @@ impl EngineInner {
                         sequence_id: seq_id,
                         element_index: elem_idx,
                     } => {
-                        if let Some((msg, arg1, arg2)) = self.dispatch_engine_or_execute_immediate(
-                            sim, display, assets, seq_id, elem_idx,
-                        ) {
+                        if let Some((msg, arg1, arg2)) =
+                            self.dispatch_engine_or_execute_immediate(sim, assets, seq_id, elem_idx)
+                        {
                             self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
                             self.orders
                                 .sequence_manager

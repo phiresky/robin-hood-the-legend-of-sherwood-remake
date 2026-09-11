@@ -13,7 +13,6 @@ impl EngineInner {
     fn dispatch_immediate_action(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         action: crate::sequence::SequenceAction,
     ) {
@@ -42,7 +41,6 @@ impl EngineInner {
             } => {
                 if let Some((msg, arg1, arg2)) = self.dispatch_engine_or_execute_immediate(
                     sim,
-                    display,
                     assets,
                     sequence_id,
                     element_index,
@@ -80,7 +78,6 @@ impl EngineInner {
     pub(crate) fn drain_pending_immediate_actions_sync(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         while let Some(action) = self.orders.sequence_manager.pop_pending_immediate_action() {
@@ -94,7 +91,7 @@ impl EngineInner {
             match action {
                 crate::sequence::SequenceAction::ExecuteImmediateOwner { .. }
                 | crate::sequence::SequenceAction::ExecuteImmediateEngine { .. } => {
-                    self.dispatch_immediate_action(sim, display, assets, action);
+                    self.dispatch_immediate_action(sim, assets, action);
                 }
                 crate::sequence::SequenceAction::InstructOwner { .. }
                 | crate::sequence::SequenceAction::EngineCommand { .. } => {
@@ -105,7 +102,7 @@ impl EngineInner {
                 }
             }
             self.dispatch_condolations(sim, assets);
-            self.drain_pending_immediate_actions_sync(sim, display, assets);
+            self.drain_pending_immediate_actions_sync(sim, assets);
             self.orders
                 .sequence_manager
                 .restore_pending_synchronous_actions(continuation);
@@ -122,7 +119,6 @@ impl EngineInner {
     pub(crate) fn drain_registration_inline_actions_sync(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
         while let Some(action) = self
@@ -137,7 +133,7 @@ impl EngineInner {
             match action {
                 crate::sequence::SequenceAction::ExecuteImmediateOwner { .. }
                 | crate::sequence::SequenceAction::ExecuteImmediateEngine { .. } => {
-                    self.dispatch_immediate_action(sim, display, assets, action);
+                    self.dispatch_immediate_action(sim, assets, action);
                 }
                 crate::sequence::SequenceAction::InstructOwner { .. }
                 | crate::sequence::SequenceAction::EngineCommand { .. } => {
@@ -148,7 +144,7 @@ impl EngineInner {
                 }
             }
             self.dispatch_condolations(sim, assets);
-            self.drain_registration_inline_actions_sync(sim, display, assets);
+            self.drain_registration_inline_actions_sync(sim, assets);
             self.orders
                 .sequence_manager
                 .restore_pending_synchronous_actions(continuation);
@@ -655,7 +651,6 @@ impl EngineInner {
     pub(super) fn dispatch_engine_or_execute_immediate(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        _display: &mut CameraDisplayState,
         assets: &LevelAssets,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,

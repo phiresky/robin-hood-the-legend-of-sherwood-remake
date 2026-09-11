@@ -12,8 +12,11 @@ impl EngineInner {
         completion: DirectorCompletion,
         assets: &LevelAssets,
     ) -> Result<(), String> {
-        let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
-        let result = self.apply_external_director_completion(completion, &mut display, assets);
+        // Preserve the director callback's display boundary: callbacks through
+        // `self` observe the default placeholder while the original display is
+        // held locally, then restored after the synchronous sequence drain.
+        let display = std::mem::take(&mut self.feedback.cutscene_camera.display);
+        let result = self.apply_external_director_completion(completion, assets);
         self.feedback.cutscene_camera.display = display;
         result
     }
@@ -70,7 +73,6 @@ impl EngineInner {
     pub(crate) fn apply_external_director_completion(
         &mut self,
         completion: DirectorCompletion,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) -> Result<(), String> {
         if !self.feedback.cutscene_camera.external_completion_replay {
@@ -123,7 +125,7 @@ impl EngineInner {
         // immediate successors inside the director callback.
         // Ordinary successors remain queued for the next manager update.
         let sim = self.control.simulation_context();
-        self.drain_registration_inline_actions_sync(&sim, display, assets);
+        self.drain_registration_inline_actions_sync(&sim, assets);
         Ok(())
     }
 

@@ -2422,8 +2422,9 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
     ) -> Option<super::SideEffects> {
-        let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
-        let effects = self.perform_post_initialize_authoritative(&mut display, assets);
+        // Keep the existing placeholder/restoration boundary around script callbacks.
+        let display = std::mem::take(&mut self.feedback.cutscene_camera.display);
+        let effects = self.perform_post_initialize_authoritative(assets);
         self.feedback.cutscene_camera.display = display;
         effects
     }
@@ -2558,7 +2559,7 @@ impl EngineInner {
         // frame callback stack now: this preserves the post-update state
         // boundary while ensuring LockUser/SendMessage/Timer successors run
         // before any actor receives the next movement tick.
-        self.drain_pending_immediate_actions_sync(sim, display, assets);
+        self.drain_pending_immediate_actions_sync(sim, assets);
 
         let code = self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed);
         self.refresh_achievement_progress(assets);
@@ -2786,7 +2787,6 @@ impl EngineInner {
     /// resulting pre-frame-one simulation state remains deterministic.
     fn perform_post_initialize_authoritative(
         &mut self,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) -> Option<super::SideEffects> {
         let needs_post_initialize = self
@@ -2810,7 +2810,7 @@ impl EngineInner {
         self.apply_pending_presentation_refresh(sim);
 
         self.run_post_initialize_if_needed(sim, assets);
-        self.drain_pending_immediate_actions_sync(sim, display, assets);
+        self.drain_pending_immediate_actions_sync(sim, assets);
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = GameCode::LevelInProgress;
@@ -2823,8 +2823,8 @@ impl EngineInner {
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) -> Option<super::SideEffects> {
-        let mut camera = self.feedback.cutscene_camera.display.clone();
-        let effects = self.perform_post_initialize_authoritative(&mut camera, assets);
+        let camera = self.feedback.cutscene_camera.display.clone();
+        let effects = self.perform_post_initialize_authoritative(assets);
         self.feedback.cutscene_camera.display = camera;
         if let Some(effects) = &effects {
             let mut input = InputState::default();
@@ -2924,10 +2924,10 @@ impl EngineInner {
         // tick. Drain that immediate continuation here so Rust preserves the
         // same launch-frame decrement. Waiting until DeferredEffectsEnd's
         // final drain makes every such timer one frame late.
-        self.drain_pending_immediate_actions_sync(sim, display, assets);
+        self.drain_pending_immediate_actions_sync(sim, assets);
 
         time_hourglass_phase(HourglassPhase::DeferredEffectsEnd, || {
-            self.hourglass_phase_deferred_effects_end(sim, display, assets, was_swordfighting)
+            self.hourglass_phase_deferred_effects_end(sim, assets, was_swordfighting)
         });
 
         GameCode::LevelInProgress

@@ -531,7 +531,6 @@ impl EngineInner {
     pub(super) fn hourglass_phase_deferred_effects_end(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         was_swordfighting: bool,
     ) {
@@ -679,6 +678,6 @@ impl EngineInner {
         // only work Original registration executes on that callback stack:
         // immediately executed commands and direct waiting-priority calls.
         // Ordinary successors stay queued for the next manager hourglass.
-        self.drain_registration_inline_actions_sync(sim, display, assets);
+        self.drain_registration_inline_actions_sync(sim, assets);
     }
 }
