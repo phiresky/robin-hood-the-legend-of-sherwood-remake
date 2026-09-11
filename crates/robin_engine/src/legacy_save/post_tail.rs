@@ -71,7 +71,7 @@ pub struct LegacyPostTailLimits {
 impl Default for LegacyPostTailLimits {
     fn default() -> Self {
         Self {
-            script_globals: 65_535,
+            script_globals: crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT,
             timer_sequence_elements: 65_535,
             path_requests: 65_535,
             mission_pc_names: 65_535,

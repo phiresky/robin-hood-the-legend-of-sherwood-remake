@@ -1994,6 +1994,7 @@ impl EngineInner {
                 &mut world.entities,
                 &mut ai.global,
                 std::sync::Arc::make_mut(&mut world.fast_grid),
+                &mut scripts.globals,
             )
             .with_pc_registry(&world.original_pc_registry_ids)
             .with_world_views(
@@ -7450,7 +7451,6 @@ mod script_context_tests {
     #[test]
     fn mission_script_snapshot_round_trips_state_and_reattaches_program() {
         let mut script = empty_mission_script();
-        script.state.globals.insert(7, 91);
         script
             .state
             .computed_locations
@@ -7498,7 +7498,12 @@ mod script_context_tests {
             &decoded.bindings.location_positions,
             &location_positions
         ));
-        assert_eq!(decoded.state.globals.get(&7), Some(&91));
+        assert!(
+            serde_json::to_value(&decoded.state)
+                .unwrap()
+                .get("globals")
+                .is_none()
+        );
         assert_eq!(decoded.state.computed_locations.len(), 1);
         assert!(decoded.state.sequence_recorder.recording.is_some());
         assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
@@ -7858,6 +7863,68 @@ mod script_context_tests {
             .as_ref()
             .expect("script remains installed");
         assert_eq!(script.active_call_frame_count(), 0);
+    }
+
+    #[test]
+    fn native_globals_are_canonical_across_json_native_snapshots_and_rollback() {
+        // The native engine codec requires more than libtest's default stack.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let sim = crate::sim_rng::test_context();
+                let assets = LevelAssets::new();
+                let mut engine = EngineInner::new();
+                engine.scripts.mission = Some(empty_mission_script());
+                engine.attach_script_bindings(&assets);
+                assert_eq!(
+                    engine.call_external_native(&sim, &assets, "InitGlobal", &[0, 7]),
+                    Ok(0)
+                );
+                assert_eq!(
+                    engine.call_external_native(&sim, &assets, "GetGlobal", &[1]),
+                    Ok(0)
+                );
+                assert_eq!(
+                    engine.call_external_native(&sim, &assets, "SetGlobal", &[15, 9]),
+                    Ok(0)
+                );
+                assert_eq!(engine.scripts.globals.len(), 16);
+                let expected = engine.scripts.globals.clone();
+                let before = crate::replay::state_hash(&engine);
+                let json = serde_json::to_value(&engine).unwrap();
+                assert_eq!(json["scripts"]["globals"], serde_json::json!(expected));
+                assert!(json["scripts"]["mission"]["state"].get("globals").is_none());
+                let restored_json: EngineInner = serde_json::from_value(json).unwrap();
+                let native = crate::engine::snapshot::encode_native_engine_inner(&engine);
+                let restored_native =
+                    crate::engine::snapshot::decode_native_engine_inner(&native).unwrap();
+                for mut restored in [restored_json, restored_native] {
+                    assert_eq!(restored.scripts.globals, expected);
+                    assert_eq!(crate::replay::state_hash(&restored), before);
+                    restored.attach_script_bindings(&assets);
+                    assert_eq!(
+                        restored.call_external_native(&sim, &assets, "GetGlobal", &[15]),
+                        Ok(9)
+                    );
+                    assert_eq!(
+                        restored.call_external_native(&sim, &assets, "SetGlobal", &[14, 13]),
+                        Ok(0)
+                    );
+                    assert_eq!(restored.scripts.globals[14], 13);
+                }
+                let rollback = engine.clone();
+                assert_eq!(
+                    engine.call_external_native(&sim, &assets, "SetGlobal", &[15, 17]),
+                    Ok(0)
+                );
+                assert_ne!(crate::replay::state_hash(&engine), before);
+                engine = rollback;
+                assert_eq!(crate::replay::state_hash(&engine), before);
+                assert_eq!(engine.scripts.globals, expected);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

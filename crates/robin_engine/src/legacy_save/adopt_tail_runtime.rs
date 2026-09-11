@@ -209,24 +209,6 @@ impl LegacyTailRuntimeAdoptionPlan {
             mission.replace_global_vm_heap(global.heap);
         }
         engine.scripts.globals = self.script_globals;
-        let restored_globals = engine
-            .scripts
-            .globals
-            .iter()
-            .enumerate()
-            .map(|(id, &value)| {
-                (
-                    i32::try_from(id).expect("legacy script-global index exceeds i32"),
-                    value,
-                )
-            })
-            .collect();
-        let mission = engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("preflighted script globals mission disappeared");
-        mission.state.globals = restored_globals;
         engine.orders.timer_elements = self.timers;
         engine.feedback.cutscene_camera.sequence_element = self.camera_element;
     }
@@ -579,12 +561,39 @@ mod tests {
         };
         plan.apply(&mut engine);
         assert_eq!(engine.scripts.globals, [-7, 11]);
-        assert_eq!(
-            engine.scripts.mission.as_ref().unwrap().state.globals,
-            BTreeMap::from([(0, -7), (1, 11)])
-        );
         assert!(engine.orders.timer_elements.is_empty());
         assert!(engine.feedback.cutscene_camera.sequence_element.is_none());
+    }
+
+    #[test]
+    fn imported_global_padding_is_live_native_storage_without_reinitializing() {
+        let (mut engine, _, _) = global_vm_fixture();
+        let mut globals = vec![0; 16];
+        globals[0] = 7;
+        LegacyTailRuntimeAdoptionPlan {
+            global_vm: None,
+            script_globals: globals.clone(),
+            timers: Vec::new(),
+            camera_element: None,
+        }
+        .apply(&mut engine);
+        let assets = LevelAssets::new();
+        engine.scripts.attach_native_capabilities(&assets);
+        let sim = crate::sim_rng::test_context();
+        assert_eq!(
+            engine.call_external_native(&sim, &assets, "GetGlobal", &[1]),
+            Ok(0)
+        );
+        assert_eq!(
+            engine.call_external_native(&sim, &assets, "SetGlobal", &[15, 9]),
+            Ok(0)
+        );
+        globals[15] = 9;
+        assert_eq!(engine.scripts.globals, globals);
+        assert_eq!(
+            engine.call_external_native(&sim, &assets, "GetGlobal", &[16]),
+            Ok(-1)
+        );
     }
 
     #[test]

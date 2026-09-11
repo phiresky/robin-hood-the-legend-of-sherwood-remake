@@ -2,6 +2,35 @@
 
 use super::*;
 
+/// Original grows to `id + 16`, making every zero-filled intervening slot
+/// valid. Invalid/hostile allocation requests are diagnosed instead of
+/// reproducing Original's unchecked negative indexing or exhausting memory.
+fn initialize_script_global(globals: &mut Vec<i32>, id: i32, value: i32) {
+    let Ok(index) = usize::try_from(id) else {
+        tracing::warn!("Script Error: InitGlobal has negative ID {id}");
+        return;
+    };
+    if index >= globals.len() {
+        let Some(length) = index.checked_add(16) else {
+            tracing::warn!("Script Error: InitGlobal growth overflows for ID {id}");
+            return;
+        };
+        if length > crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT {
+            tracing::warn!(
+                "Script Error: InitGlobal ID {id} requires {length} slots, exceeding allocation policy {}",
+                crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT
+            );
+            return;
+        }
+        if let Err(error) = globals.try_reserve_exact(length - globals.len()) {
+            tracing::warn!("Script Error: InitGlobal ID {id} allocation failed: {error}");
+            return;
+        }
+        globals.resize(length, 0);
+    }
+    globals[index] = value;
+}
+
 impl NativeContext<'_, '_> {
     pub(super) fn dispatch_script_core(
         &mut self,
@@ -21,19 +50,17 @@ impl NativeContext<'_, '_> {
             InitGlobal => {
                 let value = stack.pop_i32();
                 let id = stack.pop_i32();
-                self.script_state.globals.insert(id, value);
+                initialize_script_global(&mut self.script_globals, id, value);
                 0
             }
             SetGlobal => {
                 let value = stack.pop_i32();
                 let id = stack.pop_i32();
-                // Script globals must be created by InitGlobal
-                // first; SetGlobal on an un-init'd id warns and
-                // no-ops.
-                if let std::collections::btree_map::Entry::Occupied(mut e) =
-                    self.script_state.globals.entry(id)
+                if let Some(slot) = usize::try_from(id)
+                    .ok()
+                    .and_then(|index| self.script_globals.get_mut(index))
                 {
-                    e.insert(value);
+                    *slot = value;
                 } else {
                     tracing::warn!("Script Error: Non-valid ID for script global {id}");
                 }
@@ -41,8 +68,11 @@ impl NativeContext<'_, '_> {
             }
             GetGlobal => {
                 let id = stack.pop_i32();
-                // Returns -1 with a warning on an un-init'd id.
-                match self.script_state.globals.get(&id) {
+                // Every allocated slot is valid, including untouched padding.
+                match usize::try_from(id)
+                    .ok()
+                    .and_then(|index| self.script_globals.get(index))
+                {
                     Some(v) => *v,
                     None => {
                         tracing::warn!("Script Error: Non-valid ID for script global {id}");
@@ -794,4 +824,44 @@ fn validate_diplomacy_ids(first: i32, second: i32) -> Result<(u16, u16), String>
     let second = u16::try_from(second)
         .map_err(|_| format!("second allegiance {second} is outside 0..=65535"))?;
     Ok((first, second))
+}
+
+#[cfg(test)]
+mod globals_tests {
+    use super::initialize_script_global;
+    use crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT;
+
+    #[test]
+    fn init_global_rejects_negative_and_excessive_growth_without_mutating_slots() {
+        let mut globals = vec![7, 11];
+        for id in [
+            -1,
+            i32::MIN,
+            i32::MAX,
+            (DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT - 15) as i32,
+        ] {
+            initialize_script_global(&mut globals, id, 99);
+            assert_eq!(globals, [7, 11], "rejected ID {id} changed globals");
+        }
+        let last_growth_id = DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT - 16;
+        initialize_script_global(&mut globals, last_growth_id as i32, 23);
+        assert_eq!(globals.len(), DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT);
+        assert_eq!(globals[last_growth_id], 23);
+        assert_eq!(globals[DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT - 1], 0);
+        initialize_script_global(
+            &mut globals,
+            (DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT - 1) as i32,
+            29,
+        );
+        assert_eq!(globals.len(), DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT);
+        assert_eq!(globals[DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT - 1], 29);
+    }
+
+    #[test]
+    fn init_global_can_write_existing_slots_in_explicitly_larger_imports() {
+        let mut globals = vec![0; DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT + 1];
+        initialize_script_global(&mut globals, DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT as i32, 41);
+        assert_eq!(globals[DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT], 41);
+        assert_eq!(globals.len(), DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT + 1);
+    }
 }

@@ -70,7 +70,9 @@ pub use signatures::{
     NativeParamSig, NativeSignature, SPELLFORGE_NATIVE_ALIASES, native_definition_by_index,
     native_definition_by_name, native_signature_by_index, native_signature_by_name,
 };
-pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
+pub use state::{
+    ComputedScriptLocation, DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT, ScriptState, SequenceRecorderState,
+};
 
 use handle_codec::ScriptHandleKind;
 

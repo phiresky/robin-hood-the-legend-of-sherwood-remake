@@ -73,8 +73,14 @@ fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
     );
     fast_grid.sector_active.push(true);
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut domains_value =
         serde_json::to_value(robin_engine::engine::ScriptDomains::default()).unwrap();
     domains_value["interactables"]["doors"] =
@@ -126,7 +132,7 @@ fn lua_natives_mutate_canonical_entity_ai_and_grid_owners() {
     assert!(!fast_grid.is_sector_active(0));
 }
 
-/// `InitGlobal(0, 42)` from Lua must land in `ScriptEffects::globals`.
+/// Lua global natives write the session's canonical, zero-padded global array.
 #[test]
 fn engine_native_called_from_lua_writes_host_state() {
     let (state, _dir) = fresh_state();
@@ -135,8 +141,14 @@ fn engine_native_called_from_lua_writes_host_state() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
@@ -145,10 +157,14 @@ fn engine_native_called_from_lua_writes_host_state() {
             &mut script_state,
             &mut script_domains,
             &capabilities,
-            |lua: &Lua| lua.load("InitGlobal(0, 42)").exec(),
+            |lua: &Lua| {
+                lua.load("InitGlobal(0, 42); assert(GetGlobal(1) == 0); SetGlobal(15, 9); assert(GetGlobal(15) == 9)").exec()
+            },
         )
         .unwrap();
-    assert_eq!(script_state.globals.get(&0).copied(), Some(42));
+    assert_eq!(native_globals.get(0).copied(), Some(42));
+    assert_eq!(native_globals.len(), 16);
+    assert_eq!(native_globals[15], 9);
 }
 
 /// Lua cannot yet suspend an mlua frame into the Engine-owned synchronous
@@ -162,8 +178,14 @@ fn end_sequence_rejects_before_mutating_the_recording() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
@@ -233,10 +255,16 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
     let weather = robin_engine::engine::WeatherState::default();
     let frame = 17;
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_world_views(&[], &[], &[])
-            .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    )
+    .with_world_views(&[], &[], &[])
+    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     let actor = ScriptHandleCodec::actor_handle_from_index(0);
@@ -305,10 +333,15 @@ fn lua_yield_preflight_is_complete_and_property_sensitive() {
     assert!(script_state.sequence_recorder.recording.is_none());
 
     ai_global.ezekiel_2517 = false;
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_world_views(&[], &[], &[])
-            .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    )
+    .with_world_views(&[], &[], &[])
+    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
     state
         .with_host_and_state(
             &mut host,
@@ -345,8 +378,14 @@ fn spellforge_alias_opens_recording() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
     state
@@ -374,8 +413,14 @@ fn get_actor_name_lookup() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
     std::sync::Arc::make_mut(&mut bindings.lua_names)
@@ -415,8 +460,14 @@ fn get_all_actors_dumps_table() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
     let names = std::sync::Arc::make_mut(&mut bindings.lua_names);
@@ -453,9 +504,15 @@ fn add_and_complete_objective_mutate_live_model() {
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let mut briefings = robin_engine::short_briefings::ShortBriefings::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_short_briefings(&mut briefings);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    )
+    .with_short_briefings(&mut briefings);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
         .with_host(
@@ -484,8 +541,14 @@ fn is_actor_out_of_action_callable() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
         .with_host(
@@ -534,8 +597,14 @@ fn native_abi_is_signature_driven() {
         let mut ai_global = robin_engine::ai::AiGlobalState::default();
         let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
         let sim = test_sim();
-        let capabilities =
-            NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+        let mut native_globals = Vec::new();
+        let capabilities = NativeSessionCapabilities::new(
+            &sim,
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+            &mut native_globals,
+        );
         let mut script_domains = robin_engine::engine::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         state
@@ -565,7 +634,7 @@ fn native_abi_is_signature_driven() {
             )),
             None => {
                 assert!(host.engine_commands().is_empty());
-                assert_eq!(script_state.globals.get(&7), Some(&9));
+                assert_eq!(native_globals.get(7), Some(&9));
             }
             Some(other) => panic!("test case does not handle command {other:?}"),
         }
@@ -591,8 +660,14 @@ fn invalid_native_arguments_are_typed_errors() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
         .with_host(
@@ -637,8 +712,14 @@ fn sequence_call_registers_callback() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
         .with_host(
@@ -691,8 +772,14 @@ fn native_session_cleared_after_scope() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     state
         .with_host(
@@ -715,8 +802,14 @@ fn native_session_cleared_after_error() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
     let result: mlua::Result<()> = state.with_host(
@@ -741,11 +834,13 @@ fn nested_session_rejection_preserves_outer_session() {
     let mut outer_ai = robin_engine::ai::AiGlobalState::default();
     let mut outer_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let outer_sim = test_sim();
+    let mut outer_native_globals = Vec::new();
     let outer_capabilities = NativeSessionCapabilities::new(
         &outer_sim,
         &mut outer_entities,
         &mut outer_ai,
         &mut outer_grid,
+        &mut outer_native_globals,
     );
     let mut outer_domains = robin_engine::engine::ScriptDomains::default();
     let mut outer_script_state = ScriptState::default();
@@ -754,11 +849,13 @@ fn nested_session_rejection_preserves_outer_session() {
     let mut nested_ai = robin_engine::ai::AiGlobalState::default();
     let mut nested_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let nested_sim = test_sim();
+    let mut nested_native_globals = Vec::new();
     let nested_capabilities = NativeSessionCapabilities::new(
         &nested_sim,
         &mut nested_entities,
         &mut nested_ai,
         &mut nested_grid,
+        &mut nested_native_globals,
     );
     let mut nested_domains = robin_engine::engine::ScriptDomains::default();
 
@@ -786,7 +883,7 @@ fn nested_session_rejection_preserves_outer_session() {
             },
         )
         .unwrap();
-    assert_eq!(outer_script_state.globals.get(&9), Some(&81));
+    assert_eq!(outer_native_globals.get(9), Some(&81));
 }
 
 #[test]
@@ -797,8 +894,14 @@ fn synchronous_nested_lua_calls_share_one_native_session() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
 
@@ -827,7 +930,7 @@ fn synchronous_nested_lua_calls_share_one_native_session() {
         )
         .unwrap();
 
-    assert_eq!(script_state.globals.get(&3), Some(&42));
+    assert_eq!(native_globals.get(3), Some(&42));
 }
 
 #[test]
@@ -838,8 +941,14 @@ fn rust_to_lua_reentrancy_reuses_the_active_session() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
 
@@ -859,7 +968,7 @@ fn rust_to_lua_reentrancy_reuses_the_active_session() {
         )
         .unwrap();
 
-    assert_eq!(script_state.globals.get(&4), Some(&15));
+    assert_eq!(native_globals.get(4), Some(&15));
 }
 
 #[test]
@@ -877,8 +986,14 @@ fn cross_thread_native_invocation_is_rejected_while_session_is_active() {
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
             let sim = test_sim();
-            let capabilities =
-                NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+            let mut native_globals = Vec::new();
+            let capabilities = NativeSessionCapabilities::new(
+                &sim,
+                &mut entities,
+                &mut ai_global,
+                &mut fast_grid,
+                &mut native_globals,
+            );
             let mut script_domains = robin_engine::engine::ScriptDomains::default();
             let mut script_state = ScriptState::default();
 
@@ -897,7 +1012,7 @@ fn cross_thread_native_invocation_is_rejected_while_session_is_active() {
                 )
                 .expect("owner-thread Lua execution");
 
-            script_state.globals.get(&12).copied()
+            native_globals.get(12).copied()
         }
     });
 
@@ -930,8 +1045,14 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
             let sim = test_sim();
-            let capabilities =
-                NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+            let mut native_globals = Vec::new();
+            let capabilities = NativeSessionCapabilities::new(
+                &sim,
+                &mut entities,
+                &mut ai_global,
+                &mut fast_grid,
+                &mut native_globals,
+            );
             let mut script_domains = robin_engine::engine::ScriptDomains::default();
             let mut script_state = ScriptState::default();
 
@@ -950,7 +1071,7 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
                 )
                 .expect("owner-thread Lua execution");
 
-            script_state.globals.get(&13).copied()
+            native_globals.get(13).copied()
         }
     });
 
@@ -960,11 +1081,13 @@ fn concurrent_host_attachment_is_rejected_without_replacing_owner() {
     let mut competing_ai = robin_engine::ai::AiGlobalState::default();
     let mut competing_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let competing_sim = test_sim();
+    let mut competing_native_globals = Vec::new();
     let competing_capabilities = NativeSessionCapabilities::new(
         &competing_sim,
         &mut competing_entities,
         &mut competing_ai,
         &mut competing_grid,
+        &mut competing_native_globals,
     );
     let mut competing_domains = robin_engine::engine::ScriptDomains::default();
     let error = state
@@ -1007,8 +1130,14 @@ fn retained_function_cannot_reuse_a_stale_session() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let mut script_state = ScriptState::default();
 
@@ -1030,7 +1159,7 @@ fn retained_function_cannot_reuse_a_stale_session() {
         error.to_string().contains("no ScriptEffects attached"),
         "unexpected stale-function error: {error}"
     );
-    assert_eq!(script_state.globals.get(&5), Some(&1));
+    assert_eq!(native_globals.get(5), Some(&1));
 }
 
 #[test]
@@ -1056,8 +1185,14 @@ fn panic_unwind_detaches_native_session() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
     let _verify_detached = VerifyDetachedOnUnwind(&state);
 
@@ -1078,9 +1213,15 @@ fn native_dispatch_preserves_script_effects_queue_order() {
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let mut briefings = robin_engine::short_briefings::ShortBriefings::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid)
-            .with_short_briefings(&mut briefings);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    )
+    .with_short_briefings(&mut briefings);
     let mut script_domains = robin_engine::engine::ScriptDomains::default();
 
     state

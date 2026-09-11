@@ -9,11 +9,9 @@ use super::super::{LevelAssets, MissionScript};
 /// important: this type owns the script runtime, not a second engine model.
 #[derive(Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
 pub(crate) struct ScriptRuntime {
-    /// Legacy-save global array, retained in snapshots and save projections.
-    /// Live InitGlobal/SetGlobal/GetGlobal dispatch uses MissionScript's
-    /// ScriptState::globals instead; do not expose a second mutation API here.
-    /// TODO: reconcile imported legacy globals with native VM globals once
-    /// their indexing/default-value parity contract has been established.
+    /// Canonical cross-script globals, including zero-filled valid slots added
+    /// by Original's `InitGlobal` growth. Native calls borrow this same array;
+    /// imports, rollback, saves and parity projections never maintain a mirror.
     pub(crate) globals: Vec<i32>,
     pub(crate) mission: Option<MissionScript>,
     /// Serializable Spellforge package and event/native journal.  The Lua VM

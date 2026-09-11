@@ -583,11 +583,13 @@ mod tests {
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
             let simulation = robin_engine::sim_rng::SimulationContext::with_seed(seed);
+            let mut native_globals = Vec::new();
             let capabilities = NativeSessionCapabilities::new(
                 &simulation,
                 &mut entities,
                 &mut ai_global,
                 &mut fast_grid,
+                &mut native_globals,
             );
             state
                 .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
@@ -619,11 +621,13 @@ mod tests {
             let mut ai_global = robin_engine::ai::AiGlobalState::default();
             let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
             let simulation = robin_engine::sim_rng::SimulationContext::with_seed(7);
+            let mut native_globals = Vec::new();
             let capabilities = NativeSessionCapabilities::new(
                 &simulation,
                 &mut entities,
                 &mut ai_global,
                 &mut fast_grid,
+                &mut native_globals,
             );
             state
                 .with_host(&mut host, &mut script_domains, &capabilities, |lua| {

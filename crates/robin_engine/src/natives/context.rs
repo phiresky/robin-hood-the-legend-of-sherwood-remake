@@ -18,6 +18,7 @@ pub struct NativeSessionCapabilities<'a> {
     pc_registry: Option<&'a [EntityId]>,
     ai_global: RefCell<&'a mut crate::ai::AiGlobalState>,
     fast_grid: RefCell<&'a mut crate::fast_find_grid::FastFindGrid>,
+    script_globals: RefCell<&'a mut Vec<i32>>,
     campaign: Option<RefCell<&'a mut crate::campaign::Campaign>>,
     mission_stat: Option<RefCell<&'a mut crate::mission_stat::MissionStat>>,
     diplomacy: Option<RefCell<&'a mut crate::diplomacy::DiplomacyState>>,
@@ -39,6 +40,7 @@ impl<'a> NativeSessionCapabilities<'a> {
         entities: &'a mut crate::entities::Entities,
         ai_global: &'a mut crate::ai::AiGlobalState,
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+        script_globals: &'a mut Vec<i32>,
     ) -> Self {
         Self {
             simulation,
@@ -46,6 +48,7 @@ impl<'a> NativeSessionCapabilities<'a> {
             pc_registry: None,
             ai_global: RefCell::new(ai_global),
             fast_grid: RefCell::new(fast_grid),
+            script_globals: RefCell::new(script_globals),
             campaign: None,
             mission_stat: None,
             diplomacy: None,
@@ -193,6 +196,10 @@ impl<'a> NativeSessionCapabilities<'a> {
     pub(crate) fn entities_owner_ptr(&self) -> *const crate::entities::Entities {
         let entities = self.entities.borrow();
         std::ptr::from_ref(&**entities)
+    }
+
+    fn script_globals(&self) -> RefMut<'_, Vec<i32>> {
+        RefMut::map(self.script_globals.borrow_mut(), |value| &mut **value)
     }
 }
 
@@ -355,6 +362,7 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
     pub(crate) ai_global: RefMut<'ctx, crate::ai::AiGlobalState>,
     pub(crate) fast_grid: RefMut<'ctx, crate::fast_find_grid::FastFindGrid>,
     pub(crate) script_state: &'ctx mut ScriptState,
+    pub(crate) script_globals: RefMut<'ctx, Vec<i32>>,
     pub(crate) script_domains: &'ctx mut crate::engine::ScriptDomains,
     pub(crate) bindings: ScriptBindings<'ctx>,
     pub(crate) campaign: Option<RefMut<'ctx, crate::campaign::Campaign>>,
@@ -404,6 +412,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
             script_state,
+            script_globals: capabilities.script_globals(),
             script_domains,
             bindings: ScriptBindings::empty(),
             campaign: capabilities.campaign(),
@@ -440,6 +449,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
             script_state,
+            script_globals: capabilities.script_globals(),
             script_domains,
             bindings: bindings.view(),
             campaign: capabilities.campaign(),
@@ -477,6 +487,7 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
             ai_global: capabilities.ai_global(),
             fast_grid: capabilities.fast_grid(),
             script_state,
+            script_globals: capabilities.script_globals(),
             script_domains,
             bindings: bindings.view(),
             campaign: capabilities.campaign(),
@@ -504,6 +515,10 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
 
     pub fn script_state(&self) -> &ScriptState {
         self.script_state
+    }
+
+    pub fn script_globals(&self) -> &[i32] {
+        &self.script_globals
     }
 
     pub fn script_effects(&self) -> &ScriptEffects {

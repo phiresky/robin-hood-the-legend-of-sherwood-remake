@@ -221,8 +221,14 @@ fn static_area_shared_between_instances() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut inst = mgr.create_instance("Test").unwrap();
 
     {
@@ -234,7 +240,7 @@ fn static_area_shared_between_instances() {
         );
         let _ = poll_call(&mut inst, &mut mgr, "SetGlobal42", &[], &mut context).unwrap();
     }
-    assert_eq!(script_state.globals.get(&0), Some(&42));
+    assert_eq!(native_globals.get(0), Some(&42));
 }
 
 #[test]
@@ -260,8 +266,14 @@ fn native_calls_through_instance() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
     let mut context = NativeContext::new(
         &mut host,
         &mut script_state,
@@ -346,8 +358,14 @@ fn demo_script_via_manager() {
     let mut ai_global = robin_engine::ai::AiGlobalState::default();
     let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
     let sim = test_sim();
-    let capabilities =
-        NativeSessionCapabilities::new(&sim, &mut entities, &mut ai_global, &mut fast_grid);
+    let mut native_globals = Vec::new();
+    let capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut entities,
+        &mut ai_global,
+        &mut fast_grid,
+        &mut native_globals,
+    );
 
     // Run PutActorInBuilding (addr 0, the first function).
     // It won't do much with stub natives, but shouldn't crash.
