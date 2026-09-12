@@ -669,23 +669,43 @@ impl Database {
             .map_err(|_| DbError::ResultInvariant("history cursor exceeds i64".to_owned()))?;
         let cursor_id = cursor.map(|(_, id)| id);
         let mut query = QueryBuilder::<Sqlite>::new("");
-        query.push("WITH history AS ( SELECT 'mission' AS composition_kind, run.id, run.mission_id, run.scope_kind, submission.replay_sha256, run.original_score_delta, run.active_simulation_ticks, run.ransom_collected, run.content_manifest_id, run.config_id, run.ruleset_id, run.competition_manifest_id, run.max_concurrent_players, run.participant_instance_count, run.accepted_sequence, run.verified_at_ms FROM verified_runs run JOIN submissions submission ON submission.id = run.submission_id WHERE submission.status = 'accepted' AND submission.tombstoned_at_ms IS NULL AND ");
+        query.push("WITH history AS ( SELECT 'mission' AS composition_kind, run.id, run.mission_id, run.scope_kind, \
+            submission.replay_sha256, run.original_score_delta, run.active_simulation_ticks, \
+            run.ransom_collected, run.content_manifest_id, run.config_id, run.ruleset_id, \
+            run.competition_manifest_id, run.max_concurrent_players, run.participant_instance_count, \
+            run.accepted_sequence, run.verified_at_ms FROM verified_runs run JOIN submissions submission ON \
+            submission.id = run.submission_id WHERE submission.status = 'accepted' AND \
+            submission.tombstoned_at_ms IS NULL AND ");
         push_ruleset_filter(
             &mut query,
             "run.ruleset_id",
             active_ruleset_ids.iter().copied(),
         );
-        query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') AND EXISTS (SELECT 1 FROM submission_participants participant WHERE participant.submission_id = submission.id AND participant.public_disclosure = 'named_profile' AND participant.public_key = ");
+        query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') AND \
+            EXISTS (SELECT 1 FROM submission_participants participant WHERE participant.submission_id = \
+            submission.id AND participant.public_disclosure = 'named_profile' AND participant.public_key = ");
         query.push_bind(public_key.as_slice());
-        query.push(") UNION ALL SELECT 'full_campaign', aggregate.id, NULL, 'campaign', NULL, aggregate.final_campaign_score - aggregate.starting_campaign_score, aggregate.active_simulation_ticks, aggregate.ransom_collected, aggregate.campaign_content_manifest_id AS content_manifest_id, aggregate.config_id, aggregate.ruleset_id, aggregate.competition_manifest_id, aggregate.max_concurrent_players, aggregate.participant_instance_count, aggregate.accepted_sequence, aggregate.verified_at_ms FROM full_campaign_runs aggregate WHERE aggregate.tombstoned_at_ms IS NULL AND ");
+        query.push(") UNION ALL SELECT 'full_campaign', aggregate.id, NULL, 'campaign', NULL, \
+            aggregate.final_campaign_score - aggregate.starting_campaign_score, \
+            aggregate.active_simulation_ticks, aggregate.ransom_collected, \
+            aggregate.campaign_content_manifest_id AS content_manifest_id, aggregate.config_id, \
+            aggregate.ruleset_id, aggregate.competition_manifest_id, aggregate.max_concurrent_players, \
+            aggregate.participant_instance_count, aggregate.accepted_sequence, aggregate.verified_at_ms \
+            FROM full_campaign_runs aggregate WHERE aggregate.tombstoned_at_ms IS NULL AND ");
         push_ruleset_filter(
             &mut query,
             "aggregate.ruleset_id",
             active_ruleset_ids.iter().copied(),
         );
-        query.push(" AND EXISTS (SELECT 1 FROM full_campaign_participants participant WHERE participant.full_campaign_run_id = aggregate.id AND participant.public_key = ");
+        query.push(
+            " AND EXISTS (SELECT 1 FROM full_campaign_participants participant WHERE \
+            participant.full_campaign_run_id = aggregate.id AND participant.public_key = ",
+        );
         query.push_bind(public_key.as_slice());
-        query.push(") AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id WHERE session.full_campaign_run_id = aggregate.id AND submission.tombstoned_at_ms IS NOT NULL) ) SELECT * FROM history WHERE accepted_sequence <= ");
+        query.push(") AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON \
+            child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id \
+            WHERE session.full_campaign_run_id = aggregate.id AND submission.tombstoned_at_ms IS NOT NULL) \
+            ) SELECT * FROM history WHERE accepted_sequence <= ");
         query.push_bind(watermark);
         query.push(" AND (");
         query.push_bind(cursor_sequence);
@@ -798,7 +818,12 @@ impl Database {
         let watermark = i64::try_from(accepted_sequence_watermark)
             .map_err(|_| DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned()))?;
         let mut query = QueryBuilder::<Sqlite>::new("");
-        query.push("WITH candidates AS ( SELECT 'mission' AS subject_kind, run.id, run.mission_id, run.scope_kind, metric.metric, metric.value, run.content_manifest_id, run.config_id, run.ruleset_id, run.competition_manifest_id, run.max_concurrent_players, run.accepted_sequence FROM verified_runs run JOIN submissions submission ON submission.id = run.submission_id JOIN verified_run_metrics metric ON metric.run_id = run.id WHERE submission.status = 'accepted' AND submission.tombstoned_at_ms IS NULL AND ");
+        query.push("WITH candidates AS ( SELECT 'mission' AS subject_kind, run.id, run.mission_id, run.scope_kind, \
+            metric.metric, metric.value, run.content_manifest_id, run.config_id, run.ruleset_id, \
+            run.competition_manifest_id, run.max_concurrent_players, run.accepted_sequence FROM \
+            verified_runs run JOIN submissions submission ON submission.id = run.submission_id JOIN \
+            verified_run_metrics metric ON metric.run_id = run.id WHERE submission.status = 'accepted' AND \
+            submission.tombstoned_at_ms IS NULL AND ");
         push_ruleset_filter(
             &mut query,
             "run.ruleset_id",
@@ -806,9 +831,16 @@ impl Database {
         );
         query.push(" AND run.accepted_sequence <= ");
         query.push_bind(watermark);
-        query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') AND EXISTS (SELECT 1 FROM submission_participants participant WHERE participant.submission_id = submission.id AND participant.public_disclosure = 'named_profile' AND participant.public_key = ");
+        query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') AND \
+            EXISTS (SELECT 1 FROM submission_participants participant WHERE participant.submission_id = \
+            submission.id AND participant.public_disclosure = 'named_profile' AND participant.public_key = ");
         query.push_bind(public_key.as_slice());
-        query.push(") UNION ALL SELECT 'full_campaign', aggregate.id, NULL, 'campaign', metric.metric, metric.value, aggregate.campaign_content_manifest_id AS content_manifest_id, aggregate.config_id, aggregate.ruleset_id, aggregate.competition_manifest_id, aggregate.max_concurrent_players, aggregate.accepted_sequence FROM full_campaign_runs aggregate JOIN full_campaign_metrics metric ON metric.full_campaign_run_id = aggregate.id WHERE aggregate.tombstoned_at_ms IS NULL AND aggregate.accepted_sequence <= ");
+        query.push(") UNION ALL SELECT 'full_campaign', aggregate.id, NULL, 'campaign', metric.metric, \
+            metric.value, aggregate.campaign_content_manifest_id AS content_manifest_id, \
+            aggregate.config_id, aggregate.ruleset_id, aggregate.competition_manifest_id, \
+            aggregate.max_concurrent_players, aggregate.accepted_sequence FROM full_campaign_runs aggregate \
+            JOIN full_campaign_metrics metric ON metric.full_campaign_run_id = aggregate.id WHERE \
+            aggregate.tombstoned_at_ms IS NULL AND aggregate.accepted_sequence <= ");
         query.push_bind(watermark);
         query.push(" AND ");
         push_ruleset_filter(
@@ -816,9 +848,21 @@ impl Database {
             "aggregate.ruleset_id",
             active_ruleset_ids.iter().copied(),
         );
-        query.push(" AND EXISTS (SELECT 1 FROM full_campaign_participants participant WHERE participant.full_campaign_run_id = aggregate.id AND participant.public_key = ");
+        query.push(
+            " AND EXISTS (SELECT 1 FROM full_campaign_participants participant WHERE \
+            participant.full_campaign_run_id = aggregate.id AND participant.public_key = ",
+        );
         query.push_bind(public_key.as_slice());
-        query.push(") AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id WHERE session.full_campaign_run_id = aggregate.id AND submission.tombstoned_at_ms IS NOT NULL) ), ranked AS ( SELECT *, ROW_NUMBER() OVER (PARTITION BY subject_kind, mission_id, scope_kind, metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, max_concurrent_players ORDER BY CASE WHEN metric = 'original_score' THEN value END DESC, CASE WHEN metric = 'fastest_success' THEN value END ASC, accepted_sequence, id) AS position FROM candidates ) SELECT * FROM ranked WHERE position = 1 ORDER BY subject_kind, mission_id, scope_kind, metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, max_concurrent_players LIMIT 512");
+        query.push(") AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON \
+            child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id \
+            WHERE session.full_campaign_run_id = aggregate.id AND submission.tombstoned_at_ms IS NOT NULL) \
+            ), ranked AS ( SELECT *, ROW_NUMBER() OVER (PARTITION BY subject_kind, mission_id, scope_kind, \
+            metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, \
+            max_concurrent_players ORDER BY CASE WHEN metric = 'original_score' THEN value END DESC, CASE \
+            WHEN metric = 'fastest_success' THEN value END ASC, accepted_sequence, id) AS position FROM \
+            candidates ) SELECT * FROM ranked WHERE position = 1 ORDER BY subject_kind, mission_id, \
+            scope_kind, metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, \
+            max_concurrent_players LIMIT 512");
         let rows = query.build().fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {

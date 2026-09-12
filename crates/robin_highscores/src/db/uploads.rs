@@ -2,6 +2,78 @@
 //! No independent pool, repository transaction, or fence is created here.
 use super::*;
 
+fn check_reserved_intent(
+    existing: &SqliteRow,
+    intent: &SubmissionUploadIntent,
+    envelope_sha256: &[u8; 32],
+) -> Result<(), DbError> {
+    if existing.try_get::<String, _>("envelope_json")? != intent.envelope_json
+        || existing
+            .try_get::<Vec<u8>, _>("envelope_sha256")?
+            .as_slice()
+            != envelope_sha256
+        || existing
+            .try_get::<Vec<u8>, _>("controller_public_key")?
+            .as_slice()
+            != intent.controller_public_key
+        || existing
+            .try_get::<Vec<u8>, _>("session_genesis_sha256")?
+            .as_slice()
+            != intent.session_genesis_sha256
+        || existing
+            .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
+            .as_slice()
+            != intent.session_genesis_host_public_key
+        || existing
+            .try_get::<Vec<u8>, _>("replay_session_id")?
+            .as_slice()
+            != intent.replay_session_id
+        || existing
+            .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
+            .as_slice()
+            != intent.session_genesis_host_nonce
+    {
+        return Err(DbError::SubmissionConflict);
+    }
+    Ok(())
+}
+
+fn check_reserved_submission(
+    reservation: &SqliteRow,
+    submission: &NewSubmission,
+) -> Result<(), DbError> {
+    let envelope_sha256 = Digest32::digest_bytes(submission.envelope_json.as_bytes());
+    if reservation.try_get::<String, _>("submission_id")? != submission.id
+        || reservation.try_get::<String, _>("envelope_json")? != submission.envelope_json
+        || reservation
+            .try_get::<Vec<u8>, _>("envelope_sha256")?
+            .as_slice()
+            != envelope_sha256.as_bytes()
+        || reservation
+            .try_get::<Vec<u8>, _>("controller_public_key")?
+            .as_slice()
+            != submission.controller_public_key
+        || reservation
+            .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
+            .as_slice()
+            != submission.session_genesis_host_public_key
+        || reservation
+            .try_get::<Vec<u8>, _>("replay_session_id")?
+            .as_slice()
+            != submission.replay_session_id
+        || reservation
+            .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
+            .as_slice()
+            != submission.session_genesis_host_nonce
+        || reservation
+            .try_get::<Vec<u8>, _>("session_genesis_sha256")?
+            .as_slice()
+            != submission.session_genesis_sha256
+    {
+        return Err(DbError::SubmissionConflict);
+    }
+    Ok(())
+}
 async fn register_uploaded_artifacts(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     submission: &NewSubmission,
@@ -176,34 +248,7 @@ impl Database {
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(existing) = existing {
-            if existing.try_get::<String, _>("envelope_json")? != intent.envelope_json
-                || existing
-                    .try_get::<Vec<u8>, _>("envelope_sha256")?
-                    .as_slice()
-                    != envelope_sha256
-                || existing
-                    .try_get::<Vec<u8>, _>("controller_public_key")?
-                    .as_slice()
-                    != intent.controller_public_key
-                || existing
-                    .try_get::<Vec<u8>, _>("session_genesis_sha256")?
-                    .as_slice()
-                    != intent.session_genesis_sha256
-                || existing
-                    .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
-                    .as_slice()
-                    != intent.session_genesis_host_public_key
-                || existing
-                    .try_get::<Vec<u8>, _>("replay_session_id")?
-                    .as_slice()
-                    != intent.replay_session_id
-                || existing
-                    .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
-                    .as_slice()
-                    != intent.session_genesis_host_nonce
-            {
-                return Err(DbError::SubmissionConflict);
-            }
+            check_reserved_intent(&existing, intent, &envelope_sha256)?;
             let submission_id: String = existing.try_get("submission_id")?;
             let state: String = existing.try_get("state")?;
             if state == "committed" {
@@ -480,36 +525,7 @@ impl Database {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(DbError::InvalidChallenge)?;
-        let envelope_sha256 = Digest32::digest_bytes(submission.envelope_json.as_bytes());
-        if reservation.try_get::<String, _>("submission_id")? != submission.id
-            || reservation.try_get::<String, _>("envelope_json")? != submission.envelope_json
-            || reservation
-                .try_get::<Vec<u8>, _>("envelope_sha256")?
-                .as_slice()
-                != envelope_sha256.as_bytes()
-            || reservation
-                .try_get::<Vec<u8>, _>("controller_public_key")?
-                .as_slice()
-                != submission.controller_public_key
-            || reservation
-                .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
-                .as_slice()
-                != submission.session_genesis_host_public_key
-            || reservation
-                .try_get::<Vec<u8>, _>("replay_session_id")?
-                .as_slice()
-                != submission.replay_session_id
-            || reservation
-                .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
-                .as_slice()
-                != submission.session_genesis_host_nonce
-            || reservation
-                .try_get::<Vec<u8>, _>("session_genesis_sha256")?
-                .as_slice()
-                != submission.session_genesis_sha256
-        {
-            return Err(DbError::SubmissionConflict);
-        }
+        check_reserved_submission(&reservation, submission)?;
         let reservation_state: String = reservation.try_get("state")?;
         if reservation_state == "committed" {
             let lifecycle = self
