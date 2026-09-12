@@ -1128,65 +1128,20 @@ impl Engine {
             None
         };
 
-        let mut result = json!({
-            "position": position_state,
-            "sprite": sprite_state,
-        });
-        if let Some(subtype) = subtype {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("subtype".to_owned(), subtype);
-        }
-        if let Some(npc_ai) = npc_ai {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("npc_ai".to_owned(), npc_ai);
-        }
-        if let Some(human_continuation) = human_continuation {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("human_continuation".to_owned(), human_continuation);
-        }
-        if let Some(human_structure) = human_structure {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("human_structure".to_owned(), human_structure);
-        }
-        if let Some(pc_tail) = pc_tail {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("pc_tail".to_owned(), pc_tail);
-        }
-        if let Some(pc_core) = pc_core {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("pc_core".to_owned(), pc_core);
-        }
-        if let Some(pc_qa) = pc_qa {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("pc_qa".to_owned(), Value::Array(pc_qa));
-        }
-        if let Some(pc_interface) = pc_interface {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("pc_interface".to_owned(), pc_interface);
-        }
-        if let Some(pc_portrait) = pc_portrait {
-            result
-                .as_object_mut()
-                .expect("parity entity runtime must be an object")
-                .insert("pc_portrait".to_owned(), pc_portrait);
-        }
-        result
+        serde_json::to_value(projections::EntityRuntime {
+            position: position_state,
+            sprite: sprite_state,
+            subtype,
+            npc_ai,
+            human_continuation,
+            human_structure,
+            pc_tail,
+            pc_core,
+            pc_qa,
+            pc_interface,
+            pc_portrait,
+        })
+        .expect("typed entity parity envelope must serialize")
     }
     /// Read-only schema-13 parity view of gameplay-authoritative global state.
     #[doc(hidden)]
@@ -1248,25 +1203,28 @@ impl Engine {
     /// from each PC's active shield links in `pc_tail`.
     #[doc(hidden)]
     pub fn parity_shield_controller_state(&self) -> serde_json::Value {
-        use serde_json::{Value, json};
-
         let entity = |id: EntityId| {
-            let kind = match id.kind() {
-                crate::element::EntityIdKind::Pc => "pc",
-                other => panic!("shield controller protects non-PC entity {other:?}"),
-            };
-            json!({ "kind": kind, "index": id.index() })
+            assert!(
+                matches!(id.kind(), crate::element::EntityIdKind::Pc),
+                "shield controller protects non-PC entity {:?}",
+                id.kind()
+            );
+            typed_entity_reference(id)
         };
         let shield = &self.inner.world.shield;
-        json!({
-            "is_protected": shield.is_protected,
-            "protected_pc": shield.protected_pc.map(&entity).unwrap_or(Value::Null),
-            "danger_point": {
-                "x": { "bits": shield.danger_point.x.to_bits() },
-                "y": { "bits": shield.danger_point.y.to_bits() },
-                "z": { "bits": shield.danger_point.z.to_bits() },
+        let bits = |value: f32| projections::FloatBits {
+            bits: value.to_bits(),
+        };
+        serde_json::to_value(projections::ShieldController {
+            is_protected: shield.is_protected,
+            protected_pc: shield.protected_pc.map(entity),
+            danger_point: projections::Point3Bits {
+                x: bits(shield.danger_point.x),
+                y: bits(shield.danger_point.y),
+                z: bits(shield.danger_point.z),
             },
         })
+        .expect("typed shield controller parity must serialize")
     }
 
     /// Canonical manager-insertion-ordered sequence state for schema-13
@@ -1530,14 +1488,12 @@ impl Engine {
     /// fields that survive Original save/load and feed later simulation.
     #[doc(hidden)]
     pub fn parity_sound_sources_state(&self) -> serde_json::Value {
-        use serde_json::{Value, json};
-
-        let float = parity_float;
+        let float = typed_float;
         let sources = &self.inner.feedback.sound_sim.sources;
         let mut result = Vec::with_capacity(sources.num_sources());
         for index in 0..sources.num_sources() {
             let Some(source) = sources.get(index) else {
-                result.push(Value::Null);
+                result.push(None);
                 continue;
             };
             let kind = match source.source_kind {
@@ -1552,28 +1508,33 @@ impl Engine {
                 crate::sound_geometry::SoundSourceAltitude::Top => 2,
                 crate::sound_geometry::SoundSourceAltitude::NoAltitude => 3,
             };
-            result.push(json!({
-                "kind": kind,
-                "id": source.id,
-                "global": source.is_global,
-                "inner_distance": source.inner_distance,
-                "outer_distance": source.outer_distance,
-                "noise_covering_distance": source.noise_covering_distance,
-                "inner_volume": source.inner_volume,
-                "outer_volume": source.outer_volume,
-                "shape": source.shape.iter().map(|point| json!({
-                    "x": float(point.x), "y": float(point.y)
-                })).collect::<Vec<_>>(),
-                "altitude": altitude,
-                "min_delay": source.min_delay,
-                "max_delay": source.max_delay,
-                "delay_stepping": source.delay_stepping,
-                "timer": source.timer,
-                "active": source.active,
-                "ambience_enabled": source.ambience_enabled,
+            result.push(Some(projections::SoundSource {
+                kind: kind,
+                id: source.id,
+                global: source.is_global,
+                inner_distance: source.inner_distance,
+                outer_distance: source.outer_distance,
+                noise_covering_distance: source.noise_covering_distance,
+                inner_volume: source.inner_volume,
+                outer_volume: source.outer_volume,
+                shape: source
+                    .shape
+                    .iter()
+                    .map(|point| projections::Point2 {
+                        x: float(point.x),
+                        y: float(point.y),
+                    })
+                    .collect::<Vec<_>>(),
+                altitude: altitude,
+                min_delay: source.min_delay,
+                max_delay: source.max_delay,
+                delay_stepping: source.delay_stepping,
+                timer: source.timer,
+                active: source.active,
+                ambience_enabled: source.ambience_enabled,
             }));
         }
-        Value::Array(result)
+        serde_json::to_value(result).expect("typed sound source parity must serialize")
     }
 
     /// Ordered deterministic source-completion deadlines. Looped sources have
@@ -1581,9 +1542,7 @@ impl Engine {
     /// order in which Original queued their pending playback records.
     #[doc(hidden)]
     pub fn parity_sound_completion_frontier_state(&self) -> serde_json::Value {
-        use serde_json::json;
-
-        serde_json::Value::Array(
+        serde_json::to_value(
             self.inner
                 .feedback
                 .sound_sim
@@ -1603,13 +1562,14 @@ impl Engine {
                             playing.source_index
                         );
                     }
-                    json!({
-                        "source_index": playing.source_index,
-                        "finish_frame": playing.finish_frame,
-                    })
+                    projections::SoundCompletion {
+                        source_index: playing.source_index,
+                        finish_frame: playing.finish_frame,
+                    }
                 })
-                .collect(),
+                .collect::<Vec<_>>(),
         )
+        .expect("typed sound completion parity must serialize")
     }
 
     /// Serialized global AI-manager state. Mission-static seek/archery
@@ -1617,41 +1577,55 @@ impl Engine {
     /// mutable statuses, reservations, counters, alerts, and saved RNG seed.
     #[doc(hidden)]
     pub fn parity_ai_global_state(&self) -> serde_json::Value {
-        use serde_json::{Value, json};
-
-        let entity = parity_entity_reference;
+        let entity = typed_entity_reference;
         let global = &self.inner.ai.global;
-        json!({
-            "stupid_soldiers_cheat": global.stupid_soldiers_cheat,
-            "seek_points": global.seek_points.iter().map(|point| json!({
-                "frame_when_full_interest": point.frame_when_full_interest,
-                "last_calculated_interest": point.last_calculated_interest,
-                "locked": point.locked,
-            })).collect::<Vec<_>>(),
-            "archery_sectors": global.archery_sectors.iter().map(|sector| json!({
-                "num_owners": sector.num_owners,
-                "point_owners": sector.points.iter().map(|point| point.owner
-                    .map(&entity).unwrap_or(Value::Null)).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
-            "green_alert_soldiers": global.green_alert_soldiers,
-            "yellow_alert_soldiers": global.yellow_alert_soldiers,
-            "red_alert_soldiers": global.red_alert_soldiers,
-            "overall_alert_status": global.overall_alert_status as u32,
-            "overall_villain_alert_status": global.overall_villain_alert_status as u32,
-            "saved_random_seed": global.saved_random_seed,
-            "forbidden_remarks": global.forbidden_remarks.iter().map(|entry| json!({
-                "remark": entry.remark as u32,
-                "flags": entry.flags,
-                "speech_id": entry.speech_id,
-                // This is deliberately the stored scalar, not a normalized
-                // entity reference. The original game stores creation order here;
-                // parity must expose any slot-vs-creation-order divergence.
-                "guy_index": entry.guy_index,
-                "bad_guy": entry.bad_guy,
-                "forbidden_till_frame": entry.forbidden_till_frame,
-            })).collect::<Vec<_>>(),
-            "current_speech_variant": global.current_speech_variant,
+        serde_json::to_value(projections::GlobalAi {
+            stupid_soldiers_cheat: global.stupid_soldiers_cheat,
+            seek_points: global
+                .seek_points
+                .iter()
+                .map(|point| projections::SeekPointStatus {
+                    frame_when_full_interest: point.frame_when_full_interest,
+                    last_calculated_interest: point.last_calculated_interest,
+                    locked: point.locked,
+                })
+                .collect::<Vec<_>>(),
+            archery_sectors: global
+                .archery_sectors
+                .iter()
+                .map(|sector| projections::ArcherySector {
+                    num_owners: sector.num_owners,
+                    point_owners: sector
+                        .points
+                        .iter()
+                        .map(|point| point.owner.map(&entity))
+                        .collect::<Vec<_>>(),
+                })
+                .collect::<Vec<_>>(),
+            green_alert_soldiers: global.green_alert_soldiers,
+            yellow_alert_soldiers: global.yellow_alert_soldiers,
+            red_alert_soldiers: global.red_alert_soldiers,
+            overall_alert_status: global.overall_alert_status as u32,
+            overall_villain_alert_status: global.overall_villain_alert_status as u32,
+            saved_random_seed: global.saved_random_seed,
+            forbidden_remarks: global
+                .forbidden_remarks
+                .iter()
+                .map(|entry| projections::ForbiddenRemark {
+                    remark: entry.remark as u32,
+                    flags: entry.flags,
+                    speech_id: entry.speech_id,
+                    // This is deliberately the stored scalar, not a normalized
+                    // entity reference. The original game stores creation order here;
+                    // parity must expose any slot-vs-creation-order divergence.
+                    guy_index: entry.guy_index,
+                    bad_guy: entry.bad_guy,
+                    forbidden_till_frame: entry.forbidden_till_frame,
+                })
+                .collect::<Vec<_>>(),
+            current_speech_variant: global.current_speech_variant,
         })
+        .expect("typed global AI parity must serialize")
     }
 
     /// Exact engine player-character order. The portrait bar has a
