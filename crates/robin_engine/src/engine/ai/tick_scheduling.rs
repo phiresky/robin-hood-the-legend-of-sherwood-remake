@@ -641,12 +641,10 @@ impl EngineInner {
             // such as ale bottles, so preserve the element kind while still
             // treating a missing raw slot as corrupted state.
             let target_id = self.expect_entity_id_for_index(target_handle.get(), "AI focus target");
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI data", npc_id.index()),
+            );
             crate::ai_vision::focus_entity(npc, target_id);
             focus_channel_fired = true;
         }
@@ -657,12 +655,10 @@ impl EngineInner {
             // world X/Y in `starePoint`.
             let point_3d =
                 self.position_to_point_3d(assets, point.sector, point.level, point.x, point.y);
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI data", npc_id.index()),
+            );
             crate::ai_vision::focus_point(
                 npc,
                 crate::coordinates::GroundPoint::new(point_3d.x, point_3d.y),
@@ -671,12 +667,10 @@ impl EngineInner {
         }
 
         if effects.unfocus {
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI data", npc_id.index()),
+            );
             crate::ai_vision::unfocus(npc);
             focus_channel_fired = true;
         }
@@ -697,12 +691,10 @@ impl EngineInner {
         // back open at 8 units/frame.
         if effects.slowly_open_eyes {
             let standard = self.ai.standard_view_polygon_radius;
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost AI data", npc_id.index()));
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI data", npc_id.index()),
+            );
             npc.view_transition = true;
             npc.view_radius = 5;
             npc.view_radius_base = 5;
@@ -777,9 +769,10 @@ impl EngineInner {
         let guard_delta = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("guard-delta owner {} lost its AI", npc_id.index()))
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!("guard-delta owner {} lost its AI", npc_id.index()),
+            )
             .outbox
             .actor
             .set_guarded_pc
@@ -872,12 +865,10 @@ impl EngineInner {
         // `fleeing_run_for_arrow_reserves`.
         {
             let refill = {
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| panic!("bow-ammo owner {} lost its AI", npc_id.index()));
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("bow-ammo owner {} lost its AI", npc_id.index()),
+                );
                 std::mem::take(&mut ai.outbox.actor.refill_bow_ammo)
             };
             if refill {
@@ -950,9 +941,10 @@ impl EngineInner {
         let unalert = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("unalert owner {} lost its AI", npc_id.index()))
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!("unalert owner {} lost its AI", npc_id.index()),
+            )
             .outbox
             .actor
             .take_unalert_near_charly_seekers();
@@ -1424,9 +1416,10 @@ impl EngineInner {
         let forget_pos = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("pending-drain owner {} lost its AI", npc_id.index()))
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost its AI", npc_id.index()),
+            )
             .outbox
             .actor
             .forget_nearby_coins
@@ -1540,12 +1533,10 @@ impl EngineInner {
         // (`init_battle_before_door` + `send_before_door_to_fight`
         // in `engine/soldier_helpers.rs`) are wired below.
         let in_house_alert = {
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("pending-drain owner {} lost its AI", npc_id.index()));
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost its AI", npc_id.index()),
+            );
             std::mem::take(&mut ai.outbox.actor.enemy_in_house_alert)
         };
         if in_house_alert {
@@ -1609,9 +1600,10 @@ impl EngineInner {
             let grid = &self.world.fast_grid;
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} has no enemy AI"))
+                .expect_enemy_ai_mut(
+                    npc_id,
+                    format_args!("panic continuation owner {npc_id:?} has no enemy AI"),
+                )
                 .observe_after_synchronous_panic(sim, &ctx, &tick, Some(grid));
             // The resumed tail contains state changes, focusing, and movement.
             // Close their owner-local callbacks and actor effects before the
@@ -1707,9 +1699,10 @@ impl EngineInner {
             let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} has no enemy AI"))
+                .expect_enemy_ai_mut(
+                    npc_id,
+                    format_args!("lost-enemy overview owner {npc_id:?} has no enemy AI"),
+                )
                 .get_battle_overview(0, &ctx, &tick);
             self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
         }

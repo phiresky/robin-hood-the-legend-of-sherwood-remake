@@ -750,9 +750,10 @@ impl EngineInner {
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         self.world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("patrol-start macro owner {} lost its AI", npc_id.index()))
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!("patrol-start macro owner {} lost its AI", npc_id.index()),
+            )
             .execute_next_macro_command(sim, &ctx);
     }
 

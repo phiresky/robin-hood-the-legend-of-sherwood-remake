@@ -5775,9 +5775,10 @@ impl EngineInner {
             if is_civilian {
                 self.world
                     .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| panic!("panic owner {} lost AI", npc_id.index()))
+                    .expect_ai_controller_mut(
+                        npc_id,
+                        format_args!("panic owner {} lost AI", npc_id.index()),
+                    )
                     .say(crate::ai::Remark::CivPanic);
                 self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
@@ -6044,9 +6045,10 @@ impl EngineInner {
             );
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()))
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("panic owner {} has no AI", npc_id.index()),
+                )
                 .say(if is_civilian {
                     crate::ai::Remark::CivPanic
                 } else {
@@ -6097,12 +6099,10 @@ impl EngineInner {
             // Not new: upgrade-only bump of `lasting_panic_runs`
             // (`if lasting_panic_runs < runs`).  No state change, no
             // `say()`, no self-fire.
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("panic owner {} has no AI", npc_id.index()),
+            );
             if ai.lasting_panic_runs < request.runs {
                 ai.lasting_panic_runs = request.runs;
             }
