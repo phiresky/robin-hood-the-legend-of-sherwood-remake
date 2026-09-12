@@ -44,15 +44,22 @@ fn production_entity_publication_has_no_fixture_behavior() {
             struct NoFixtureBehavior;
             impl<'ast> Visit<'ast> for NoFixtureBehavior {
                 fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
-                    if attribute.path().is_ident("cfg") {
+                    if attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr") {
                         let cfg = attribute
                             .meta
                             .require_list()
                             .expect("cfg arguments")
                             .tokens
                             .to_string();
+                        let selects_test_build = cfg
+                            .split(|character: char| {
+                                !character.is_ascii_alphanumeric()
+                                    && character != '_'
+                                    && character != '-'
+                            })
+                            .any(|word| matches!(word, "test" | "test-helpers"));
                         assert!(
-                            !cfg.contains("test"),
+                            !selects_test_build,
                             "production publication must not vary in test builds: {cfg}"
                         );
                     }

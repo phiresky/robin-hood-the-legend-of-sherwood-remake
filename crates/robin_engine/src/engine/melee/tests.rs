@@ -2,7 +2,7 @@ use super::*;
 use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::element::ActiveFlight;
-use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+use crate::scb::{SCB_VERSION, ScbFile};
 
 fn make_engine() -> EngineInner {
     let mut engine = EngineInner::new();
