@@ -1410,11 +1410,11 @@ impl EnemyAi {
         self.list_them.clear();
         for &handle in &ctx.self_seen_enemy_handles {
             let Some(target) = ctx.entity_view(handle) else {
-                // Detectable removal is owner-ordered; a target killed by an
-                // earlier owner can remain in this observer's retained seen
-                // list until its next refresh.
-                // TODO: remove dead target detectables synchronously from all
-                // later observers in the same actor pass.
+                // A retained seen handle can lack a spatial view even while
+                // its actor exists: entity_has_ai_view excludes actors with
+                // no layer. Missing observation does not prove removal.
+                // TODO: establish Original removal/invalid-layer handling
+                // before changing owner-ordered detectable retention.
                 tracing::warn!(
                     me = self.base.me,
                     target = handle,
@@ -4878,11 +4878,10 @@ impl EnemyAi {
         let mut nearest = None;
         let mut min_distance: u16 = 65432; // Original `oo` sentinel
         let Some(owner_view) = ctx.entity_view(self.base.me) else {
-            // Dense fights can deactivate/delete this owner earlier in the
-            // same actor pass, after its normal-timer tail was admitted. A
-            // dead owner cannot select a meaningful replacement target.
-            // TODO: prune the admitted tail when the earlier slot removes
-            // its owner instead of reaching this stale callback.
+            // Actors with no layer are omitted from spatial views even when
+            // still present; current timer tails dispatch synchronously.
+            // TODO: distinguish missing-layer observations from actual removal
+            // and establish Original behavior before changing admitted tails.
             tracing::warn!(
                 me = self.base.me,
                 "primary-target replacement owner left the live entity view earlier in this frame"

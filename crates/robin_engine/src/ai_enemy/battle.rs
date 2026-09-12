@@ -608,10 +608,10 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
         if ctx.entity_view(self.base.me).is_none() {
-            // An earlier actor slot can remove this soldier after its timer
-            // tail was admitted. There is no live owner on which to apply a
-            // tactical decision.
-            // TODO: cancel admitted owner tails at the removal boundary.
+            // Actors with no layer are omitted from spatial views even when
+            // still present; current timer tails dispatch synchronously.
+            // TODO: distinguish missing-layer observations from actual removal
+            // and establish Original behavior before changing admitted tails.
             tracing::warn!(
                 me = self.base.me,
                 "battle planning skipped after owner left the live entity view"
