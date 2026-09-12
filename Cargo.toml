@@ -199,8 +199,30 @@ codegen-backend = "llvm"
 [profile.test.package.curve25519-dalek]
 codegen-backend = "llvm"
 
-# The wildcard dependency override excludes workspace members: they inherit
-# dev's opt-level 0, or the selected custom profile's workspace opt-level.
+# The wildcard dependency override excludes workspace members. Keep explicit
+# package settings: custom-profile inheritance also affects host build scripts
+# and proc-macros, whose build-override defaults differ from normal libraries.
+# Full-workspace unit graphs, not a leaf-library build, must verify changes.
+[profile.dev.package.robin_rs]
+opt-level = 0
+[profile.dev.package.robin_engine]
+opt-level = 0
+[profile.dev.package.robin_lua]
+opt-level = 0
+[profile.dev.package.robin_replay_format]
+opt-level = 0
+[profile.dev.package.robin_ranked_verification]
+opt-level = 0
+[profile.dev.package.robin_spellforge]
+opt-level = 0
+[profile.dev.package.robin_util]
+opt-level = 0
+[profile.dev.package.robin_assets]
+opt-level = 0
+[profile.dev.package.robin_content]
+opt-level = 0
+[profile.dev.package.robin_state_hash_derive]
+opt-level = 0
 
 # rilua's native I/O compatibility path calls C `fprintf("%.14g", f64)`.
 # Cranelift deliberately rejects floating-point C variadic arguments because
@@ -236,6 +258,27 @@ debug = 2
 # Use with `cargo build --profile dev-opt1 --bin robin`.
 [profile.dev-opt1]
 inherits = "dev"
+opt-level = 1
+
+[profile.dev-opt1.package.robin_rs]
+opt-level = 1
+[profile.dev-opt1.package.robin_engine]
+opt-level = 1
+[profile.dev-opt1.package.robin_lua]
+opt-level = 1
+[profile.dev-opt1.package.robin_replay_format]
+opt-level = 1
+[profile.dev-opt1.package.robin_ranked_verification]
+opt-level = 1
+[profile.dev-opt1.package.robin_spellforge]
+opt-level = 1
+[profile.dev-opt1.package.robin_util]
+opt-level = 1
+[profile.dev-opt1.package.robin_assets]
+opt-level = 1
+[profile.dev-opt1.package.robin_content]
+opt-level = 1
+[profile.dev-opt1.package.robin_state_hash_derive]
 opt-level = 1
 
 # Wasm profiles — inherit from dev/release but force the LLVM codegen
