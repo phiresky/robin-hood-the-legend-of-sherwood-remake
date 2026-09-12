@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use robin_engine::order::OrderType;
 use robin_engine::profiles::ProfileManager;
-use robin_engine::sbfile::{SB_FILE_READ, SbFile};
+use robin_engine::sbfile::SbFile;
 use robin_engine::sprite_script::{FrameKind, SpriteInfo, SpriteScriptor, UNMAPPED};
 
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
@@ -32,7 +32,7 @@ fn audit_datadir(root: &Path) -> Result<()> {
         .find(|path| path.is_dir())
         .ok_or_else(|| anyhow!("{} has neither Data/ nor DATA/", root.display()))?;
     let cpf = data.join("Configuration/profile.cpf");
-    let mut file = SbFile::open(&cpf.to_string_lossy(), SB_FILE_READ).map_err(|code| {
+    let mut file = SbFile::open(&cpf.to_string_lossy()).map_err(|code| {
         anyhow!(
             "open {} failed with legacy file error {code}",
             cpf.display()

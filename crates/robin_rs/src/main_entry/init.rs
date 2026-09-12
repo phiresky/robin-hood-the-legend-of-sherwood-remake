@@ -12,7 +12,6 @@ use robin_engine::engine as engine_api;
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::ProfileManager;
-use robin_engine::sbfile as engine_sbfile;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR};
 use robin_engine::sbfile::{SbFile, SbFileSystem};
@@ -888,7 +887,7 @@ fn load_profiles_with_files(
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
     let mut file = files
-        .open(cpf_path, engine_sbfile::SB_FILE_READ)
+        .open(cpf_path)
         .map_err(|status| InitError::ContentProfilesOpen {
             path: cpf_path,
             status,

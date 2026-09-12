@@ -471,14 +471,14 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
         let mut temporary = NamedTempFile::new().unwrap();
         temporary.write_all(bytes).unwrap();
         temporary.flush().unwrap();
         let path = temporary.path().to_str().unwrap();
-        let mut file = SbFile::open(path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 

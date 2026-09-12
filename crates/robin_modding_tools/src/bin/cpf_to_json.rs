@@ -7,7 +7,7 @@
 
 use anyhow::Context;
 use robin_engine::profiles::ProfileManager;
-use robin_engine::sbfile::{SB_FILE_READ, SbFile};
+use robin_engine::sbfile::SbFile;
 
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
 #[command(
@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
         )
         .with_context(|| format!("load {input_path}"))?
     } else {
-        let mut file = SbFile::open(input_path, SB_FILE_READ)
+        let mut file = SbFile::open(input_path)
             .map_err(|status| anyhow::anyhow!("open {input_path}: file error {status}"))?;
         let mut mgr = ProfileManager::new();
         mgr.load_all_legacy_cpf(&mut file)

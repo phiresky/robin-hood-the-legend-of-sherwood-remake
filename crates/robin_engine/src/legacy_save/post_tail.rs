@@ -769,7 +769,7 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     struct NoVm;
 
@@ -845,7 +845,7 @@ mod tests {
         let mut temporary = NamedTempFile::new().unwrap();
         temporary.write_all(bytes).unwrap();
         temporary.flush().unwrap();
-        let mut file = SbFile::open(temporary.path().to_str().unwrap(), SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(temporary.path().to_str().unwrap()).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 

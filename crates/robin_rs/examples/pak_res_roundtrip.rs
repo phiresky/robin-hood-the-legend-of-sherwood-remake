@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use robin_assets::picture::Picture;
 use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir::{ShippingDatadir, decode_mission_compressed};
-use robin_engine::sbfile::{SB_FILE_READ, SbFile};
+use robin_engine::sbfile::SbFile;
 
 #[derive(clap::Parser, serde::Serialize, serde::Deserialize)]
 struct Args {
@@ -65,8 +65,8 @@ fn main() -> Result<()> {
         let result = if k.ends_with(".pak") {
             // Manual walk: read back-to-back packed 16-bit pictures via the
             // public Picture::load_sixteen_from_stream entry point.
-            let mut file = SbFile::open(scratch.to_str().unwrap(), SB_FILE_READ)
-                .map_err(|e| anyhow!("open: {e}"))?;
+            let mut file =
+                SbFile::open(scratch.to_str().unwrap()).map_err(|e| anyhow!("open: {e}"))?;
             let total = file.get_size();
             let mut count = 0;
             let mut last = String::new();

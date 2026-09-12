@@ -7,7 +7,7 @@
 
 use robin_engine::engine::GlobalOptions;
 use robin_engine::profiles::ProfileManager;
-use robin_engine::sbfile::{SB_FILE_READ, SbFileSystem};
+use robin_engine::sbfile::SbFileSystem;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileLoadError {
@@ -46,13 +46,12 @@ pub fn load_profiles(
         } else {
             let cpf_path = "Data/Configuration/profile.cpf";
             tracing::info!(path = cpf_path, "verifier loading legacy profile catalog");
-            let mut file =
-                files
-                    .open(cpf_path, SB_FILE_READ)
-                    .map_err(|status| ProfileLoadError::Open {
-                        path: cpf_path,
-                        status,
-                    })?;
+            let mut file = files
+                .open(cpf_path)
+                .map_err(|status| ProfileLoadError::Open {
+                    path: cpf_path,
+                    status,
+                })?;
             let mut profiles = ProfileManager::new();
             profiles
                 .load_all_legacy_cpf(&mut file)

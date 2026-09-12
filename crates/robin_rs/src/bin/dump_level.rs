@@ -41,12 +41,12 @@ fn main() {
 
     use robin_engine::level_data::{ChunkReader, LevelFormat, load_proto_level};
     use robin_engine::profiles::{CivilianType, ProfileManager};
-    use robin_engine::sbfile::{SB_FILE_READ, SbFile};
+    use robin_engine::sbfile::SbFile;
     use std::collections::BTreeSet;
 
     // Load the proto file (geometry, motion areas, buildings, etc.)
     let proto_path = format!("{}/{}.rhp", args.level_dir, args.proto);
-    let proto_file = SbFile::open(&proto_path, SB_FILE_READ).unwrap_or_else(|e| {
+    let proto_file = SbFile::open(&proto_path).unwrap_or_else(|e| {
         eprintln!("Failed to open {proto_path}: error {e}");
         std::process::exit(1);
     });
@@ -66,7 +66,7 @@ fn main() {
     // under a naive `|_| false` stub.
     let default_cpf = format!("{}/../Configuration/profile.cpf", args.level_dir);
     let cpf_path = args.profile_cpf.clone().unwrap_or(default_cpf);
-    let beggar_indices: BTreeSet<u32> = match SbFile::open(&cpf_path, SB_FILE_READ) {
+    let beggar_indices: BTreeSet<u32> = match SbFile::open(&cpf_path) {
         Ok(mut file) => {
             let mut mgr = ProfileManager::new();
             match mgr.load_all_legacy_cpf(&mut file) {
@@ -98,7 +98,7 @@ fn main() {
     // Optionally load mission too.
     let mission = if let Some(ref name) = args.mission {
         let mission_path = format!("{}/{}.rhm", args.level_dir, name);
-        let mission_file = SbFile::open(&mission_path, SB_FILE_READ).unwrap_or_else(|e| {
+        let mission_file = SbFile::open(&mission_path).unwrap_or_else(|e| {
             eprintln!("Failed to open {mission_path}: error {e}");
             std::process::exit(1);
         });

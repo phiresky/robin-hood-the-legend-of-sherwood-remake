@@ -544,7 +544,7 @@ fn load_loose_mission_names(
     files: &SbFileSystem,
 ) -> std::collections::BTreeMap<u32, String> {
     let path = format!("{root}/Data/Configuration/profile.cpf");
-    let Ok(mut file) = files.open(&path, robin_engine::sbfile::SB_FILE_READ) else {
+    let Ok(mut file) = files.open(&path) else {
         tracing::debug!(
             root,
             "Language pack has no localized profile.cpf mission titles"

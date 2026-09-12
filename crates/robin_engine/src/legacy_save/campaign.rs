@@ -861,14 +861,14 @@ mod tests {
     use crate::legacy_save::{
         LegacySaveAbiProfile, LegacySaveHeader, PORT_LINUX_I386_MAGIC, RETAIL_WINDOWS_X86_MAGIC,
     };
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
         let mut fixture = NamedTempFile::new().unwrap();
         fixture.write_all(bytes).unwrap();
         fixture.flush().unwrap();
         let path = fixture.path().to_string_lossy().into_owned();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 
@@ -945,7 +945,7 @@ mod tests {
 
     fn read_fixture(path: &Path) -> (LegacySaveHeader, LegacySaveCampaigns) {
         let path = path.to_string_lossy();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         let mut reader = LegacyReader::new(&mut file);
         let header = LegacySaveHeader::read(&mut reader).unwrap();
         let campaigns =
@@ -956,7 +956,7 @@ mod tests {
     fn read_fixture_profiles() -> Option<ProfileManager> {
         let path = repository_fixture("datadirs/fullgame_linux/Data/Configuration/profile.cpf")?;
         let path = path.to_string_lossy();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         let mut profiles = ProfileManager::new();
         profiles.load_all_legacy_cpf(&mut file).unwrap();
         Some(profiles)

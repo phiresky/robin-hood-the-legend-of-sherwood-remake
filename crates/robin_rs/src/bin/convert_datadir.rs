@@ -59,7 +59,7 @@ use robin_engine::level_data::{
 };
 use robin_engine::order::OrderType;
 use robin_engine::profiles::{Action, CivilianType, ProfileManager};
-use robin_engine::sbfile::{SB_FILE_READ, SbFile, resolve_case_insensitive};
+use robin_engine::sbfile::{SbFile, resolve_case_insensitive};
 use robin_engine::sprite_script;
 use robin_rs::main_entry::{FALLBACK_LOCALE_FOLDER, LANGUAGE_FOLDERS};
 
@@ -780,8 +780,8 @@ impl Converter {
         let resolved = self
             .in_path(rel)
             .ok_or_else(|| anyhow!("cpf missing: {rel}"))?;
-        let mut file = SbFile::open(&resolved.src.to_string_lossy(), SB_FILE_READ)
-            .map_err(|e| anyhow!("open cpf: {e}"))?;
+        let mut file =
+            SbFile::open(&resolved.src.to_string_lossy()).map_err(|e| anyhow!("open cpf: {e}"))?;
         let mut mgr = ProfileManager::new();
         mgr.load_all_legacy_cpf(&mut file)
             .map_err(|e| anyhow!("parse cpf: {e}"))?;
@@ -1643,8 +1643,7 @@ fn convert_red(src: &Path, dst: &Path) -> Result<()> {
 }
 
 fn convert_rhp(src: &Path, dst: &Path) -> Result<()> {
-    let file =
-        SbFile::open(&src.to_string_lossy(), SB_FILE_READ).map_err(|e| anyhow!("open rhp: {e}"))?;
+    let file = SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open rhp: {e}"))?;
     let mut reader = ChunkReader::new(file);
     let format = {
         let tag = reader
@@ -1662,7 +1661,7 @@ fn convert_rhm(src: &Path, dst: &Path, is_beggar: &dyn Fn(u32) -> bool) -> Resul
     // parses cleanly. Fine for a one-shot converter.
     let src_str = src.to_string_lossy().to_string();
     for format in [LevelFormat::Fullgame, LevelFormat::Demo] {
-        let file = SbFile::open(&src_str, SB_FILE_READ).map_err(|e| anyhow!("open rhm: {e}"))?;
+        let file = SbFile::open(&src_str).map_err(|e| anyhow!("open rhm: {e}"))?;
         let mut reader = ChunkReader::new(file);
         if let Ok(mission) = load_mission(&mut reader, format, is_beggar) {
             return write_json_pretty(dst, &mission);
@@ -1742,8 +1741,7 @@ fn convert_res(src: &Path, out_dir: &Path) -> Result<()> {
 /// more. Read pictures until EOF and dump each as a PNG.
 fn convert_pak(src: &Path, out_dir: &Path) -> Result<()> {
     fs::create_dir_all(out_dir)?;
-    let mut file =
-        SbFile::open(&src.to_string_lossy(), SB_FILE_READ).map_err(|e| anyhow!("open pak: {e}"))?;
+    let mut file = SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open pak: {e}"))?;
     let total = file.get_size();
     let mut entries = Vec::new();
     let mut i = 0usize;
@@ -1811,8 +1809,8 @@ fn write_picture_png(pic: &Picture, dst: &Path) -> Result<()> {
 /// as a PNG.  The disk format uses `Picture::load_sixteen_from_stream`,
 /// which owns the bzip2 decompress of the 16-bit RGB565 payload.
 fn convert_sixteen_picture_to_png(src: &Path, dst: &Path) -> Result<()> {
-    let mut file = SbFile::open(&src.to_string_lossy(), SB_FILE_READ)
-        .map_err(|e| anyhow!("open {}: {e}", src.display()))?;
+    let mut file =
+        SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open {}: {e}", src.display()))?;
     let picture = Picture::load_sixteen_from_stream(&mut file)
         .with_context(|| format!("decoding {}", src.display()))?;
     if let Some(parent) = dst.parent() {
@@ -2094,8 +2092,8 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     let cpf_path =
         in_path("Configuration/profile.cpf").ok_or_else(|| anyhow!("profile.cpf missing"))?;
     let mut cpf = {
-        let mut file = SbFile::open(&cpf_path.to_string_lossy(), SB_FILE_READ)
-            .map_err(|e| anyhow!("open cpf: {e}"))?;
+        let mut file =
+            SbFile::open(&cpf_path.to_string_lossy()).map_err(|e| anyhow!("open cpf: {e}"))?;
         let mut mgr = ProfileManager::new();
         mgr.load_all_legacy_cpf(&mut file)
             .map_err(|e| anyhow!("parse cpf: {e}"))?;
@@ -2331,7 +2329,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let Some(path) = resolve_data_file(&source.data_dir, "Configuration/profile.cpf") else {
             continue;
         };
-        let mut file = SbFile::open(&path.to_string_lossy(), SB_FILE_READ)
+        let mut file = SbFile::open(&path.to_string_lossy())
             .map_err(|error| anyhow!("open locale {} cpf: {error}", source.iso))?;
         let mut profiles = ProfileManager::new();
         profiles
@@ -3174,7 +3172,7 @@ fn transcode_pak_drop_bzip(path: &Path) -> Result<Vec<u8>> {
 /// can read the image straight from the shipping datadir.
 fn transcode_sixteen_drop_bzip(path: &Path) -> Result<Vec<u8>> {
     use robin_assets::picture::SixteenPacking;
-    let mut file = SbFile::open(&path.to_string_lossy(), SB_FILE_READ)
+    let mut file = SbFile::open(&path.to_string_lossy())
         .map_err(|e| anyhow!("open {}: {e}", path.display()))?;
     let pic = Picture::load_sixteen_from_stream(&mut file)
         .with_context(|| format!("decoding {}", path.display()))?;

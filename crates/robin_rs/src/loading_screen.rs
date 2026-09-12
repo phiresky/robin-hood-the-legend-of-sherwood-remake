@@ -506,7 +506,7 @@ fn load_loose_loading_pictures(
 ) -> anyhow::Result<[Picture; 3]> {
     use anyhow::Context;
     let mut file = files
-        .open(pak_path, 0)
+        .open(pak_path)
         .map_err(|error| anyhow::anyhow!("cannot open '{pak_path}': error {error}"))?;
     Ok([
         Picture::load_sixteen_from_stream(&mut file).context("initial picture")?,

@@ -22,8 +22,6 @@ pub const SBFILE_ERROR_PATH_ALREADY_PRESENT: i32 = -10;
 pub const SBFILE_ERROR_PATH_NOT_IN_SET: i32 = -11;
 pub const SBFILE_ERROR_BAD_ARCHIVE: i32 = -20;
 
-pub const SB_FILE_READ: i32 = 0x01;
-
 /// Instance-owned game-file lookup state.
 ///
 /// The original game stored alternate paths in a static list and searched it
@@ -989,13 +987,13 @@ fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<AssetBytes>
 }
 
 impl SbFile {
-    pub fn open(path: &str, _flags: i32) -> Result<Self, i32> {
-        global_file_system().open(path, _flags)
+    pub fn open(path: &str) -> Result<Self, i32> {
+        global_file_system().open(path)
     }
 }
 
 impl SbFileSystem {
-    pub fn open(&self, path: &str, _flags: i32) -> Result<SbFile, i32> {
+    pub fn open(&self, path: &str) -> Result<SbFile, i32> {
         let normalised = path.replace('\\', "/");
         let requested = Path::new(&normalised);
         if let Some(root) = self.ranked_verifier_primary_path.lock().unwrap().clone() {
@@ -1123,7 +1121,7 @@ impl SbFileSystem {
     /// Read through the same overlay, locale, and confinement rules as `open`,
     /// retaining shared backing storage for memory-mounted files.
     pub fn read_shared(&self, path: &str) -> Result<AssetBytes, i32> {
-        Ok(self.open(path, SB_FILE_READ)?.into_shared_bytes())
+        Ok(self.open(path)?.into_shared_bytes())
     }
 
     /// Read a patch from the base lookup and then every overlay in mount order.
@@ -1300,12 +1298,6 @@ impl SbFile {
         global_file_system().add_overlay_zip(zip_path)
     }
 
-    /// Mount a zip using one exact `.rhm` entry to select its language or
-    /// folder-wrapped datadir root.
-    pub fn add_overlay_zip_for_mission(zip_path: &str, rhm_entry: &str) -> i32 {
-        global_file_system().add_overlay_zip_for_mission(zip_path, rhm_entry)
-    }
-
     /// Mount exact already-validated ZIP bytes without consulting a host
     /// filesystem. Browser multiplayer uses this for the complete mission and
     /// shared Spellforge library distributed by the authenticated host.
@@ -1326,25 +1318,6 @@ impl SbFile {
 
     pub fn set_primary_path(path: &str) -> i32 {
         global_file_system().set_primary_path(path)
-    }
-
-    /// Permanently confine this process's legacy asset resolver to one
-    /// canonical datadir. This is intentionally one-way: the isolated ranked
-    /// verifier child handles exactly one job and must never regain ambient
-    /// overlay, locale, VFS, current-directory, or alternate-path lookup.
-    pub fn lock_ranked_verifier_primary_path(path: &Path) -> i32 {
-        global_file_system().lock_ranked_verifier_primary_path(path)
-    }
-
-    /// Permanently confine the ranked verifier to one canonical datadir and
-    /// one exact locale directory beneath it. No fallback locale or ambient
-    /// lookup path is retained.
-    pub fn lock_ranked_verifier_primary_path_with_locale(
-        path: &Path,
-        resource_locale_root: &str,
-    ) -> i32 {
-        global_file_system()
-            .lock_ranked_verifier_primary_path_with_locale(path, resource_locale_root)
     }
 
     pub fn mount_snapshot() -> SbFileMountSnapshot {
@@ -2381,10 +2354,7 @@ mod tests {
         assert_eq!(file_system.read_all("Data/source.bin").unwrap(), b"source");
         assert_eq!(file_system.read_all("Data/core.bin").unwrap(), b"core");
         assert!(matches!(
-            file_system.open(
-                source.join("Data/source.bin").to_str().unwrap(),
-                SB_FILE_READ
-            ),
+            file_system.open(source.join("Data/source.bin").to_str().unwrap()),
             Err(SBFILE_ERROR_READ)
         ));
         assert_eq!(
@@ -2408,7 +2378,7 @@ mod tests {
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("test.bin");
         fs::write(&path, b"Hello").unwrap();
-        let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
+        let mut f = SbFile::open(path.to_str().unwrap()).unwrap();
         let mut buf = [0u8; 5];
         assert_eq!(f.read(&mut buf), SBFILE_NO_ERROR);
         assert_eq!(&buf, b"Hello");
@@ -2485,7 +2455,7 @@ mod tests {
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("u32.bin");
         fs::write(&path, [0xEF, 0xBE, 0xAD, 0xDE]).unwrap();
-        let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
+        let mut f = SbFile::open(path.to_str().unwrap()).unwrap();
         let v = crate::legacy_io::LegacyReader::new(&mut f)
             .read_u32("value")
             .unwrap();
@@ -2499,7 +2469,7 @@ mod tests {
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("str.bin");
         fs::write(&path, [0x05, 0x00, b'h', b'e', b'l', b'l', b'o']).unwrap();
-        let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
+        let mut f = SbFile::open(path.to_str().unwrap()).unwrap();
         let s = crate::legacy_io::LegacyReader::new(&mut f)
             .read_string("value")
             .unwrap();
@@ -2513,7 +2483,7 @@ mod tests {
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("chk.bin");
         fs::write(&path, [0x77, 0x77]).unwrap();
-        let mut f = SbFile::open(path.to_str().unwrap(), SB_FILE_READ).unwrap();
+        let mut f = SbFile::open(path.to_str().unwrap()).unwrap();
         crate::legacy_io::LegacyReader::new(&mut f)
             .read_checkpoint("checkpoint")
             .unwrap();
@@ -2629,13 +2599,10 @@ mod tests {
             b"approved"
         );
         assert!(file_system.resolve_data_path("../secret.res").is_none());
-        assert!(file_system.open("../secret.res", SB_FILE_READ).is_err());
+        assert!(file_system.open("../secret.res").is_err());
         assert!(
             file_system
-                .open(
-                    sibling.path().join("secret.res").to_str().unwrap(),
-                    SB_FILE_READ
-                )
+                .open(sibling.path().join("secret.res").to_str().unwrap())
                 .is_err()
         );
 
@@ -2849,14 +2816,14 @@ mod tests {
         );
 
         assert!(matches!(
-            file_system.open("Cargo.toml", SB_FILE_READ),
+            file_system.open("Cargo.toml"),
             Err(SBFILE_ERROR_FILE_NOT_FOUND)
         ));
         assert!(!file_system.try_exists("Cargo.toml").unwrap());
         assert!(file_system.resolve_data_path("Cargo.toml").is_none());
         assert!(file_system.resolve_data_dir_layers("src").is_empty());
         assert!(matches!(
-            file_system.open("Data/ambient-vfs.dat", SB_FILE_READ),
+            file_system.open("Data/ambient-vfs.dat"),
             Err(SBFILE_ERROR_FILE_NOT_FOUND)
         ));
         assert!(!file_system.try_exists("Data/ambient-vfs.dat").unwrap());
@@ -2925,13 +2892,7 @@ mod tests {
         );
 
         let assert_resolves_to = |expected: &[u8], expected_path: &Path| {
-            assert_eq!(
-                file_system
-                    .open(relative, SB_FILE_READ)
-                    .unwrap()
-                    .into_bytes(),
-                expected
-            );
+            assert_eq!(file_system.open(relative).unwrap().into_bytes(), expected);
             assert_eq!(file_system.read_all(relative).unwrap(), expected);
             assert!(file_system.try_exists(relative).unwrap());
             assert_eq!(
@@ -2988,7 +2949,7 @@ mod tests {
             SBFILE_NO_ERROR
         );
         assert!(matches!(
-            file_system.open("Data/Text/only-in-english.res", SB_FILE_READ),
+            file_system.open("Data/Text/only-in-english.res"),
             Err(SBFILE_ERROR_FILE_NOT_FOUND)
         ));
         assert!(file_system.resolve_data_dir_layers("Data/Text").is_empty());
@@ -3019,7 +2980,7 @@ mod tests {
         );
         assert_eq!(
             file_system
-                .open("Data/Configuration/profile.cpf", SB_FILE_READ)
+                .open("Data/Configuration/profile.cpf")
                 .unwrap()
                 .into_bytes(),
             b"base-profile"
@@ -3246,7 +3207,7 @@ mod tests {
         assert_eq!(shared.as_ptr(), source.as_ptr());
         assert_eq!(file_system.read_all(path).unwrap(), source.as_ref());
 
-        let mut stream = file_system.open(path, SB_FILE_READ).unwrap();
+        let mut stream = file_system.open(path).unwrap();
         let mut prefix = [0; 2];
         assert_eq!(stream.read(&mut prefix), SBFILE_NO_ERROR);
         assert_eq!(prefix, *b"sh");
@@ -3307,7 +3268,7 @@ mod tests {
             SBFILE_NO_ERROR
         );
         assert!(matches!(
-            file_system.open("escape/secret.dat", SB_FILE_READ),
+            file_system.open("escape/secret.dat"),
             Err(SBFILE_ERROR_READ)
         ));
     }

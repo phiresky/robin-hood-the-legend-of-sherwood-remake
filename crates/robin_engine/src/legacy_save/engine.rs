@@ -629,7 +629,7 @@ mod tests {
     use super::*;
     use crate::legacy_save::LegacySaveHeader;
     use crate::legacy_save::campaign::{LegacyCampaignLimits, LegacySaveCampaigns};
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     fn repository_fixture(relative: &str) -> Option<PathBuf> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -639,7 +639,7 @@ mod tests {
 
     fn read_fixture(path: &Path) -> (LegacySaveHeader, LegacyEnginePreamble) {
         let path = path.to_string_lossy();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         let mut reader = LegacyReader::new(&mut file);
         let header = LegacySaveHeader::read(&mut reader).unwrap();
         let campaigns =
@@ -738,7 +738,7 @@ mod tests {
             return;
         };
         let path = path.to_string_lossy();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         let mut reader = LegacyReader::new(&mut file);
         let header = LegacySaveHeader::read(&mut reader).unwrap();
         LegacySaveCampaigns::read(&mut reader, &LegacyCampaignLimits::default()).unwrap();

@@ -232,11 +232,8 @@ fn main() {
     }
 
     let mut pm = ProfileManager::new();
-    let mut cpf = robin_engine::sbfile::SbFile::open(
-        "Data/Configuration/profile.cpf",
-        robin_engine::sbfile::SB_FILE_READ,
-    )
-    .expect("open profile.cpf");
+    let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
+        .expect("open profile.cpf");
     pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
     let profiles = std::sync::Arc::new(pm);
     eprintln!(

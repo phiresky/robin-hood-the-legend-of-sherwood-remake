@@ -653,8 +653,7 @@ pub(super) fn parse_level_pair(
     rhm: &Path,
     beggar_ids: &BTreeSet<u32>,
 ) -> Result<(LoadedProtoLevel, LoadedMission)> {
-    let file =
-        SbFile::open(&rhp.to_string_lossy(), SB_FILE_READ).map_err(|e| anyhow!("open rhp: {e}"))?;
+    let file = SbFile::open(&rhp.to_string_lossy()).map_err(|e| anyhow!("open rhp: {e}"))?;
     let mut reader = ChunkReader::new(file);
     let format = {
         let tag = reader
@@ -664,8 +663,7 @@ pub(super) fn parse_level_pair(
     };
     let proto = load_proto_level(&mut reader, format).map_err(|e| anyhow!("rhp: {e:?}"))?;
 
-    let file =
-        SbFile::open(&rhm.to_string_lossy(), SB_FILE_READ).map_err(|e| anyhow!("open rhm: {e}"))?;
+    let file = SbFile::open(&rhm.to_string_lossy()).map_err(|e| anyhow!("open rhm: {e}"))?;
     let mut reader = ChunkReader::new(file);
     let mission = load_mission(&mut reader, format, &|idx| beggar_ids.contains(&idx))
         .map_err(|e| anyhow!("rhm: {e:?}"))?;
@@ -673,8 +671,7 @@ pub(super) fn parse_level_pair(
 }
 
 pub(super) fn read_pak_pictures(src: &Path) -> Result<Vec<Picture>> {
-    let mut file =
-        SbFile::open(&src.to_string_lossy(), SB_FILE_READ).map_err(|e| anyhow!("open pak: {e}"))?;
+    let mut file = SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open pak: {e}"))?;
     let total = file.get_size();
     let mut pics = Vec::new();
     while file.tell() < total {

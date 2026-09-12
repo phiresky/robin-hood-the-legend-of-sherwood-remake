@@ -49,7 +49,7 @@ mod tests {
         let root = std::env::var_os("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
         let data = find_data_dir(Path::new(&root)).unwrap();
         let cpf_path = resolve_data_file(&data, "Configuration/profile.cpf").expect("profile.cpf");
-        let mut file = SbFile::open(&cpf_path.to_string_lossy(), SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&cpf_path.to_string_lossy()).unwrap();
         let mut profiles = ProfileManager::new();
         profiles.load_all_legacy_cpf(&mut file).unwrap();
         let beggar_ids = profiles

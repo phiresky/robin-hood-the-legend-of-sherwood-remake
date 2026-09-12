@@ -979,7 +979,7 @@ mod tests {
                 vfs.install_preloaded_asset("original-picture", stream)
                     .unwrap();
                 let files = robin_data_io::sbfile::SbFileSystem::new(vfs);
-                let mut file = files.open("original-picture", 0).unwrap();
+                let mut file = files.open("original-picture").unwrap();
                 assert_eq!(
                     Picture::load_sixteen_from_stream(&mut file).is_ok(),
                     matches!(length, 4 | 6)
@@ -1054,7 +1054,7 @@ mod tests {
             vfs.install_preloaded_asset("sixteen-fixture.bin", stream_bytes)
                 .unwrap();
             let files = robin_data_io::sbfile::SbFileSystem::new(vfs.clone());
-            let mut file = files.open("sixteen-fixture.bin", 0).unwrap();
+            let mut file = files.open("sixteen-fixture.bin").unwrap();
             assert_eq!(
                 Picture::load_sixteen_from_stream(&mut file).unwrap().data,
                 picture.data
@@ -1067,7 +1067,7 @@ mod tests {
                 assert!(Picture::load_sixteen_from_bytes(&invalid).is_err());
                 vfs.install_preloaded_asset("sixteen-fixture.bin", invalid)
                     .unwrap();
-                let mut file = files.open("sixteen-fixture.bin", 0).unwrap();
+                let mut file = files.open("sixteen-fixture.bin").unwrap();
                 assert!(Picture::load_sixteen_from_stream(&mut file).is_err());
             }
             assert!(Picture::load_sixteen_from_bytes(&bytes[..bytes.len() - 1]).is_err());
@@ -1075,7 +1075,7 @@ mod tests {
             oversized[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
             vfs.install_preloaded_asset("sixteen-fixture.bin", oversized)
                 .unwrap();
-            let mut file = files.open("sixteen-fixture.bin", 0).unwrap();
+            let mut file = files.open("sixteen-fixture.bin").unwrap();
             assert!(Picture::load_sixteen_from_stream(&mut file).is_err());
         }
         let mut invalid = picture.clone();
@@ -1110,7 +1110,7 @@ mod tests {
                 bytes.extend_from_slice(&42u32.to_le_bytes());
                 vfs.install_preloaded_asset("terrain-fixture.bin", bytes)
                     .unwrap();
-                let mut file = files.open("terrain-fixture.bin", 0).unwrap();
+                let mut file = files.open("terrain-fixture.bin").unwrap();
                 seek_to(&mut file, prefix_len as u64).unwrap();
                 let decoded = Picture::load_terrain_from_stream(&mut file).unwrap();
                 assert_eq!((decoded.width, decoded.height, decoded.pitch), (2, 1, 4));
@@ -1130,7 +1130,7 @@ mod tests {
             bytes.extend_from_slice(jxl_header);
             vfs.install_preloaded_asset("terrain-fixture.bin", bytes)
                 .unwrap();
-            let mut file = files.open("terrain-fixture.bin", 0).unwrap();
+            let mut file = files.open("terrain-fixture.bin").unwrap();
             seek_to(&mut file, prefix_len as u64).unwrap();
             assert_eq!(
                 Picture::load_terrain_from_stream(&mut file)

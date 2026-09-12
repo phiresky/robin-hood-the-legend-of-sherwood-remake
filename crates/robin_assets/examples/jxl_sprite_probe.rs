@@ -93,7 +93,7 @@ mod probe {
     use robin_assets::picture::{Picture, PixelFormat};
     use robin_assets::shipping_datadir::derive_chunk_self_refs;
     use robin_assets::sprite_codec::{self, SpriteGrid};
-    use robin_engine::sbfile::{SB_FILE_READ, SbFile};
+    use robin_engine::sbfile::SbFile;
     use robin_engine::sprite_script::{SpriteInfo, SpriteScriptor};
     use robin_engine::sprite_variant::SpriteVariant;
 
@@ -1657,7 +1657,7 @@ mod probe {
     fn probe_pak(args: &Args, rel: &str, path: &Path, report: &mut String) -> Result<()> {
         let mut out = String::new();
         writeln!(out, "\n== pak {rel} ==")?;
-        let mut file = SbFile::open(&path.to_string_lossy(), SB_FILE_READ)
+        let mut file = SbFile::open(&path.to_string_lossy())
             .map_err(|e| anyhow!("open {}: {e}", path.display()))?;
         let total = file.get_size();
         let mut pics: Vec<Picture> = Vec::new();

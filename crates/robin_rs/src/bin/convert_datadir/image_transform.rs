@@ -102,8 +102,8 @@ mod tests {
 /// produce a meaningful size win for this content and is much slower.
 /// Maps are opaque; RGB-only PNG input avoids redundant extra JXL channels.
 pub(super) fn transcode_sixteen_to_jxl(src: &Path, quality: Option<u8>) -> Result<Vec<u8>> {
-    let mut file = SbFile::open(&src.to_string_lossy(), SB_FILE_READ)
-        .map_err(|e| anyhow!("open {}: {e}", src.display()))?;
+    let mut file =
+        SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open {}: {e}", src.display()))?;
     let pic = Picture::load_sixteen_from_stream(&mut file)
         .with_context(|| format!("decode {}", src.display()))?;
     transcode_picture_to_jxl(&pic, quality)
