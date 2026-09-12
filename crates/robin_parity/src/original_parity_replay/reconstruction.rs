@@ -4,10 +4,10 @@ use super::Host;
 use super::{
     Arc, BTreeMap, BTreeSet, BinaryTraceReader, BinaryTraceRecord, Command, Engine, Entity,
     EntityMap, GestureQuality, GroupMoveGoalTranslation, LevelAssets, MapPoint, Path, PathBuf,
-    PlayerCommand, ReplayDropAleResolution, ReplayGroupMoveResolution, TRACE_NATIVE_SUFFIX,
-    TRACE_SCHEMA_VERSION, TraceCampaign, TraceCommand, TraceElement, TraceEntityKind, TraceFrame,
-    TraceHeader, TraceInitialNpcTransient, TraceStartState, WorldPoint3D,
-    ensure_native_binary_trace, native_binary_trace_path,
+    PlayerCommand, ReplayDropAleResolution, ReplayGroupMoveResolution, StorageContext,
+    TRACE_NATIVE_SUFFIX, TRACE_SCHEMA_VERSION, TraceCampaign, TraceCommand, TraceElement,
+    TraceEntityKind, TraceFrame, TraceHeader, TraceInitialNpcTransient, TraceStartState,
+    TraceStorageResult, WorldPoint3D, ensure_native_binary_trace, native_binary_trace_path,
 };
 
 pub(super) fn apply_initial_npc_transients(
@@ -192,33 +192,33 @@ pub(super) fn apply_legacy_interactive_chain_macro_fallback(
     prefix_draw_count: usize,
     engine: &mut Engine,
     assets: &LevelAssets,
-) -> usize {
+) -> TraceStorageResult<usize> {
     if header.schema != TRACE_SCHEMA_VERSION
         || header.start_state != TraceStartState::LoadedSave
         || header.initial_npc_transients.is_some()
         || !legacy_loaded_save_retains_process_transients(prefix_draw_count)
     {
-        return 0;
+        return Ok(0);
     }
     let Some(previous_path) = preceding_interactive_session_path(trace_path, header.session_index)
         .filter(|path| path.is_file() || native_binary_trace_path(path).is_file())
     else {
-        return 0;
+        return Ok(0);
     };
-    let previous_native = ensure_native_binary_trace(&previous_path);
-    let mut reader = BinaryTraceReader::open(&previous_native);
-    let previous_header = reader.read_header().trace;
+    let previous_native = ensure_native_binary_trace(&previous_path)?;
+    let mut reader = BinaryTraceReader::open(&previous_native)?;
+    let previous_header = reader.read_header()?.trace;
     if previous_header.schema != TRACE_SCHEMA_VERSION
         || previous_header.session_index.checked_add(1) != Some(header.session_index)
         || previous_header.mission != header.mission
         || previous_header.proto_level != header.proto_level
         || previous_header.rng_seed != header.rng_seed
     {
-        return 0;
+        return Ok(0);
     }
     let mut final_frame = None;
     loop {
-        match reader.read_record() {
+        match reader.read_record()? {
             BinaryTraceRecord::Frame(frame) => final_frame = Some(frame),
             BinaryTraceRecord::End {
                 final_frame: end,
@@ -226,8 +226,12 @@ pub(super) fn apply_legacy_interactive_chain_macro_fallback(
                 ..
             } => {
                 reader
-                    .validate_terminator(frame_count.unwrap(), end.unwrap())
-                    .unwrap_or_else(|error| panic!("invalid preceding interactive trace: {error}"));
+                    .validate_terminator(
+                        frame_count
+                            .storage_context("preceding interactive trace lost its frame count")?,
+                        end.storage_context("preceding interactive trace lost its final frame")?,
+                    )
+                    .map_err(|error| format!("invalid preceding interactive trace: {error}"))?;
                 break;
             }
         }
@@ -239,7 +243,7 @@ pub(super) fn apply_legacy_interactive_chain_macro_fallback(
         .collect::<BTreeMap<_, _>>();
     let mut restored = 0;
     for element in &final_frame
-        .expect("preceding interactive trace has no frames")
+        .storage_context("preceding interactive trace has no frames")?
         .elements
     {
         let Some((path_id, waypoint, offset)) =
@@ -256,7 +260,7 @@ pub(super) fn apply_legacy_interactive_chain_macro_fallback(
                 .restore_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
         );
     }
-    restored
+    Ok(restored)
 }
 
 impl TraceCommand {
