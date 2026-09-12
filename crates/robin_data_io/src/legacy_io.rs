@@ -10,7 +10,7 @@ use std::{borrow::Cow, fmt};
 
 use thiserror::Error;
 
-use crate::sbfile::SbFile;
+use crate::sbfile::{SbFile, SbFileError};
 
 pub type LegacyResult<T> = Result<T, LegacyIoError>;
 
@@ -27,8 +27,8 @@ pub struct LegacyIoError {
 
 #[derive(Debug, Error)]
 pub enum LegacyIoErrorKind {
-    #[error("legacy file compatibility error {code}")]
-    SbFile { code: i32 },
+    #[error("{0}")]
+    SbFile(#[source] SbFileError),
     #[error("stream write failed")]
     Write(#[source] io::Error),
     #[error("invalid value {value}; expected {expected}")]
@@ -109,20 +109,17 @@ impl<'a> LegacyReader<'a> {
     pub fn read_bytes(&mut self, field: impl fmt::Display, bytes: &mut [u8]) -> LegacyResult<()> {
         let offset = self.offset();
         self.file
-            .serialize_bytes(bytes)
-            .map_err(|code| self.error_at(offset, field, LegacyIoErrorKind::SbFile { code }))
+            .read(bytes)
+            .map_err(|error| self.error_at(offset, field, LegacyIoErrorKind::SbFile(error)))
     }
 
     /// Move relative to the current position, reporting failed seeks with the
     /// same path/offset/field context as reads.
     pub fn skip(&mut self, distance: i64, field: impl fmt::Display) -> LegacyResult<()> {
         let offset = self.offset();
-        let code = self.file.skip(distance, 1);
-        if code < 0 {
-            Err(self.error_at(offset, field, LegacyIoErrorKind::SbFile { code }))
-        } else {
-            Ok(())
-        }
+        self.file
+            .skip(distance, 1)
+            .map_err(|error| self.error_at(offset, field, LegacyIoErrorKind::SbFile(error)))
     }
 
     pub fn read_u8(&mut self, field: impl fmt::Display) -> LegacyResult<u8> {
@@ -550,9 +547,7 @@ mod tests {
         assert_eq!(error.field, "characters[3].shooting");
         assert!(matches!(
             error.kind,
-            LegacyIoErrorKind::SbFile {
-                code: crate::sbfile::SBFILE_ERROR_READ
-            }
+            LegacyIoErrorKind::SbFile(SbFileError::Read)
         ));
     }
 

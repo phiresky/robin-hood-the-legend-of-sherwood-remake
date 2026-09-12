@@ -925,7 +925,7 @@ mod tests {
             LegacyCampaignStream::read(reader, &LegacyCampaignLimits::default()).unwrap_err()
         });
         assert_eq!(error.field, "last_pseudo_mission_id");
-        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile(_)));
     }
 
     #[allow(dead_code)]

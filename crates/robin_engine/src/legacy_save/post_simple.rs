@@ -647,6 +647,6 @@ mod tests {
         });
         assert_eq!(error.offset, bytes.len() as u64 - 2);
         assert_eq!(error.field, "titbits.items[0].position.z");
-        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile(_)));
     }
 }
