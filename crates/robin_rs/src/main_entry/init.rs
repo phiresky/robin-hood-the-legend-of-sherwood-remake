@@ -392,27 +392,49 @@ pub fn register_language_data_paths_for_tool() {
     add_language_folder();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn configured_data_dir(explicit: Option<&Path>, environment: Option<String>) -> Option<String> {
+    explicit
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .or_else(|| environment.filter(|dir| !dir.is_empty()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_primary_data_dir(files: &SbFileSystem, path: String) -> Result<(), InitError> {
+    files
+        .set_primary_path(&path)
+        .map_err(|status| InitError::DataDirectoryInstall { path, status })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn explicit_datadir_precedes_environment_without_hiding_an_empty_override() {
+    assert_eq!(
+        configured_data_dir(Some(Path::new("explicit")), Some("environment".into())),
+        Some("explicit".into())
+    );
+    assert_eq!(
+        configured_data_dir(Some(Path::new("")), Some("environment".into())),
+        Some(String::new())
+    );
+    assert_eq!(configured_data_dir(None, Some(String::new())), None);
+    assert_eq!(configured_data_dir(None, None), None);
+    assert_eq!(
+        configured_data_dir(None, Some("environment".into())),
+        Some("environment".into())
+    );
+}
+
 /// Set up the working directory so that `Data/` is accessible.
 ///
 /// `data_dir_override` (e.g. a tool's `--data-dir` flag) takes priority
 /// over the `ROBINHOOD_DATA_DIR` environment variable.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Result<(), InitError> {
-    let data_dir = data_dir_override
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| {
-            std::env::var("ROBINHOOD_DATA_DIR")
-                .ok()
-                .filter(|dir| !dir.is_empty())
-        });
+    let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
     if let Some(data_dir) = data_dir {
         tracing::info!("using primary datadir {}", data_dir);
-        if let Err(status) = files.set_primary_path(&data_dir) {
-            return Err(InitError::DataDirectoryInstall {
-                path: data_dir,
-                status,
-            });
-        }
+        install_primary_data_dir(files, data_dir)?;
     } else {
         // No override and no env var: reuse the remembered datadir, or
         // auto-detect (working directory, executable directory, well-known
@@ -426,12 +448,7 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
         // Cancelling the picker must stop startup before installing any data.
         let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
         tracing::info!("using primary datadir {}", chosen.display());
-        if let Err(status) = files.set_primary_path(&chosen.to_string_lossy()) {
-            return Err(InitError::DataDirectoryInstall {
-                path: chosen.display().to_string(),
-                status,
-            });
-        }
+        install_primary_data_dir(files, chosen.to_string_lossy().into_owned())?;
     }
 
     // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
@@ -493,20 +510,9 @@ fn datadir_cancellation_does_not_fall_back_to_working_directory() {
 /// `ShippingDatadir` / `asset_fs` bundle.
 #[cfg(target_os = "android")]
 fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Result<(), InitError> {
-    let data_dir = data_dir_override
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| {
-            std::env::var("ROBINHOOD_DATA_DIR")
-                .ok()
-                .filter(|dir| !dir.is_empty())
-        });
+    let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
     if let Some(data_dir) = data_dir {
-        if let Err(status) = files.set_primary_path(&data_dir) {
-            return Err(InitError::DataDirectoryInstall {
-                path: data_dir,
-                status,
-            });
-        }
+        install_primary_data_dir(files, data_dir)?;
     }
 
     if robin_engine::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
