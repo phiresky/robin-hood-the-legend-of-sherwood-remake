@@ -6038,6 +6038,78 @@ impl EngineInner {
         let Some(selected) = selected else {
             return MovementOwnerMotion::default();
         };
+        if !self.prepare_movement_owner_execution(sim, assets, owner, selected) {
+            return MovementOwnerMotion::default();
+        }
+
+        // Sample mutable mobile geometry only now, at this actor's Original
+        // entity slot. Preparing it once before the live owner walk freezes
+        // every actor onto the same side of intervening mobile masters.
+        let prepared = self.live_mobile_geometry();
+
+        let prepass = self.prepare_movement_owner_prepass(owner, selected);
+
+        // Pre-pass: snapshot every actor's position / layer / sector /
+        // posture / repulsive-point contribution for the
+        // anti-collision disturbing-actor lookup.  Captured once per
+        // tick so the mutable main loop can read neighbour state
+        // without a second borrow, matching the deterministic
+        // start-of-tick view the replay system relies on.
+        // Mutable — each entity's post-move position is written back
+        // so later entities in the same tick see the serial
+        // "already-moved" view: each actor's anti-collision lookup
+        // reads live positions from earlier-processed actors.
+        let mut anti_snapshots =
+            super::anti_collision::snapshot_all(&self.world.entities, &assets.profile_manager);
+
+        if let Some(entity) = self.world.entities.get(owner) {
+            super::animation::direction_provenance_snapshot(
+                entity.position_iface(),
+                owner,
+                self.control.frame_counter,
+                "movement_after_prepass",
+            );
+        }
+        let mut deferred = MovementDeferred::default();
+
+        // Iterate a stable creation-order ID list instead of holding one
+        // mutable iterator borrow across the whole pass. This lets each actor
+        // sample its SEEK target directly from the entity table immediately
+        // before its own movement. Mutations by an earlier-created actor are
+        // therefore visible, while a later-created target still exposes its
+        // pre-movement state, matching the original engine update loop.
+        let movement_actor_ids: Vec<_> = self
+            .world
+            .entities
+            .actors()
+            .filter(|(id, _)| EntityId::from(*id) == owner)
+            .map(|(id, _)| id)
+            .collect();
+        for actor_id in movement_actor_ids {
+            self.tick_one_movement_actor(
+                sim,
+                assets,
+                owner,
+                selected,
+                actor_id,
+                &prepass,
+                &prepared,
+                &mut anti_snapshots,
+                &mut deferred,
+            );
+        }
+        self.apply_movement_owner_outcome(sim, assets, owner, selected, deferred)
+    }
+
+    /// Entry selection is latched once; rejected/frozen execution never falls
+    /// through to a second movement order in the same owner slot.
+    fn prepare_movement_owner_execution(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) -> bool {
         let selected_is_live = self
             .orders
             .sequence_manager
@@ -6046,7 +6118,7 @@ impl EngineInner {
             .and_then(|element| element.current_order())
             .is_some_and(|order| order.order_id == selected.order_id);
         if !selected_is_live {
-            return MovementOwnerMotion::default();
+            return false;
         }
         if let Some(entity) = self.world.entities.get(owner) {
             super::animation::direction_provenance_snapshot(
@@ -6063,7 +6135,7 @@ impl EngineInner {
             .and_then(|entity| entity.actor_data())
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return MovementOwnerMotion::default();
+            return false;
         }
         let selected_command = self
             .orders
@@ -6079,14 +6151,14 @@ impl EngineInner {
             selected_command,
             Some(crate::element::Command::WaitTimer | crate::element::Command::WaitFreeLift)
         ) {
-            return MovementOwnerMotion::default();
+            return false;
         }
         if self.abort_orphaned_sword_movement(sim, assets, owner, selected) {
             // Sequence-element launch registers the replacement for the later
             // sequence-manager phase. It must not execute at this actor
             // boundary: the original game exposes swordfight exit as the current
             // command for one frame before its lowering order starts.
-            return MovementOwnerMotion::default();
+            return false;
         }
         // Freeze-all is read only during sprite updates and in NPC AI gates;
         // actor execution itself is never gated on it. The non-animation
@@ -6165,14 +6237,18 @@ impl EngineInner {
             if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
-            return MovementOwnerMotion::default();
+            return false;
         }
 
-        // Sample mutable mobile geometry only now, at this actor's Original
-        // entity slot. Preparing it once before the live owner walk freezes
-        // every actor onto the same side of intervening mobile masters.
-        let prepared = self.live_mobile_geometry();
+        true
+    }
 
+    /// Snapshot only at this owner's live creation slot, not once per frame.
+    fn prepare_movement_owner_prepass(
+        &mut self,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) -> MovementPrepass {
         // Pre-pass: collect principal opponent positions for
         // combat-moving entities.  During sword/shield movement,
         // Opponent-facing / danger-facing overrides the entity's facing
@@ -6360,6 +6436,24 @@ impl EngineInner {
             }
         }
 
+        self.turn_movement_owner_drunken(owner, selected);
+        let (lift_translation, door_pass_climb_direction, decorative_building_trap_at_destination) =
+            self.snapshot_movement_owner_lift(owner, selected);
+
+        MovementPrepass {
+            combat_face_target,
+            combat_face_target_is_ground,
+            speed_factor,
+            goal_target_info,
+            final_tolerance,
+            point_seek_post_sector,
+            lift_translation,
+            door_pass_climb_direction,
+            decorative_building_trap_at_destination,
+        }
+    }
+
+    fn turn_movement_owner_drunken(&mut self, owner: EntityId, selected: MovementOwnerSelection) {
         // Pre-pass: drive the per-tick drunken turn for every
         // drunken soldier on an ordinary movement. Drunken turning picks
         // between slow (delay 2) and very slow (delay 5) turns so the
@@ -6420,7 +6514,13 @@ impl EngineInner {
             }
             turn_drunken(&mut soldier.element.sprite.position_iface);
         }
+    }
 
+    fn snapshot_movement_owner_lift(
+        &self,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+    ) -> (Option<LiftAnimContext>, Option<i16>, bool) {
         // Pre-pass: per-entity current-sector lift translation, for
         // the lift branches of the movement-animation derivation.
         // When a moving actor is in a lift sector, the per-frame
@@ -6600,66 +6700,23 @@ impl EngineInner {
             }
         }
 
-        // Pre-pass: snapshot every actor's position / layer / sector /
-        // posture / repulsive-point contribution for the
-        // anti-collision disturbing-actor lookup.  Captured once per
-        // tick so the mutable main loop can read neighbour state
-        // without a second borrow, matching the deterministic
-        // start-of-tick view the replay system relies on.
-        // Mutable — each entity's post-move position is written back
-        // so later entities in the same tick see the serial
-        // "already-moved" view: each actor's anti-collision lookup
-        // reads live positions from earlier-processed actors.
-        let mut anti_snapshots =
-            super::anti_collision::snapshot_all(&self.world.entities, &assets.profile_manager);
-
-        let prepass = MovementPrepass {
-            combat_face_target,
-            combat_face_target_is_ground,
-            speed_factor,
-            goal_target_info,
-            final_tolerance,
-            point_seek_post_sector,
+        (
             lift_translation,
             door_pass_climb_direction,
             decorative_building_trap_at_destination,
-        };
-        if let Some(entity) = self.world.entities.get(owner) {
-            super::animation::direction_provenance_snapshot(
-                entity.position_iface(),
-                owner,
-                self.control.frame_counter,
-                "movement_after_prepass",
-            );
-        }
-        let mut deferred = MovementDeferred::default();
+        )
+    }
 
-        // Iterate a stable creation-order ID list instead of holding one
-        // mutable iterator borrow across the whole pass. This lets each actor
-        // sample its SEEK target directly from the entity table immediately
-        // before its own movement. Mutations by an earlier-created actor are
-        // therefore visible, while a later-created target still exposes its
-        // pre-movement state, matching the original engine update loop.
-        let movement_actor_ids: Vec<_> = self
-            .world
-            .entities
-            .actors()
-            .filter(|(id, _)| EntityId::from(*id) == owner)
-            .map(|(id, _)| id)
-            .collect();
-        for actor_id in movement_actor_ids {
-            self.tick_one_movement_actor(
-                sim,
-                assets,
-                owner,
-                selected,
-                actor_id,
-                &prepass,
-                &prepared,
-                &mut anti_snapshots,
-                &mut deferred,
-            );
-        }
+    /// Ordered Execute tails and actor completion. Synchronous callbacks are
+    /// intentional phase barriers; do not batch or reorder these effects.
+    fn apply_movement_owner_outcome(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+        deferred: MovementDeferred,
+    ) -> MovementOwnerMotion {
         let MovementDeferred {
             post_completion_motion_override,
             sword_movement_starts,
@@ -6773,146 +6830,19 @@ impl EngineInner {
         for entity_id in sword_movement_provokes {
             self.launch_sword_movement_termination_provoke(entity_id);
         }
-        for entity_id in door_pass_transition_start_effects {
-            // TODO(parity): apply this START reposition and its crossing
-            // callbacks inside the owner's actor slot, as Original does, so
-            // later actor slots can observe the midpoint synchronously.
-            self.apply_door_pass_transition_start_side_effects(assets, entity_id);
-            // A stationary ladder-exit START returns before the ordinary
-            // movement tail queues the actor update's post-execution crossing
-            // check.  The START side effect above can nevertheless snap the
-            // actor across a boundary to the door midpoint.  Original tests
-            // that live post-Execute segment before interpreting START, so
-            // recover it from the movement step's outer old-position latch here. A
-            // non-stationary START already queued its segment in the common
-            // tail and must not dispatch the callbacks twice.
-            if !line_cross_checks
-                .iter()
-                .any(|(queued, _, _)| *queued == entity_id)
-            {
-                let crossing = self.world.entities.get(entity_id).and_then(|entity| {
-                    let old_pos = entity.position_iface().old_map_position();
-                    let new_pos = entity.element_data().position_map();
-                    let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
-                    let eligible = old_pos != new_pos
-                        && actor_line_crossing_eligible(
-                            entity.element_data().posture(),
-                            entity
-                                .human_data()
-                                .is_some_and(|human| human.carrier.is_some()),
-                            in_bounds,
-                        );
-                    eligible.then_some((entity_id, old_pos, entity.element_data().layer()))
-                });
-                if let Some(crossing) = crossing {
-                    line_cross_checks.push(crossing);
-                    non_elevation_cross_checks.push(crossing);
-                }
-            }
-        }
-        for entity_id in door_pass_transition_done_effects {
-            self.apply_door_pass_transition_done_side_effects(assets, entity_id);
-            // The transition Execute arm above can return DONE without a
-            // motion displacement, then snap to an authored door
-            // point here. The original game checks line crossings after that
-            // complete Execute arm. Recover the live segment only when the
-            // ordinary motion path did not already queue it, and apply the
-            // eligibility gate after the side effect: crenel completion has
-            // changed the actor to Flying by now and must be excluded.
-            let crossing_already_recorded = line_cross_checks
-                .iter()
-                .any(|(queued, _, _)| *queued == entity_id);
-            let crossing = self.world.entities.get(entity_id).and_then(|entity| {
-                let old_pos = entity.position_iface().old_map_position();
-                let new_pos = entity.element_data().position_map();
-                let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
-                door_transition_completion_crossing_candidate(
-                    entity_id,
-                    old_pos,
-                    new_pos,
-                    entity.element_data().layer(),
-                    entity.element_data().posture(),
-                    entity
-                        .human_data()
-                        .is_some_and(|human| human.carrier.is_some()),
-                    in_bounds,
-                    crossing_already_recorded,
-                )
-            });
-            if let Some(crossing) = crossing {
-                line_cross_checks.push(crossing);
-                non_elevation_cross_checks.push(crossing);
-            }
-        }
-        for (entity_id, action) in door_pass_transition_completion_effects {
-            self.apply_door_pass_transition_completion_side_effects(assets, entity_id, action);
-        }
+        self.apply_movement_door_transition_effects(
+            assets,
+            door_pass_transition_start_effects,
+            door_pass_transition_done_effects,
+            door_pass_transition_completion_effects,
+            &mut line_cross_checks,
+            &mut non_elevation_cross_checks,
+        );
 
-        // Seeking sets the moving action state and refreshes synchronously
-        // from the actor's execution branch. The actor update observes the
-        // replacement movement when it subsequently checks line crossings.
-        // Keep this before crossing resolution/dispatch; delaying it until
-        // afterwards lets LINE_SOUND/LINE_SCRIPT callbacks inspect the stale
-        // seek and can enter the seeking AI state an extra time.
-        // Seeking answers both of these branches with an explicit
-        // return in-progress motion immediately after refreshing seek state
-        // for both stale final waypoints and out-of-reach stop transitions, so the
-        // execution result latched by the actor update is IN_PROGRESS regardless of
-        // the state seek refresh left on the replaced element.
-        let mut refreshed_seek_in_progress = false;
-        for (owner, seq_id, elem_idx) in transition_seek_refreshes {
-            // Re-read the seek element's flags / target / tolerance / action
-            // because another staged Execute effect may have changed adjacent
-            // elements. When it no longer looks like an entity-target seek,
-            // skip silently.
-            let snapshot = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|e| match &e.data {
-                    crate::sequence::SequenceElementData::Movement {
-                        flags,
-                        element,
-                        action,
-                        ..
-                    } => element.map(|t| (*flags, t, *action)),
-                    _ => None,
-                });
-            if let Some((flags, target, action)) = snapshot {
-                let new_target_pos = self
-                    .get_entity(target)
-                    .map(|e| e.element_data().position_map())
-                    .unwrap_or_default();
-                if let Some(actor) = self
-                    .get_entity_mut(owner)
-                    .and_then(|entity| entity.actor_data_mut())
-                {
-                    let before = actor.action_state;
-                    actor.action_state = actor.action_state.set_moving(false, false);
-                    tracing::trace!(
-                        target: "parity_post_process_path",
-                        ?owner,
-                        ?before,
-                        after = ?actor.action_state,
-                        "transition seek refresh arming moving state",
-                    );
-                }
-                self.apply_seek_refresh(
-                    sim,
-                    assets,
-                    crate::engine::refresh_seek::EntitySeekRequest {
-                        owner,
-                        sequence_id: seq_id,
-                        element_index: elem_idx,
-                        target,
-                        action,
-                        flags,
-                    },
-                    new_target_pos,
-                );
-                refreshed_seek_in_progress = true;
-            }
-        }
+        // Refresh synchronously before galopp and crossing callbacks can observe
+        // the selected seek. Its explicit IN_PROGRESS result survives replacement.
+        let refreshed_seek_in_progress =
+            self.refresh_movement_transition_seeks(sim, assets, transition_seek_refreshes);
 
         // The rider's `EVENT_GALOPP_LOOP_END` is dispatched from the derived
         // human execution arm immediately after motion processing. Its complete
@@ -6925,71 +6855,12 @@ impl EngineInner {
             self.dispatch_galopp_loop_event(sim, assets, owner);
         }
 
-        // Resolve every queued crossing segment against the actor's live
-        // position now that all Execute-arm completion branches have run.
-        // Line-crossing checks sample the map position at this point and
-        // gathers the crossed lines once; the elevation swap and the
-        // patch/script/sound tail then both work off that single segment,
-        // so the endpoint must not be re-sampled between the two passes.
-        // The in-bounds guard is the original game's map-box containment early
-        // return, likewise evaluated on the live position.
-        let resolve_cross_checks = |engine: &Self, queued: Vec<(EntityId, MapPoint, u16)>| {
-            queued
-                .into_iter()
-                .filter_map(|(entity_id, old_pos, layer)| {
-                    let new_pos = engine.get_entity(entity_id)?.element_data().position_map();
-                    engine
-                        .world
-                        .fast_grid
-                        .level
-                        .map_bbox
-                        .contains_point(new_pos)
-                        .then_some((entity_id, old_pos, new_pos, layer))
-                })
-                .collect::<Vec<_>>()
-        };
-        let line_cross_checks = resolve_cross_checks(self, line_cross_checks);
-        let non_elevation_cross_checks = resolve_cross_checks(self, non_elevation_cross_checks);
-        // Dispatch elevation-line crossings detected during the loop.
-        // Runs as a post-pass after the per-actor movement update.
-        // When a human actor crosses an elevation line, we also fire
-        // roll-state updates so any in-progress Rolling combat_anim can
-        // re-aim its flight at the new obstacle's slope.
-        for (entity_id, old_pos, new_pos, layer) in line_cross_checks {
-            let crossed = self.check_for_line_crossing(assets, entity_id, old_pos, new_pos, layer);
-            if crossed {
-                let is_human = self
-                    .expect_entity(entity_id, "line-crossing mover")
-                    .is_human();
-                if is_human {
-                    self.update_roll_after_crossing(assets, entity_id);
-                }
-                let compute_direction = self
-                    .orders
-                    .sequence_manager
-                    .in_progress_element_for_actor_matching(entity_id, |e| e.data.is_movement())
-                    .and_then(|(seq_id, elem_idx)| {
-                        self.orders
-                            .sequence_manager
-                            .get_element(seq_id, elem_idx)
-                            .and_then(|e| e.current_order())
-                    })
-                    .map(|order| order.compute_direction);
-                if let Some(compute_direction) = compute_direction
-                    && let Some(entity) = self.get_entity_mut(entity_id)
-                {
-                    entity
-                        .position_iface_mut()
-                        .compute_increment_all(compute_direction);
-                }
-            }
-        }
-
-        for (entity_id, old_pos, new_pos, layer) in non_elevation_cross_checks {
-            self.check_for_non_elevation_line_crossing(
-                sim, assets, entity_id, old_pos, new_pos, layer,
-            );
-        }
+        self.dispatch_movement_owner_crossings(
+            sim,
+            assets,
+            line_cross_checks,
+            non_elevation_cross_checks,
+        );
 
         // The actor tick dispatches the line-crossing check before
         // its terminated arm advances the order. The latter can synchronously
@@ -7011,56 +6882,8 @@ impl EngineInner {
             clear_terminal_door_pass_goal(entity);
         }
 
-        // These calls are inside the Human/PC sword movement Execute arms,
-        // after motion processing and before actor completion or order advancement.
         if executed_sword_movement && matches!(owner, EntityId::Pc(_)) {
-            let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
-                entity.actor_data()?;
-                // The player-character update gates the override on the
-                // live selected sequence element: it must exist and must not
-                // carry non-interruptible priority
-                // priority flag. A door pass is
-                // exactly that priority
-                // non-interruptible, so a sword walk that
-                // belongs to a PassDoor element never aborts — the update's
-                // ABORTED arm asserts the same invariant
-                // as required by the abort invariant. Without this gate the
-                // aborted pop cancelled the door pass's own order advance
-                // and the actor replayed the walk instead of reaching its
-                // PASSING_DOOR action point.
-                let selected_priority = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner)
-                    .and_then(|(seq_id, elem_idx)| {
-                        self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                    })
-                    .map(|element| element.priority)?;
-                if selected_priority == crate::sequence::SequencePriority::NonInterruptable {
-                    return None;
-                }
-                if !entity.position_iface().is_moving_map()
-                    || !crate::engine::melee::enemies_are_blocking_my_movement(
-                        &self.world.entities,
-                        owner,
-                    )
-                {
-                    return None;
-                }
-                Some((selected.seq_id, selected.elem_idx))
-            });
-            if let Some((seq_id, elem_idx)) = pinch_abort {
-                // The player-character update overrides the nested human
-                // motion result with an aborted state here. The
-                // the base actor update therefore marks the entry-latched
-                // element Impossible and does not run its TERMINATED
-                // order-advancement arm, even when motion processing had already
-                // reached the short step-back destination.
-                cancel_aborted_order_pop(&mut order_pops, seq_id, elem_idx);
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-            }
+            self.abort_pinched_pc_sword_movement(owner, selected, &mut order_pops);
         }
 
         // Execute pending door-pass triggers (PassingDoor steps).
@@ -7208,7 +7031,8 @@ impl EngineInner {
             // and executed its one entry-latched order choice for this
             // owner slot. The successor becomes observable immediately and
             // executes at the actor's next update; never recurse into a
-            // second Execute in the same slot.
+            // second Execute in the same slot. The returned resumed-successor
+            // list is deliberately not executed recursively here.
             let _ = self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
 
@@ -7238,6 +7062,297 @@ impl EngineInner {
             initial: refreshed_seek_in_progress.then_some(crate::sprite::MotionState::InProgress),
             post_completion_override: post_completion_motion_override,
             terminal_order_pops,
+        }
+    }
+
+    fn apply_movement_door_transition_effects(
+        &mut self,
+        assets: &crate::engine::LevelAssets,
+        starts: Vec<EntityId>,
+        dones: Vec<EntityId>,
+        completions: Vec<(EntityId, OrderType)>,
+        line_cross_checks: &mut Vec<(EntityId, MapPoint, u16)>,
+        non_elevation_cross_checks: &mut Vec<(EntityId, MapPoint, u16)>,
+    ) {
+        for entity_id in starts {
+            // TODO(parity): apply this START reposition and its crossing
+            // callbacks inside the owner's actor slot, as Original does, so
+            // later actor slots can observe the midpoint synchronously.
+            self.apply_door_pass_transition_start_side_effects(assets, entity_id);
+            // A stationary ladder-exit START returns before the ordinary
+            // movement tail queues the actor update's post-execution crossing
+            // check.  The START side effect above can nevertheless snap the
+            // actor across a boundary to the door midpoint.  Original tests
+            // that live post-Execute segment before interpreting START, so
+            // recover it from the movement step's outer old-position latch here. A
+            // non-stationary START already queued its segment in the common
+            // tail and must not dispatch the callbacks twice.
+            if !line_cross_checks
+                .iter()
+                .any(|(queued, _, _)| *queued == entity_id)
+            {
+                let crossing = self.world.entities.get(entity_id).and_then(|entity| {
+                    let old_pos = entity.position_iface().old_map_position();
+                    let new_pos = entity.element_data().position_map();
+                    let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
+                    let eligible = old_pos != new_pos
+                        && actor_line_crossing_eligible(
+                            entity.element_data().posture(),
+                            entity
+                                .human_data()
+                                .is_some_and(|human| human.carrier.is_some()),
+                            in_bounds,
+                        );
+                    eligible.then_some((entity_id, old_pos, entity.element_data().layer()))
+                });
+                if let Some(crossing) = crossing {
+                    line_cross_checks.push(crossing);
+                    non_elevation_cross_checks.push(crossing);
+                }
+            }
+        }
+        for entity_id in dones {
+            self.apply_door_pass_transition_done_side_effects(assets, entity_id);
+            // The transition Execute arm above can return DONE without a
+            // motion displacement, then snap to an authored door
+            // point here. The original game checks line crossings after that
+            // complete Execute arm. Recover the live segment only when the
+            // ordinary motion path did not already queue it, and apply the
+            // eligibility gate after the side effect: crenel completion has
+            // changed the actor to Flying by now and must be excluded.
+            let crossing_already_recorded = line_cross_checks
+                .iter()
+                .any(|(queued, _, _)| *queued == entity_id);
+            let crossing = self.world.entities.get(entity_id).and_then(|entity| {
+                let old_pos = entity.position_iface().old_map_position();
+                let new_pos = entity.element_data().position_map();
+                let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
+                door_transition_completion_crossing_candidate(
+                    entity_id,
+                    old_pos,
+                    new_pos,
+                    entity.element_data().layer(),
+                    entity.element_data().posture(),
+                    entity
+                        .human_data()
+                        .is_some_and(|human| human.carrier.is_some()),
+                    in_bounds,
+                    crossing_already_recorded,
+                )
+            });
+            if let Some(crossing) = crossing {
+                line_cross_checks.push(crossing);
+                non_elevation_cross_checks.push(crossing);
+            }
+        }
+        for (entity_id, action) in completions {
+            self.apply_door_pass_transition_completion_side_effects(assets, entity_id, action);
+        }
+    }
+
+    fn refresh_movement_transition_seeks(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        transition_seek_refreshes: Vec<(EntityId, crate::sequence::SequenceId, usize)>,
+    ) -> bool {
+        // Seeking sets the moving action state and refreshes synchronously
+        // from the actor's execution branch. The actor update observes the
+        // replacement movement when it subsequently checks line crossings.
+        // Keep this before crossing resolution/dispatch; delaying it until
+        // afterwards lets LINE_SOUND/LINE_SCRIPT callbacks inspect the stale
+        // seek and can enter the seeking AI state an extra time.
+        // Seeking answers both of these branches with an explicit
+        // return in-progress motion immediately after refreshing seek state
+        // for both stale final waypoints and out-of-reach stop transitions, so the
+        // execution result latched by the actor update is IN_PROGRESS regardless of
+        // the state seek refresh left on the replaced element.
+        let mut refreshed_seek_in_progress = false;
+        for (owner, seq_id, elem_idx) in transition_seek_refreshes {
+            // Re-read the seek element's flags / target / tolerance / action
+            // because another staged Execute effect may have changed adjacent
+            // elements. When it no longer looks like an entity-target seek,
+            // skip silently.
+            let snapshot = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|e| match &e.data {
+                    crate::sequence::SequenceElementData::Movement {
+                        flags,
+                        element,
+                        action,
+                        ..
+                    } => element.map(|t| (*flags, t, *action)),
+                    _ => None,
+                });
+            if let Some((flags, target, action)) = snapshot {
+                let new_target_pos = self
+                    .get_entity(target)
+                    .map(|e| e.element_data().position_map())
+                    .unwrap_or_default();
+                if let Some(actor) = self
+                    .get_entity_mut(owner)
+                    .and_then(|entity| entity.actor_data_mut())
+                {
+                    let before = actor.action_state;
+                    actor.action_state = actor.action_state.set_moving(false, false);
+                    tracing::trace!(
+                        target: "parity_post_process_path",
+                        ?owner,
+                        ?before,
+                        after = ?actor.action_state,
+                        "transition seek refresh arming moving state",
+                    );
+                }
+                self.apply_seek_refresh(
+                    sim,
+                    assets,
+                    crate::engine::refresh_seek::EntitySeekRequest {
+                        owner,
+                        sequence_id: seq_id,
+                        element_index: elem_idx,
+                        target,
+                        action,
+                        flags,
+                    },
+                    new_target_pos,
+                );
+                refreshed_seek_in_progress = true;
+            }
+        }
+
+        refreshed_seek_in_progress
+    }
+
+    fn dispatch_movement_owner_crossings(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        line_cross_checks: Vec<(EntityId, MapPoint, u16)>,
+        non_elevation_cross_checks: Vec<(EntityId, MapPoint, u16)>,
+    ) {
+        // Resolve every queued crossing segment against the actor's live
+        // position now that all Execute-arm completion branches have run.
+        // Line-crossing checks sample the map position at this point and
+        // gathers the crossed lines once; the elevation swap and the
+        // patch/script/sound tail then both work off that single segment,
+        // so the endpoint must not be re-sampled between the two passes.
+        // The in-bounds guard is the original game's map-box containment early
+        // return, likewise evaluated on the live position.
+        let resolve_cross_checks = |engine: &Self, queued: Vec<(EntityId, MapPoint, u16)>| {
+            queued
+                .into_iter()
+                .filter_map(|(entity_id, old_pos, layer)| {
+                    let new_pos = engine.get_entity(entity_id)?.element_data().position_map();
+                    engine
+                        .world
+                        .fast_grid
+                        .level
+                        .map_bbox
+                        .contains_point(new_pos)
+                        .then_some((entity_id, old_pos, new_pos, layer))
+                })
+                .collect::<Vec<_>>()
+        };
+        let line_cross_checks = resolve_cross_checks(self, line_cross_checks);
+        let non_elevation_cross_checks = resolve_cross_checks(self, non_elevation_cross_checks);
+        // Dispatch elevation-line crossings detected during the loop.
+        // Runs as a post-pass after the per-actor movement update.
+        // When a human actor crosses an elevation line, we also fire
+        // roll-state updates so any in-progress Rolling combat_anim can
+        // re-aim its flight at the new obstacle's slope.
+        for (entity_id, old_pos, new_pos, layer) in line_cross_checks {
+            let crossed = self.check_for_line_crossing(assets, entity_id, old_pos, new_pos, layer);
+            if crossed {
+                let is_human = self
+                    .expect_entity(entity_id, "line-crossing mover")
+                    .is_human();
+                if is_human {
+                    self.update_roll_after_crossing(assets, entity_id);
+                }
+                let compute_direction = self
+                    .orders
+                    .sequence_manager
+                    .in_progress_element_for_actor_matching(entity_id, |e| e.data.is_movement())
+                    .and_then(|(seq_id, elem_idx)| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .and_then(|e| e.current_order())
+                    })
+                    .map(|order| order.compute_direction);
+                if let Some(compute_direction) = compute_direction
+                    && let Some(entity) = self.get_entity_mut(entity_id)
+                {
+                    entity
+                        .position_iface_mut()
+                        .compute_increment_all(compute_direction);
+                }
+            }
+        }
+
+        for (entity_id, old_pos, new_pos, layer) in non_elevation_cross_checks {
+            self.check_for_non_elevation_line_crossing(
+                sim, assets, entity_id, old_pos, new_pos, layer,
+            );
+        }
+    }
+
+    fn abort_pinched_pc_sword_movement(
+        &mut self,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+        order_pops: &mut Vec<(crate::sequence::SequenceId, usize)>,
+    ) {
+        // These calls are inside the Human/PC sword movement Execute arms,
+        // after motion processing and before actor completion or order advancement.
+        let pinch_abort = self.world.entities.get(owner).and_then(|entity| {
+            entity.actor_data()?;
+            // The player-character update gates the override on the
+            // live selected sequence element: it must exist and must not
+            // carry non-interruptible priority
+            // priority flag. A door pass is
+            // exactly that priority
+            // non-interruptible, so a sword walk that
+            // belongs to a PassDoor element never aborts — the update's
+            // ABORTED arm asserts the same invariant
+            // as required by the abort invariant. Without this gate the
+            // aborted pop cancelled the door pass's own order advance
+            // and the actor replayed the walk instead of reaching its
+            // PASSING_DOOR action point.
+            let selected_priority = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner)
+                .and_then(|(seq_id, elem_idx)| {
+                    self.orders.sequence_manager.get_element(seq_id, elem_idx)
+                })
+                .map(|element| element.priority)?;
+            if selected_priority == crate::sequence::SequencePriority::NonInterruptable {
+                return None;
+            }
+            if !entity.position_iface().is_moving_map()
+                || !crate::engine::melee::enemies_are_blocking_my_movement(
+                    &self.world.entities,
+                    owner,
+                )
+            {
+                return None;
+            }
+            Some((selected.seq_id, selected.elem_idx))
+        });
+        if let Some((seq_id, elem_idx)) = pinch_abort {
+            // The player-character update overrides the nested human
+            // motion result with an aborted state here. The
+            // the base actor update therefore marks the entry-latched
+            // element Impossible and does not run its TERMINATED
+            // order-advancement arm, even when motion processing had already
+            // reached the short step-back destination.
+            cancel_aborted_order_pop(order_pops, seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
         }
     }
 
@@ -12525,6 +12640,10 @@ mod drunken_turn_timing_tests {
 #[cfg(test)]
 #[path = "movement/tests/orphaned_sword_movement.rs"]
 mod orphaned_sword_movement_tests;
+
+#[cfg(test)]
+#[path = "movement/tests/owner_phases.rs"]
+mod movement_owner_phase_tests;
 
 #[cfg(test)]
 #[path = "movement/tests/movement_transition_state.rs"]
