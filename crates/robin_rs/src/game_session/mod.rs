@@ -221,7 +221,7 @@ pub(super) enum HandlerAction {
 }
 
 pub(crate) async fn run_mission_headless(
-    callbacks: &RustCallbacks,
+    callbacks: &mut RustCallbacks,
     campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
@@ -708,10 +708,10 @@ async fn run_session_body(
 }
 
 pub(crate) async fn run_mission(
-    window: &GameWindow,
-    callbacks: &RustCallbacks,
+    window: &mut GameWindow,
+    callbacks: &mut RustCallbacks,
     campaign: Campaign,
-    profiles: &engine_profiles::ProfileManager,
+    profiles: &mut engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
     args: crate::main_entry::MissionLaunch,
