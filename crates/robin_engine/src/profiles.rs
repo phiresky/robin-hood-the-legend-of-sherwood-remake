@@ -1161,7 +1161,7 @@ fn reserve_legacy<T>(
 
 /// Read a Vec<u32> as a u32 count prefix + N u32 values.
 fn read_u32_vec(reader: &mut LegacyReader<'_>, field: &str) -> LegacyResult<Vec<u32>> {
-    reader.scope(field, |reader| {
+    reader.scope(field.to_owned(), |reader| {
         let count = read_count(reader, "count")?;
         let mut values = reserve_legacy(reader, "items", count)?;
         for index in 0..count {
@@ -1176,7 +1176,7 @@ fn read_profiles<T>(
     field: &str,
     mut read_one: impl FnMut(&mut LegacyReader<'_>, usize) -> LegacyResult<T>,
 ) -> LegacyResult<Vec<T>> {
-    reader.scope(field, |reader| {
+    reader.scope(field.to_owned(), |reader| {
         let count = read_count(reader, "count")?;
         let mut values = reserve_legacy(reader, "items", count)?;
         for index in 0..count {

@@ -4024,6 +4024,31 @@ impl ThickMoveCorridor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runtime_grid_clone_and_serialization_keep_distinct_level_ownership() {
+        let mut grid = super::FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+        let cloned = grid.clone();
+        assert!(std::sync::Arc::ptr_eq(&grid.level, &cloned.level));
+
+        let json = serde_json::to_value(&grid).unwrap();
+        assert!(json.get("level").is_none());
+        let restored: super::FastFindGrid = serde_json::from_value(json.clone()).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&grid.level, &restored.level));
+        assert_eq!(serde_json::to_value(&restored).unwrap(), json);
+
+        use robin_util::state_hash::StateHash;
+        use std::hash::Hasher;
+        let hash = |grid: &super::FastFindGrid| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            grid.state_hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&grid), hash(&restored));
+        assert_eq!(bitcode::encode(&grid), bitcode::encode(&restored));
+    }
+
     use super::*;
 
     #[test]

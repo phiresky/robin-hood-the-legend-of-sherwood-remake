@@ -274,7 +274,49 @@ pub struct IndexedCache {
     pub stats: CacheStats,
 }
 
+/// Playback/cache-lifetime policy shared by FX and speech selection.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SampleRequest {
+    pub sample_present: bool,
+    pub is_3d: bool,
+    pub ttl_init: u32,
+    pub ttl_increment: u32,
+}
+
 impl IndexedCache {
+    fn prepare_selected_sample(
+        &mut self,
+        idx: usize,
+        request: SampleRequest,
+        loader: &SampleLoader,
+        exclamation_id: Option<u32>,
+    ) {
+        let SampleRequest {
+            sample_present,
+            is_3d,
+            ttl_init,
+            ttl_increment,
+        } = request;
+        let entry = &mut self.entries[idx];
+        if sample_present && entry.is_loaded() {
+            self.stats.hits += 1;
+            entry.time_to_live += ttl_increment;
+        } else if sample_present || entry.sample_length_ms == 0 {
+            if entry.load_sample(is_3d, ttl_init, loader) {
+                self.stats.misses += 1;
+                self.stats.data_size += entry.sample_size;
+            } else if let Some(exclamation_id) = exclamation_id {
+                tracing::trace!(
+                    exclamation_id = format!("{exclamation_id:#010x}"),
+                    idx,
+                    file = entry.file_name.as_str(),
+                    sample_present,
+                    "get_exclamation_sample: load_sample FAILED"
+                );
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -339,15 +381,11 @@ impl IndexedCache {
     /// Get an entry for playback from a group, handling FX / material / random
     /// selection. Returns `None` if the group or entry is not found, or if a
     /// random gap is selected.
-    #[allow(clippy::too_many_arguments)]
     pub fn get_fx_sample(
         &mut self,
-        sample_present: bool,
+        request: SampleRequest,
         sample_id: u32,
         material: Option<Material>,
-        is_3d: bool,
-        ttl_init: u32,
-        ttl_increment: u32,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
     ) -> Option<usize> {
@@ -380,34 +418,16 @@ impl IndexedCache {
         };
 
         let idx = cache_entry_index?;
-        let entry = &mut self.entries[idx];
-
-        if sample_present {
-            if entry.is_loaded() {
-                self.stats.hits += 1;
-                entry.time_to_live += ttl_increment;
-            } else if entry.load_sample(is_3d, ttl_init, loader) {
-                self.stats.misses += 1;
-                self.stats.data_size += entry.sample_size;
-            }
-        } else if entry.sample_length_ms == 0 && entry.load_sample(is_3d, ttl_init, loader) {
-            self.stats.misses += 1;
-            self.stats.data_size += entry.sample_size;
-        }
-
+        self.prepare_selected_sample(idx, request, loader, None);
         Some(idx)
     }
 
     /// Get an exclamation/speech sample. Variant == u32::MAX means random.
-    #[allow(clippy::too_many_arguments)]
     pub fn get_exclamation_sample(
         &mut self,
-        sample_present: bool,
+        request: SampleRequest,
         exclamation_id: u32,
         variant: Option<u32>,
-        is_3d: bool,
-        ttl_init: u32,
-        ttl_increment: u32,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
     ) -> Option<usize> {
@@ -418,7 +438,7 @@ impl IndexedCache {
             "Speech groups MUST be random groups"
         );
 
-        let entry_indices = group.entry_indices.clone();
+        let entry_indices = &group.entry_indices;
         let gaps = group.gaps;
         let count = entry_indices.len();
 
@@ -443,37 +463,7 @@ impl IndexedCache {
             }
         };
 
-        let entry = &mut self.entries[idx];
-
-        if sample_present {
-            if entry.is_loaded() {
-                self.stats.hits += 1;
-                entry.time_to_live += ttl_increment;
-            } else if entry.load_sample(is_3d, ttl_init, loader) {
-                self.stats.misses += 1;
-                self.stats.data_size += entry.sample_size;
-            } else {
-                tracing::trace!(
-                    exclamation_id = format!("{exclamation_id:#010x}"),
-                    idx,
-                    file = entry.file_name.as_str(),
-                    "get_exclamation_sample: load_sample FAILED (sample_present)"
-                );
-            }
-        } else if entry.sample_length_ms == 0 {
-            if entry.load_sample(is_3d, ttl_init, loader) {
-                self.stats.misses += 1;
-                self.stats.data_size += entry.sample_size;
-            } else {
-                tracing::trace!(
-                    exclamation_id = format!("{exclamation_id:#010x}"),
-                    idx,
-                    file = entry.file_name.as_str(),
-                    "get_exclamation_sample: load_sample FAILED (length query)"
-                );
-            }
-        }
-
+        self.prepare_selected_sample(idx, request, loader, Some(exclamation_id));
         Some(idx)
     }
 }
@@ -1211,12 +1201,14 @@ impl SoundCache {
     ) -> Option<usize> {
         assert!(sample_id < 65536, "sample_id must fit in 16 bits");
         self.fx_cache.get_fx_sample(
-            sample_present,
+            SampleRequest {
+                sample_present: sample_present,
+                is_3d: self.use_3d_sound,
+                ttl_init: FXCACHE_TTL_INIT,
+                ttl_increment: FXCACHE_TTL_INCREMENT,
+            },
             sample_id,
             material,
-            self.use_3d_sound,
-            FXCACHE_TTL_INIT,
-            FXCACHE_TTL_INCREMENT,
             loader,
             rng,
         )
@@ -1269,12 +1261,14 @@ impl SoundCache {
         rng: &mut dyn FnMut(u32) -> u32,
     ) -> Option<usize> {
         self.speech_cache.get_exclamation_sample(
-            sample_present,
+            SampleRequest {
+                sample_present: sample_present,
+                is_3d: self.use_3d_sound,
+                ttl_init: SPEECHCACHE_TTL_INIT,
+                ttl_increment: SPEECHCACHE_TTL_INCREMENT,
+            },
             exclamation_id,
             variant,
-            self.use_3d_sound,
-            SPEECHCACHE_TTL_INIT,
-            SPEECHCACHE_TTL_INCREMENT,
             loader,
             rng,
         )
@@ -1466,12 +1460,14 @@ mod tests {
 
         let mut rng = make_rng(1);
         let result = cache.get_fx_sample(
-            true,
+            SampleRequest {
+                sample_present: true,
+                is_3d: false,
+                ttl_init: FXCACHE_TTL_INIT,
+                ttl_increment: FXCACHE_TTL_INCREMENT,
+            },
             42,
             None,
-            false,
-            FXCACHE_TTL_INIT,
-            FXCACHE_TTL_INCREMENT,
             &dummy_loader,
             &mut rng,
         );
@@ -1481,12 +1477,14 @@ mod tests {
 
         // Second access should be a hit
         let result2 = cache.get_fx_sample(
-            true,
+            SampleRequest {
+                sample_present: true,
+                is_3d: false,
+                ttl_init: FXCACHE_TTL_INIT,
+                ttl_increment: FXCACHE_TTL_INCREMENT,
+            },
             42,
             None,
-            false,
-            FXCACHE_TTL_INIT,
-            FXCACHE_TTL_INCREMENT,
             &dummy_loader,
             &mut rng,
         );
@@ -1509,12 +1507,14 @@ mod tests {
 
         let mut rng = make_rng(1);
         let result = cache.get_fx_sample(
-            true,
+            SampleRequest {
+                sample_present: true,
+                is_3d: false,
+                ttl_init: FXCACHE_TTL_INIT,
+                ttl_increment: FXCACHE_TTL_INCREMENT,
+            },
             10,
             Some(Material::Wood),
-            false,
-            FXCACHE_TTL_INIT,
-            FXCACHE_TTL_INCREMENT,
             &dummy_loader,
             &mut rng,
         );
@@ -1541,12 +1541,14 @@ mod tests {
             cache.entries[0].sample_data = None;
             cache.entries[1].sample_data = None;
             match cache.get_fx_sample(
-                true,
+                SampleRequest {
+                    sample_present: true,
+                    is_3d: false,
+                    ttl_init: FXCACHE_TTL_INIT,
+                    ttl_increment: FXCACHE_TTL_INCREMENT,
+                },
                 20,
                 None,
-                false,
-                FXCACHE_TTL_INIT,
-                FXCACHE_TTL_INCREMENT,
                 &dummy_loader,
                 &mut rng,
             ) {

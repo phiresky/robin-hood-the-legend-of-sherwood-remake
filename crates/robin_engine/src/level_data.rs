@@ -43,8 +43,8 @@ pub enum LevelError {
     #[error("unknown element sub-chunk: '{0}'")]
     UnknownElementChunk(String),
 
-    #[error("file read error (sbfile code {0})")]
-    ReadError(i32),
+    #[error("file read error: {0}")]
+    ReadError(#[from] crate::sbfile::SbFileError),
 
     #[error("file not found: {0}")]
     FileNotFound(String),
@@ -54,12 +54,6 @@ pub enum LevelError {
 
     #[error("unsupported mobile-element data: {0}")]
     UnsupportedMobileData(String),
-}
-
-impl From<i32> for LevelError {
-    fn from(code: i32) -> Self {
-        LevelError::ReadError(code)
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2650,14 +2644,14 @@ const BEGGAR_SCROLL_SET_COUNT: usize = 10;
 
 fn open_level_file(files: &crate::sbfile::SbFileSystem, path: &str) -> Result<SbFile, LevelError> {
     files.open(path).map_err(|code| {
-        if code == crate::sbfile::SBFILE_ERROR_FILE_NOT_FOUND {
+        if code == crate::sbfile::SbFileError::NotFound {
             LevelError::FileNotFound(path.to_owned())
         } else {
             LevelError::Legacy(LegacyIoError {
                 path: path.to_owned(),
                 offset: 0,
                 field: "open".to_owned(),
-                kind: crate::legacy_io::LegacyIoErrorKind::SbFile { code },
+                kind: crate::legacy_io::LegacyIoErrorKind::SbFile(code),
             })
         }
     })
@@ -5508,9 +5502,7 @@ mod tests {
             assert_eq!(error.field, "open");
             assert!(matches!(
                 error.kind,
-                crate::legacy_io::LegacyIoErrorKind::SbFile {
-                    code: crate::sbfile::SBFILE_ERROR_READ
-                }
+                crate::legacy_io::LegacyIoErrorKind::SbFile(crate::sbfile::SbFileError::Read)
             ));
         };
         for failed_file in ["proto.rhp", "mission.rhm"] {
