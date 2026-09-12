@@ -57,11 +57,11 @@ crc32fast = "1.5"
 # path: several map lookups per decoded tile).
 foldhash = "0.2"
 # Most adaptive contexts contain only a few symbols; keep them inline.
-smallvec = { version = "1", features = ["union"] }
+smallvec = { workspace = true, features = ["union"] }
 bitcode.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
-png = { version = "0.18", optional = true }
+png = { workspace = true, optional = true }
 zstd.workspace = true
 # Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
 # decode terrain `.map` files when the converter has transcoded them to
@@ -95,7 +95,7 @@ tempfile.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 js-sys = "0.3"
-wasm-bindgen = "0.2"
+wasm-bindgen.workspace = true
 
 # Browser thread pool for parallel VQ chunk decode (feature `wasm-threads`).
 # The build must also enable `-C target-feature=+atomics,+bulk-memory,
@@ -107,10 +107,10 @@ wasm-bindgen = "0.2"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rayon = { version = "1", optional = true }
 wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"], optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { version = "0.3", optional = true }
 futures-channel = { version = "0.3", optional = true }
-futures-util = { version = "0.3", optional = true }
+futures-util = { workspace = true, optional = true }
 # Global allocator for every wasm build (src/wasm_alloc.rs): std's dlmalloc
 # funnels every thread through one futex lock, which measurably INVERTS
 # worker-pool decode scaling past ~4 threads, and talc is ~9% faster even
@@ -150,4 +150,4 @@ name = "mission_sprite_audit"
 required-features = ["engine-adapters"]
 
 [dev-dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
