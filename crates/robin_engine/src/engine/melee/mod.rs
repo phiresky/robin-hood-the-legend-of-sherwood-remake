@@ -2084,18 +2084,9 @@ fn collect_arc_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        if !is_possible_sword_strike_victim(
-            entities,
-            attacker_id,
-            entity,
-            target_id,
-            profile_manager,
-            fast_grid,
-            obstacles,
-        ) {
-            continue;
-        }
+    for (target_id, entity) in
+        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
+    {
         // The original game computes strike geometry from the map position; elevation
         // is handled independently by sword-strike victim eligibility checks.
         let pos = entity.element_data().position_map();
@@ -2140,19 +2131,9 @@ fn collect_lateral_strike_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        if !is_possible_sword_strike_victim(
-            entities,
-            attacker_id,
-            entity,
-            target_id,
-            profile_manager,
-            fast_grid,
-            obstacles,
-        ) {
-            continue;
-        }
-
+    for (target_id, entity) in
+        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
+    {
         let target_position = entity.element_data().position();
         let dx = target_position.x - attacker_position.x;
         let dy = (target_position.y - attacker_position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -2188,19 +2169,9 @@ fn collect_full_circle_strike_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        if !is_possible_sword_strike_victim(
-            entities,
-            attacker_id,
-            entity,
-            target_id,
-            profile_manager,
-            fast_grid,
-            obstacles,
-        ) {
-            continue;
-        }
-
+    for (target_id, entity) in
+        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
+    {
         let target_position = entity.element_data().position();
         if full_circle_strike_distance_is_in_range(
             attacker_position,
@@ -2230,19 +2201,9 @@ fn collect_half_circle_strike_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        if !is_possible_sword_strike_victim(
-            entities,
-            attacker_id,
-            entity,
-            target_id,
-            profile_manager,
-            fast_grid,
-            obstacles,
-        ) {
-            continue;
-        }
-
+    for (target_id, entity) in
+        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
+    {
         let target_position = entity.element_data().position();
         if half_circle_strike_seed_allows(
             attacker_position,
@@ -2372,18 +2333,9 @@ fn collect_circle_warn_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        if !is_possible_sword_strike_victim(
-            entities,
-            attacker_id,
-            entity,
-            target_id,
-            profile_manager,
-            fast_grid,
-            obstacles,
-        ) {
-            continue;
-        }
+    for (target_id, entity) in
+        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
+    {
         let pos = entity.element_data().position_map();
         // Circle sword-strike victim collection forms this vector as
         // attacker - victim. Distance is symmetric, but the same vector's
@@ -2488,18 +2440,9 @@ fn collect_push_victims(
     let ((fx, fy), (sx, sy)) = crate::combat::push_strike_basis(attacker_direction);
 
     let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        if !is_possible_sword_strike_victim(
-            entities,
-            attacker_id,
-            entity,
-            target_id,
-            profile_manager,
-            fast_grid,
-            obstacles,
-        ) {
-            continue;
-        }
+    for (target_id, entity) in
+        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
+    {
         let victim_elev = entity.position_iface().get_elevation();
         if !push_strike_elevation_allows(position_space, attacker_elevation, victim_elev) {
             continue;
@@ -2666,4 +2609,26 @@ impl EngineInner {
             })
             .collect()
     }
+}
+
+/// Shared eligibility only. Each caller retains its authored geometry,
+/// including map/world coordinate choice, float order and range boundaries.
+fn sword_strike_candidates<'a>(
+    entities: &'a Entities,
+    attacker_id: EntityId,
+    profile_manager: &'a crate::profiles::ProfileManager,
+    fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'a>,
+) -> impl Iterator<Item = (crate::entity_id::HumanId, &'a Entity)> + 'a {
+    entities.humans().filter(move |(target_id, entity)| {
+        is_possible_sword_strike_victim(
+            entities,
+            attacker_id,
+            entity,
+            *target_id,
+            profile_manager,
+            fast_grid,
+            obstacles,
+        )
+    })
 }

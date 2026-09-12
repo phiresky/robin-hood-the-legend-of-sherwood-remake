@@ -966,9 +966,7 @@ impl EngineInner {
         }
 
         let profiles = &assets.profile_manager;
-        let campaign = self
-            .mission_domain
-            .required_campaign_mut("quit-mission updates");
+        let campaign = self.mission_domain.campaign_mut();
         if campaign.current_mission_idx.is_some() {
             campaign.set_mission_done(won, None, profiles);
         }
@@ -977,13 +975,7 @@ impl EngineInner {
 
         self.reset_all_pc_comas(assets);
 
-        if won
-            && self
-                .mission_domain
-                .required_campaign("quit-mission updates")
-                .current_mission_idx
-                .is_some()
-        {
+        if won && self.mission_domain.campaign().current_mission_idx.is_some() {
             // The LIVING/DEAD/SCORE value additions are gated on
             // `mission_won` — a lost mission must NOT accumulate these
             // totals onto the campaign.
@@ -1047,8 +1039,7 @@ impl EngineInner {
             feedback,
             ..
         } = self;
-        let (campaign, mission_stat) =
-            mission_domain.required_campaign_and_stat("quit-mission updates");
+        let (campaign, mission_stat) = mission_domain.campaign_and_stat_mut();
         QuitMissionContext {
             campaign,
             mission_stat,
@@ -1127,9 +1118,7 @@ impl EngineInner {
     /// (amulet death-save).
     pub(crate) fn reset_all_pc_comas(&mut self, assets: &LevelAssets) {
         let coma_pc_ids: Vec<EntityId> = {
-            let campaign = self
-                .mission_domain
-                .required_campaign("quit-mission updates");
+            let campaign = self.mission_domain.campaign();
             self.world
                 .pc_ids
                 .iter()
@@ -5741,7 +5730,7 @@ impl EngineInner {
     /// begins ticking.
     pub(crate) fn register_peasant_name(&mut self, name: String) {
         self.mission_domain
-            .required_campaign_mut("registering a mission peasant name")
+            .campaign_mut()
             .register_peasant_name(name);
     }
 
