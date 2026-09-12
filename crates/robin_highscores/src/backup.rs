@@ -6,7 +6,7 @@
 //! summary binds the protected payload manifest by digest without duplicating
 //! its potentially large file inventory into the API-readable status file.
 
-use ring::hmac;
+use crate::authentication as hmac;
 use robin_run_protocol::{ArtifactRefV1, Digest32, Validate as _, canonical_json_bytes};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -848,7 +848,7 @@ async fn load_backup_release_identity_inner(
         let mut options = tokio::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
-        options.custom_flags(libc::O_NOFOLLOW);
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
         options.open(path).await?
     };
     let metadata = file.metadata().await?;
@@ -1193,10 +1193,7 @@ impl BackupCleanupJournalV1 {
             hmac_sha256: String::new(),
         };
         value.validate_fields()?;
-        value.hmac_sha256 = hex::encode(hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, key),
-            &value.signing_bytes()?,
-        ));
+        value.hmac_sha256 = hex::encode(hmac::sign(key, &value.signing_bytes()?));
         Ok(value)
     }
 
@@ -1204,7 +1201,7 @@ impl BackupCleanupJournalV1 {
         self.validate_fields()?;
         validate_digest(&self.hmac_sha256, "backup cleanup-journal HMAC")?;
         hmac::verify(
-            &hmac::Key::new(hmac::HMAC_SHA256, key),
+            key,
             &self.signing_bytes()?,
             &hex::decode(&self.hmac_sha256)?,
         )
@@ -1300,10 +1297,7 @@ impl BackupVerificationEnvelopeV2 {
             hmac_sha256: String::new(),
         };
         value.validate_fields()?;
-        value.hmac_sha256 = hex::encode(hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, key),
-            &value.signing_bytes()?,
-        ));
+        value.hmac_sha256 = hex::encode(hmac::sign(key, &value.signing_bytes()?));
         Ok(value)
     }
 
@@ -1311,12 +1305,8 @@ impl BackupVerificationEnvelopeV2 {
         self.validate_fields()?;
         validate_digest(&self.hmac_sha256, "backup verification-envelope HMAC")?;
         let tag = hex::decode(&self.hmac_sha256)?;
-        hmac::verify(
-            &hmac::Key::new(hmac::HMAC_SHA256, key),
-            &self.signing_bytes()?,
-            &tag,
-        )
-        .map_err(|_| anyhow::anyhow!("backup verification-envelope authentication failed"))
+        hmac::verify(key, &self.signing_bytes()?, &tag)
+            .map_err(|_| anyhow::anyhow!("backup verification-envelope authentication failed"))
     }
 
     pub fn verify_manifest(
@@ -1481,7 +1471,7 @@ impl BackupStatusV4 {
         };
         status.validate_fields()?;
         status.hmac_sha256 = hex::encode(hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, backup_authority_hmac_key),
+            backup_authority_hmac_key,
             &status.signing_bytes()?,
         ));
         Ok(status)
@@ -1492,12 +1482,8 @@ impl BackupStatusV4 {
         validate_digest(&self.hmac_sha256, "backup status HMAC")?;
         let tag = hex::decode(&self.hmac_sha256)?;
         anyhow::ensure!(tag.len() == 32, "backup status HMAC has the wrong length");
-        hmac::verify(
-            &hmac::Key::new(hmac::HMAC_SHA256, backup_authority_hmac_key),
-            &self.signing_bytes()?,
-            &tag,
-        )
-        .map_err(|_| anyhow::anyhow!("backup status authentication failed"))?;
+        hmac::verify(backup_authority_hmac_key, &self.signing_bytes()?, &tag)
+            .map_err(|_| anyhow::anyhow!("backup status authentication failed"))?;
         Ok(())
     }
 
@@ -1786,7 +1772,7 @@ mod tests {
         let mut mismatched_schema = status.clone();
         mismatched_schema.database_schema_version += 1;
         mismatched_schema.hmac_sha256 = hex::encode(hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, &key),
+            &key,
             &mismatched_schema.signing_bytes().unwrap(),
         ));
         assert!(
@@ -1798,10 +1784,7 @@ mod tests {
         old_domain_bytes
             .extend_from_slice(&status.signing_bytes().unwrap()[BACKUP_STATUS_DOMAIN.len()..]);
         let mut old_domain = status.clone();
-        old_domain.hmac_sha256 = hex::encode(hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, &key),
-            &old_domain_bytes,
-        ));
+        old_domain.hmac_sha256 = hex::encode(hmac::sign(&key, &old_domain_bytes));
         assert!(
             old_domain.verify(&key).is_err(),
             "the obsolete V3 HMAC domain must not authenticate V4 status"
@@ -1926,10 +1909,7 @@ mod tests {
             &envelope.signing_bytes().unwrap()[BACKUP_VERIFICATION_ENVELOPE_DOMAIN.len()..],
         );
         let mut old = envelope.clone();
-        old.hmac_sha256 = hex::encode(hmac::sign(
-            &hmac::Key::new(hmac::HMAC_SHA256, &key),
-            &obsolete_domain,
-        ));
+        old.hmac_sha256 = hex::encode(hmac::sign(&key, &obsolete_domain));
         assert!(old.verify(&key).is_err());
 
         let mut different_manifest = manifest.clone();

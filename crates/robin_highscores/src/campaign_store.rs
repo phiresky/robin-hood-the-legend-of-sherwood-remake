@@ -517,7 +517,7 @@ async fn open_path_verified(
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
+    options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path).await?.into_std().await;
     verify_open_campaign_file(file, digest, max_bytes, require_read_only).await
 }

@@ -529,7 +529,7 @@ fn load_secret_bootstrap_config(path: &Path, field: &str) -> anyhow::Result<Serv
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
+    options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path)?;
     let metadata = file.metadata()?;
     anyhow::ensure!(

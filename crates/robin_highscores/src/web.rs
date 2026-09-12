@@ -3303,11 +3303,8 @@ async fn abuse_report(
     };
     let address = effective_client_ip(&state.config, peer, &headers)?;
     let active_ruleset_ids = active_ruleset_ids(&state.config);
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &state.cursor_hmac_key);
-    let reporter_ip_hash: [u8; 32] = ring::hmac::sign(&key, address.to_string().as_bytes())
-        .as_ref()
-        .try_into()
-        .map_err(|_| ApiError::Internal)?;
+    let reporter_ip_hash =
+        crate::authentication::sign(&state.cursor_hmac_key, address.to_string().as_bytes());
     let (report_id, received_at_unix_ms) = state
         .database
         .insert_abuse_report(
@@ -4534,8 +4531,7 @@ fn encode_cursor(cursor: &CursorToken, key: &[u8; 32]) -> Result<String, ApiErro
 
 fn encode_cursor_envelope<T: Serialize>(cursor: &T, key: &[u8; 32]) -> Result<String, ApiError> {
     let bytes = serde_json::to_vec(cursor).map_err(internal_json)?;
-    let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
-    let signature = ring::hmac::sign(&signing_key, &bytes);
+    let signature = crate::authentication::sign(key, &bytes);
     let mut authenticated = bytes;
     authenticated.extend_from_slice(signature.as_ref());
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(authenticated))
@@ -4555,8 +4551,7 @@ fn decode_cursor_envelope<T: serde::de::DeserializeOwned>(
         return Err(ApiError::BadRequest("cursor is not valid".to_owned()));
     }
     let (bytes, signature) = authenticated.split_at(authenticated.len() - 32);
-    let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
-    ring::hmac::verify(&signing_key, bytes, signature)
+    crate::authentication::verify(key, bytes, signature)
         .map_err(|_| ApiError::BadRequest("cursor authentication failed".to_owned()))?;
     serde_json::from_slice(bytes)
         .map_err(|_| ApiError::BadRequest("cursor is not valid".to_owned()))

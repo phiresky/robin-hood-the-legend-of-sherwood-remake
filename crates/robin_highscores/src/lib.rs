@@ -7,6 +7,7 @@
 //! results. This separation is deliberate: there is no debug or loopback HTTP
 //! endpoint capable of promoting a submission.
 
+mod authentication;
 pub mod backup;
 pub mod campaign_store;
 pub mod config;

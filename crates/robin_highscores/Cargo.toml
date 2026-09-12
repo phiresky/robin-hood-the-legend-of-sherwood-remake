@@ -41,9 +41,8 @@ futures-util = "0.3"
 fs2 = "0.4"
 hex = "0.4"
 ipnet = "2"
-libc = "0.2"
 rand = "0.10"
-ring = "0.17"
+hmac = "0.13"
 robin_run_protocol = { workspace = true, features = ["authentication"] }
 robin_engine.workspace = true
 robin_replay_format.workspace = true
@@ -71,6 +70,8 @@ nix_legacy = { package = "nix", version = "0.29", features = ["fs"] }
 sd-notify = "0.5"
 
 [dev-dependencies]
+# Independent compatibility oracle for persisted HMAC authorities and cursors.
+ring = "0.17"
 bitcode.workspace = true
 http-body-util = "0.1"
 tracing-test = "0.2"
