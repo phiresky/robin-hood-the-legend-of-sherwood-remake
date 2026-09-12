@@ -615,6 +615,7 @@ fn original_entity_reference(id: EntityId) -> serde_json::Value {
     serde_json::json!({ "kind": kind, "index": id.index() })
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct Menu;
 impl crate::sherwood_stat::MenuTextLookup for Menu {
     fn get(&self, id: usize) -> String {
