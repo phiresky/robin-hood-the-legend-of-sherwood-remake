@@ -1992,26 +1992,40 @@ mod tests {
         }
     }
 
+    fn load_original_cpf_fixture() -> ProfileManager {
+        let root = original_data::data_directory("");
+        // SbFile resolves the original distribution's casing (Data/DATA, etc.).
+        // The fixture must be the authored binary, never a pre-generated JSON
+        // file accidentally left in a developer's installation.
+        let path = root.join("Data/Configuration/profile.cpf");
+        let mut file = SbFile::open(path.to_str().expect("fixture path must be UTF-8"))
+            .unwrap_or_else(|error| panic!("open Original profile {}: {error}", path.display()));
+        let mut profiles = ProfileManager::new();
+        profiles
+            .load_all_legacy_cpf(&mut file)
+            .unwrap_or_else(|error| panic!("decode Original profile {}: {error}", path.display()));
+        profiles
+    }
+
     #[test]
     #[ignore = "requires Original data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn original_cpf_and_exported_document_share_profile_validation() {
-        let root = original_data::data_directory("");
-        let path = [
-            "Data/Configuration/profile.cpf",
-            "DATA/Configuration/profile.cpf",
-        ]
-        .into_iter()
-        .map(|relative| root.join(relative))
-        .find(|path| path.is_file())
-        .expect("Original data must contain Configuration/profile.cpf");
-        let mut file = SbFile::open(path.to_str().unwrap()).unwrap();
-        let mut profiles = ProfileManager::new();
-        profiles.load_all_legacy_cpf(&mut file).unwrap();
+        let profiles = load_original_cpf_fixture();
         let document = crate::content_patch::profile_document(&profiles).unwrap();
-        let decoded = crate::content_patch::profiles_from_document(document).unwrap();
+        // Exercise the public JSON loading path without writing into game data
+        // or requiring the CLI converter's process/UI dependencies.
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("profiles.json", serde_json::to_vec(&document).unwrap())
+            .unwrap();
+        let files = crate::sbfile::SbFileSystem::new(vfs);
+        let decoded = ProfileManager::load_json_with_files("profiles.json", &files).unwrap();
         assert_eq!(
-            serde_json::to_value(profiles).unwrap(),
+            serde_json::to_value(&profiles).unwrap(),
             serde_json::to_value(decoded).unwrap()
+        );
+        assert_eq!(
+            ProfileManager::load_json_document_with_files("profiles.json", &files).unwrap(),
+            document,
         );
     }
 
@@ -2284,15 +2298,12 @@ mod tests {
         assert!(p.required_actions.is_empty());
     }
 
-    // ── Integration tests against real profile.json files ───────
+    // ── Integration tests against Original binary profile.cpf files ───────
 
     #[test]
     #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
-    fn load_demo_profile_json() {
-        let path = original_data::data_file("Data/Configuration/profile.json");
-
-        let mgr = ProfileManager::load_json(path.to_str().unwrap())
-            .expect("failed to load demo profile.json");
+    fn load_demo_profile_cpf() {
+        let mgr = load_original_cpf_fixture();
 
         // Collection counts
         assert_eq!(mgr.hth_weapons.len(), 20, "expected 20 HtH weapons");
@@ -2320,11 +2331,8 @@ mod tests {
 
     #[test]
     #[ignore = "requires full-game data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
-    fn load_fullgame_profile_json() {
-        let path = original_data::data_file("Data/Configuration/profile.json");
-
-        let mgr = ProfileManager::load_json(path.to_str().unwrap())
-            .expect("failed to load fullgame profile.json");
+    fn load_fullgame_profile_cpf() {
+        let mgr = load_original_cpf_fixture();
 
         // Collection counts
         assert_eq!(mgr.missions.len(), 63, "expected 63 missions");
@@ -2364,15 +2372,16 @@ mod tests {
     #[test]
     #[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
     fn demo_profile_serde_round_trip() {
-        let path = original_data::data_file("Data/Configuration/profile.json");
-
-        let mgr = ProfileManager::load_json(path.to_str().unwrap())
-            .expect("failed to load demo profile.json");
+        let mgr = load_original_cpf_fixture();
 
         // Serialize to JSON string, then deserialize back
         let json = serde_json::to_string(&mgr).expect("failed to serialize ProfileManager to JSON");
         let mgr2: ProfileManager =
             serde_json::from_str(&json).expect("failed to deserialize ProfileManager from JSON");
+        assert_eq!(
+            serde_json::to_value(&mgr2).unwrap(),
+            serde_json::to_value(&mgr).unwrap()
+        );
 
         // Verify all collection counts survive the round trip
         assert_eq!(mgr2.hth_weapons.len(), mgr.hth_weapons.len());

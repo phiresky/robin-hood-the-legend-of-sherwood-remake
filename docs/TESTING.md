@@ -147,8 +147,14 @@ ROBINHOOD_DATA_DIR=/absolute/path/to/leicester-demo bash scripts/check-quality.s
 ROBINHOOD_DATA_DIR=/absolute/path/to/full-game bash scripts/check-quality.sh fixtures-fullgame
 ```
 
-Each root must contain `Data/`. The demo suite checks the original profile,
-profile JSON round trip, font, sprite banks, and script decoding/manager fixtures.
+Each root must contain `Data/` (original distribution casing is supported).
+Both profile fixture gates read the shipped `Data/Configuration/profile.cpf`
+directly and validate its decoded profiles. They also export its canonical JSON
+document into an isolated in-memory filesystem and exercise the engine JSON
+loader, comparing every decoded field. No generated `profile.json` or
+`profile.cpf.json` is required, and neither gate writes into the game-data root.
+The demo additionally checks the full profile serde round trip, font, sprite
+banks, and script decoding/manager fixtures.
 It also checks the Ecoste demo's five dialogue portraits in
 `DATA/Interface/DEFAULT.RES` (resource 267), including archive loading and RGBA
 conversion; this fixture is explicitly selected with `engine-adapters`. The
