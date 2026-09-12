@@ -183,7 +183,7 @@ pub(crate) async fn show_movies(
         } else {
             // No `RHID_MENU_BACKGROUND_2` available — fall back to dim so
             // we at least get visible button chrome.
-            renderer.render_gpu_rect(0, 0, MENU_W, MENU_H, 0, 0, 0, 255);
+            renderer.render_gpu_rect(0, 0, MENU_W, MENU_H, [0, 0, 0, 255]);
         }
 
         // Title — centre the string horizontally inside the 0..500 column,

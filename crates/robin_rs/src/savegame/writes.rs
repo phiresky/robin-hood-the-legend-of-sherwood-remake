@@ -97,15 +97,13 @@ impl SaveGameManager {
                     mission_id,
                 )
             });
-        let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-        let mut save = GameSaveFile::capture_with_game(
-            engine,
+        let mut save = capture_save(
             host,
             game,
+            engine,
             mission_id,
-            game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
+            profiles,
             current.text.clone(),
-            provenance,
         )?;
         host.application_context()
             .replay_recording()
@@ -253,17 +251,8 @@ impl SaveGameManager {
             self.reconcile_quick_slots()?;
             let idx = self.ensure_special_slot(filename, display_text)?;
             let display_text = self.catalog[idx].text.clone();
-            let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-            // Capture (clone) on the main thread — fast.
-            let mut save = GameSaveFile::capture_with_game(
-                engine,
-                host,
-                game,
-                mission_id,
-                game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
-                display_text,
-                provenance,
-            )?;
+            // Capture (clone) on the main thread before starting the writer.
+            let mut save = capture_save(host, game, engine, mission_id, profiles, display_text)?;
             host.application_context()
                 .replay_recording()
                 .attach_save_boundary(&mut save)?;
@@ -430,16 +419,7 @@ impl SaveGameManager {
             .with_context(|| format!("cannot write missing save slot {index}"))?
             .text
             .clone();
-        let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-        let mut save = GameSaveFile::capture_with_game(
-            engine,
-            host,
-            game,
-            mission_id,
-            game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
-            display_text,
-            provenance,
-        )?;
+        let mut save = capture_save(host, game, engine, mission_id, profiles, display_text)?;
         save.header.multiplayer_diagnostic = multiplayer_diagnostic;
         let mut metadata = self.catalog[index].clone();
         metadata.update_snapshot_metadata(
@@ -533,4 +513,25 @@ impl SaveGameManager {
         self.commit_synchronous(index, metadata, &bytes, thumbnail)
             .map(|_| ())
     }
+}
+
+/// Capture only: each publication workflow owns when to attach its replay boundary.
+fn capture_save(
+    host: &Host,
+    game: &crate::game::Game,
+    engine: &Engine,
+    mission_id: u32,
+    profiles: Option<&ProfileManager>,
+    display_text: String,
+) -> Result<GameSaveFile> {
+    let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
+    GameSaveFile::capture_with_game(
+        engine,
+        host,
+        game,
+        mission_id,
+        game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
+        display_text,
+        provenance,
+    )
 }
