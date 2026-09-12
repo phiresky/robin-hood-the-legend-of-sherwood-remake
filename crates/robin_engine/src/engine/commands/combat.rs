@@ -151,9 +151,9 @@ impl EngineInner {
 
         // Status filter
         let status_ok = {
-            let target = match self.get_entity(target_id) {
-                Some(e) => e,
-                None => return,
+            let Some(target) = self.get_entity(target_id) else {
+                tracing::warn!(?pc_id, ?target_id, "combat command target disappeared");
+                return;
             };
             let selector_camp = self
                 .get_entity(pc_id)
@@ -266,7 +266,13 @@ impl EngineInner {
                 e.element_data().position_map(),
                 e.element_data().layer(),
             ),
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?pc_id,
+                    "combat command actor disappeared before route construction"
+                );
+                return;
+            }
         };
         let (target_sector, target_pos, target_layer) = match self.get_entity(target_id) {
             Some(e) => (
@@ -274,7 +280,13 @@ impl EngineInner {
                 e.element_data().position_map(),
                 e.element_data().layer(),
             ),
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?target_id,
+                    "combat command target disappeared before route construction"
+                );
+                return;
+            }
         };
 
         if let (Some(pcs), Some(ts)) = (pc_sector, target_sector)
@@ -498,7 +510,13 @@ impl EngineInner {
             .get(aggressor_line_idx as usize)
         {
             Some(l) => (l.clone(), l.associated_line_index),
-            None => return,
+            None => {
+                tracing::warn!(
+                    aggressor_line_idx,
+                    "jump attack references a missing aggressor line"
+                );
+                return;
+            }
         };
         let Some(victim_line) = victim_line_idx.and_then(|idx| {
             self.world
@@ -513,7 +531,10 @@ impl EngineInner {
 
         let victim_pos = match self.get_entity(target_id) {
             Some(e) => e.element_data().position_map(),
-            None => return,
+            None => {
+                tracing::warn!(?target_id, "jump attack target disappeared");
+                return;
+            }
         };
         let t_victim = victim_line.compute_nearest_point_param(victim_pos.to_geo().into());
         let coeff = t_victim * victim_line.norm();

@@ -1725,10 +1725,14 @@ impl EngineInner {
             gesture_quality.is_strike_quality(),
             "invalid gesture quality reached sweep initialization"
         );
-        let profile = match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
-            Some(p) => p,
-            None => return,
+        // No weapon means no sweep; a referenced profile must exist.
+        let Some(profile_idx) = profile_idx else {
+            return;
         };
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| panic!("sweep has missing weapon profile {profile_idx}"));
         let thrust = &profile.thrusts[strike as usize];
         let direction = thrust.direction;
         // Original-game sword strike-angle access evaluates authored-degree
@@ -1886,9 +1890,9 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(attacker_id) else {
                 return;
             };
-            let actor = match entity.actor_data() {
-                Some(a) => a,
-                None => return,
+            let Some(actor) = entity.actor_data() else {
+                // Sweep polling admits entities without actor capability.
+                return;
             };
             if let Some(sweep) = &actor.sweep_state {
                 let pos = entity.element_data().position_map();
@@ -2726,13 +2730,12 @@ impl EngineInner {
         inc_y: f32,
     ) {
         // Read flyer position + sector.
-        let (flyer_pos_ground, flyer_sector) = match self.get_entity(flyer_id) {
-            Some(e) => {
-                let elem = e.element_data();
-                let position = elem.position();
-                ((position.x, position.y), elem.sector())
-            }
-            None => return,
+        let (flyer_pos_ground, flyer_sector) = {
+            let elem = self
+                .expect_entity(flyer_id, "domino effect flyer")
+                .element_data();
+            let position = elem.position();
+            ((position.x, position.y), elem.sector())
         };
 
         // The flyer's `is_active_and_outside_building` test is

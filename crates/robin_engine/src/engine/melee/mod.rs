@@ -1447,14 +1447,16 @@ fn entity_distance<A: Into<EntityId>, B: Into<EntityId>>(
 ) -> f32 {
     let a = a.into();
     let b = b.into();
-    let pos_a = match entities.get(a) {
-        Some(e) => e.element_data().position_map(),
-        None => return f32::MAX,
-    };
-    let pos_b = match entities.get(b) {
-        Some(e) => e.element_data().position_map(),
-        None => return f32::MAX,
-    };
+    let pos_a = entities
+        .get(a)
+        .unwrap_or_else(|| panic!("distance source {a:?} disappeared"))
+        .element_data()
+        .position_map();
+    let pos_b = entities
+        .get(b)
+        .unwrap_or_else(|| panic!("distance target {b:?} disappeared"))
+        .element_data()
+        .position_map();
     let dx = pos_a.x - pos_b.x;
     let dy = pos_a.y - pos_b.y;
     (dx * dx + dy * dy).sqrt()
