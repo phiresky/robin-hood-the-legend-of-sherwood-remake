@@ -12,7 +12,6 @@
 //! that the signer set equals the offer's participant set, and that every
 //! Ed25519 signature covers the canonical final submission bytes.
 
-use crate::leaderboard_http::HttpTask;
 use crate::leaderboard_preferences::{LeaderboardPreferences, LeaderboardTab};
 use crate::leaderboard_service::{
     LeaderboardApi, decode_board, decode_offer, decode_submission_accepted,
@@ -241,6 +240,12 @@ pub trait MissionEndTask<T> {
     /// Return `None` while work remains pending. Implementations must never
     /// block the calling render frame.
     fn try_take(&mut self) -> Option<Result<T, String>>;
+}
+
+impl<T, F: FnMut() -> Option<Result<T, String>>> MissionEndTask<T> for F {
+    fn try_take(&mut self) -> Option<Result<T, String>> {
+        self()
+    }
 }
 
 pub trait SubmissionAuthorizationTask: MissionEndTask<SignedSubmissionV1> {
@@ -1395,57 +1400,28 @@ impl HttpMissionEndLeaderboardBackend {
     }
 }
 
-struct BoardHttpTask {
-    task: HttpTask,
-    query: LeaderboardQueryV1,
-}
-
-impl MissionEndTask<LeaderboardPageV1> for BoardHttpTask {
-    fn try_take(&mut self) -> Option<Result<LeaderboardPageV1, String>> {
-        self.task
-            .try_take()
-            .map(|result| decode_board(result, &self.query).map_err(|error| error.to_string()))
-    }
-}
-
-struct OfferHttpTask(HttpTask);
-
-impl MissionEndTask<SubmissionOfferV1> for OfferHttpTask {
-    fn try_take(&mut self) -> Option<Result<SubmissionOfferV1, String>> {
-        self.0
-            .try_take()
-            .map(|result| decode_offer(result).map_err(|error| error.to_string()))
-    }
-}
-
-struct UploadHttpTask(HttpTask);
-
-impl MissionEndTask<SubmissionAcceptedV1> for UploadHttpTask {
-    fn try_take(&mut self) -> Option<Result<SubmissionAcceptedV1, String>> {
-        self.0
-            .try_take()
-            .map(|result| decode_submission_accepted(result).map_err(|error| error.to_string()))
-    }
-}
-
 impl MissionEndLeaderboardBackend for HttpMissionEndLeaderboardBackend {
     fn board(
         &mut self,
         query: LeaderboardQueryV1,
     ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV1>>, String> {
         let task = self.api.board(&query).map_err(|error| error.to_string())?;
-        Ok(Box::new(BoardHttpTask { task, query }))
+        Ok(Box::new(task.map(move |result| {
+            decode_board(result, &query).map_err(|error| error.to_string())
+        })))
     }
 
     fn offer(
         &mut self,
         request: SubmissionOfferRequestV1,
     ) -> Result<Box<dyn MissionEndTask<SubmissionOfferV1>>, String> {
-        Ok(Box::new(OfferHttpTask(
-            self.api
-                .submission_offer(&request)
-                .map_err(|error| error.to_string())?,
-        )))
+        let task = self
+            .api
+            .submission_offer(&request)
+            .map_err(|error| error.to_string())?;
+        Ok(Box::new(task.map(|result| {
+            decode_offer(result).map_err(|error| error.to_string())
+        })))
     }
 
     fn submit(
@@ -1454,11 +1430,13 @@ impl MissionEndLeaderboardBackend for HttpMissionEndLeaderboardBackend {
         replay_bytes: Arc<[u8]>,
         starting_campaign_bytes: Arc<[u8]>,
     ) -> Result<Box<dyn MissionEndTask<SubmissionAcceptedV1>>, String> {
-        Ok(Box::new(UploadHttpTask(
-            self.api
-                .submit(&submission, replay_bytes, starting_campaign_bytes)
-                .map_err(|error| error.to_string())?,
-        )))
+        let task = self
+            .api
+            .submit(&submission, replay_bytes, starting_campaign_bytes)
+            .map_err(|error| error.to_string())?;
+        Ok(Box::new(task.map(|result| {
+            decode_submission_accepted(result).map_err(|error| error.to_string())
+        })))
     }
 }
 

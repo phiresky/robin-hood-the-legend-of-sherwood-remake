@@ -1404,30 +1404,14 @@ impl RankedSessionHost {
         {
             return Err(RankedSessionError::TransportIdentityMismatch);
         }
-        let join_event_ordinal = u32::try_from(self.observations.len())
-            .map_err(|_| RankedSessionError::CounterOverflow("join event ordinal"))?;
-        let claim = NamedSeatJoinClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            session_genesis_sha256: self.genesis.canonical_digest().map_err(invalid_document)?,
+        let claim = self.seat_claim(SeatClaimIdentity {
             public_key: durable_public_key,
             transport_endpoint_id: authenticated_transport_endpoint,
             host_endpoint_id,
-            replay_session_id: self.genesis.claim.replay_session_id,
             participant_instance_id: random_digest(),
             seat,
             connection_epoch: 0,
-            join_event_ordinal,
-            mission_id: self.genesis.claim.ranked_session.mission_id.clone(),
-            content_manifest_sha256: self.genesis.claim.ranked_session.content_manifest_sha256,
-            rules_config_sha256: self.genesis.claim.ranked_session.rules_config_sha256,
-            ruleset_manifest_sha256: self.genesis.claim.ranked_session.ruleset_manifest_sha256,
-            competition_manifest_sha256: self
-                .genesis
-                .claim
-                .ranked_session
-                .competition_manifest_sha256,
-            host_nonce: self.genesis.claim.host_nonce,
-        };
+        })?;
         claim.validate().map_err(invalid_document)?;
         self.pending_admission = Some((PendingAdmissionKind::Fresh, claim.clone()));
         Ok(claim)
@@ -1463,18 +1447,35 @@ impl RankedSessionHost {
             .last_connection_epoch
             .checked_add(1)
             .ok_or(RankedSessionError::CounterOverflow("connection epoch"))?;
-        let join_event_ordinal = u32::try_from(self.observations.len())
-            .map_err(|_| RankedSessionError::CounterOverflow("join event ordinal"))?;
-        let claim = NamedSeatJoinClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            session_genesis_sha256: self.genesis.canonical_digest().map_err(invalid_document)?,
+        let claim = self.seat_claim(SeatClaimIdentity {
             public_key: durable_public_key,
             transport_endpoint_id: authenticated_transport_endpoint,
             host_endpoint_id,
-            replay_session_id: self.genesis.claim.replay_session_id,
             participant_instance_id: participant.claim.participant_instance_id,
             seat,
-            connection_epoch,
+            connection_epoch: connection_epoch,
+        })?;
+        claim.validate().map_err(invalid_document)?;
+        self.pending_admission = Some((PendingAdmissionKind::Reconnect, claim.clone()));
+        Ok(claim)
+    }
+
+    fn seat_claim(
+        &self,
+        identity: SeatClaimIdentity,
+    ) -> Result<NamedSeatJoinClaimV1, RankedSessionError> {
+        let join_event_ordinal = u32::try_from(self.observations.len())
+            .map_err(|_| RankedSessionError::CounterOverflow("join event ordinal"))?;
+        Ok(NamedSeatJoinClaimV1 {
+            schema_version: SCHEMA_VERSION_V1,
+            session_genesis_sha256: self.genesis.canonical_digest().map_err(invalid_document)?,
+            public_key: identity.public_key,
+            transport_endpoint_id: identity.transport_endpoint_id,
+            host_endpoint_id: identity.host_endpoint_id,
+            replay_session_id: self.genesis.claim.replay_session_id,
+            participant_instance_id: identity.participant_instance_id,
+            seat: identity.seat,
+            connection_epoch: identity.connection_epoch,
             join_event_ordinal,
             mission_id: self.genesis.claim.ranked_session.mission_id.clone(),
             content_manifest_sha256: self.genesis.claim.ranked_session.content_manifest_sha256,
@@ -1486,10 +1487,7 @@ impl RankedSessionHost {
                 .ranked_session
                 .competition_manifest_sha256,
             host_nonce: self.genesis.claim.host_nonce,
-        };
-        claim.validate().map_err(invalid_document)?;
-        self.pending_admission = Some((PendingAdmissionKind::Reconnect, claim.clone()));
-        Ok(claim)
+        })
     }
 
     /// Cancel the one serialized pending admission. Transport callers use
@@ -2952,4 +2950,14 @@ mod tests {
             Err(RankedSessionError::InvalidSignature)
         ));
     }
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct SeatClaimIdentity {
+    public_key: PublicKey32,
+    transport_endpoint_id: PublicKey32,
+    host_endpoint_id: PublicKey32,
+    participant_instance_id: Digest32,
+    seat: u16,
+    connection_epoch: u32,
 }

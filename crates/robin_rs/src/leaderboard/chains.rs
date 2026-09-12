@@ -13,9 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const STORE_SCHEMA_VERSION: u32 = 1;
-#[cfg(not(target_arch = "wasm32"))]
 const STORE_FILE: &str = "leaderboard-campaign-chains.json";
-#[cfg(target_arch = "wasm32")]
 const BROWSER_STORE_KEY: &str = "robin-hood.leaderboard-campaign-chains.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,27 +240,14 @@ pub enum CampaignChainStoreError {
     DuplicateReceipt,
     #[error("more than one verified campaign chain matches this exact mission start")]
     AmbiguousContinuation,
-    #[error("failed to read campaign-chain store from {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Storage(#[from] super::store::StoreError),
     #[error("failed to decode campaign-chain store from {path}: {source}")]
     Decode {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
     },
-    #[error("failed to persist campaign-chain store to {path}: {source}")]
-    Persist {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[cfg(target_arch = "wasm32")]
-    #[error("browser campaign-chain storage is unavailable: {0}")]
-    BrowserStorage(String),
 }
 
 pub fn load() -> Result<CampaignChainStore, CampaignChainStoreError> {
@@ -286,49 +271,19 @@ pub fn persist(store: &CampaignChainStore) -> Result<(), CampaignChainStoreError
 }
 
 fn display_path() -> PathBuf {
-    #[cfg(target_arch = "wasm32")]
-    {
-        PathBuf::from(BROWSER_STORE_KEY)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        crate::save_file::default_save_directory().join(STORE_FILE)
-    }
+    super::store::display_path(STORE_FILE, BROWSER_STORE_KEY)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn read_store() -> Result<Option<String>, CampaignChainStoreError> {
-    let path = display_path();
-    crate::leaderboard_storage::read_private_utf8(&path)
-        .map_err(|source| CampaignChainStoreError::Read { path, source })
+    Ok(super::store::read(STORE_FILE, BROWSER_STORE_KEY)?)
 }
-
-#[cfg(target_arch = "wasm32")]
-fn read_store() -> Result<Option<String>, CampaignChainStoreError> {
-    browser_storage()?
-        .get_item(BROWSER_STORE_KEY)
-        .map_err(|error| CampaignChainStoreError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn persist_store(encoded: &[u8]) -> Result<(), CampaignChainStoreError> {
-    let path = display_path();
-    crate::leaderboard_storage::replace_private(&path, ".leaderboard-chains-", encoded)
-        .map_err(|source| CampaignChainStoreError::Persist { path, source })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn persist_store(encoded: &[u8]) -> Result<(), CampaignChainStoreError> {
-    let encoded =
-        std::str::from_utf8(encoded).expect("serialized campaign-chain store must be valid UTF-8");
-    browser_storage()?
-        .set_item(BROWSER_STORE_KEY, encoded)
-        .map_err(|error| CampaignChainStoreError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage, CampaignChainStoreError> {
-    crate::browser_storage::local_storage().map_err(CampaignChainStoreError::BrowserStorage)
+    Ok(super::store::write(
+        STORE_FILE,
+        BROWSER_STORE_KEY,
+        ".leaderboard-chains-",
+        encoded,
+    )?)
 }
 
 #[cfg(test)]

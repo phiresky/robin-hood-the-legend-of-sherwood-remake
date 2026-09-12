@@ -17,6 +17,7 @@ use robin_engine::sbfile::SbFileSystem;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod catalog;
 mod feature40_text;
 
 #[cfg(any(not(target_arch = "wasm32"), test))]
@@ -1044,112 +1045,7 @@ pub const FEATURE40_PORT_TEXT_KEYS: &[PortTextKey] = &[
 ];
 
 pub fn port_text(locale: Option<&str>, key: PortTextKey) -> &'static str {
-    let language = locale.map(locale_primary).unwrap_or(Cow::Borrowed("en"));
-    match key {
-        PortTextKey::CampaignClassicMap => {
-            return if language == "de" {
-                "Klassische Karte"
-            } else {
-                "Classic map"
-            };
-        }
-        PortTextKey::CampaignProgressTree => {
-            return if language == "de" {
-                "Fortschrittsbaum"
-            } else {
-                "Progress tree"
-            };
-        }
-        PortTextKey::CampaignSherwoodMuseum => {
-            return if language == "de" {
-                "Sherwood-Museum"
-            } else {
-                "Sherwood museum"
-            };
-        }
-        PortTextKey::GameplayLabel(setting) | PortTextKey::GameplayTooltip(setting) => {
-            let (label, help) = setting
-                .text(&language)
-                .or_else(|| setting.text("en"))
-                .expect("every gameplay setting has English catalogue text");
-            return if matches!(key, PortTextKey::GameplayLabel(_)) {
-                label
-            } else {
-                help
-            };
-        }
-        PortTextKey::GameAutosaved => {
-            return if language == "de" {
-                "Spiel automatisch gespeichert."
-            } else {
-                "Game autosaved."
-            };
-        }
-        PortTextKey::AutosaveFailed => {
-            return if language == "de" {
-                "Automatisches Speichern fehlgeschlagen – siehe Protokoll."
-            } else {
-                "Autosave failed - check the log."
-            };
-        }
-        PortTextKey::SaveFailed => {
-            return if language == "de" {
-                "Speichern fehlgeschlagen – vor erneutem Versuch das Protokoll prüfen."
-            } else {
-                "Save failed - check the log before retrying."
-            };
-        }
-        _ => {}
-    }
-
-    if let Some(text) = feature40_text::text(locale.unwrap_or("en-US"), key)
-        .or_else(|| feature40_text::text("en-US", key))
-    {
-        return text;
-    }
-    match (language.as_ref(), key) {
-        ("de", PortTextKey::Language) => "Sprache",
-        ("de", PortTextKey::Automatic) => "Automatisch",
-        ("de", PortTextKey::Apply) => "Anwenden",
-        ("fr", PortTextKey::Language) => "Langue",
-        ("fr", PortTextKey::Automatic) => "Automatique",
-        ("fr", PortTextKey::Apply) => "Appliquer",
-        ("it", PortTextKey::Language) => "Lingua",
-        ("it", PortTextKey::Automatic) => "Automatico",
-        ("it", PortTextKey::Apply) => "Applica",
-        ("pt" | "es", PortTextKey::Language) => "Idioma",
-        ("pt" | "es", PortTextKey::Automatic) => "Automático",
-        ("pt" | "es", PortTextKey::Apply) => "Aplicar",
-        ("ru", PortTextKey::Language) => "Язык",
-        ("ru", PortTextKey::Automatic) => "Автоматически",
-        ("ru", PortTextKey::Apply) => "Применить",
-        ("ja", PortTextKey::Language) => "言語",
-        ("ja", PortTextKey::Automatic) => "自動",
-        ("ja", PortTextKey::Apply) => "適用",
-        ("cs", PortTextKey::Language) => "Jazyk",
-        ("cs", PortTextKey::Automatic) => "Automaticky",
-        ("cs", PortTextKey::Apply) => "Použít",
-        ("pl", PortTextKey::Language) => "Język",
-        ("pl", PortTextKey::Automatic) => "Automatycznie",
-        ("pl", PortTextKey::Apply) => "Zastosuj",
-        ("zh", PortTextKey::Language) => "語言",
-        ("zh", PortTextKey::Automatic) => "自動",
-        ("zh", PortTextKey::Apply) => "套用",
-        ("ko", PortTextKey::Language) => "언어",
-        ("ko", PortTextKey::Automatic) => "자동",
-        ("ko", PortTextKey::Apply) => "적용",
-        ("th", PortTextKey::Language) => "ภาษา",
-        ("th", PortTextKey::Automatic) => "อัตโนมัติ",
-        ("th", PortTextKey::Apply) => "ใช้",
-        (_, PortTextKey::Language) => "Language",
-        (_, PortTextKey::Automatic) => "Automatic",
-        (_, PortTextKey::Apply) => "Apply",
-        (_, PortTextKey::InstalledLanguages) => "Installed languages",
-        (_, PortTextKey::OptionalEnglishFallback) => {
-            "Missing optional voice or cinematics use the installed English pack"
-        }
-        _ => unreachable!("Feature 40 keys return from the complete port-owned catalogue"),
-    }
+    catalog::text(locale, key)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

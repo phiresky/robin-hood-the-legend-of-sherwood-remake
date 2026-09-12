@@ -13,9 +13,7 @@ pub const SAME_ORIGIN_API_BASE_PATH: &str = "/api/v1";
 pub const NATIVE_PRODUCTION_API_BASE_URL: &str = "https://robinhood.phiresky.xyz/api/v1";
 pub const LOCAL_API_BASE_URL: &str = "http://127.0.0.1:8787/api/v1";
 pub const API_BASE_URL_ENV: &str = "ROBINHOOD_LEADERBOARD_API_URL";
-#[cfg(not(target_arch = "wasm32"))]
 const PREFERENCES_FILE: &str = "leaderboards.json";
-#[cfg(target_arch = "wasm32")]
 const BROWSER_PREFERENCES_KEY: &str = "robin-hood.leaderboards.v1";
 const PREFERENCES_SCHEMA_VERSION: u16 = 1;
 
@@ -185,27 +183,14 @@ pub enum LeaderboardPreferencesError {
     InvalidFacet { field: &'static str },
     #[error("leaderboard player-count filter is outside the supported seat range")]
     InvalidPlayerCount,
-    #[error("failed to read leaderboard preferences from {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Storage(#[from] super::store::StoreError),
     #[error("failed to decode leaderboard preferences from {path}: {source}")]
     Decode {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
     },
-    #[error("failed to persist leaderboard preferences to {path}: {source}")]
-    Persist {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[cfg(target_arch = "wasm32")]
-    #[error("browser leaderboard-preference storage is unavailable: {0}")]
-    BrowserStorage(String),
 }
 
 const fn default_preferred_player_count() -> Option<u16> {
@@ -293,49 +278,22 @@ pub fn persist(preferences: &LeaderboardPreferences) -> Result<(), LeaderboardPr
 }
 
 fn display_path() -> PathBuf {
-    #[cfg(target_arch = "wasm32")]
-    {
-        PathBuf::from(BROWSER_PREFERENCES_KEY)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        crate::save_file::default_save_directory().join(PREFERENCES_FILE)
-    }
+    super::store::display_path(PREFERENCES_FILE, BROWSER_PREFERENCES_KEY)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn read_store() -> Result<Option<String>, LeaderboardPreferencesError> {
-    let path = display_path();
-    crate::leaderboard_storage::read_private_utf8(&path)
-        .map_err(|source| LeaderboardPreferencesError::Read { path, source })
+    Ok(super::store::read(
+        PREFERENCES_FILE,
+        BROWSER_PREFERENCES_KEY,
+    )?)
 }
-
-#[cfg(target_arch = "wasm32")]
-fn read_store() -> Result<Option<String>, LeaderboardPreferencesError> {
-    browser_storage()?
-        .get_item(BROWSER_PREFERENCES_KEY)
-        .map_err(|error| LeaderboardPreferencesError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn persist_store(encoded: &[u8]) -> Result<(), LeaderboardPreferencesError> {
-    let path = display_path();
-    crate::leaderboard_storage::replace_private(&path, ".leaderboards-", encoded)
-        .map_err(|source| LeaderboardPreferencesError::Persist { path, source })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn persist_store(encoded: &[u8]) -> Result<(), LeaderboardPreferencesError> {
-    let encoded = std::str::from_utf8(encoded)
-        .expect("serialized leaderboard preferences must be valid UTF-8");
-    browser_storage()?
-        .set_item(BROWSER_PREFERENCES_KEY, encoded)
-        .map_err(|error| LeaderboardPreferencesError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage, LeaderboardPreferencesError> {
-    crate::browser_storage::local_storage().map_err(LeaderboardPreferencesError::BrowserStorage)
+    Ok(super::store::write(
+        PREFERENCES_FILE,
+        BROWSER_PREFERENCES_KEY,
+        ".leaderboards-",
+        encoded,
+    )?)
 }
 
 #[cfg(test)]

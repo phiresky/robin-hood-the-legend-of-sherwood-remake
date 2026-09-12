@@ -420,16 +420,18 @@ impl CampaignMapModalState {
             renderer,
             transform,
             &self.graph,
-            self.selected_progress,
-            self.presentation,
             &self.assets,
-            self.show_achievement_badges,
-            self.lifetime_totals,
-            true,
-            self.achievement_overview,
-            self.details_offset(),
-            self.scroll_views[HISTORY_VIEW].offset(),
-            self.selected_play,
+            ProgressViewState {
+                selected: self.selected_progress,
+                presentation: self.presentation,
+                show_achievement_badges: self.show_achievement_badges,
+                lifetime_totals: self.lifetime_totals,
+                browsing: true,
+                achievement_overview: self.achievement_overview,
+                details_scroll: self.details_offset(),
+                history_scroll: self.scroll_views[HISTORY_VIEW].offset(),
+                selected_play: self.selected_play,
+            },
             &self.replay_status,
             Some(&self.scroll_views),
         );
@@ -493,31 +495,26 @@ impl CampaignMapModalState {
                 campaign,
                 profiles,
                 campaign_map,
-                &self.items,
-                self.selected_classic,
-                &self.assets,
                 menu_resources,
-                &self.input,
-                &self.frame,
-                self.show_achievement_badges,
-                campaign.achievement_aggregation(profiles),
-                self.lifetime_achievements,
+                self,
             ),
             CampaignPresentationMode::ProgressTree | CampaignPresentationMode::SherwoodMuseum => {
                 render_campaign_progress(
                     renderer,
                     transform,
                     &self.graph,
-                    self.selected_progress,
-                    self.presentation,
                     &self.assets,
-                    self.show_achievement_badges,
-                    self.lifetime_totals,
-                    false,
-                    self.achievement_overview,
-                    self.details_offset(),
-                    self.scroll_views[HISTORY_VIEW].offset(),
-                    self.selected_play,
+                    ProgressViewState {
+                        selected: self.selected_progress,
+                        presentation: self.presentation,
+                        show_achievement_badges: self.show_achievement_badges,
+                        lifetime_totals: self.lifetime_totals,
+                        browsing: false,
+                        achievement_overview: self.achievement_overview,
+                        details_scroll: self.details_offset(),
+                        history_scroll: self.scroll_views[HISTORY_VIEW].offset(),
+                        selected_play: self.selected_play,
+                    },
                     &self.replay_status,
                     Some(&self.scroll_views),
                 )
@@ -1532,14 +1529,10 @@ fn current_achievement_status(
     format!("Current campaign: {status}")
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_campaign_progress(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    graph: &CampaignProgressGraph,
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ProgressViewState {
     selected: usize,
     presentation: CampaignPresentationMode,
-    assets: &CampaignMapAssets,
     show_achievement_badges: bool,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
     browsing: bool,
@@ -1547,9 +1540,28 @@ fn render_campaign_progress(
     details_scroll: Option<usize>,
     history_scroll: usize,
     selected_play: usize,
+}
+
+fn render_campaign_progress(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    assets: &CampaignMapAssets,
+    view: ProgressViewState,
     replay_status: &str,
     scroll_views: Option<&[ScrollView; 5]>,
 ) {
+    let ProgressViewState {
+        selected,
+        presentation,
+        show_achievement_badges,
+        lifetime_totals,
+        browsing,
+        achievement_overview,
+        details_scroll,
+        history_scroll,
+        selected_play,
+    } = view;
     let mut capture_views;
     let views = if let Some(views) = scroll_views {
         views
@@ -2537,23 +2549,23 @@ fn build_campaign_frame(
     frame
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_campaign_map(
     renderer: &mut Renderer,
     transform: MenuTransform,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     campaign_map: &CampaignMapState,
-    items: &[CampaignMapItem],
-    selected: usize,
-    assets: &CampaignMapAssets,
     resources: Option<&IngameMenuResources>,
-    input: &ModalInputState,
-    frame: &FrameWnd,
-    show_achievement_badges: bool,
-    campaign_achievements: robin_engine::achievement::AchievementAggregationSummary,
-    lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
+    state: &CampaignMapModalState,
 ) {
+    let items = &state.items;
+    let selected = state.selected_classic;
+    let assets = &state.assets;
+    let input = &state.input;
+    let frame = &state.frame;
+    let show_achievement_badges = state.show_achievement_badges;
+    let campaign_achievements = campaign.achievement_aggregation(profiles);
+    let lifetime_achievements = state.lifetime_achievements;
     if assets.background.is_none() {
         renderer.render_gpu_rect(
             transform.origin_x,
@@ -3872,17 +3884,20 @@ mod capture_tests {
                         &mut renderer,
                         progress_transform(width as i32, height as i32),
                         &state.graph,
-                        selected,
-                        mode,
                         &state.assets,
-                        true,
-                        state.lifetime_totals,
-                        true,
-                        name == "achievements",
-                        name.starts_with("details")
-                            .then_some(usize::from(name == "details-more")),
-                        if name == "details-more" { 8 } else { 0 },
-                        if name == "details-more" { 10 } else { 0 },
+                        ProgressViewState {
+                            selected: selected,
+                            presentation: mode,
+                            show_achievement_badges: true,
+                            lifetime_totals: state.lifetime_totals,
+                            browsing: true,
+                            achievement_overview: name == "achievements",
+                            details_scroll: name
+                                .starts_with("details")
+                                .then_some(usize::from(name == "details-more")),
+                            history_scroll: if name == "details-more" { 8 } else { 0 },
+                            selected_play: if name == "details-more" { 10 } else { 0 },
+                        },
                         "",
                         None,
                     );
