@@ -731,23 +731,12 @@ impl InteractiveMission {
                     http,
                     ..
                 } = &mut self.runtime;
-                let MissionMutation {
-                    host,
-                    game,
-                    manager,
-                    assets,
-                    dev,
-                } = world.mutation();
                 let terminal_pending = self.frontend.ui.terminal_flow_active();
                 InteractiveFrameSimulation::drive_manual_steps(
                     http,
                     timeline,
                     &services.callbacks.save_manager,
-                    host,
-                    game,
-                    manager,
-                    assets,
-                    dev,
+                    world.mutation(),
                     &mut control.manual_pause,
                     &mut self.frontend.ui,
                     services.window,

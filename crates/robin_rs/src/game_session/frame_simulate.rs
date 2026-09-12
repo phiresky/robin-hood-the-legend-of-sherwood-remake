@@ -1516,11 +1516,7 @@ impl InteractiveFrameSimulation {
         http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
         save_manager: &crate::savegame::SaveGameManager,
-        host: &mut Host,
-        game: &mut crate::game::Game,
-        manager: &mut robin_engine::engine_manager::EngineManager,
-        assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
-        dev: &mut robin_engine::engine::DevState,
+        mutation: super::runtime::MissionMutation<'_>,
         manual_pause: &mut bool,
         ui: &mut super::interactive::MissionUi,
         window: &crate::window::GameWindow,
@@ -1530,6 +1526,13 @@ impl InteractiveFrameSimulation {
         keyboard_step: KeyboardStep,
     ) {
         // ── Pending `/step-forward` / `/step-back` requests ──
+        let super::runtime::MissionMutation {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        } = mutation;
         // Run each queued step synchronously with its own tick +
         // bookkeeping (forward) or rewind-buffer seek (back).  These
         // requests intentionally bypass the `paused` gate — their whole
@@ -1550,11 +1553,13 @@ impl InteractiveFrameSimulation {
         let mut dismissed_ui_task = false;
         drain_steps(
             http.take_pending_steps(),
-            manager,
-            host,
-            assets.as_ref(),
-            dev,
-            game,
+            super::runtime::MissionMutation {
+                manager,
+                host,
+                assets,
+                dev,
+                game,
+            },
             runtime,
             manual_pause,
             &mut ui.active_modal,
