@@ -206,7 +206,6 @@ impl SimulationVisualRefresh<'_> {
             presentation.rebind_shadow_key(
                 resources,
                 host,
-                &window.gpu,
                 current_shadow_color,
                 current_visual_ambiance,
                 engine.sim_config().bypass_fog_sprites_crash,

@@ -866,7 +866,6 @@ impl MissionPresentation {
         &mut self,
         resources: &mut MissionResources,
         host: &mut Host,
-        gpu: &crate::window::GpuContext,
         shadow_color: u16,
         ambiance: robin_engine::engine::Ambiance,
         bypass_fog_sprites_crash: bool,
@@ -883,7 +882,7 @@ impl MissionPresentation {
         );
         self.sprites
             .titbit_renderer
-            .load(&mut resources.cursor, gpu, shadow_color);
+            .load(&mut resources.cursor, &self.renderer, shadow_color);
     }
 }
 
