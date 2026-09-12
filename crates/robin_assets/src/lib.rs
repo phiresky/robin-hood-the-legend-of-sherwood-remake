@@ -11,6 +11,7 @@
 mod original_data {
     pub use robin_test_support::original_data::*;
 
+    #[cfg(feature = "engine-adapters")]
     pub fn demo_scb_path() -> std::path::PathBuf {
         // scb::parse_file resolves case-insensitive original asset paths;
         // extracted demo data can use DATA rather than Data.
