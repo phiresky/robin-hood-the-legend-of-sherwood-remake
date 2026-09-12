@@ -601,7 +601,7 @@ impl EngineInner {
     /// progress) for the host seat.  Single-player + UI gating
     /// callers use this; per-seat dispatch uses
     /// [`Self::is_zoom_possible_for_seat`].
-    pub fn is_zoom_possible(&self, _display: &HostDisplayState) -> bool {
+    pub fn is_zoom_possible(&self) -> bool {
         self.is_camera_zoom_possible_for_seat(0)
     }
 
@@ -629,7 +629,7 @@ impl EngineInner {
     }
 
     /// Whether a zoom is currently in progress.
-    pub fn is_zooming(&self, _display: &HostDisplayState) -> bool {
+    pub fn is_zooming(&self) -> bool {
         !self.is_camera_zoom_possible_for_seat(0)
     }
 
@@ -637,7 +637,7 @@ impl EngineInner {
     /// `MSG_ZOOM_UP_START` fires and cleared at `MSG_ZOOM_UP_END`.  Used
     /// by HUD code to pin the zoom+ widget to selected for the duration
     /// of the transition.
-    pub fn is_zoom_up_in_progress(&self, _display: &HostDisplayState) -> bool {
+    pub fn is_zoom_up_in_progress(&self) -> bool {
         self.feedback
             .cutscene_camera
             .display
@@ -647,7 +647,7 @@ impl EngineInner {
 
     /// Companion to [`Self::is_zoom_up_in_progress`] for zoom-out
     /// transitions.
-    pub fn is_zoom_down_in_progress(&self, _display: &HostDisplayState) -> bool {
+    pub fn is_zoom_down_in_progress(&self) -> bool {
         self.feedback
             .cutscene_camera
             .display

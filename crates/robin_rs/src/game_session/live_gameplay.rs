@@ -200,7 +200,7 @@ fn dispatch_gameplay_action(
             dispatch_local_command(&host.transport, commands, &command);
         }
         GameAction::QuickSave => {
-            if !engine.is_zoom_possible(&host.frontend.presentation.engine_display) {
+            if !engine.is_zoom_possible() {
                 game.quick_save_after_zoom = true;
             } else {
                 let mission_id = current_mission_id(engine.campaign(), &assets.profile_manager);
@@ -216,7 +216,7 @@ fn dispatch_gameplay_action(
                 );
                 return;
             }
-            if !engine.is_zoom_possible(&host.frontend.presentation.engine_display) {
+            if !engine.is_zoom_possible() {
                 game.quick_load_after_zoom = true;
             } else {
                 callbacks.queue_operation(SaveLoadRequest::QuickLoad {

@@ -2632,6 +2632,21 @@ const PROTO_EXTENSION: &str = ".rhp";
 const MISSION_EXTENSION: &str = ".rhm";
 const BEGGAR_SCROLL_SET_COUNT: usize = 10;
 
+fn open_level_file(files: &crate::sbfile::SbFileSystem, path: &str) -> Result<SbFile, LevelError> {
+    files.open(path).map_err(|code| {
+        if code == crate::sbfile::SBFILE_ERROR_FILE_NOT_FOUND {
+            LevelError::FileNotFound(path.to_owned())
+        } else {
+            LevelError::Legacy(LegacyIoError {
+                path: path.to_owned(),
+                offset: 0,
+                field: "open".to_owned(),
+                kind: crate::legacy_io::LegacyIoErrorKind::SbFile { code },
+            })
+        }
+    })
+}
+
 /// Load a complete level from proto-level (`.rhp`) and mission (`.rhm`) files.
 ///
 /// `is_beggar` determines whether a given civilian profile index is a beggar.
@@ -2670,9 +2685,7 @@ pub fn load_level_with_files(
     let mission_path = format!("{}/{}{}", level_directory, mission_name, MISSION_EXTENSION);
 
     // Open proto-level and detect format
-    let proto_file = files
-        .open(&proto_path)
-        .map_err(|_| LevelError::FileNotFound(proto_path.clone()))?;
+    let proto_file = open_level_file(files, &proto_path)?;
     let mut proto_reader = ChunkReader::new(proto_file);
 
     let format = {
@@ -2691,9 +2704,7 @@ pub fn load_level_with_files(
     progress(1.0);
 
     // Open and load mission
-    let mission_file = files
-        .open(&mission_path)
-        .map_err(|_| LevelError::FileNotFound(mission_path.clone()))?;
+    let mission_file = open_level_file(files, &mission_path)?;
     let mut mission_reader = ChunkReader::new(mission_file);
 
     let mission = load_mission(&mut mission_reader, format, is_beggar)?;
@@ -3728,9 +3739,7 @@ pub fn scan_mission_for_beam_mes_with_files(
     path: &str,
     files: &crate::sbfile::SbFileSystem,
 ) -> Result<MissionBeamMeScan, LevelError> {
-    let file = files
-        .open(path)
-        .map_err(|_| LevelError::FileNotFound(path.to_string()))?;
+    let file = open_level_file(files, path)?;
     let mut reader = ChunkReader::new(file);
 
     let format = {
@@ -5419,6 +5428,111 @@ mod tests {
         fs::write(&path, data).unwrap();
         let path_str = path.to_str().unwrap().to_string();
         (dir, path_str)
+    }
+
+    #[test]
+    fn level_open_stages_preserve_missing_file_paths() {
+        for format in [LevelFormat::Demo, LevelFormat::Fullgame] {
+            let dir = tempfile::tempdir().unwrap();
+            let directory = dir.path().to_str().unwrap();
+            let files = crate::sbfile::SbFileSystem::new(std::sync::Arc::new(
+                robin_util::asset_fs::AssetVfs::new(),
+            ));
+            let mut progress = Vec::new();
+            let error = load_level_with_files(
+                "mission",
+                "proto",
+                directory,
+                &|_| false,
+                &mut |value| progress.push(value),
+                &files,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, LevelError::FileNotFound(path) if path == format!("{directory}/proto.rhp"))
+            );
+            assert!(progress.is_empty());
+
+            fs::write(
+                dir.path().join("proto.rhp"),
+                build_chunk(format.proto_tag(), format.file_version(), &[]),
+            )
+            .unwrap();
+            let error = load_level_with_files(
+                "mission",
+                "proto",
+                directory,
+                &|_| false,
+                &mut |value| progress.push(value),
+                &files,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, LevelError::FileNotFound(path) if path == format!("{directory}/mission.rhm"))
+            );
+            assert_eq!(progress, [1.0]);
+
+            let mission_path = format!("{directory}/mission.rhm");
+            let error = scan_mission_for_beam_mes_with_files(&mission_path, &files).unwrap_err();
+            assert!(matches!(error, LevelError::FileNotFound(path) if path == mission_path));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn level_open_stages_preserve_contextual_read_failures() {
+        use std::os::unix::fs::symlink;
+
+        let assert_open_error = |error: LevelError, expected_path: &str| {
+            let LevelError::Legacy(error) = error else {
+                panic!("expected contextual open failure, got {error:?}");
+            };
+            assert_eq!(error.path, expected_path);
+            assert_eq!(error.offset, 0);
+            assert_eq!(error.field, "open");
+            assert!(matches!(
+                error.kind,
+                crate::legacy_io::LegacyIoErrorKind::SbFile {
+                    code: crate::sbfile::SBFILE_ERROR_READ
+                }
+            ));
+        };
+        for failed_file in ["proto.rhp", "mission.rhm"] {
+            let dir = tempfile::tempdir().unwrap();
+            let directory = dir.path().to_str().unwrap();
+            let files = crate::sbfile::SbFileSystem::new(std::sync::Arc::new(
+                robin_util::asset_fs::AssetVfs::new(),
+            ));
+            if failed_file == "mission.rhm" {
+                let format = LevelFormat::Demo;
+                fs::write(
+                    dir.path().join("proto.rhp"),
+                    build_chunk(format.proto_tag(), format.file_version(), &[]),
+                )
+                .unwrap();
+            }
+            symlink(failed_file, dir.path().join(failed_file)).unwrap();
+            let mut progress = Vec::new();
+            let error = load_level_with_files(
+                "mission",
+                "proto",
+                directory,
+                &|_| false,
+                &mut |value| progress.push(value),
+                &files,
+            )
+            .unwrap_err();
+            assert_open_error(error, &format!("{directory}/{failed_file}"));
+            assert_eq!(progress.len(), usize::from(failed_file == "mission.rhm"));
+
+            if failed_file == "mission.rhm" {
+                let path = format!("{directory}/mission.rhm");
+                assert_open_error(
+                    scan_mission_for_beam_mes_with_files(&path, &files).unwrap_err(),
+                    &path,
+                );
+            }
+        }
     }
 
     #[test]

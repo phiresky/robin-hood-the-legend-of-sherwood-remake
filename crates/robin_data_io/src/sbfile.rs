@@ -527,6 +527,53 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn path_resolution_error(operation: &str, path: &Path, error: std::io::Error) -> i32 {
+    tracing::warn!("asset {operation} {} failed: {error}", path.display());
+    SBFILE_ERROR_READ
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_missing_component(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn candidate_exists(path: &Path) -> Result<bool, i32> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if is_missing_component(&error) => Ok(false),
+        Err(error) => Err(path_resolution_error("metadata", path, error)),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn first_case_folded_entry(
+    directory: &Path,
+    target_lower: &str,
+    entries: impl IntoIterator<Item = std::io::Result<PathBuf>>,
+) -> Result<Option<PathBuf>, i32> {
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| path_resolution_error("directory entry", directory, error))?;
+        if let Some(name) = entry.file_name().and_then(|name| name.to_str())
+            && !name.starts_with('.')
+            && name.to_ascii_lowercase() == target_lower
+        {
+            return Ok(Some(entry));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn try_resolve_case_insensitive(path: &Path) -> Result<Option<PathBuf>, i32> {
+    Ok(resolve_case_insensitive(path))
+}
+
 // Walks every component case-insensitively. Shipping datadirs use mixed
 // casing across components (`DATA/` uppercase, `data/` lowercase), so
 // case-folding has to apply to every component, not just the leaf.
@@ -534,7 +581,16 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 // case-fold scan.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
-    let path_str = path.to_str()?;
+    // The fallible helper logs before this compatibility facade discards status.
+    try_resolve_case_insensitive(path).ok().flatten()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn try_resolve_case_insensitive(path: &Path) -> Result<Option<PathBuf>, i32> {
+    let Some(path_str) = path.to_str() else {
+        tracing::warn!("asset path is not UTF-8: {}", path.display());
+        return Err(SBFILE_ERROR_READ);
+    };
     if cfg!(windows) {
         // The case-fold walk below cannot rebuild drive/verbatim prefixes
         // (`C:\`, canonicalize's `\\?\C:\`), and Windows filesystems are
@@ -542,7 +598,7 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
         // and the only thing that works. Verbatim paths forbid forward
         // slashes, so fold separators to backslashes first.
         let backslashed = PathBuf::from(path_str.replace('/', "\\"));
-        return backslashed.exists().then_some(backslashed);
+        return Ok(candidate_exists(&backslashed)?.then_some(backslashed));
     }
     let normalised = path_str.replace('\\', "/");
     let path = Path::new(&normalised);
@@ -555,31 +611,36 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
         _ => PathBuf::from("."),
     };
     for component in components {
-        let target = component.as_os_str().to_str()?;
+        let target = component
+            .as_os_str()
+            .to_str()
+            .expect("components of a UTF-8 path");
         let candidate = resolved.join(target);
-        if candidate.exists() {
+        if candidate_exists(&candidate)? {
             resolved = candidate;
             continue;
         }
         let target_lower = target.to_ascii_lowercase();
-        let mut found = false;
-        if let Ok(entries) = fs::read_dir(&resolved) {
-            for entry in entries.flatten() {
-                if let Some(name) = entry.file_name().to_str()
-                    && !name.starts_with('.')
-                    && name.to_ascii_lowercase() == target_lower
-                {
-                    resolved = entry.path();
-                    found = true;
-                    break;
-                }
-            }
-        }
-        if !found {
-            return None;
-        }
+        let entries = match fs::read_dir(&resolved) {
+            Ok(entries) => entries,
+            Err(error) if is_missing_component(&error) => return Ok(None),
+            Err(error) => return Err(path_resolution_error("read directory", &resolved, error)),
+        };
+        let Some(found) = first_case_folded_entry(
+            &resolved,
+            &target_lower,
+            entries.map(|entry| entry.map(|entry| entry.path())),
+        )?
+        else {
+            return Ok(None);
+        };
+        // Once an entry matches, even disappearance or a dangling symlink is
+        // a failed selected asset, not absence permitting a lower-priority one.
+        fs::metadata(&found)
+            .map_err(|error| path_resolution_error("selected entry metadata", &found, error))?;
+        resolved = found;
     }
-    Some(resolved)
+    Ok(Some(resolved))
 }
 
 /// Resolve a game-data path to an actual filesystem path.
@@ -644,7 +705,7 @@ impl SbFileSystem {
         let mut entries = std::collections::BTreeMap::<String, OverlayEntry>::new();
         match root {
             OverlayRoot::Directory(directory) => {
-                let Some(resolved) = resolve_case_insensitive(&directory.join(&path)) else {
+                let Some(resolved) = try_resolve_case_insensitive(&directory.join(&path))? else {
                     return Ok(Vec::new());
                 };
                 let resolved = fs::canonicalize(resolved).map_err(|_| SBFILE_ERROR_READ)?;
@@ -886,27 +947,25 @@ impl SbFileSystem {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_contained_file(root: &Path, candidate: &Path) -> Option<PathBuf> {
-    let resolved = resolve_case_insensitive(candidate)?;
-    let resolved = fs::canonicalize(resolved).ok()?;
-    (resolved.starts_with(root) && resolved.is_file()).then_some(resolved)
+    try_resolve_contained_file(root, candidate).ok().flatten()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_contained_directory(root: &Path, candidate: &Path) -> Option<PathBuf> {
-    let resolved = resolve_case_insensitive(candidate)?;
-    let resolved = fs::canonicalize(resolved).ok()?;
-    (resolved.starts_with(root) && resolved.is_dir()).then_some(resolved)
+    let resolved = try_resolve_contained(root, candidate).ok().flatten()?;
+    let metadata = fs::metadata(&resolved)
+        .map_err(|error| path_resolution_error("metadata", &resolved, error))
+        .ok()?;
+    metadata.is_dir().then_some(resolved)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn path_exists_contained(root: &Path, candidate: &Path) -> Result<bool, i32> {
-    let Some(resolved) = resolve_case_insensitive(candidate) else {
-        return Ok(false);
+fn try_resolve_contained(root: &Path, candidate: &Path) -> Result<Option<PathBuf>, i32> {
+    let Some(resolved) = try_resolve_case_insensitive(candidate)? else {
+        return Ok(None);
     };
-    let resolved = fs::canonicalize(&resolved).map_err(|error| {
-        tracing::warn!("asset {} cannot be resolved: {error}", resolved.display());
-        SBFILE_ERROR_READ
-    })?;
+    let resolved = fs::canonicalize(&resolved)
+        .map_err(|error| path_resolution_error("canonicalize", &resolved, error))?;
     if !resolved.starts_with(root) {
         tracing::warn!(
             "asset {} escapes mount {}",
@@ -915,7 +974,22 @@ fn path_exists_contained(root: &Path, candidate: &Path) -> Result<bool, i32> {
         );
         return Err(SBFILE_ERROR_READ);
     }
-    Ok(true)
+    Ok(Some(resolved))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn try_resolve_contained_file(root: &Path, candidate: &Path) -> Result<Option<PathBuf>, i32> {
+    let Some(resolved) = try_resolve_contained(root, candidate)? else {
+        return Ok(None);
+    };
+    let metadata = fs::metadata(&resolved)
+        .map_err(|error| path_resolution_error("metadata", &resolved, error))?;
+    Ok(metadata.is_file().then_some(resolved))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn path_exists_contained(root: &Path, candidate: &Path) -> Result<bool, i32> {
+    try_resolve_contained(root, candidate).map(|path| path.is_some())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -928,6 +1002,11 @@ fn resolve_contained_file(root: &Path, candidate: &Path) -> Option<PathBuf> {
 fn resolve_contained_directory(root: &Path, candidate: &Path) -> Option<PathBuf> {
     let resolved = resolve_case_insensitive(candidate)?;
     (resolved.starts_with(root) && resolved.is_dir()).then_some(resolved)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn try_resolve_contained_file(root: &Path, candidate: &Path) -> Result<Option<PathBuf>, i32> {
+    Ok(resolve_contained_file(root, candidate))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1004,11 +1083,14 @@ impl SbFileSystem {
             {
                 return Err(SBFILE_ERROR_READ);
             }
-            let resolved = self
-                .ranked_confined_candidates(&root, &normalised)
-                .into_iter()
-                .find_map(|candidate| resolve_contained_file(&root, &candidate))
-                .ok_or(SBFILE_ERROR_FILE_NOT_FOUND)?;
+            let mut resolved = None;
+            for candidate in self.ranked_confined_candidates(&root, &normalised) {
+                if let Some(path) = try_resolve_contained_file(&root, &candidate)? {
+                    resolved = Some(path);
+                    break;
+                }
+            }
+            let resolved = resolved.ok_or(SBFILE_ERROR_FILE_NOT_FOUND)?;
             let bytes = fs::read(&resolved).map_err(|error| {
                 tracing::warn!(
                     "ranked verifier asset {} cannot be read: {error}",
@@ -1484,7 +1566,7 @@ impl SbFileSystem {
     fn resolve_instance_path(&self, path: &Path) -> Result<Option<PathBuf>, i32> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            Ok(resolve_case_insensitive(&self.physical_path(path)))
+            try_resolve_case_insensitive(&self.physical_path(path))
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -2113,7 +2195,7 @@ fn read_from_overlay(
 ) -> Result<Option<AssetBytes>, i32> {
     match root {
         OverlayRoot::Directory(dir) => {
-            let Some(resolved) = resolve_case_insensitive(&dir.join(normalised)) else {
+            let Some(resolved) = try_resolve_case_insensitive(&dir.join(normalised))? else {
                 return Ok(None);
             };
             let resolved = fs::canonicalize(&resolved).map_err(|error| {
@@ -2162,6 +2244,176 @@ fn checked_overlay_relative(path: &str) -> Result<String, i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn case_folded_entries_report_failure_without_changing_first_match_order() {
+        let directory = Path::new("fixture");
+        let denied = || Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(
+            first_case_folded_entry(directory, "asset", [denied(), Ok(directory.join("Asset"))]),
+            Err(SBFILE_ERROR_READ)
+        );
+        assert_eq!(
+            first_case_folded_entry(directory, "asset", [Ok(directory.join("Asset")), denied()]),
+            Ok(Some(directory.join("Asset")))
+        );
+        assert_eq!(
+            first_case_folded_entry(
+                directory,
+                "asset",
+                [Ok(directory.join("ASSET")), Ok(directory.join("Asset"))]
+            ),
+            Ok(Some(directory.join("ASSET")))
+        );
+        assert_eq!(
+            first_case_folded_entry(directory, ".hidden", [Ok(directory.join(".HIDDEN"))]),
+            Ok(None)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_resolution_preserves_spelling_and_distinguishes_missing_from_loops() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("Data")).unwrap();
+        fs::write(root.path().join("Data/Exact"), b"first").unwrap();
+        fs::write(root.path().join("Data/exact"), b"second").unwrap();
+        fs::write(root.path().join("Data/Blocker"), b"not a directory").unwrap();
+        symlink("Loop", root.path().join("Data/Loop")).unwrap();
+        for name in ["Exact", "exact"] {
+            assert_eq!(
+                try_resolve_case_insensitive(&root.path().join("data").join(name)),
+                Ok(Some(root.path().join("Data").join(name)))
+            );
+        }
+        for name in ["missing", "Blocker/child"] {
+            assert_eq!(
+                try_resolve_case_insensitive(&root.path().join("Data").join(name)),
+                Ok(None)
+            );
+        }
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        for name in ["Loop", "loop"] {
+            let path = root.path().join("Data").join(name);
+            assert_eq!(try_resolve_case_insensitive(&path), Err(SBFILE_ERROR_READ));
+            assert!(resolve_case_insensitive(&path).is_none());
+            assert_eq!(
+                files.try_exists(path.to_str().unwrap()),
+                Err(SBFILE_ERROR_READ)
+            );
+            assert!(matches!(
+                files.open(path.to_str().unwrap()),
+                Err(SBFILE_ERROR_READ)
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broken_overlay_errors_stop_lookup_but_missing_components_allow_fallback() {
+        use std::os::unix::fs::symlink;
+        let lower = tempfile::tempdir().unwrap();
+        let higher = tempfile::tempdir().unwrap();
+        write_layer_file(lower.path(), "Loop", b"must not substitute");
+        write_layer_file(lower.path(), "missing", b"lower missing");
+        write_layer_file(lower.path(), "Blocker/child", b"lower child");
+        symlink("Loop", higher.path().join("Loop")).unwrap();
+        fs::write(higher.path().join("Blocker"), b"not a directory").unwrap();
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        for root in [lower.path(), higher.path()] {
+            assert_eq!(
+                files.add_overlay_path(root.to_str().unwrap()),
+                SBFILE_NO_ERROR
+            );
+        }
+        assert_eq!(files.read_all("loop"), Err(SBFILE_ERROR_READ));
+        assert_eq!(files.try_exists("loop"), Err(SBFILE_ERROR_READ));
+        assert_eq!(
+            files.read_overlay(higher.path().to_str().unwrap(), "loop"),
+            Err(SBFILE_ERROR_READ)
+        );
+        assert!(matches!(
+            files.list_overlay_dir(higher.path().to_str().unwrap(), "loop"),
+            Err(SBFILE_ERROR_READ)
+        ));
+        assert_eq!(files.read_all("missing").unwrap(), b"lower missing");
+        assert_eq!(files.read_all("Blocker/child").unwrap(), b"lower child");
+        assert!(files.try_exists("Blocker/child").unwrap());
+        assert!(
+            files
+                .list_overlay_dir(higher.path().to_str().unwrap(), "absent")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            files.list_overlay_dir(higher.path().to_str().unwrap(), "Blocker"),
+            Err(SBFILE_ERROR_READ)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_selected_overlay_does_not_fall_back_to_lower_file() {
+        use std::os::unix::fs::symlink;
+        let lower = tempfile::tempdir().unwrap();
+        let higher = tempfile::tempdir().unwrap();
+        write_layer_file(lower.path(), "Asset", b"must not substitute");
+        symlink("missing-target", higher.path().join("Asset")).unwrap();
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        for root in [lower.path(), higher.path()] {
+            assert_eq!(
+                files.add_overlay_path(root.to_str().unwrap()),
+                SBFILE_NO_ERROR
+            );
+        }
+        for path in ["Asset", "asset"] {
+            assert_eq!(files.read_all(path), Err(SBFILE_ERROR_READ));
+            assert_eq!(files.try_exists(path), Err(SBFILE_ERROR_READ));
+            assert_eq!(
+                files.read_overlay(higher.path().to_str().unwrap(), path),
+                Err(SBFILE_ERROR_READ)
+            );
+            assert!(matches!(
+                files.list_overlay_dir(higher.path().to_str().unwrap(), path),
+                Err(SBFILE_ERROR_READ)
+            ));
+        }
+        let confined = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            confined.lock_ranked_verifier_primary_path(higher.path()),
+            SBFILE_NO_ERROR
+        );
+        assert!(matches!(confined.open("asset"), Err(SBFILE_ERROR_READ)));
+        assert_eq!(confined.try_exists("asset"), Err(SBFILE_ERROR_READ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ranked_reads_propagate_resolution_errors_and_reject_escaping_files() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret"), b"outside").unwrap();
+        symlink("Loop", root.path().join("Loop")).unwrap();
+        symlink(outside.path(), root.path().join("escape")).unwrap();
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            files.lock_ranked_verifier_primary_path(root.path()),
+            SBFILE_NO_ERROR
+        );
+        for path in ["loop", "escape/secret"] {
+            assert!(matches!(files.open(path), Err(SBFILE_ERROR_READ)));
+            assert_eq!(files.try_exists(path), Err(SBFILE_ERROR_READ));
+            assert!(files.resolve_data_path(path).is_none());
+        }
+        assert!(matches!(
+            files.open("absent"),
+            Err(SBFILE_ERROR_FILE_NOT_FOUND)
+        ));
+        assert!(!files.try_exists("absent").unwrap());
+    }
 
     #[test]
     fn patch_layers_compose_base_and_zip_overlays_in_mount_order() {

@@ -565,10 +565,7 @@ fn drain_deferred_save_load_after_zoom(
     callbacks: &mut RustCallbacks,
     shift_held: bool,
 ) {
-    if !manager
-        .engine
-        .is_zoom_possible(&host.frontend.presentation.engine_display)
-    {
+    if !manager.engine.is_zoom_possible() {
         return;
     }
     if std::mem::take(&mut game.quick_save_after_zoom) {

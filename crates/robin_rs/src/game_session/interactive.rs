@@ -807,7 +807,6 @@ impl MissionPresentation {
     ) {
         super::render::prepare_zoom_presentation(
             &engine.presentation_view(),
-            &host.frontend.presentation.engine_display,
             host,
             &mut self.renderer,
             &mut hud.zoom_tooltip,

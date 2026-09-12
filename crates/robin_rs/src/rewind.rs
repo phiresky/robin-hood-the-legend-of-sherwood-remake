@@ -419,7 +419,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("zoom command admission");
-        assert!(engine.is_zoom_up_in_progress(&host.frontend.presentation.engine_display));
+        assert!(engine.is_zoom_up_in_progress());
 
         // LockAlt is handled after the zoom gate in the simulation tick. It
         // therefore remains pending throughout these active transition
@@ -478,7 +478,7 @@ mod tests {
             rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
 
-        assert!(engine.is_zoom_up_in_progress(&host.frontend.presentation.engine_display));
+        assert!(engine.is_zoom_up_in_progress());
         assert!(!engine.is_lock_alt());
 
         let rewound = rewind

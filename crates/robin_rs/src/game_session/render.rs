@@ -456,7 +456,6 @@ fn allied_portrait_tooltip(
 /// - The Zoom+ and Zoom- widgets receive their localized tooltips.
 pub(super) fn prepare_zoom_presentation(
     engine: &PresentationView<'_>,
-    display: &engine_api::HostDisplayState,
     host: &HostPresentation<'_>,
     renderer: &mut Renderer,
     tooltip: &mut ZoomTooltipTracker,
@@ -464,7 +463,7 @@ pub(super) fn prepare_zoom_presentation(
     threaded_input: &crate::input::ThreadedInput,
 ) {
     let frame_id = PresentationFrameId::new(engine.frame_counter());
-    let enable = ZoomButtonEnable::from_engine(engine, display);
+    let enable = ZoomButtonEnable::from_engine(engine);
     let mouse = threaded_input.position();
     let hovered = layout.hit_test_geometric(mouse.x as i32, mouse.y as i32);
     let input = ZoomPresentationUpdate::new(enable, hovered, host.frontend.input.left_mouse_down());
