@@ -1147,6 +1147,22 @@ impl IngameMenuResources {
         let mut text_res = ResourceManager::with_files(files.clone());
         for path in ["Data/Text/Level.res", "Data/Interface/Start.sxt"] {
             if let Err(error) = text_res.try_attach_or_from_shipping(path, shipping) {
+                // Original demo editions use this filename for the loading
+                // picture, not a text archive. Validate that alternate format
+                // rather than treating every failed archive as optional text.
+                if path == "Data/Interface/Start.sxt"
+                    && matches!(
+                        error,
+                        robin_assets::resource_manager::ResourceAttachmentError::Malformed(_)
+                    )
+                    && files.read_shared(path).is_ok_and(|bytes| {
+                        !bytes.starts_with(b"SRES")
+                            && robin_assets::picture::Picture::load_sixteen_from_bytes(&bytes)
+                                .is_ok()
+                    })
+                {
+                    continue;
+                }
                 tracing::warn!("Cannot load menu text archive {path}: {error:#}");
                 return None;
             }
@@ -1364,19 +1380,6 @@ impl IngameMenuResources {
             portrait_cache: HashMap::new(),
             owners,
         })
-    }
-
-    /// Reload only locale-sensitive menu state. Sprite surfaces and portrait
-    /// textures are language-independent and stay owned by this cache, which
-    /// avoids leaking a second full DEFAULT.RES upload on every switch.
-    pub fn reload_localized(
-        &mut self,
-        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-        files: std::sync::Arc<robin_engine::sbfile::SbFileSystem>,
-    ) -> anyhow::Result<()> {
-        let prepared = Self::prepare_localized(shipping, files)?;
-        self.apply_localized(prepared);
-        Ok(())
     }
 
     pub(crate) fn prepare_localized(
