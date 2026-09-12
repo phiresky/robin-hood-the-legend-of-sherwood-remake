@@ -97,7 +97,9 @@ pub async fn yield_to_display_refresh() {
 
         let (sender, receiver) = futures::channel::oneshot::channel();
         let _frame = gloo_render::request_animation_frame(move |_| {
-            let _ = sender.send(());
+            if sender.send(()).is_err() {
+                tracing::trace!("display-refresh wait already retired");
+            }
         });
         let fallback = gloo_timers::future::TimeoutFuture::new(20);
         futures::pin_mut!(receiver, fallback);
@@ -169,7 +171,7 @@ fn install_browser_lifecycle_autosave(requested: Arc<AtomicBool>) -> Result<(), 
             .is_some_and(|document| document.hidden());
         if hidden {
             visibility_requested.store(true, Ordering::Release);
-            let _ = visibility_wake.try_send(());
+            report_window_send(visibility_wake.try_send(()));
         }
     });
     document
@@ -180,7 +182,7 @@ fn install_browser_lifecycle_autosave(requested: Arc<AtomicBool>) -> Result<(), 
     let pagehide_requested = requested.clone();
     let pagehide = Closure::<dyn FnMut()>::new(move || {
         pagehide_requested.store(true, Ordering::Release);
-        let _ = wake_tx.try_send(());
+        report_window_send(wake_tx.try_send(()));
     });
     window
         .add_event_listener_with_callback("pagehide", pagehide.as_ref().unchecked_ref())
@@ -314,13 +316,12 @@ enum HostMsg {
 }
 
 #[cfg(target_os = "android")]
-static ANDROID_BACK_TX: std::sync::OnceLock<
-    std::sync::Mutex<Option<async_channel::Sender<HostMsg>>>,
-> = std::sync::OnceLock::new();
+static ANDROID_BACK_TX: std::sync::Mutex<Option<async_channel::Sender<HostMsg>>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(target_os = "android")]
 fn android_back_tx() -> &'static std::sync::Mutex<Option<async_channel::Sender<HostMsg>>> {
-    ANDROID_BACK_TX.get_or_init(|| std::sync::Mutex::new(None))
+    &ANDROID_BACK_TX
 }
 
 #[cfg(target_os = "android")]
@@ -335,7 +336,7 @@ pub extern "system" fn Java_io_github_phiresky_robinhood_RobinHoodActivity_nativ
         .expect("android back tx poisoned")
         .as_ref()
     {
-        let _ = tx.try_send(HostMsg::Event(GameEvent::MenuToggleRequested));
+        report_window_send(tx.try_send(HostMsg::Event(GameEvent::MenuToggleRequested)));
     }
 }
 
@@ -346,11 +347,10 @@ pub extern "system" fn Java_io_github_phiresky_robinhood_RobinHoodActivity_nativ
 /// only drained at `about_to_wait`, which is too late for dead-key
 /// resets — by the time it runs, the next keypress has already been
 /// composed.
-static GAME_WINDOW: std::sync::OnceLock<std::sync::Mutex<Option<Arc<Window>>>> =
-    std::sync::OnceLock::new();
+static GAME_WINDOW: std::sync::Mutex<Option<Arc<Window>>> = std::sync::Mutex::new(None);
 
 fn game_window_slot() -> &'static std::sync::Mutex<Option<Arc<Window>>> {
-    GAME_WINDOW.get_or_init(|| std::sync::Mutex::new(None))
+    &GAME_WINDOW
 }
 
 fn set_game_window(window: Arc<Window>) {
@@ -528,6 +528,16 @@ impl GameWindow {
     /// The corresponding yield point is [`sleep_ms`] / [`yield_to_runtime`],
     /// which the game's main loop calls every frame.
     pub fn poll_events(&mut self) -> Vec<GameEvent> {
+        let mut events = self.drain_host_messages();
+        self.translate_pointer_events(&mut events);
+        #[cfg(feature = "gamepad")]
+        self.drain_gamepad_events(&mut events);
+        for event in &events {
+            self.gamepad_input.fold(event);
+        }
+        events
+    }
+    fn drain_host_messages(&mut self) -> Vec<GameEvent> {
         let mut events = self.deferred_event_batches.pop_front().unwrap_or_default();
         let mut defer_following_events = !self.deferred_event_batches.is_empty();
         while let Ok(msg) = self.events_rx.try_recv() {
@@ -609,6 +619,10 @@ impl GameWindow {
 
         preserve_close_request(self.close_requested, &mut events);
 
+        events
+    }
+
+    fn translate_pointer_events(&mut self, events: &mut [GameEvent]) {
         // Carry cursor-position deltas across drains so MouseDown/Up
         // events that didn't include explicit coords can still find
         // the latest sampled position.
@@ -679,9 +693,11 @@ impl GameWindow {
                 _ => {}
             }
         }
+    }
 
+    #[cfg(feature = "gamepad")]
+    fn drain_gamepad_events(&mut self, events: &mut Vec<GameEvent>) {
         // Drain gilrs events to GameEvent::Gamepad{Added,Removed,Button,Axis}.
-        #[cfg(feature = "gamepad")]
         if let Some(gilrs) = &mut self.gamepads {
             while let Some(gilrs::Event { id, event, .. }) = gilrs.next_event() {
                 let which = usize::from(id) as u32;
@@ -724,15 +740,10 @@ impl GameWindow {
                 }
             }
         }
-
-        for event in &events {
-            self.gamepad_input.fold(event);
-        }
-        events
     }
 
     pub fn grab_mouse(&mut self, grab: bool) {
-        let _ = self.cmd_tx.try_send(HostCmd::GrabMouse(grab));
+        report_window_send(self.cmd_tx.try_send(HostCmd::GrabMouse(grab)));
     }
 
     pub fn cursor_pos(&self) -> (i32, i32) {
@@ -1135,15 +1146,17 @@ fn touch_output_needs_deferred_up(output: &[TouchOutput]) -> bool {
 impl AppHandler {
     #[cfg(target_os = "android")]
     fn send_menu_toggle_request(&self) {
-        let _ = self
-            .events_tx
-            .try_send(HostMsg::Event(GameEvent::MenuToggleRequested));
+        report_window_send(
+            self.events_tx
+                .try_send(HostMsg::Event(GameEvent::MenuToggleRequested)),
+        );
     }
 
     fn send_pause_request(&self) {
-        let _ = self
-            .events_tx
-            .try_send(HostMsg::Event(GameEvent::PauseRequested));
+        report_window_send(
+            self.events_tx
+                .try_send(HostMsg::Event(GameEvent::PauseRequested)),
+        );
     }
 
     fn emit_touch_outputs(&mut self, output: Vec<TouchOutput>) {
@@ -1171,11 +1184,11 @@ impl AppHandler {
                 TouchOutput::PointerUp { x, y } => {
                     self.last_cursor = (x as i32, y as i32);
                     let mouse_up = GameEvent::MouseUp(x as i32, y as i32, 1);
-                    let _ = if defer_pointer_up {
+                    report_window_send(if defer_pointer_up {
                         self.events_tx.try_send(HostMsg::DeferredEvent(mouse_up))
                     } else {
                         self.events_tx.try_send(HostMsg::Event(mouse_up))
-                    };
+                    });
                     continue;
                 }
                 TouchOutput::PointerCancel => GameEvent::PointerCancel,
@@ -1217,7 +1230,7 @@ impl AppHandler {
                     cancelled,
                 },
             };
-            let _ = self.events_tx.try_send(HostMsg::Event(event));
+            report_window_send(self.events_tx.try_send(HostMsg::Event(event)));
         }
     }
 
@@ -1266,14 +1279,15 @@ impl ApplicationHandler for AppHandler {
                 // window on the same channel used for first creation.
                 (self.on_window_ready)(window.clone());
             }
-            let _ = self.events_tx.try_send(HostMsg::SurfaceReady {
+            report_window_send(self.events_tx.try_send(HostMsg::SurfaceReady {
                 window: window.clone(),
-            });
+            }));
             let PhysicalSize { width, height } = window.inner_size();
-            let _ = self.events_tx.try_send(HostMsg::Resized { width, height });
-            let _ = self
-                .events_tx
-                .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(true)));
+            report_window_send(self.events_tx.try_send(HostMsg::Resized { width, height }));
+            report_window_send(
+                self.events_tx
+                    .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(true))),
+            );
             #[cfg(target_os = "android")]
             {
                 self.resize_refresh_frames = 30;
@@ -1336,10 +1350,11 @@ impl ApplicationHandler for AppHandler {
         let output = self.touch.cancel_all();
         self.emit_touch_outputs(output);
         self.send_pause_request();
-        let _ = self.events_tx.try_send(HostMsg::LifecycleAutosave);
-        let _ = self
-            .events_tx
-            .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(false)));
+        report_window_send(self.events_tx.try_send(HostMsg::LifecycleAutosave));
+        report_window_send(
+            self.events_tx
+                .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(false))),
+        );
     }
 
     fn window_event(
@@ -1368,7 +1383,7 @@ impl ApplicationHandler for AppHandler {
                 }
             }
             WindowEvent::Resized(PhysicalSize { width, height }) => {
-                let _ = self.events_tx.try_send(HostMsg::Resized { width, height });
+                report_window_send(self.events_tx.try_send(HostMsg::Resized { width, height }));
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.touch.set_scale_factor(scale_factor);
@@ -1396,26 +1411,30 @@ impl ApplicationHandler for AppHandler {
                 match state {
                     ElementState::Pressed => {
                         if !repeat {
-                            let _ = self.events_tx.try_send(HostMsg::Event(GameEvent::KeyDown {
-                                keycode,
-                                physical_key,
-                            }));
+                            report_window_send(self.events_tx.try_send(HostMsg::Event(
+                                GameEvent::KeyDown {
+                                    keycode,
+                                    physical_key,
+                                },
+                            )));
                         }
                         if let Some(text) = text
                             && !text.chars().any(|c| c.is_control())
                         {
-                            let _ = self
-                                .events_tx
-                                .try_send(HostMsg::Event(GameEvent::TextInput {
+                            report_window_send(self.events_tx.try_send(HostMsg::Event(
+                                GameEvent::TextInput {
                                     text: text.to_string(),
-                                }));
+                                },
+                            )));
                         }
                     }
                     ElementState::Released => {
-                        let _ = self.events_tx.try_send(HostMsg::Event(GameEvent::KeyUp {
-                            keycode,
-                            physical_key,
-                        }));
+                        report_window_send(self.events_tx.try_send(HostMsg::Event(
+                            GameEvent::KeyUp {
+                                keycode,
+                                physical_key,
+                            },
+                        )));
                     }
                 }
             }
@@ -1424,14 +1443,15 @@ impl ApplicationHandler for AppHandler {
                 let y = position.y as i32;
                 tracing::trace!("winit CursorMoved: ({x}, {y})");
                 self.last_cursor = (x, y);
-                let _ = self
-                    .events_tx
-                    .try_send(HostMsg::Event(GameEvent::MouseMove {
-                        x,
-                        y,
-                        xrel: 0,
-                        yrel: 0,
-                    }));
+                report_window_send(
+                    self.events_tx
+                        .try_send(HostMsg::Event(GameEvent::MouseMove {
+                            x,
+                            y,
+                            xrel: 0,
+                            yrel: 0,
+                        })),
+                );
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let (x, y) = self.last_cursor;
@@ -1464,7 +1484,7 @@ impl ApplicationHandler for AppHandler {
                     }
                     ElementState::Released => GameEvent::MouseUp(x, y, btn),
                 };
-                let _ = self.events_tx.try_send(HostMsg::Event(event));
+                report_window_send(self.events_tx.try_send(HostMsg::Event(event)));
             }
             WindowEvent::Touch(touch) => {
                 let x = touch.location.x;
@@ -1480,13 +1500,14 @@ impl ApplicationHandler for AppHandler {
             }
             WindowEvent::Focused(focused) => {
                 if !focused {
-                    let _ = self.events_tx.try_send(HostMsg::LifecycleAutosave);
+                    report_window_send(self.events_tx.try_send(HostMsg::LifecycleAutosave));
                     let output = self.touch.cancel_all();
                     self.emit_touch_outputs(output);
                 }
-                let _ = self
-                    .events_tx
-                    .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(focused)));
+                report_window_send(
+                    self.events_tx
+                        .try_send(HostMsg::Event(GameEvent::WindowFocusChanged(focused))),
+                );
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let y = match delta {
@@ -1494,9 +1515,10 @@ impl ApplicationHandler for AppHandler {
                     MouseScrollDelta::PixelDelta(p) => (p.y / 32.0) as i32,
                 };
                 if y != 0 {
-                    let _ = self
-                        .events_tx
-                        .try_send(HostMsg::Event(GameEvent::MouseWheel(y)));
+                    report_window_send(
+                        self.events_tx
+                            .try_send(HostMsg::Event(GameEvent::MouseWheel(y))),
+                    );
                 }
             }
             _ => {}
@@ -1514,7 +1536,7 @@ impl ApplicationHandler for AppHandler {
             if let Some(window) = &self.window {
                 let PhysicalSize { width, height } = window.inner_size();
                 if width > 0 && height > 0 {
-                    let _ = self.events_tx.try_send(HostMsg::Resized { width, height });
+                    report_window_send(self.events_tx.try_send(HostMsg::Resized { width, height }));
                     window.request_redraw();
                 }
             }
@@ -1664,7 +1686,7 @@ where
     let event_loop_proxy = event_loop.create_proxy();
 
     let on_ready: WindowReadyFn = Box::new(move |w: Arc<Window>| {
-        let _ = window_tx.try_send(w);
+        report_window_send(window_tx.try_send(w));
     });
 
     let logical_w = width;
@@ -1704,8 +1726,10 @@ where
     let completion = GameRuntimeCompletion {
         sender: Some(exit_code_tx),
         wake: Some(move || {
-            let _ = cmd_tx.try_send(HostCmd::Exit);
-            let _ = event_loop_proxy.send_event(());
+            report_window_send(cmd_tx.try_send(HostCmd::Exit));
+            if event_loop_proxy.send_event(()).is_err() {
+                tracing::trace!("game completion wake arrived after the event loop closed");
+            }
         }),
     };
     spawn_game_runtime(move || async move {
@@ -1924,6 +1948,18 @@ pub fn stop_text_input() {}
 mod tests {
     use super::{GameRuntimeCompletion, receive_game_exit_code, touch_output_needs_deferred_up};
     use crate::touch_input::TouchOutput;
+
+    #[test]
+    fn failed_window_send_preserves_the_already_queued_message() {
+        let (sender, receiver) = async_channel::bounded(1);
+        super::report_window_send(sender.try_send(1));
+        super::report_window_send(sender.try_send(2));
+        assert_eq!(receiver.try_recv().unwrap(), 1);
+        assert!(receiver.try_recv().is_err());
+        receiver.close();
+        super::report_window_send(sender.try_send(3));
+        assert!(receiver.try_recv().is_err());
+    }
 
     #[test]
     fn game_exit_code_is_forwarded() {
@@ -2246,6 +2282,23 @@ fn gilrs_button_to_index(b: gilrs::Button) -> Option<u8> {
         B::DPadRight => 14,
         _ => return None,
     })
+}
+
+/// Report fire-and-forget delivery failures without requiring message payloads
+/// (which can contain live windows) to implement Debug. Bounded wake queues
+/// may coalesce notifications; closed queues are normal during shutdown.
+fn report_window_send<T>(result: Result<(), async_channel::TrySendError<T>>) {
+    match result {
+        Ok(()) => {}
+        Err(async_channel::TrySendError::Full(_)) => tracing::debug!(
+            message_type = std::any::type_name::<T>(),
+            "window channel full; message not enqueued"
+        ),
+        Err(async_channel::TrySendError::Closed(_)) => tracing::trace!(
+            message_type = std::any::type_name::<T>(),
+            "window channel closed; message not enqueued"
+        ),
+    }
 }
 
 #[cfg(feature = "gamepad")]

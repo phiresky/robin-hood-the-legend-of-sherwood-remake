@@ -8,8 +8,8 @@ use robin_engine::graphic_config::{TextureEffect, TextureScaleMode};
 use super::pipelines::{PipelineStore, SPRITE_STENCIL_FORMAT, blend_index};
 use super::resources::GpuResources;
 use super::{
-    DrawOperation, QuadTexture, QuadVertex, QueuedDraw, ScreenUniform, TextureSource, bind_counter,
-    log_fps, make_alpha_source, make_tex_bg, upload_counter,
+    DrawOperation, QuadTexture, QuadVertex, QueuedDraw, ScreenUniform, TextureSource,
+    make_alpha_source, make_tex_bg,
 };
 
 fn expand_queue_geometry(draws: &[QueuedDraw], verts: &mut Vec<QuadVertex>) {
@@ -102,6 +102,7 @@ fn composition_plan(draws: &[QueuedDraw]) -> Vec<CompositionPass> {
 }
 
 pub(super) struct FrameState {
+    pub(super) diagnostics: super::diagnostics::FrameCounters,
     pub(super) width: u16,
     pub(super) height: u16,
     gpu_phase_active: bool,
@@ -544,17 +545,10 @@ impl FrameState {
         // Frame done — clear queues and reset GPU phase for next frame.
         if compose_logical_frame {
             let draws_this_frame = self.queued.len();
-            let uploads_this_frame = upload_counter::take_count();
             let present_us = present_start.elapsed().as_micros() as u64;
             self.clear_recording();
-            log_fps(
-                draws_this_frame,
-                uploads_this_frame,
-                bind_counter::take_count(),
-                bind_counter::take_draw_calls(),
-                present_us,
-                resources,
-            );
+            self.diagnostics
+                .log_fps(draws_this_frame, present_us, resources);
         }
         true
     }
@@ -807,6 +801,7 @@ impl FrameState {
             .is_some_and(|config| config.present_mode == wgpu::PresentMode::Fifo);
 
         Self {
+            diagnostics: Default::default(),
             width,
             height,
             gpu_phase_active: false,
@@ -1314,7 +1309,7 @@ impl FrameState {
         macro_rules! flush_run {
             () => {
                 if let Some((first, count)) = pending.take() {
-                    bind_counter::inc_draw_call();
+                    self.diagnostics.inc_draw_call();
                     pass.draw(first..first + count, 0..1);
                 }
             };
@@ -1410,7 +1405,7 @@ impl FrameState {
             };
             if need_rebind_tex {
                 flush_run!();
-                bind_counter::inc();
+                self.diagnostics.inc_bind();
                 let (bg, kind, index) = match texture {
                     TextureSource::White => (&resources.white_bg, BoundTex::White, None),
                     TextureSource::FrozenScene => {
