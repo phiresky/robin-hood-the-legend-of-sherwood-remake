@@ -1745,17 +1745,7 @@ impl NativeContext<'_, '_> {
                         return -1;
                     }
                 };
-                let action = match prop {
-                    4 => Action::Purse,
-                    5 => Action::Stone,
-                    6 => Action::Apple,
-                    7 => Action::Ale,
-                    8 => Action::Eat,
-                    9 => Action::Heal,
-                    10 => Action::Net,
-                    11 => Action::WaspNest,
-                    _ => unreachable!(),
-                };
+                let action = Self::persistent_ammo_action(prop).expect("ammo property arm");
                 self.campaign
                     .as_ref()
                     .and_then(|campaign| {
@@ -1773,9 +1763,24 @@ impl NativeContext<'_, '_> {
         }
     }
 
+    fn persistent_ammo_action(prop: i32) -> Option<crate::profiles::Action> {
+        use crate::profiles::Action;
+        match prop {
+            0 => Some(Action::Bow),
+            4 => Some(Action::Purse),
+            5 => Some(Action::Stone),
+            6 => Some(Action::Apple),
+            7 => Some(Action::Ale),
+            8 => Some(Action::Eat),
+            9 => Some(Action::Heal),
+            10 => Some(Action::Net),
+            11 => Some(Action::WaspNest),
+            _ => None,
+        }
+    }
+
     fn set_persistent_property(&mut self, actor: i32, prop: i32, amount: i32) -> bool {
         use crate::pc_status::SpecialPeasantName;
-        use crate::profiles::Action;
 
         // First handle entity-level mutations (money, life_points, concussion)
         match prop {
@@ -1894,18 +1899,7 @@ impl NativeContext<'_, '_> {
         // For ammo properties (0, 4–11), validate the live actor first.
         // The original game sets player-character ammo directly;
         // campaign persistence is an additional mirror, not a prerequisite.
-        let action = match prop {
-            0 => Some(Action::Bow),
-            4 => Some(Action::Purse),
-            5 => Some(Action::Stone),
-            6 => Some(Action::Apple),
-            7 => Some(Action::Ale),
-            8 => Some(Action::Eat),
-            9 => Some(Action::Heal),
-            10 => Some(Action::Net),
-            11 => Some(Action::WaspNest),
-            _ => None,
-        };
+        let action = Self::persistent_ammo_action(prop);
 
         if let Some(action) = action {
             // Validate entity type and extract profile index.

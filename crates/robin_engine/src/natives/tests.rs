@@ -10,6 +10,27 @@ const TMP8: u16 = 0xC008;
 const TMP12: u16 = 0xC00C;
 const TMP16: u16 = 0xC010;
 
+#[test]
+fn movement_recording_without_start_is_rejected() {
+    for native in [NativeFn::RecordMove, NativeFn::RecordMoveNear] {
+        let mut host = BoundScriptEffects::new();
+        host.entities.push(Some(native_test_soldier()));
+        let actor = ScriptHandleCodec::actor_handle_from_index(0);
+        let mut location_query = NativeStack::default();
+        location_query.push_i32(actor);
+        let location = call_host_native(&mut host, NativeFn::GetActorLocation, &mut location_query);
+        let mut arguments = NativeStack::default();
+        arguments.push_i32(actor);
+        arguments.push_i32(location);
+        arguments.push_i32(0);
+        if native == NativeFn::RecordMoveNear {
+            arguments.push_i32(10);
+        }
+        assert_eq!(call_host_native(&mut host, native, &mut arguments), 0);
+        assert!(host.state.sequence_recorder.is_none());
+    }
+}
+
 #[derive(Default)]
 struct TestQueryViews<'a> {
     sequence_manager: Option<&'a mut crate::sequence::SequenceManager>,

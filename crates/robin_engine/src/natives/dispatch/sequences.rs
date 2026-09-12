@@ -393,14 +393,19 @@ impl NativeContext<'_, '_> {
             }
 
             // --- Movement ---
-            RecordMove => {
+            RecordMove | RecordMoveNear => {
+                let tolerance = if native == RecordMoveNear {
+                    stack.pop_i32() as f32
+                } else {
+                    0.0
+                };
                 let style = stack.pop_i32();
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
                 // Reject null actor, non-actor handle, null /
                 // non-Point location, and any style outside 0..=3.
                 if !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error in RecordMove: invalid actor handle {actor}");
+                    tracing::warn!(target: "script", %native,"Script error in RecordMove: invalid actor handle {actor}");
                     return 0;
                 }
                 let Some((dx, dy)) = self.resolve_location_pos(loc) else {
@@ -447,7 +452,7 @@ impl NativeContext<'_, '_> {
                         layer: goal_layer,
                     },
                     victim: None,
-                    tolerance: 0.0,
+                    tolerance,
                     initial_flags: MoveFlags::CALLED_BY_SCRIPT,
                     speed_factor: 1.0,
                 });
@@ -458,82 +463,16 @@ impl NativeContext<'_, '_> {
                 {
                     rec.bump_priority_from(
                         pre_record_size,
-                        crate::sequence::SequencePriority::Script,
+                        if native == RecordMoveNear {
+                            crate::sequence::SequencePriority::Preference
+                        } else {
+                            crate::sequence::SequencePriority::Script
+                        },
                     );
                 }
                 1
             }
-            RecordMoveNear => {
-                let tolerance = stack.pop_i32();
-                let style = stack.pop_i32();
-                let loc = stack.pop_i32();
-                let actor = stack.pop_i32();
-                // Same validation as RecordMove (we additionally
-                // explicitly reject null actor handles, which the
-                // the original game would dereference).
-                if !self.is_actor_handle(actor) {
-                    tracing::warn!(target: "script","Script error in RecordMoveNear: invalid actor handle {actor}");
-                    return 0;
-                }
-                let Some((dx, dy)) = self.resolve_location_pos(loc) else {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMoveNear: illegal location handle {loc} (null or not a Point)"
-                    );
-                    return 0;
-                };
-                if !(0..=3).contains(&style) {
-                    tracing::warn!(target: "script",
-                        "Script error in RecordMoveNear: illegal movement style {style}"
-                    );
-                    return 0;
-                }
-                let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
-                let origin = self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
-                let action = Self::movement_style(style);
-                let Some(pre_record_size) = self
-                    .script_state
-                    .sequence_recorder
-                    .as_ref()
-                    .map(|r| r.current_size())
-                else {
-                    tracing::warn!(target: "script", %native, "recorded movement requires an active Start/Thanx session");
-                    return 0;
-                };
-                let (goal_layer, goal_sector) =
-                    dest_layer_sector.expect("validated RecordMoveNear point has no motion sector");
-                let (sx, sy, src_layer, src_sector) =
-                    origin.unwrap_or((dx, dy, goal_layer, goal_sector));
-                self.append_move_to_sequence(SequenceMoveRequest {
-                    actor_handle: actor,
-                    action: action,
-                    source: SequenceMovePoint {
-                        position: (sx, sy),
-                        sector: src_sector,
-                        layer: src_layer,
-                    },
-                    goal: SequenceMovePoint {
-                        position: (dx, dy),
-                        sector: goal_sector,
-                        layer: goal_layer,
-                    },
-                    victim: None,
-                    tolerance: tolerance as f32,
-                    initial_flags: MoveFlags::CALLED_BY_SCRIPT,
-                    speed_factor: 1.0,
-                });
-                // NONINTERRUPTABLE near-walks bump every
-                // just-added element to Preference priority (one
-                // rung weaker than RecordMove's Script).
-                if matches!(style, 2 | 3)
-                    && let Some(rec) = self.script_state.sequence_recorder.as_mut()
-                {
-                    rec.bump_priority_from(
-                        pre_record_size,
-                        crate::sequence::SequencePriority::Preference,
-                    );
-                }
-                1
-            }
+
             RecordMoveIntoBuilding => {
                 // Validate the location is a Point, find the
                 // nearest door within 300px of it, then synthesise
