@@ -1917,6 +1917,53 @@ mod tests {
     }
 
     #[test]
+    fn immutable_timeline_resolution_preserves_duplicate_boundary_selection() {
+        let path = unique_replay_path("immutable_timeline_resolution");
+        {
+            let mut recorder = ReplayRecorder::new(
+                &path,
+                "timeline".into(),
+                test_mission_assets("timeline"),
+                7,
+                crate::engine::SimConfig::default(),
+                &crate::campaign::Campaign::default(),
+            )
+            .unwrap();
+            for (ordinal, before, after) in [(0, 0, 0), (1, 0, 0), (2, 0, 1), (3, 1, 1), (4, 1, 2)]
+            {
+                assert!(recorder.write_frame(
+                    ordinal,
+                    before,
+                    after,
+                    SimulationFrameInput::default().with_hourglass(after != before),
+                    Vec::new(),
+                    None,
+                ));
+            }
+        }
+        let data = ReplayData::from_file(&path).unwrap();
+        let mut player = ReplayPlayer::new(data);
+        assert!(player.resolve_timeline_frame(TimelineFrame::ZERO).is_err());
+        assert_eq!(player.current_frame(), 0);
+        for (target, expected) in [(0, 0), (1, 3), (2, 5)] {
+            player.seek_ordinal(ReplayFrameOrdinal::from_wire(5));
+            let resolved = player
+                .resolve_timeline_frame(TimelineFrame::from_wire(target))
+                .unwrap();
+            assert_eq!(resolved.number(), expected);
+            assert_eq!(player.current_frame(), 5, "lookup must not move the cursor");
+            assert_eq!(
+                player
+                    .seek_timeline_frame(TimelineFrame::from_wire(target))
+                    .unwrap(),
+                resolved
+            );
+            assert_eq!(player.current_frame(), expected);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn save_markers_and_load_backs_round_trip_linearly() {
         let path = unique_replay_path("save_load_timeline");
         let campaign = crate::campaign::Campaign::default();
@@ -1982,6 +2029,29 @@ mod tests {
         // must stay on the current linear segment instead of jumping across
         // the discontinuity to an older branch.
         let mut player = ReplayPlayer::new(data.clone());
+        for (cursor, target, expected) in [(30, 10, 10), (31, 10, 30), (31, 11, 31)] {
+            player.seek_ordinal(ReplayFrameOrdinal::from_wire(cursor));
+            let readonly = &player;
+            assert_eq!(
+                readonly
+                    .resolve_timeline_frame(TimelineFrame::from_wire(target))
+                    .unwrap()
+                    .number(),
+                expected
+            );
+            assert_eq!(readonly.current_frame(), cursor);
+        }
+        let error = player
+            .resolve_timeline_frame(TimelineFrame::from_wire(99))
+            .unwrap_err();
+        assert_eq!(player.current_frame(), 31);
+        assert_eq!(
+            player
+                .seek_timeline_frame(TimelineFrame::from_wire(99))
+                .unwrap_err(),
+            error
+        );
+        assert_eq!(player.current_frame(), 31);
         player.seek_ordinal(ReplayFrameOrdinal::from_wire(30));
         assert_eq!(
             player

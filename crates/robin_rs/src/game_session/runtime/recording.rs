@@ -162,16 +162,13 @@ impl ReplayLifecycle {
     }
 
     pub(super) fn resolve_ordinal(
-        &mut self,
+        &self,
         target: TimelineFrame,
     ) -> Result<Option<ReplayFrameOrdinal>, String> {
-        let Some(player) = &mut self.player else {
-            return Ok(None);
-        };
-        let original = ReplayFrameOrdinal::from_wire(player.current_frame());
-        let resolved = player.seek_timeline_frame(target);
-        player.seek_ordinal(original);
-        resolved.map(Some)
+        self.player
+            .as_ref()
+            .map(|player| player.resolve_timeline_frame(target))
+            .transpose()
     }
 
     pub(super) fn seek_timeline(
@@ -683,7 +680,7 @@ mod tests {
         let mut player =
             ReplayPlayer::new(service.exports().snapshot().unwrap().parse_sync().unwrap());
         player.seek_ordinal(ReplayFrameOrdinal::from_wire(2));
-        let mut playback = ReplayLifecycle::new(None, Some(player), service.recording());
+        let playback = ReplayLifecycle::new(None, Some(player), service.recording());
         assert_eq!(
             playback.resolve_ordinal(TimelineFrame::ZERO).unwrap(),
             Some(ReplayFrameOrdinal::ZERO)

@@ -1373,7 +1373,7 @@ impl TimelineRuntime {
     }
 
     pub(super) fn resolve_replay_ordinal(
-        &mut self,
+        &self,
         target: TimelineFrame,
     ) -> Result<Option<ReplayFrameOrdinal>, String> {
         self.replay.resolve_ordinal(target)
