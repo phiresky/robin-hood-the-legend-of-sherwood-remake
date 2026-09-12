@@ -35,7 +35,7 @@ ANIMATIONS = {
 
 
 def arguments() -> argparse.Namespace:
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = Path(__file__).resolve().parents[1]
     default_source = (
         repo_root
         / "datadirs/fullgame_gog_hackable/Data/Characters/RobinHood.rhs.d"
@@ -52,10 +52,8 @@ def arguments() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parents[1]
-        / "robin-hood-engineer"
-        / "graphics",
-        help="output graphics directory (default: %(default)s)",
+        required=True,
+        help="output graphics directory in the external Factorio mod checkout",
     )
     return parser.parse_args()
 

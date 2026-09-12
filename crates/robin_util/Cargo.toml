@@ -17,7 +17,7 @@ nonmax.workspace = true
 enum-map.workspace = true
 indexmap.workspace = true
 serde_json.workspace = true
-serde-value = "0.7"
+serde-value.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

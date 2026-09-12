@@ -7,9 +7,10 @@ set -euo pipefail
 # one at a time.  A zero-failure complete corpus terminates the ladder; any
 # non-zero verdict advances the random-input base by one million.
 
-workspace=${SCHEMA16_LADDER_WORKSPACE:-/home/phire/robinhood}
+script_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+workspace=${SCHEMA16_LADDER_WORKSPACE:-$script_workspace}
 corpus_root="$workspace/parity-save-replays/60s-random-input"
-audit_dir=${SCHEMA16_LADDER_AUDIT_DIR:-/home/phire/.cache/sccache/robinhood-parity-audits/autonomous-watch-7bb79e1d}
+audit_dir=${SCHEMA16_LADDER_AUDIT_DIR:-$workspace/tmp/parity-audits/corpus-ladder}
 recorder=${SCHEMA16_LADDER_RECORDER:-$corpus_root/schema16-seed2000000-20260818/recorder/robin-schema16-3d5cc341-PENDING}
 expected_recorder_sha=${SCHEMA16_LADDER_RECORDER_SHA:-3d5cc341d3f57202d1aaf42f518ec3a76da576d4a239bc660b799c9b0be73138}
 first_seed_base=${SCHEMA16_LADDER_FIRST_SEED_BASE:-2000000}

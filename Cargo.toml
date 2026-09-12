@@ -22,6 +22,7 @@ members = [
     "crates/robin_util",
     "crates/robin_assets",
     "crates/robin_state_hash_derive",
+    "crates/robin_test_support",
     "crates/robin_replay_verifier",
 ]
 # Keep bare `cargo build` / `cargo test` as a quick workspace smoke check.
@@ -68,6 +69,7 @@ robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 robin_run_protocol = { path = "crates/robin_run_protocol", default-features = false }
 robin_spellforge = { path = "crates/robin_spellforge" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
+robin_test_support = { path = "crates/robin_test_support" }
 robin_util = { path = "crates/robin_util" }
 
 # Dependencies shared by multiple workspace crates. Keep crate-specific feature
