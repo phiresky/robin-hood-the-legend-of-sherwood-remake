@@ -28,6 +28,26 @@ pub(super) fn text(locale: Option<&str>, key: PortTextKey) -> &'static str {
     let language = locale
         .map(locale_primary)
         .unwrap_or(std::borrow::Cow::Borrowed("en"));
+    if let PortTextKey::SaveRelativeTime {
+        unit,
+        future,
+        singular,
+    } = key
+    {
+        // Relative-time translations must supply whole phrases and their own
+        // plural selection. Until available, fall back as a complete English
+        // message rather than combining localized affixes with English units.
+        let row = SAVE_RELATIVE_TIME
+            .iter()
+            .find(|row| row.0 == unit)
+            .expect("every relative-time unit has English templates");
+        return match (future, singular) {
+            (false, true) => row.1,
+            (false, false) => row.2,
+            (true, true) => row.3,
+            (true, false) => row.4,
+        };
+    }
     if let PortTextKey::GameplayLabel(setting) | PortTextKey::GameplayTooltip(setting) = key {
         let (_, en_label, en_help, de_label, de_help) = GAMEPLAY
             .iter()
@@ -58,6 +78,58 @@ pub(super) fn text(locale: Option<&str>, key: PortTextKey) -> &'static str {
 }
 
 const BASIC: &[(PortTextKey, &str, &str)] = &[
+    (PortTextKey::SaveNewSaveLabel, "en", "< New Save >"),
+    (
+        PortTextKey::SaveNewSaveHint,
+        "en",
+        "Name optional - creates a new save slot",
+    ),
+    (PortTextKey::SaveMission, "en", "Mission: {value}"),
+    (PortTextKey::SavePlayer, "en", "Player: {value}"),
+    (PortTextKey::SaveSaved, "en", "Saved: {value}"),
+    (PortTextKey::SaveExactDate, "en", "Date: {value}"),
+    (
+        PortTextKey::SaveCampaignProgress,
+        "en",
+        "Campaign: {progress}%",
+    ),
+    (PortTextKey::SaveMissions, "en", "Missions: {done}/{total}"),
+    (PortTextKey::SaveGangSize, "en", "Gang: {size}"),
+    (PortTextKey::SaveRansom, "en", "Ransom: {value}"),
+    (PortTextKey::SaveBlazons, "en", "Blazons: {value}"),
+    (PortTextKey::SaveAmulets, "en", "Amulets: {value}"),
+    (
+        PortTextKey::SaveLegacyValueUnavailable,
+        "en",
+        "unavailable (legacy save)",
+    ),
+    (PortTextKey::SaveInvalidTimestamp, "en", "invalid timestamp"),
+    (
+        PortTextKey::SaveRelativeTimeUnavailable,
+        "en",
+        "relative time unavailable",
+    ),
+    (
+        PortTextKey::SaveLocalTimeUnavailable,
+        "en",
+        "local time unavailable",
+    ),
+    (PortTextKey::SaveJustNow, "en", "just now"),
+    (PortTextKey::SaveCompactSaved, "en", "Saved {value}"),
+    (
+        PortTextKey::SaveCompactCampaignProgress,
+        "en",
+        "{progress}% campaign",
+    ),
+    (
+        PortTextKey::SaveCompactMissions,
+        "en",
+        "{done}/{total} missions",
+    ),
+    (PortTextKey::SaveCompactGangSize, "en", "Gang {size}"),
+    (PortTextKey::SaveCompactRansom, "en", "Ransom {value}"),
+    (PortTextKey::SaveCompactBlazons, "en", "Blazons {value}"),
+    (PortTextKey::SaveCompactAmulets, "en", "Amulets {value}"),
     (PortTextKey::CampaignClassicMap, "de", "Klassische Karte"),
     (PortTextKey::CampaignClassicMap, "en", "Classic map"),
     (PortTextKey::CampaignProgressTree, "de", "Fortschrittsbaum"),
@@ -458,5 +530,57 @@ const GAMEPLAY: [(GameplaySetting, &str, &str, &str, &str); GameplaySetting::ALL
         "Repeat animated terrain triggers to reverse their animation, obstacles and doors. Applies to newly launched missions; off preserves original one-shot patches.",
         "Umkehrbare Hintergrundänderungen (nächster Start)",
         "Animierte Geländeauslöser wiederholen, um Animation, Hindernisse und Türen umzukehren. Gilt für neu gestartete Missionen; ausgeschaltet bleibt das ursprüngliche einmalige Verhalten.",
+    ),
+];
+
+const SAVE_RELATIVE_TIME: &[(super::RelativeTimeUnit, &str, &str, &str, &str)] = &[
+    (
+        super::RelativeTimeUnit::Second,
+        "{value} second ago",
+        "{value} seconds ago",
+        "in {value} second",
+        "in {value} seconds",
+    ),
+    (
+        super::RelativeTimeUnit::Minute,
+        "{value} minute ago",
+        "{value} minutes ago",
+        "in {value} minute",
+        "in {value} minutes",
+    ),
+    (
+        super::RelativeTimeUnit::Hour,
+        "{value} hour ago",
+        "{value} hours ago",
+        "in {value} hour",
+        "in {value} hours",
+    ),
+    (
+        super::RelativeTimeUnit::Day,
+        "{value} day ago",
+        "{value} days ago",
+        "in {value} day",
+        "in {value} days",
+    ),
+    (
+        super::RelativeTimeUnit::Week,
+        "{value} week ago",
+        "{value} weeks ago",
+        "in {value} week",
+        "in {value} weeks",
+    ),
+    (
+        super::RelativeTimeUnit::Month,
+        "{value} month ago",
+        "{value} months ago",
+        "in {value} month",
+        "in {value} months",
+    ),
+    (
+        super::RelativeTimeUnit::Year,
+        "{value} year ago",
+        "{value} years ago",
+        "in {value} year",
+        "in {value} years",
     ),
 ];

@@ -252,7 +252,7 @@ impl LoadPickerModalState {
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
-        let metadata_text = EnglishSaveMetadataText;
+        let metadata_text = SaveMetadataText::new(resources.menu_text.presentation_locale());
         let now_unix = if self.detailed_metadata {
             match crate::save_file::unix_timestamp_now() {
                 Ok(now) => Some(now),
@@ -358,146 +358,169 @@ const COMPACT_ROW_HEIGHT: i32 = 36;
 const DETAILED_ROW_HEIGHT: i32 = 52;
 const DETAIL_LINE_HEIGHT: i32 = 16;
 
-/// Relative-time units used by save metadata. The Original string table has
-/// no equivalent phrases; these belong in the port-owned language catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RelativeTimeUnit {
-    Second,
-    Minute,
-    Hour,
-    Day,
-    Week,
-    Month,
-    Year,
+use crate::localization::PortTextKey;
+pub(crate) use crate::localization::RelativeTimeUnit;
+
+/// Pure save-copy formatting, borrowing the menu's prepared presentation locale.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SaveMetadataText<'a> {
+    #[serde(borrow)]
+    locale: Option<&'a str>,
 }
 
-/// English save metadata copy and relative-time grammar.
-/// TODO: integrate this copy into the port-wide language catalog.
-#[derive(serde::Serialize, serde::Deserialize)]
-pub(crate) struct EnglishSaveMetadataText;
-
-impl EnglishSaveMetadataText {
-    fn quantity(value: u64, unit: RelativeTimeUnit) -> String {
-        let singular = match unit {
-            RelativeTimeUnit::Second => "second",
-            RelativeTimeUnit::Minute => "minute",
-            RelativeTimeUnit::Hour => "hour",
-            RelativeTimeUnit::Day => "day",
-            RelativeTimeUnit::Week => "week",
-            RelativeTimeUnit::Month => "month",
-            RelativeTimeUnit::Year => "year",
-        };
-        if value == 1 {
-            format!("1 {singular}")
-        } else {
-            format!("{value} {singular}s")
-        }
+impl<'a> SaveMetadataText<'a> {
+    fn new(locale: Option<&'a str>) -> Self {
+        Self { locale }
     }
-}
 
-impl EnglishSaveMetadataText {
+    fn format(&self, key: PortTextKey, arguments: &[(&str, &str)]) -> String {
+        crate::localization::format_port_text(self.locale, key, arguments)
+            .unwrap_or_else(|error| panic!("invalid save metadata catalog entry {key:?}: {error}"))
+    }
+
     fn new_save_label(&self) -> String {
-        "< New Save >".to_string()
+        crate::localization::port_text(self.locale, PortTextKey::SaveNewSaveLabel).to_owned()
     }
 
     fn new_save_hint(&self) -> String {
-        "Name optional - creates a new save slot".to_string()
+        crate::localization::port_text(self.locale, PortTextKey::SaveNewSaveHint).to_owned()
     }
 
     fn mission(&self, value: &str) -> String {
-        format!("Mission: {value}")
+        self.format(PortTextKey::SaveMission, &[("value", value)])
     }
 
     fn player(&self, value: &str) -> String {
-        format!("Player: {value}")
+        self.format(PortTextKey::SavePlayer, &[("value", value)])
     }
 
     fn saved(&self, value: &str) -> String {
-        format!("Saved: {value}")
+        self.format(PortTextKey::SaveSaved, &[("value", value)])
     }
 
     fn exact_date(&self, value: &str) -> String {
-        format!("Date: {value}")
+        self.format(PortTextKey::SaveExactDate, &[("value", value)])
     }
 
     fn campaign_progress(&self, progress: u32) -> String {
-        format!("Campaign: {progress}%")
+        self.format(
+            PortTextKey::SaveCampaignProgress,
+            &[("progress", &progress.to_string())],
+        )
     }
 
     fn missions(&self, done: usize, total: usize) -> String {
-        format!("Missions: {done}/{total}")
+        self.format(
+            PortTextKey::SaveMissions,
+            &[("done", &done.to_string()), ("total", &total.to_string())],
+        )
     }
 
     fn gang_size(&self, size: usize) -> String {
-        format!("Gang: {size}")
+        self.format(PortTextKey::SaveGangSize, &[("size", &size.to_string())])
     }
 
     fn ransom(&self, value: i32) -> String {
-        format!("Ransom: {value}")
+        self.format(PortTextKey::SaveRansom, &[("value", &value.to_string())])
     }
 
     fn blazons(&self, value: i32) -> String {
-        format!("Blazons: {value}")
+        self.format(PortTextKey::SaveBlazons, &[("value", &value.to_string())])
     }
 
     fn amulets(&self, value: i32) -> String {
-        format!("Amulets: {value}")
+        self.format(PortTextKey::SaveAmulets, &[("value", &value.to_string())])
     }
 
     fn legacy_value_unavailable(&self) -> String {
-        "unavailable (legacy save)".to_string()
+        crate::localization::port_text(self.locale, PortTextKey::SaveLegacyValueUnavailable)
+            .to_owned()
     }
 
     fn invalid_timestamp(&self) -> String {
-        "invalid timestamp".to_string()
+        crate::localization::port_text(self.locale, PortTextKey::SaveInvalidTimestamp).to_owned()
     }
 
     fn relative_time_unavailable(&self) -> String {
-        "relative time unavailable".to_string()
+        crate::localization::port_text(self.locale, PortTextKey::SaveRelativeTimeUnavailable)
+            .to_owned()
     }
 
     fn local_time_unavailable(&self) -> String {
-        "local time unavailable".to_string()
+        crate::localization::port_text(self.locale, PortTextKey::SaveLocalTimeUnavailable)
+            .to_owned()
     }
 
     fn just_now(&self) -> String {
-        "just now".to_string()
-    }
-
-    fn elapsed(&self, value: u64, unit: RelativeTimeUnit) -> String {
-        format!("{} ago", Self::quantity(value, unit))
-    }
-
-    fn future(&self, value: u64, unit: RelativeTimeUnit) -> String {
-        format!("in {}", Self::quantity(value, unit))
+        crate::localization::port_text(self.locale, PortTextKey::SaveJustNow).to_owned()
     }
 
     fn compact_saved(&self, value: &str) -> String {
-        format!("Saved {value}")
+        self.format(PortTextKey::SaveCompactSaved, &[("value", value)])
     }
 
     fn compact_campaign_progress(&self, progress: u32) -> String {
-        format!("{progress}% campaign")
+        self.format(
+            PortTextKey::SaveCompactCampaignProgress,
+            &[("progress", &progress.to_string())],
+        )
     }
 
     fn compact_missions(&self, done: usize, total: usize) -> String {
-        format!("{done}/{total} missions")
+        self.format(
+            PortTextKey::SaveCompactMissions,
+            &[("done", &done.to_string()), ("total", &total.to_string())],
+        )
     }
 
     fn compact_gang_size(&self, size: usize) -> String {
-        format!("Gang {size}")
+        self.format(
+            PortTextKey::SaveCompactGangSize,
+            &[("size", &size.to_string())],
+        )
     }
 
     fn compact_ransom(&self, value: i32) -> String {
-        format!("Ransom {value}")
+        self.format(
+            PortTextKey::SaveCompactRansom,
+            &[("value", &value.to_string())],
+        )
     }
 
     fn compact_blazons(&self, value: i32) -> String {
-        format!("Blazons {value}")
+        self.format(
+            PortTextKey::SaveCompactBlazons,
+            &[("value", &value.to_string())],
+        )
     }
 
     fn compact_amulets(&self, value: i32) -> String {
-        format!("Amulets {value}")
+        self.format(
+            PortTextKey::SaveCompactAmulets,
+            &[("value", &value.to_string())],
+        )
+    }
+
+    fn elapsed(&self, value: u64, unit: RelativeTimeUnit) -> String {
+        self.format(
+            PortTextKey::SaveRelativeTime {
+                unit,
+                future: false,
+                singular: value == 1,
+            },
+            &[("value", &value.to_string())],
+        )
+    }
+
+    fn future(&self, value: u64, unit: RelativeTimeUnit) -> String {
+        self.format(
+            PortTextKey::SaveRelativeTime {
+                unit,
+                future: true,
+                singular: value == 1,
+            },
+            &[("value", &value.to_string())],
+        )
     }
 }
 
@@ -622,7 +645,7 @@ fn draw_preview(
     resources: &IngameMenuResources,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
     detailed_metadata: bool,
 ) {
     let slot = match selected {
@@ -700,7 +723,7 @@ fn row_label<'a>(
     row: ListRow,
     save_manager: &'a SaveGameManager,
     visible: &[usize],
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
 ) -> Cow<'a, str> {
     match row {
         ListRow::New => Cow::Owned(text.new_save_label()),
@@ -728,7 +751,7 @@ fn row_detail_lines(
     visible: &[usize],
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
     detailed_metadata: bool,
 ) -> [String; 2] {
     match row {
@@ -747,7 +770,7 @@ fn existing_save_row_detail_lines(
     save: &SaveGame,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
     detailed_metadata: bool,
 ) -> [String; 2] {
     if !detailed_metadata {
@@ -775,12 +798,13 @@ pub(crate) fn cooperative_save_row_detail_lines(
     detailed_metadata: bool,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
+    locale: Option<&str>,
 ) -> [String; 2] {
     existing_save_row_detail_lines(
         save,
         now_unix,
         local_time_zone,
-        &EnglishSaveMetadataText,
+        &SaveMetadataText::new(locale),
         detailed_metadata,
     )
 }
@@ -788,7 +812,7 @@ pub(crate) fn cooperative_save_row_detail_lines(
 fn compact_row_detail(
     save: &SaveGame,
     local_time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
 ) -> String {
     let exact = format_compact_saved_time(&save.timestamp, local_time_zone, text);
     let mut output = text.compact_saved(&exact);
@@ -827,7 +851,7 @@ fn selected_metadata_lines(
     save: &SaveGame,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
 ) -> Vec<String> {
     let mission = mission_with_time(save, text);
     let player = metadata_value(&save.player_name, text);
@@ -860,7 +884,7 @@ fn selected_metadata_lines(
     lines
 }
 
-fn mission_with_time(save: &SaveGame, text: &EnglishSaveMetadataText) -> String {
+fn mission_with_time(save: &SaveGame, text: &SaveMetadataText<'_>) -> String {
     let mission = metadata_value(&save.mission_name, text);
     match save.mission_elapsed_seconds {
         Some(seconds) => format!("{mission} ({:02}:{:02})", seconds / 60, seconds % 60),
@@ -868,7 +892,7 @@ fn mission_with_time(save: &SaveGame, text: &EnglishSaveMetadataText) -> String 
     }
 }
 
-fn metadata_value<'a>(value: &'a str, text: &EnglishSaveMetadataText) -> Cow<'a, str> {
+fn metadata_value<'a>(value: &'a str, text: &SaveMetadataText<'_>) -> Cow<'a, str> {
     if value.is_empty() {
         Cow::Owned(text.legacy_value_unavailable())
     } else {
@@ -883,7 +907,7 @@ fn parse_save_timestamp(timestamp: &str) -> Result<u64, ()> {
 fn format_exact_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
 ) -> String {
     format_local_saved_time(timestamp, time_zone, text, "%Y-%m-%d %H:%M:%S %Z")
 }
@@ -891,7 +915,7 @@ fn format_exact_saved_time(
 fn format_compact_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
 ) -> String {
     format_local_saved_time(timestamp, time_zone, text, "%Y-%m-%d %H:%M")
 }
@@ -899,7 +923,7 @@ fn format_compact_saved_time(
 fn format_local_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
     format: &str,
 ) -> String {
     let Ok(seconds) = parse_save_timestamp(timestamp) else {
@@ -923,7 +947,7 @@ fn format_local_saved_time(
 fn format_relative_saved_time(
     timestamp: &str,
     now_unix: Option<u64>,
-    text: &EnglishSaveMetadataText,
+    text: &SaveMetadataText<'_>,
 ) -> String {
     let Ok(saved_unix) = parse_save_timestamp(timestamp) else {
         return text.invalid_timestamp();
@@ -1134,6 +1158,55 @@ pub(crate) fn finish_picker_delete(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn save_catalog_fallback_preserves_complete_relative_time_grammar() {
+        for locale in [
+            None,
+            Some("en-US"),
+            Some("de-DE"),
+            Some("ru-RU"),
+            Some("ja-JP"),
+        ] {
+            let text = SaveMetadataText::new(locale);
+            for (unit, word) in [
+                (RelativeTimeUnit::Second, "second"),
+                (RelativeTimeUnit::Minute, "minute"),
+                (RelativeTimeUnit::Hour, "hour"),
+                (RelativeTimeUnit::Day, "day"),
+                (RelativeTimeUnit::Week, "week"),
+                (RelativeTimeUnit::Month, "month"),
+                (RelativeTimeUnit::Year, "year"),
+            ] {
+                for value in [0, 1, 2, 21] {
+                    let suffix = if value == 1 { "" } else { "s" };
+                    assert_eq!(
+                        text.elapsed(value, unit),
+                        format!("{value} {word}{suffix} ago")
+                    );
+                    assert_eq!(
+                        text.future(value, unit),
+                        format!("in {value} {word}{suffix}")
+                    );
+                }
+            }
+            assert_eq!(text.just_now(), "just now");
+            assert_eq!(text.new_save_label(), "< New Save >");
+        }
+    }
+
+    #[test]
+    fn save_catalog_inserts_metadata_without_reinterpreting_braces() {
+        let text = SaveMetadataText::new(Some("untranslated"));
+        assert_eq!(
+            text.mission("Sherwood {value}"),
+            "Mission: Sherwood {value}"
+        );
+        assert_eq!(text.player("{done}/{total}"), "Player: {done}/{total}");
+        assert_eq!(text.missions(2, 12), "Missions: 2/12");
+        assert_eq!(text.compact_missions(2, 12), "2/12 missions");
+        assert_eq!(text.campaign_progress(40), "Campaign: 40%");
+    }
+
     #[test]
     fn save_text_truncation_borrows_unchanged_text() {
         let text = String::from("café");
@@ -1363,18 +1436,18 @@ mod tests {
             save.mission_elapsed_seconds = Some(seconds);
             for detailed in [false, true] {
                 assert!(
-                    cooperative_save_row_detail_lines(&save, detailed, Some(123), None)[0]
+                    cooperative_save_row_detail_lines(&save, detailed, Some(123), None, None)[0]
                         .contains(expected)
                 );
             }
             assert!(
-                selected_metadata_lines(&save, Some(123), None, &EnglishSaveMetadataText)[0]
+                selected_metadata_lines(&save, Some(123), None, &SaveMetadataText::default())[0]
                     .contains(expected)
             );
         }
         save.mission_elapsed_seconds = None;
         assert_eq!(
-            mission_with_time(&save, &EnglishSaveMetadataText),
+            mission_with_time(&save, &SaveMetadataText::default()),
             "The Silver Arrow"
         );
     }
@@ -1450,7 +1523,7 @@ mod tests {
                 ListRow::Existing(0),
                 &manager,
                 &load_visible,
-                &EnglishSaveMetadataText,
+                &SaveMetadataText::default(),
             ),
             "Autosave - The Silver Arrow"
         );
@@ -1458,7 +1531,7 @@ mod tests {
 
     #[test]
     fn relative_time_covers_thresholds_and_future_clock_changes() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         let now = 2_000_000;
         let cases = [
             (now, "just now"),
@@ -1483,7 +1556,7 @@ mod tests {
 
     #[test]
     fn invalid_and_unavailable_clocks_are_reported_honestly() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         assert_eq!(
             format_relative_saved_time("not-a-clock", Some(10), &text),
             "invalid timestamp"
@@ -1504,7 +1577,7 @@ mod tests {
 
     #[test]
     fn local_time_formats_share_validation_before_timezone_availability() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         for timestamp in [
             "",
             "not-a-clock",
@@ -1546,7 +1619,7 @@ mod tests {
 
     #[test]
     fn exact_time_uses_the_requested_zone() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         assert_eq!(
             format_exact_saved_time("0", Some(&TimeZone::UTC), &text),
             "1970-01-01 00:00:00 UTC"
@@ -1555,7 +1628,7 @@ mod tests {
 
     #[test]
     fn metadata_values_borrow_present_text_without_trimming() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         for value in ["The Silver Arrow", "Alice", "  ", " é "] {
             let rendered = metadata_value(value, &text);
             assert!(matches!(rendered, Cow::Borrowed(_)));
@@ -1569,7 +1642,7 @@ mod tests {
 
     #[test]
     fn every_existing_row_leads_with_required_metadata() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
         manager.insert_test_slot(saved_at("100"), crate::savegame::SlotState::Draft);
         let lines = row_detail_lines(
@@ -1587,7 +1660,7 @@ mod tests {
 
     #[test]
     fn incomplete_original_import_row_does_not_invent_player_or_mission() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
         manager.insert_test_slot(saved_at("100"), crate::savegame::SlotState::Draft);
         manager.get_mut(0).unwrap().mission_name.clear();
@@ -1616,7 +1689,7 @@ mod tests {
         save.blazons = Some(0);
         save.amulets = Some(0);
         assert_eq!(
-            compact_row_detail(&save, Some(&TimeZone::UTC), &EnglishSaveMetadataText),
+            compact_row_detail(&save, Some(&TimeZone::UTC), &SaveMetadataText::default()),
             "Saved 1970-01-01 01:00 | The Silver Arrow | 0% campaign | 0/12 missions | Gang 0 | Ransom -1 | Blazons 0 | Amulets 0"
         );
         save.text = format!("  {}  ", save.mission_name);
@@ -1627,14 +1700,14 @@ mod tests {
         save.blazons = None;
         save.amulets = None;
         assert_eq!(
-            compact_row_detail(&save, Some(&TimeZone::UTC), &EnglishSaveMetadataText),
+            compact_row_detail(&save, Some(&TimeZone::UTC), &SaveMetadataText::default()),
             "Saved 1970-01-01 01:00"
         );
     }
 
     #[test]
     fn compact_mode_hides_expanded_provenance_without_discarding_it() {
-        let text = EnglishSaveMetadataText;
+        let text = SaveMetadataText::default();
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
         let mut save = saved_at("3600");
         save.campaign_progress = Some(25);

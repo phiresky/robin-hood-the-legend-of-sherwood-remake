@@ -1780,9 +1780,16 @@ impl SaveLoadTaskState {
                 let (selected, label, details) = if self.mode == SaveLoadMode::Save && row == 0 {
                     (
                         self.model.selected_row() == Some(ListRow::New),
-                        std::borrow::Cow::Borrowed("< New Save >"),
+                        std::borrow::Cow::Borrowed(crate::localization::port_text(
+                            resources.menu_text.presentation_locale(),
+                            crate::localization::PortTextKey::SaveNewSaveLabel,
+                        )),
                         [
-                            "Name optional - creates a new save slot".to_string(),
+                            crate::localization::port_text(
+                                resources.menu_text.presentation_locale(),
+                                crate::localization::PortTextKey::SaveNewSaveHint,
+                            )
+                            .to_owned(),
                             String::new(),
                         ],
                     )
@@ -1798,6 +1805,7 @@ impl SaveLoadTaskState {
                             self.detailed_metadata,
                             now_unix,
                             self.local_time_zone.as_ref(),
+                            resources.menu_text.presentation_locale(),
                         ),
                     )
                 };
