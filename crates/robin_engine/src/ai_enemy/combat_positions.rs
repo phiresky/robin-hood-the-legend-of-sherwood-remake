@@ -3072,81 +3072,7 @@ impl EnemyAi {
             );
         }
         if !detects_primary {
-            // Lost sight: forecast their direction and abandon the fight.
-            // `primary_target` may just have changed to the actor's principal
-            // opponent. Never apply the tick's old primary-target forecast to
-            // that replacement: the original game refreshes the primary target first and
-            // forecasts the AI destination of the refreshed target.
-            let prepared = tick
-                .enemy_detectable_forecasts
-                .iter()
-                .find_map(|(handle, forecast)| {
-                    (Some(AiEntityHandle::new(*handle)) == self.base.primary_target)
-                        .then_some(forecast)
-                })
-                .or_else(|| {
-                    (tick.primary_target_snapshot_handle == self.base.primary_target)
-                        .then_some(tick.primary_target_forecast.as_ref())
-                        .flatten()
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "swordfight reconsideration refreshed primary target {:?} without a matching destination forecast",
-                        self.base.primary_target
-                    )
-                });
-            let forecast =
-                prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
-            self.base.seek_position = forecast.position;
-            self.pc_gone_away_in_this_direction = forecast.direction;
-            self.missed_pc = self.base.primary_target;
-            self.pc_missed = true;
-            self.end_swordfight(ctx, tick);
-
-            // Clear the target lock.
-            self.base.outbox.actor.set_unfocus();
-
-            // Chase or overview depending on target type and personality.
-            let missed_is_pc = ctx
-                .entity_view(self.missed_pc)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "swordfight reconsideration lost refreshed target {:?} without an entity view",
-                        self.missed_pc
-                    )
-                })
-                .is_pc;
-            if missed_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
-                self.base.say(Remark::HuntsEnemy);
-                self.seek_area(
-                    sim,
-                    self.base.seek_position,
-                    parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                    SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
-                    self.pc_gone_away_in_this_direction,
-                    global,
-                    ctx,
-                    tick,
-                );
-            } else {
-                // AI destination forecasting above only populates the retained
-                // seek center. Original aims this immediate snap at the
-                // missed actor's current `Position`, not that forecast.
-                let missed_position = ctx
-                    .entity_view(self.missed_pc)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "lost-enemy overview owner {} is missing current position for target {:?}",
-                            self.base.me, self.missed_pc
-                        )
-                    })
-                    .position;
-                let dx = missed_position.x - ctx.position.x;
-                let dy = missed_position.y - ctx.position.y;
-                let dir = vec_to_sector(dx, dy);
-                self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
-                self.get_battle_overview(0, ctx, tick);
-            }
+            self.finish_swordfight_after_target_loss(sim, global, ctx, tick);
             return;
         }
 
@@ -4541,3 +4467,91 @@ fn drunk_combat_freezes(sim: &crate::sim_rng::SimulationContext, blood_alcohol: 
 
 #[cfg(test)]
 mod tests;
+
+impl EnemyAi {
+    /// Close the lost-target branch before normal swordfight repositioning.
+    fn finish_swordfight_after_target_loss(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        // Lost sight: forecast their direction and abandon the fight.
+        // `primary_target` may just have changed to the actor's principal
+        // opponent. Never apply the tick's old primary-target forecast to
+        // that replacement: the original game refreshes the primary target first and
+        // forecasts the AI destination of the refreshed target.
+        let prepared = tick
+            .enemy_detectable_forecasts
+            .iter()
+            .find_map(|(handle, forecast)| {
+                (Some(AiEntityHandle::new(*handle)) == self.base.primary_target)
+                    .then_some(forecast)
+            })
+            .or_else(|| {
+                (tick.primary_target_snapshot_handle == self.base.primary_target)
+                    .then_some(tick.primary_target_forecast.as_ref())
+                    .flatten()
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "swordfight reconsideration refreshed primary target {:?} without a matching destination forecast",
+                    self.base.primary_target
+                )
+            });
+        let forecast =
+            prepared.resolve_retaining_direction(sim, self.pc_gone_away_in_this_direction);
+        self.base.seek_position = forecast.position;
+        self.pc_gone_away_in_this_direction = forecast.direction;
+        self.missed_pc = self.base.primary_target;
+        self.pc_missed = true;
+        self.end_swordfight(ctx, tick);
+
+        // Clear the target lock.
+        self.base.outbox.actor.set_unfocus();
+
+        // Chase or overview depending on target type and personality.
+        let missed_is_pc = ctx
+            .entity_view(self.missed_pc)
+            .unwrap_or_else(|| {
+                panic!(
+                    "swordfight reconsideration lost refreshed target {:?} without an entity view",
+                    self.missed_pc
+                )
+            })
+            .is_pc;
+        if missed_is_pc && self.answer_question(Question::ShallIFollowLostEnemy, ctx) {
+            self.base.say(Remark::HuntsEnemy);
+            self.seek_area(
+                sim,
+                self.base.seek_position,
+                parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE,
+                self.pc_gone_away_in_this_direction,
+                global,
+                ctx,
+                tick,
+            );
+        } else {
+            // AI destination forecasting above only populates the retained
+            // seek center. Original aims this immediate snap at the
+            // missed actor's current `Position`, not that forecast.
+            let missed_position = ctx
+                .entity_view(self.missed_pc)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lost-enemy overview owner {} is missing current position for target {:?}",
+                        self.base.me, self.missed_pc
+                    )
+                })
+                .position;
+            let dx = missed_position.x - ctx.position.x;
+            let dy = missed_position.y - ctx.position.y;
+            let dir = vec_to_sector(dx, dy);
+            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+            self.get_battle_overview(0, ctx, tick);
+        }
+        return;
+    }
+}
