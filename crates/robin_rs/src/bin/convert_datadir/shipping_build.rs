@@ -599,3 +599,4 @@ pub(super) fn finish_profiles_and_boot_files(
     }
     Ok(())
 }
+use std::collections::BTreeMap;
