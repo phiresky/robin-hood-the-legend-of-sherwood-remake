@@ -3215,7 +3215,10 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         "Turn()'s authoritative result must replace the visual sprite edge"
     );
 
-    engine.propagate_done_to_current_orders();
+    crate::engine::order_arbitration::propagate_done_to_current_orders(
+        &mut engine.world.entities,
+        &mut engine.orders.sequence_manager,
+    );
     assert!(
         !engine
             .orders

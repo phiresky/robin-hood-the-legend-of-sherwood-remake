@@ -2657,7 +2657,11 @@ impl EngineInner {
             // failed-path retry entry leak past the freeze, and the
             // 100-frame retry queue can fire `element_impossible` /
             // hero-speech on an actor that has been frozen / killed.
-            self.stop_owner_active_mechanics(owner);
+            crate::engine::order_arbitration::stop_owner_active_mechanics(
+                &mut self.world,
+                &mut self.orders,
+                owner,
+            );
             self.orders.sequence_manager.element_interrupted(
                 cur_seq,
                 cur_idx,

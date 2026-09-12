@@ -4315,7 +4315,10 @@ fn done_propagation_requires_the_current_order_identity() {
         sprite.last_motion_state = Some(MotionState::Done);
         sprite.last_processed_order_id = stale_order_id.get();
     }
-    engine.propagate_done_to_current_orders();
+    crate::engine::order_arbitration::propagate_done_to_current_orders(
+        &mut engine.world.entities,
+        &mut engine.orders.sequence_manager,
+    );
 
     assert!(
         !engine
@@ -4348,7 +4351,10 @@ fn done_propagation_requires_the_current_order_identity() {
         sprite.last_motion_state = Some(MotionState::Done);
         sprite.last_processed_order_id = replacement_order_id.get();
     }
-    engine.propagate_done_to_current_orders();
+    crate::engine::order_arbitration::propagate_done_to_current_orders(
+        &mut engine.world.entities,
+        &mut engine.orders.sequence_manager,
+    );
 
     assert!(
         engine
