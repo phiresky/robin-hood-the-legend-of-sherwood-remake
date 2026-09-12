@@ -83,7 +83,6 @@ impl EngineInner {
     /// by the original game's actor update.
     pub(in crate::engine) fn dispatch_sword_strike(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
         target: EntityId,

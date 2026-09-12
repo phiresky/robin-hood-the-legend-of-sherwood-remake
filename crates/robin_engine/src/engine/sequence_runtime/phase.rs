@@ -703,7 +703,6 @@ impl EngineInner {
 
         self.dispatch_prepared_move_instruction(
             sim,
-            assets,
             owner,
             sequence_id,
             element_index,
@@ -1598,7 +1597,7 @@ impl EngineInner {
                                 // epilogue.
                                 let barrier = match target {
                                     Some(target_id) => self.dispatch_sword_strike(
-                                        sim, assets, owner, target_id, strike, seq_id, elem_idx,
+                                        assets, owner, target_id, strike, seq_id, elem_idx,
                                     ),
                                     None => {
                                         self.orders

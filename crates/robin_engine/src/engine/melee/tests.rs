@@ -1643,7 +1643,6 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
         );
         let sequence = engine.launch_element(element);
         engine.dispatch_sword_strike(
-            &crate::sim_rng::test_context(),
             &LevelAssets::default(),
             attacker,
             target,
@@ -1671,7 +1670,6 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
     );
     let sequence = engine.launch_element(thrust_a);
     engine.dispatch_sword_strike(
-        &crate::sim_rng::test_context(),
         &LevelAssets::default(),
         attacker,
         target,
@@ -1753,15 +1751,7 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
         Some(target),
     );
     let sequence = engine.launch_element(strike);
-    engine.dispatch_sword_strike(
-        &crate::sim_rng::test_context(),
-        &assets,
-        attacker,
-        target,
-        SwordStrike::A,
-        sequence,
-        0,
-    );
+    engine.dispatch_sword_strike(&assets, attacker, target, SwordStrike::A, sequence, 0);
 
     let element = engine
         .orders
@@ -4570,7 +4560,6 @@ fn lateral_start_rebases_retained_serialized_human_victims() {
 
 #[test]
 fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
-    let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -4611,7 +4600,7 @@ fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
         vec![victim]
     );
 
-    engine.complete_melee_strike(&sim, &assets, attacker, None, 0, SwordStrike::D, Some(1));
+    engine.complete_melee_strike(&assets, attacker, None, 0, SwordStrike::D, Some(1));
 
     let attacker_entity = engine.get_entity(attacker).unwrap();
     assert!(
@@ -8889,8 +8878,6 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
 /// swordfight switches the primary target.
 #[test]
 fn thrust_a_promotes_clicked_secondary_opponent() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = make_engine();
     let pc = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -8951,7 +8938,6 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
         .action_state;
 
     engine.dispatch_sword_strike(
-        sim,
         &LevelAssets::default(),
         pc,
         clicked,
