@@ -34,6 +34,18 @@ impl From<robin_run_protocol::ValidationError> for ApiError {
     }
 }
 
+impl From<robin_run_protocol::CanonicalError> for ApiError {
+    fn from(error: robin_run_protocol::CanonicalError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
+impl From<robin_run_protocol::CanonicalDocumentError> for ApiError {
+    fn from(error: robin_run_protocol::CanonicalDocumentError) -> Self {
+        Self::BadRequest(error.to_string())
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorBody {
     schema_version: u32,
