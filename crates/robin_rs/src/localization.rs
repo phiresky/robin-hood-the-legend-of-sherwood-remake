@@ -17,10 +17,12 @@ use robin_engine::sbfile::SbFileSystem;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod catalog;
 mod feature40_text;
 
 #[cfg(any(not(target_arch = "wasm32"), test))]
 const PREFERENCES_FILE: &str = "language.json";
+#[cfg(target_arch = "wasm32")]
 const BROWSER_PREFERENCES_KEY: &str = "robin_hood.language.v1";
 const MENU_TEXT_TABLES: [i32; 3] = [1_000_507, 1_000_040, 1_000_034];
 const MINIMUM_CORE_MENU_STRINGS: usize = 32;
@@ -130,6 +132,7 @@ pub enum LocalizationError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum PreferenceStore {
     Native(PathBuf),
+    #[cfg(target_arch = "wasm32")]
     Browser,
     Memory,
 }
@@ -834,8 +837,6 @@ fn persist_preferences(
                 .set_item(BROWSER_PREFERENCES_KEY, &encoded)
                 .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        PreferenceStore::Browser => Ok(()),
         PreferenceStore::Memory => Ok(()),
     }
 }
@@ -858,52 +859,23 @@ fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationErr
                 .get_item(BROWSER_PREFERENCES_KEY)
                 .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        PreferenceStore::Browser => Ok(None),
         PreferenceStore::Memory => Ok(None),
     }
 }
 
 fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
-    use std::io::Write as _;
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source: std::io::Error::other("language preference path has no parent directory"),
-        })?;
-    std::fs::create_dir_all(parent).map_err(|source| LocalizationError::PersistPreferences {
-        path: path.to_owned(),
-        source,
-    })?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".language-")
-        .suffix(".json.tmp")
-        .tempfile_in(parent)
-        .map_err(|source| LocalizationError::PersistPreferences {
+    crate::desktop_persistence::write_bytes(path, bytes).map_err(|source| {
+        LocalizationError::PersistPreferences {
             path: path.to_owned(),
             source,
-        })?;
-    temporary
-        .write_all(bytes)
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|source| LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source,
-        })?;
-    temporary
-        .persist(path)
-        .map(|_| ())
-        .map_err(|error| LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source: error.error,
-        })
+        }
+    })
 }
 
 fn store_display_path(store: &PreferenceStore) -> PathBuf {
     match store {
         PreferenceStore::Native(path) => path.clone(),
+        #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => PathBuf::from(BROWSER_PREFERENCES_KEY),
         PreferenceStore::Memory => PathBuf::from("<memory>"),
     }
@@ -1073,112 +1045,7 @@ pub const FEATURE40_PORT_TEXT_KEYS: &[PortTextKey] = &[
 ];
 
 pub fn port_text(locale: Option<&str>, key: PortTextKey) -> &'static str {
-    let language = locale.map(locale_primary).unwrap_or(Cow::Borrowed("en"));
-    match key {
-        PortTextKey::CampaignClassicMap => {
-            return if language == "de" {
-                "Klassische Karte"
-            } else {
-                "Classic map"
-            };
-        }
-        PortTextKey::CampaignProgressTree => {
-            return if language == "de" {
-                "Fortschrittsbaum"
-            } else {
-                "Progress tree"
-            };
-        }
-        PortTextKey::CampaignSherwoodMuseum => {
-            return if language == "de" {
-                "Sherwood-Museum"
-            } else {
-                "Sherwood museum"
-            };
-        }
-        PortTextKey::GameplayLabel(setting) | PortTextKey::GameplayTooltip(setting) => {
-            let (label, help) = setting
-                .text(&language)
-                .or_else(|| setting.text("en"))
-                .expect("every gameplay setting has English catalogue text");
-            return if matches!(key, PortTextKey::GameplayLabel(_)) {
-                label
-            } else {
-                help
-            };
-        }
-        PortTextKey::GameAutosaved => {
-            return if language == "de" {
-                "Spiel automatisch gespeichert."
-            } else {
-                "Game autosaved."
-            };
-        }
-        PortTextKey::AutosaveFailed => {
-            return if language == "de" {
-                "Automatisches Speichern fehlgeschlagen – siehe Protokoll."
-            } else {
-                "Autosave failed - check the log."
-            };
-        }
-        PortTextKey::SaveFailed => {
-            return if language == "de" {
-                "Speichern fehlgeschlagen – vor erneutem Versuch das Protokoll prüfen."
-            } else {
-                "Save failed - check the log before retrying."
-            };
-        }
-        _ => {}
-    }
-
-    if let Some(text) = feature40_text::text(locale.unwrap_or("en-US"), key)
-        .or_else(|| feature40_text::text("en-US", key))
-    {
-        return text;
-    }
-    match (language.as_ref(), key) {
-        ("de", PortTextKey::Language) => "Sprache",
-        ("de", PortTextKey::Automatic) => "Automatisch",
-        ("de", PortTextKey::Apply) => "Anwenden",
-        ("fr", PortTextKey::Language) => "Langue",
-        ("fr", PortTextKey::Automatic) => "Automatique",
-        ("fr", PortTextKey::Apply) => "Appliquer",
-        ("it", PortTextKey::Language) => "Lingua",
-        ("it", PortTextKey::Automatic) => "Automatico",
-        ("it", PortTextKey::Apply) => "Applica",
-        ("pt" | "es", PortTextKey::Language) => "Idioma",
-        ("pt" | "es", PortTextKey::Automatic) => "Automático",
-        ("pt" | "es", PortTextKey::Apply) => "Aplicar",
-        ("ru", PortTextKey::Language) => "Язык",
-        ("ru", PortTextKey::Automatic) => "Автоматически",
-        ("ru", PortTextKey::Apply) => "Применить",
-        ("ja", PortTextKey::Language) => "言語",
-        ("ja", PortTextKey::Automatic) => "自動",
-        ("ja", PortTextKey::Apply) => "適用",
-        ("cs", PortTextKey::Language) => "Jazyk",
-        ("cs", PortTextKey::Automatic) => "Automaticky",
-        ("cs", PortTextKey::Apply) => "Použít",
-        ("pl", PortTextKey::Language) => "Język",
-        ("pl", PortTextKey::Automatic) => "Automatycznie",
-        ("pl", PortTextKey::Apply) => "Zastosuj",
-        ("zh", PortTextKey::Language) => "語言",
-        ("zh", PortTextKey::Automatic) => "自動",
-        ("zh", PortTextKey::Apply) => "套用",
-        ("ko", PortTextKey::Language) => "언어",
-        ("ko", PortTextKey::Automatic) => "자동",
-        ("ko", PortTextKey::Apply) => "적용",
-        ("th", PortTextKey::Language) => "ภาษา",
-        ("th", PortTextKey::Automatic) => "อัตโนมัติ",
-        ("th", PortTextKey::Apply) => "ใช้",
-        (_, PortTextKey::Language) => "Language",
-        (_, PortTextKey::Automatic) => "Automatic",
-        (_, PortTextKey::Apply) => "Apply",
-        (_, PortTextKey::InstalledLanguages) => "Installed languages",
-        (_, PortTextKey::OptionalEnglishFallback) => {
-            "Missing optional voice or cinematics use the installed English pack"
-        }
-        _ => unreachable!("Feature 40 keys return from the complete port-owned catalogue"),
-    }
+    catalog::text(locale, key)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
