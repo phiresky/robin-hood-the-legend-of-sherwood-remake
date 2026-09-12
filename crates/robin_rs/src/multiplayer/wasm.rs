@@ -866,54 +866,9 @@ async fn complete_content_admission(
         "content decision",
     )
     .await?;
-    let mut received = match decision {
-        NetOutbound::ContentRequest {
-            full_mod_sha256,
-            resume_offset,
-        } if full_mod_sha256 == offer.full_mod_sha256 && resume_offset <= offer.encoded_bytes => {
-            write_frame(
-                &mut session.send,
-                &NetMsg::ContentRequest {
-                    full_mod_sha256,
-                    resume_offset,
-                },
-            )
-            .await?;
-            resume_offset
-        }
-        NetOutbound::ContentRequest {
-            full_mod_sha256,
-            resume_offset,
-        } => {
-            return Err(format!(
-                "invalid content request for {} at offset {resume_offset}; offered {} with {} bytes",
-                robin_engine::spellforge::hex_hash(&full_mod_sha256),
-                robin_engine::spellforge::hex_hash(&offer.full_mod_sha256),
-                offer.encoded_bytes
-            ));
-        }
-        NetOutbound::ContentReject {
-            full_mod_sha256,
-            reason,
-        } if full_mod_sha256 == offer.full_mod_sha256 => {
-            write_frame(
-                &mut session.send,
-                &NetMsg::ContentReject {
-                    full_mod_sha256,
-                    reason: reason.clone(),
-                },
-            )
-            .await?;
-            return Err(format!(
-                "local player declined exact host content: {reason}"
-            ));
-        }
-        other => {
-            return Err(format!(
-                "expected local ContentRequest/ContentReject, got {other:?}"
-            ));
-        }
-    };
+    let decision = crate::multiplayer::content_transfer::ContentDecision::decode(offer, decision)?;
+    write_frame(&mut session.send, &decision.message(offer)).await?;
+    let mut received = decision.resume_offset()?;
 
     let transfer_started = web_time::Instant::now();
     while received < offer.encoded_bytes {
