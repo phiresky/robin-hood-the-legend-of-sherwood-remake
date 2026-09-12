@@ -2070,7 +2070,10 @@ pub fn hackable_level_descriptor_path(mission_filename: &str) -> String {
 /// Whether a hackable JSON level descriptor exists for this mission in the
 /// primary datadir or any registered overlay.
 pub fn hackable_level_exists(mission_filename: &str) -> bool {
-    crate::sbfile::SbFile::exists(&hackable_level_descriptor_path(mission_filename))
+    let path = hackable_level_descriptor_path(mission_filename);
+    crate::sbfile::global_file_system()
+        .try_exists(&path)
+        .unwrap_or_else(|error| panic!("cannot inspect level descriptor {path:?}: {error:?}"))
 }
 
 /// Editable geometry source for a hackable JSON level.

@@ -275,8 +275,7 @@ impl EnemyAi {
         );
         self.base.primary_target = target;
         self.base.outbox.actor.set_focus(target);
-        self.set_state(AiState::Attacking, Substate::AttackingReserve);
-        self.base.launch_timer(50, ctx.frame);
+        self.set_state_with_timer(AiState::Attacking, Substate::AttackingReserve, 50, ctx);
     }
 
     // -----------------------------------------------------------------------
@@ -332,7 +331,7 @@ impl EnemyAi {
             );
         } else {
             // No allowed target — stand down.
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
     }
 
@@ -361,7 +360,7 @@ impl EnemyAi {
         // `SUBSTATE_ATTACKING_APPROACHING_SLEEPING_ENEMY` below. We
         // mirror the behaviour exactly.
         if self.combat_trainer || self.is_merry_man_forest(ctx) {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             // Return to duty suspends around engine-owned patrol initialization in
             // Rust. Keep the remaining statements behind that continuation,
             // just as they are behind the complete synchronous call in the
@@ -1036,7 +1035,7 @@ impl EnemyAi {
             //   on a bend point with friend-seen enemies should hold
             //   the firing position, not run away to seek.
             if self.combat_trainer {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             } else if self.my_shooting_point.is_some() {
                 // Archer has a shooting point — equip bow based on
                 // elevation relative to last-seen enemy.
@@ -1073,8 +1072,12 @@ impl EnemyAi {
                 // Must precede the friend-seen seek arm so an archer
                 // mid-shot doesn't abandon his position to chase someone
                 // else's sighting.
-                self.set_state(AiState::Attacking, Substate::AttackingArcherWaitOnBendPoint);
-                self.base.launch_timer(500, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingArcherWaitOnBendPoint,
+                    500,
+                    ctx,
+                );
             } else if !self.list_them.is_empty() {
                 // Friends see enemies that I don't — seek toward the
                 // first friend's enemy position.
@@ -1563,8 +1566,12 @@ impl EnemyAi {
                         self.base.outbox.actor.enter_swordfight_jump_line = None;
                     }
                     self.base.outbox.actor.set_focus(target);
-                    self.set_state(AiState::Attacking, Substate::AttackingLastReserve);
-                    self.base.launch_timer(50, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingLastReserve,
+                        50,
+                        ctx,
+                    );
                 }
 
                 Decision::Observe => {
@@ -1578,8 +1585,12 @@ impl EnemyAi {
                     self.base.outbox.actor.set_focus(target);
                     if self.combat_trainer {
                         self.base.set_emoticon(EmoticonType::XMark);
-                        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
-                        self.base.launch_timer(1, ctx.frame);
+                        self.set_state_with_timer(
+                            AiState::Attacking,
+                            Substate::AttackingApproachToObserve,
+                            1,
+                            ctx,
+                        );
                     } else {
                         // DECISION_OBSERVE uses the swordfight-observer
                         // courage distance, not the proud-observer constant,
@@ -2119,15 +2130,23 @@ impl EnemyAi {
                         if self.base.already_on_point {
                             self.base.already_on_point = false;
                             self.base.face_entity(target, ctx);
-                            self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
-                            self.base.launch_timer(20, ctx.frame);
+                            self.set_state_with_timer(
+                                AiState::Attacking,
+                                Substate::AttackingTooProudToAttack,
+                                20,
+                                ctx,
+                            );
                         }
                     } else {
                         // Good distance — face and observe.
                         self.base.face_entity(target, ctx);
                         self.base.outbox.actor.set_focus(self.base.primary_target);
-                        self.set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
-                        self.base.launch_timer(20, ctx.frame);
+                        self.set_state_with_timer(
+                            AiState::Attacking,
+                            Substate::AttackingTooProudToAttack,
+                            20,
+                            ctx,
+                        );
                     }
 
                     // Only on first battle decision entry.
@@ -2235,8 +2254,12 @@ impl EnemyAi {
                     self.base.outbox.actor.set_focus(target);
 
                     if ctx.self_action_state.is_bow() {
-                        self.set_state(AiState::Attacking, Substate::AttackingBowObserving);
-                        self.base.launch_timer(50, ctx.frame);
+                        self.set_state_with_timer(
+                            AiState::Attacking,
+                            Substate::AttackingBowObserving,
+                            50,
+                            ctx,
+                        );
                     } else {
                         self.base.stop_all();
                         self.base
@@ -2691,8 +2714,7 @@ impl EnemyAi {
         }
         // Already swordfighting? stay.
         if ctx.is_swordfighting {
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(30, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 30, ctx);
             return;
         }
 
@@ -3182,8 +3204,12 @@ impl EnemyAi {
                     self,
                     Substate::AttackingChargingEnemy,
                 );
-                self.set_state(AiState::Attacking, Substate::AttackingChargingEnemy);
-                self.base.launch_timer(10, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingChargingEnemy,
+                    10,
+                    ctx,
+                );
             } else {
                 // Run to within run_distance of the target without stopping first.
                 self.base.go_near(
@@ -3201,8 +3227,12 @@ impl EnemyAi {
                     self,
                     Substate::AttackingRunningToEnemy,
                 );
-                self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
-                self.base.launch_timer(10, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingRunningToEnemy,
+                    10,
+                    ctx,
+                );
             }
         } else {
             // Below run distance: walk, or run if target is running.
@@ -3233,8 +3263,12 @@ impl EnemyAi {
                     self,
                     Substate::AttackingRunningToEnemy,
                 );
-                self.set_state(AiState::Attacking, Substate::AttackingRunningToEnemy);
-                self.base.launch_timer(10, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingRunningToEnemy,
+                    10,
+                    ctx,
+                );
             } else {
                 if my_line_jump.is_none() {
                     // Walk to within sword range of the target.
@@ -3257,8 +3291,12 @@ impl EnemyAi {
                     self,
                     Substate::AttackingWalkingToEnemy,
                 );
-                self.set_state(AiState::Attacking, Substate::AttackingWalkingToEnemy);
-                self.base.launch_timer(10, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingWalkingToEnemy,
+                    10,
+                    ctx,
+                );
             }
         }
 
@@ -3489,8 +3527,12 @@ impl EnemyAi {
         );
 
         self.base.set_emoticon(EmoticonType::XMark);
-        self.set_state(AiState::Attacking, Substate::AttackingApproachToObserve);
-        self.base.launch_timer(50, ctx.frame);
+        self.set_state_with_timer(
+            AiState::Attacking,
+            Substate::AttackingApproachToObserve,
+            50,
+            ctx,
+        );
 
         if self.base.couldnt_reachpoint
             && let Some(wait_pos) = avenger_wait_position
@@ -4165,8 +4207,7 @@ impl EnemyAi {
             self.base.say(Remark::StartsCombat);
         }
         self.base.clear_emoticon();
-        self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-        self.base.launch_timer(20, ctx.frame);
+        self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
     }
 
     // -----------------------------------------------------------------------

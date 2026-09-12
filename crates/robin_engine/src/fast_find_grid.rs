@@ -1490,7 +1490,10 @@ impl FastFindGrid {
         self.line_active
             .get(usize::from(line_idx))
             .copied()
-            .unwrap_or(false)
+            .unwrap_or_else(|| {
+                tracing::warn!("active-state query references an out-of-range spatial index");
+                false
+            })
     }
 
     /// Read the active state of a sector. Returns `false` if the index
@@ -1500,7 +1503,10 @@ impl FastFindGrid {
         self.sector_active
             .get(sector_idx as usize)
             .copied()
-            .unwrap_or(false)
+            .unwrap_or_else(|| {
+                tracing::warn!("active-state query references an out-of-range spatial index");
+                false
+            })
     }
 
     /// Read the active state of a mask. Returns `false` if the index is
@@ -1510,7 +1516,10 @@ impl FastFindGrid {
         self.mask_active
             .get(usize::from(mask_idx))
             .copied()
-            .unwrap_or(false)
+            .unwrap_or_else(|| {
+                tracing::warn!("active-state query references an out-of-range spatial index");
+                false
+            })
     }
 
     /// Mutable accessor to the lift runtime state. Inserts a default
@@ -3623,7 +3632,6 @@ impl FastFindGrid {
         &self,
         origin: crate::coordinates::WorldPoint3D,
         destination: crate::coordinates::WorldPoint3D,
-        _layer: u16,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> bool {
@@ -4197,7 +4205,6 @@ mod tests {
         assert!(grid.is_reachable_3d(
             crate::coordinates::WorldPoint3D::new(64.0, 96.0, 20.0),
             crate::coordinates::WorldPoint3D::new(64.0, 160.0, 20.0),
-            0,
             crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
             crate::sight_obstacle::ObstacleList::empty(),
         ));

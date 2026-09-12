@@ -179,70 +179,121 @@ pub(super) fn compare_frame(
     legacy_missing_draw_view: bool,
     legacy_blocked_box_shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
 ) -> Vec<String> {
-    let mut differences = Vec::new();
+    let mut comparison = FrameComparison {
+        engine,
+        assets,
+        frame,
+        entity_map,
+        late_movement_retranslations,
+        legacy_additive_omissions,
+        legacy_missing_draw_view,
+        legacy_blocked_box_shadows,
+        differences: Vec::new(),
+    };
+    comparison.compare_selection(actual_game_code);
+    comparison.compare_entities();
+    comparison.differences
+}
 
-    if frame.game_code != actual_game_code {
-        differences.push(format!(
-            "frame.game_code: original={} rust={actual_game_code}",
-            frame.game_code
-        ));
-    }
-    let selected: Vec<EntityId> = frame
-        .selected_pcs
-        .iter()
-        .copied()
-        .map(|id| entity_map.translate(id))
-        .collect();
-    if engine.selected_hero_ids() != selected {
-        differences.push(format!(
-            "selected_pcs: original={selected:?} rust={:?}",
-            engine.selected_hero_ids()
-        ));
-    }
+/// One frame's comparison policy and ordered diagnostic sink. This borrowed
+/// runtime context is not a wire document.
+struct FrameComparison<'a> {
+    engine: &'a Engine,
+    assets: &'a LevelAssets,
+    frame: &'a TraceFrame,
+    entity_map: &'a EntityMap,
+    late_movement_retranslations: &'a [EntityId],
+    legacy_additive_omissions: bool,
+    legacy_missing_draw_view: bool,
+    legacy_blocked_box_shadows: &'a mut BTreeMap<u32, LegacyBlockedBoxShadow>,
+    differences: Vec<String>,
+}
 
-    // Actor state is generally the most actionable parity signal. Report it
-    // before the (much larger) background-FX table.
-    let mut elements: Vec<_> = frame.elements.iter().collect();
-    elements.sort_by_key(|element| {
-        let priority = match element.entity_id.kind {
-            TraceEntityKind::Pc => 0,
-            TraceEntityKind::Soldier => 1,
-            TraceEntityKind::Civilian => 2,
-            _ => 3,
-        };
-        (priority, element.entity_id.index)
-    });
-    for expected in elements {
-        // Background FX animation is presentation state. It remains in the
-        // trace for a later renderer-parity pass, but does not belong in the
-        // first logical gameplay comparison.
-        if expected.entity_id.kind == TraceEntityKind::Fx {
-            continue;
+impl FrameComparison<'_> {
+    fn compare_entities(&mut self) {
+        // Actor state is generally the most actionable parity signal. Report it
+        // before the (much larger) background-FX table.
+        let frame = self.frame;
+        let engine = self.engine;
+        let entity_map = self.entity_map;
+        let mut elements: Vec<_> = frame.elements.iter().collect();
+        elements.sort_by_key(|element| {
+            let priority = match element.entity_id.kind {
+                TraceEntityKind::Pc => 0,
+                TraceEntityKind::Soldier => 1,
+                TraceEntityKind::Civilian => 2,
+                _ => 3,
+            };
+            (priority, element.entity_id.index)
+        });
+        for expected in elements {
+            // Background FX animation is presentation state. It remains in the
+            // trace for a later renderer-parity pass, but does not belong in the
+            // first logical gameplay comparison.
+            if expected.entity_id.kind == TraceEntityKind::Fx {
+                continue;
+            }
+            let id = entity_map.translate(expected.entity_id);
+            let Some(actual) = engine.get_entity(id) else {
+                self.differences.push(format!(
+                    "{:?}: missing in Rust entity table",
+                    EntityLabel {
+                        id,
+                        original_index: expected.entity_id.index
+                    }
+                ));
+                continue;
+            };
+            assert_eq!(
+                expected.ai.is_some(),
+                expected.detection.is_some(),
+                "Original NPC trace state must contain both ai and detection payloads for {:?}",
+                expected.entity_id
+            );
+            self.compare_element(expected, actual, id);
+            self.compare_runtime(expected, id);
+            self.compare_actor(expected, actual, id);
+            self.compare_human(expected, actual, id);
+            self.compare_ammunition(expected, id);
+            self.compare_ai(expected, actual, id);
+            self.compare_detection(expected, actual, id);
         }
-        let id = entity_map.translate(expected.entity_id);
-        // Diff paths name the RUST id, but `--dump-entity`, the trace's
-        // `elements[].entity_id.index` and the Original's logs all use the ORIGINAL
-        // index, and the two are frequently unequal (e.g. Original pc:171 is
-        // Rust Pc(PcId(174))). Four investigations lost hours to that mismatch, so
-        // every diff root spells the pairing out.
-        let id_label = EntityLabel {
-            id,
-            original_index: expected.entity_id.index,
-        };
-        let Some(actual) = engine.get_entity(id) else {
-            differences.push(format!("{id_label:?}: missing in Rust entity table"));
-            continue;
-        };
+    }
+
+    fn compare_selection(&mut self, actual_game_code: i32) {
+        let engine = self.engine;
+        let frame = self.frame;
+        let entity_map = self.entity_map;
+        let differences = &mut self.differences;
+        if frame.game_code != actual_game_code {
+            differences.push(format!(
+                "frame.game_code: original={} rust={actual_game_code}",
+                frame.game_code
+            ));
+        }
+        let selected: Vec<EntityId> = frame
+            .selected_pcs
+            .iter()
+            .copied()
+            .map(|id| entity_map.translate(id))
+            .collect();
+        if engine.selected_hero_ids() != selected {
+            differences.push(format!(
+                "selected_pcs: original={selected:?} rust={:?}",
+                engine.selected_hero_ids()
+            ));
+        }
+    }
+
+    fn compare_element(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+        let engine = self.engine;
+        let entity_map = self.entity_map;
+        let legacy_additive_omissions = self.legacy_additive_omissions;
+        let differences = &mut self.differences;
         let element = actual.element_data();
-        assert_eq!(
-            expected.ai.is_some(),
-            expected.detection.is_some(),
-            "Original NPC trace state must contain both ai and detection payloads for {:?}",
-            expected.entity_id
-        );
         if entity_map.creation_order_is_exact(expected.creation_order) {
             compare(
-                &mut differences,
+                differences,
                 id,
                 "creation_order",
                 expected.creation_order,
@@ -250,28 +301,22 @@ pub(super) fn compare_frame(
             );
         }
         compare(
-            &mut differences,
+            differences,
             id,
             "kind",
             expected.kind,
             trace_kind_for_entity(actual),
         );
         compare(
-            &mut differences,
+            differences,
             id,
             "entity_id.kind",
             expected.entity_id.kind,
             expected.kind,
         );
+        compare(differences, id, "active", expected.active, element.active);
         compare(
-            &mut differences,
-            id,
-            "active",
-            expected.active,
-            element.active,
-        );
-        compare(
-            &mut differences,
+            differences,
             id,
             "blipped",
             expected.blipped,
@@ -284,7 +329,7 @@ pub(super) fn compare_frame(
         // remain deserialized for diagnostics, but neither is logical state.
         if expected.actor.is_some() {
             compare(
-                &mut differences,
+                differences,
                 id,
                 "unreachable",
                 expected.unreachable,
@@ -304,7 +349,7 @@ pub(super) fn compare_frame(
             }
         }
         compare_point(
-            &mut differences,
+            differences,
             id,
             "position_map",
             expected.position_map,
@@ -319,7 +364,7 @@ pub(super) fn compare_frame(
             );
         if !undefined_runtime_bonus_old_position {
             compare_point(
-                &mut differences,
+                differences,
                 id,
                 "old_position_map",
                 expected.old_position_map,
@@ -327,7 +372,7 @@ pub(super) fn compare_frame(
             );
         }
         compare_point_with_absolute_tolerance(
-            &mut differences,
+            differences,
             id,
             "position_goal_map",
             expected.position_goal_map,
@@ -335,7 +380,7 @@ pub(super) fn compare_frame(
             0.011,
         );
         compare_float(
-            &mut differences,
+            differences,
             id,
             "elevation",
             expected.elevation,
@@ -343,7 +388,7 @@ pub(super) fn compare_frame(
         );
         if !undefined_runtime_bonus_old_position {
             compare_float(
-                &mut differences,
+                differences,
                 id,
                 "old_elevation",
                 expected.old_elevation,
@@ -352,7 +397,7 @@ pub(super) fn compare_frame(
         }
         let increment_map = pi.raw_increment_map();
         compare_point(
-            &mut differences,
+            differences,
             id,
             "increment_map",
             expected.increment_map,
@@ -360,7 +405,7 @@ pub(super) fn compare_frame(
         );
         if let Some(expected_increment_map_valid) = expected.increment_map_valid {
             compare(
-                &mut differences,
+                differences,
                 id,
                 "increment_map_valid",
                 expected_increment_map_valid,
@@ -370,7 +415,7 @@ pub(super) fn compare_frame(
         if !undefined_runtime_bonus_old_position {
             let movement_map = element.position_map() - pi.old_map_position();
             compare_point(
-                &mut differences,
+                differences,
                 id,
                 "movement_map",
                 expected.movement_map,
@@ -381,7 +426,7 @@ pub(super) fn compare_frame(
         let mapped_building_sector = expected.sector != actual_sector
             && entity_map.sectors_equivalent(expected.sector, actual_sector);
         compare(
-            &mut differences,
+            differences,
             id,
             "layer",
             expected.layer,
@@ -390,7 +435,7 @@ pub(super) fn compare_frame(
                 .map_or(u16::MAX, robin_engine::position_interface::Layer::get),
         );
         compare(
-            &mut differences,
+            differences,
             id,
             "layer_goal",
             expected.layer_goal,
@@ -398,38 +443,26 @@ pub(super) fn compare_frame(
                 .map_or(u16::MAX, robin_engine::position_interface::Layer::get),
         );
         if !mapped_building_sector {
-            compare(
-                &mut differences,
-                id,
-                "sector",
-                expected.sector,
-                actual_sector,
-            );
+            compare(differences, id, "sector", expected.sector, actual_sector);
         }
         compare(
-            &mut differences,
+            differences,
             id,
             "direction",
             expected.direction,
             i16::from(pi.get_direction().as_u8()),
         );
         compare(
-            &mut differences,
+            differences,
             id,
             "direction_goal",
             expected.direction_goal,
             i16::from(pi.get_direction_goal().as_u8()),
         );
         if !undefined_runtime_bonus_old_position {
+            compare(differences, id, "moving", expected.moving, pi.is_moving());
             compare(
-                &mut differences,
-                id,
-                "moving",
-                expected.moving,
-                pi.is_moving(),
-            );
-            compare(
-                &mut differences,
+                differences,
                 id,
                 "moving_map",
                 expected.moving_map,
@@ -437,14 +470,14 @@ pub(super) fn compare_frame(
             );
         }
         compare(
-            &mut differences,
+            differences,
             id,
             "sprite_row",
             expected.sprite_row,
             element.sprite.current_row,
         );
         compare(
-            &mut differences,
+            differences,
             id,
             "sprite_frame",
             expected.sprite_frame,
@@ -452,13 +485,26 @@ pub(super) fn compare_frame(
         );
         if !legacy_additive_omissions {
             compare(
-                &mut differences,
+                differences,
                 id,
                 "sprite_frame_count",
                 expected.sprite_frame_count,
                 element.sprite.frame_count,
             );
         }
+    }
+
+    fn compare_runtime(&mut self, expected: &TraceElement, id: EntityId) {
+        let engine = self.engine;
+        let assets = self.assets;
+        let entity_map = self.entity_map;
+        let legacy_missing_draw_view = self.legacy_missing_draw_view;
+        let legacy_blocked_box_shadows = &mut *self.legacy_blocked_box_shadows;
+        let differences = &mut self.differences;
+        let id_label = EntityLabel {
+            id,
+            original_index: expected.entity_id.index,
+        };
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
             let original_last_processed_order_id = expected_runtime
@@ -522,9 +568,18 @@ pub(super) fn compare_frame(
                 &format!("{id_label:?}.runtime"),
                 &expected_runtime,
                 &actual_runtime,
-                &mut differences,
+                differences,
             );
         }
+    }
+
+    fn compare_actor(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+        let engine = self.engine;
+        let frame = self.frame;
+        let late_movement_retranslations = self.late_movement_retranslations;
+        let legacy_additive_omissions = self.legacy_additive_omissions;
+        let differences = &mut self.differences;
+        let element = actual.element_data();
         if let Some(expected_actor) = &expected.actor {
             let actual_actor = actual
                 .actor_data()
@@ -547,7 +602,7 @@ pub(super) fn compare_frame(
                 ));
             }
             compare(
-                &mut differences,
+                differences,
                 id,
                 "actor.wait_time",
                 expected_actor.wait_time,
@@ -563,7 +618,7 @@ pub(super) fn compare_frame(
                 && original_actor_animation_is_logical(id, late_movement_retranslations)
             {
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "actor.animation",
                     expected_actor.animation,
@@ -583,7 +638,7 @@ pub(super) fn compare_frame(
                 && original_motion_state_is_defined(expected_actor.motion_state)
             {
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "actor.motion_state",
                     expected_actor.motion_state,
@@ -591,7 +646,7 @@ pub(super) fn compare_frame(
                 );
             }
             compare(
-                &mut differences,
+                differences,
                 id,
                 "actor.command",
                 command_from_stable_name(&expected_actor.command_name),
@@ -599,7 +654,7 @@ pub(super) fn compare_frame(
             );
             if !legacy_additive_omissions {
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "actor.passing_door_directly",
                     expected_actor.passing_door_directly,
@@ -623,7 +678,7 @@ pub(super) fn compare_frame(
             }
             if let Some(expected_sequence) = &expected_actor.sequence_element {
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "actor.sequence_element.command",
                     command_from_stable_name(&expected_sequence.command_name),
@@ -631,6 +686,14 @@ pub(super) fn compare_frame(
                 );
             }
         }
+    }
+
+    fn compare_human(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+        let engine = self.engine;
+        let assets = self.assets;
+        let entity_map = self.entity_map;
+        let legacy_additive_omissions = self.legacy_additive_omissions;
+        let differences = &mut self.differences;
         if let Some(expected_human) = &expected.human {
             let actual_camp = actual.camp();
             let actual_life = match actual {
@@ -640,21 +703,21 @@ pub(super) fn compare_frame(
                 _ => panic!("trace reports life_points for non-human {id:?}"),
             };
             compare(
-                &mut differences,
+                differences,
                 id,
                 "life_points",
                 expected_human.life_points,
                 actual_life,
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "dead",
                 expected_human.dead,
                 actual.is_dead(),
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "unconscious",
                 expected_human.unconscious,
@@ -664,28 +727,28 @@ pub(super) fn compare_frame(
                     .unconscious,
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "human.camp",
                 expected_human.camp.as_str(),
                 camp_name(actual_camp),
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "human.original_camp",
                 expected_human.original_camp,
                 camp_ordinal(actual_camp),
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "human.vip",
                 expected_human.vip,
                 entity_is_vip(actual, assets),
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "human.civilian",
                 expected_human.civilian,
@@ -702,7 +765,7 @@ pub(super) fn compare_frame(
                     panic!("trace reports human opponents for non-human {id:?}")
                 });
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "human.opponents",
                     expected_opponents,
@@ -734,7 +797,7 @@ pub(super) fn compare_frame(
                     })
                     .collect();
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "human.opponent_jump_lines",
                     expected_jump_lines,
@@ -742,6 +805,11 @@ pub(super) fn compare_frame(
                 );
             }
         }
+    }
+
+    fn compare_ammunition(&mut self, expected: &TraceElement, id: EntityId) {
+        let engine = self.engine;
+        let differences = &mut self.differences;
         if let Some(expected_pc) = &expected.pc {
             use robin_engine::profiles::Action;
 
@@ -758,7 +826,7 @@ pub(super) fn compare_frame(
                 ("wasp_nests", ammo.wasp_nests, Action::WaspNest),
             ] {
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     &format!("pc.ammo.{field}"),
                     expected_count,
@@ -766,19 +834,26 @@ pub(super) fn compare_frame(
                 );
             }
         }
+    }
+
+    fn compare_ai(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+        let engine = self.engine;
+        let entity_map = self.entity_map;
+        let legacy_additive_omissions = self.legacy_additive_omissions;
+        let differences = &mut self.differences;
         if let Some(expected_ai) = &expected.ai {
             let actual_ai = actual
                 .ai_controller()
                 .unwrap_or_else(|| panic!("trace reports AI state for non-NPC {id:?}"));
             compare(
-                &mut differences,
+                differences,
                 id,
                 "ai.state",
                 expected_ai.state,
                 actual_ai.current_state as u32,
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "ai.substate",
                 expected_ai.substate,
@@ -786,49 +861,49 @@ pub(super) fn compare_frame(
             );
             if !legacy_additive_omissions {
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.script_locked",
                     expected_ai.script_locked,
                     actual_ai.ai_is_script_locked(),
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.locked",
                     expected_ai.locked,
                     actual_ai.ai_is_locked(),
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.locks",
                     expected_ai.locks,
                     actual_ai.locks_flag_field.bits(),
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.was_busy",
                     expected_ai.was_busy,
                     actual_ai.was_busy,
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.very_busy",
                     expected_ai.very_busy,
                     engine.is_very_very_busy(id),
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.macro_timer_running",
                     expected_ai.macro_timer_running,
                     actual_ai.macro_timer_is_running,
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.macro_timer_ring",
                     expected_ai.macro_timer_ring,
@@ -862,21 +937,21 @@ pub(super) fn compare_frame(
                         })
                     });
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.macro_cursor",
                     expected_ai.macro_cursor,
                     actual_macro_cursor,
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.macro_remaining",
                     expected_ai.macro_remaining,
                     actual_ai.number_of_remaining_macro_bytes,
                 );
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.macro_in_progress",
                     expected_ai.macro_in_progress,
@@ -897,7 +972,7 @@ pub(super) fn compare_frame(
                         })
                     })
                     .collect();
-                compare(&mut differences, id, "ai.list_us", expected_us, actual_us);
+                compare(differences, id, "ai.list_us", expected_us, actual_us);
                 let expected_them: Vec<EntityId> = expected_ai
                     .list_them
                     .iter()
@@ -920,13 +995,7 @@ pub(super) fn compare_frame(
                             .collect()
                     })
                     .unwrap_or_default();
-                compare(
-                    &mut differences,
-                    id,
-                    "ai.list_them",
-                    expected_them,
-                    actual_them,
-                );
+                compare(differences, id, "ai.list_them", expected_them, actual_them);
                 let expected_line = expected_ai.my_line_jump.as_ref().map(trace_jump_line_bits);
                 let actual_line_index = actual.enemy_ai().and_then(|enemy| enemy.my_line_jump);
                 if expected_line.is_some() && actual.enemy_ai().is_none() {
@@ -944,7 +1013,7 @@ pub(super) fn compare_frame(
                     runtime_jump_line_bits(line)
                 });
                 compare(
-                    &mut differences,
+                    differences,
                     id,
                     "ai.my_line_jump",
                     expected_line,
@@ -952,6 +1021,12 @@ pub(super) fn compare_frame(
                 );
             }
         }
+    }
+
+    fn compare_detection(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+        let frame = self.frame;
+        let entity_map = self.entity_map;
+        let differences = &mut self.differences;
         if let Some(expected_detection) = &expected.detection {
             let npc = actual
                 .npc_data()
@@ -960,35 +1035,35 @@ pub(super) fn compare_frame(
                 .ai_controller()
                 .unwrap_or_else(|| panic!("trace reports detection state for AI-less NPC {id:?}"));
             compare(
-                &mut differences,
+                differences,
                 id,
                 "detection.suspects",
                 expected_detection.suspects.as_slice(),
                 npc.detection_suspects.as_slice(),
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "detection.maximal_suspect",
                 expected_detection.maximal_suspect,
                 npc.maximal_detection_suspect,
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "detection.maximal_visibility",
                 expected_detection.maximal_visibility,
                 controller.max_visibility,
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "detection.view_status",
                 expected_detection.view_status,
                 npc.eye_status as u8,
             );
             compare(
-                &mut differences,
+                differences,
                 id,
                 "detection.alert_status",
                 expected_detection.alert_status,
@@ -997,7 +1072,7 @@ pub(super) fn compare_frame(
 
             let actual_detectables_len = npc.detectable_lists.iter().map(Vec::len).sum::<usize>();
             compare(
-                &mut differences,
+                differences,
                 id,
                 "detection.detectables.length",
                 expected_detection.detectables.len(),
@@ -1056,7 +1131,7 @@ pub(super) fn compare_frame(
                 .enumerate()
             {
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1065,7 +1140,7 @@ pub(super) fn compare_frame(
                     detectable_type_ordinal(actual_detectable.detectable_type),
                 );
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1076,7 +1151,7 @@ pub(super) fn compare_frame(
                     }),
                 );
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1085,7 +1160,7 @@ pub(super) fn compare_frame(
                     actual_detectable.seen_now,
                 );
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1094,7 +1169,7 @@ pub(super) fn compare_frame(
                     actual_detectable.seen_last_frame,
                 );
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1103,7 +1178,7 @@ pub(super) fn compare_frame(
                     actual_detectable.heard_last_frame,
                 );
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1112,7 +1187,7 @@ pub(super) fn compare_frame(
                     actual_detectable.shadow_seen_now,
                 );
                 compare_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1121,7 +1196,7 @@ pub(super) fn compare_frame(
                     actual_detectable.shadow_seen_last_frame,
                 );
                 compare_float_indexed(
-                    &mut differences,
+                    differences,
                     id,
                     "detection.detectables",
                     detectable_index,
@@ -1132,7 +1207,6 @@ pub(super) fn compare_frame(
             }
         }
     }
-    differences
 }
 
 pub(super) fn compare<T: std::fmt::Debug + PartialEq>(

@@ -1,5 +1,28 @@
 use super::*;
 
+/// Only these three damage-animation selectors share this posture family.
+/// Instruction admission and melee strike eligibility have different families
+/// and must not use this normalization. Undefined retains load-time upright
+/// animation behavior; excluded postures remain distinct for caller policies.
+fn damage_animation_posture(posture: Posture) -> Posture {
+    match posture {
+        Posture::Upright
+        | Posture::Undefined
+        | Posture::Spy
+        | Posture::Cloaked
+        | Posture::LeaningOut
+        | Posture::Leisure
+        | Posture::Siesta
+        | Posture::CarryingCorpse
+        | Posture::HelpingToClimb
+        | Posture::CarryingOnShoulders
+        | Posture::AnonymousArcher
+        | Posture::Sitting => Posture::Upright,
+        Posture::Crouched | Posture::SimulatingBeggar | Posture::Tree => Posture::Crouched,
+        other => other,
+    }
+}
+
 // ─── Animation selection ────────────────────────────────────────────
 
 /// Animation category for combat state transitions.
@@ -25,24 +48,13 @@ pub(super) fn select_combat_animations(
     action_state: ActionState,
 ) -> Option<CombatAnimations> {
     use crate::order::OrderType;
-    match posture {
+    match damage_animation_posture(posture) {
         // `Undefined` is treated as `Upright` everywhere else (see
         // sprite-row selection in `element.rs`).  Without it in this
         // arm, NPCs that still carry the default load-time posture
         // (soldiers never explicitly set it) get no falling / push /
         // hit animation at KO time.
-        Posture::Upright
-        | Posture::Undefined
-        | Posture::Spy
-        | Posture::Cloaked
-        | Posture::LeaningOut
-        | Posture::Leisure
-        | Posture::Siesta
-        | Posture::CarryingCorpse
-        | Posture::HelpingToClimb
-        | Posture::CarryingOnShoulders
-        | Posture::AnonymousArcher
-        | Posture::Sitting => {
+        Posture::Upright => {
             if action_state.is_sword() || action_state == ActionState::Menacing {
                 Some(CombatAnimations {
                     falling_back: OrderType::FallingBackSword,
@@ -69,7 +81,7 @@ pub(super) fn select_combat_animations(
                 })
             }
         }
-        Posture::Crouched | Posture::SimulatingBeggar | Posture::Tree => Some(CombatAnimations {
+        Posture::Crouched => Some(CombatAnimations {
             falling_back: OrderType::FallingBackCrouched,
             dying_forward: OrderType::DyingCrouched,
             standing_up: OrderType::StandingUp,
@@ -102,24 +114,13 @@ pub(super) fn select_push_damage_animations(
     action_state: ActionState,
 ) -> Option<PushDamageAnimations> {
     use crate::order::OrderType;
-    match posture {
+    match damage_animation_posture(posture) {
         // `Undefined` is treated as `Upright` everywhere else (see
         // sprite-row selection in `element.rs`).  Without it in this
         // arm, NPCs that still carry the default load-time posture
         // (soldiers never explicitly set it) get no falling / push /
         // hit animation at KO time.
-        Posture::Upright
-        | Posture::Undefined
-        | Posture::Spy
-        | Posture::Cloaked
-        | Posture::LeaningOut
-        | Posture::Leisure
-        | Posture::Siesta
-        | Posture::CarryingCorpse
-        | Posture::HelpingToClimb
-        | Posture::CarryingOnShoulders
-        | Posture::AnonymousArcher
-        | Posture::Sitting => {
+        Posture::Upright => {
             if action_state.is_sword() || action_state == ActionState::Menacing {
                 Some(PushDamageAnimations {
                     falling: OrderType::FallingPushedWithSword,
@@ -141,7 +142,7 @@ pub(super) fn select_push_damage_animations(
                 })
             }
         }
-        Posture::Crouched | Posture::SimulatingBeggar | Posture::Tree => {
+        Posture::Crouched => {
             Some(PushDamageAnimations {
                 falling: OrderType::FallingPushedCrouched,
                 // The original game initializes the stand-up animation to
@@ -184,19 +185,8 @@ pub(in crate::engine) fn select_hit_fall_animation(
     harder: bool,
 ) -> Option<crate::order::OrderType> {
     use crate::order::OrderType;
-    match posture {
-        Posture::Upright
-        | Posture::Undefined
-        | Posture::Spy
-        | Posture::Cloaked
-        | Posture::LeaningOut
-        | Posture::Leisure
-        | Posture::Siesta
-        | Posture::CarryingCorpse
-        | Posture::HelpingToClimb
-        | Posture::CarryingOnShoulders
-        | Posture::AnonymousArcher
-        | Posture::Sitting => {
+    match damage_animation_posture(posture) {
+        Posture::Upright => {
             if action_state.is_bow() {
                 Some(if harder {
                     OrderType::FallingHitHarderWithBow
@@ -217,7 +207,7 @@ pub(in crate::engine) fn select_hit_fall_animation(
                 })
             }
         }
-        Posture::Crouched | Posture::Tree | Posture::SimulatingBeggar => Some(if harder {
+        Posture::Crouched => Some(if harder {
             OrderType::FallingHitHarderCrouched
         } else {
             OrderType::FallingHitCrouched

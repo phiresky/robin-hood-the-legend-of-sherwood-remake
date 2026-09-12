@@ -11,7 +11,7 @@ mod combat_positions;
 mod detection;
 mod event_handlers;
 mod money_fight;
-use detection::*;
+pub(crate) use detection::context_detects_180_degrees;
 mod periodic;
 mod seek;
 mod substate_handlers;
@@ -24,6 +24,16 @@ pub use util::*;
 use crate::ai::*;
 use crate::entity_id::PcId;
 use crate::parameters_ai;
+
+/// Borrowed decision inputs. Mutable global AI state remains a separate owner.
+/// This is an ephemeral call context, never a save or rollback projection.
+#[derive(Clone, Copy)]
+struct ThinkEnv<'a> {
+    sim: &'a crate::sim_rng::SimulationContext,
+    ctx: &'a AiContext,
+    tick: &'a AiPerTickData,
+    grid: Option<&'a crate::fast_find_grid::FastFindGrid>,
+}
 
 /// Master switch for the opt-in AI decision/path diagnostic used by the
 /// Save020/Save055 substate-only parity cohort. Keep this check separate so
@@ -2475,7 +2485,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventReturnToDuty => {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
                 // This arm never assigns the return value, so it
                 // returns `false` (the default).  Callers test the
                 // bool to decide whether to re-dispatch / continue
@@ -2771,7 +2781,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
 
@@ -2788,7 +2798,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
 
@@ -2805,7 +2815,7 @@ impl EnemyAi {
             } else if self.base.think_recursion_depth < 111 {
                 // 100..=110 asserts and bails to return_to_duty;
                 // 111+ does nothing (the assert already fired upstream).
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
 
@@ -2897,6 +2907,30 @@ impl EnemyAi {
     // -----------------------------------------------------------------------
     // Return to duty — restore default behavior
     // -----------------------------------------------------------------------
+
+    /// Ordinary return with no special duty-transition flags.
+    #[track_caller]
+    fn return_to_duty_default(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+    }
+
+    /// Change virtual enemy state before arming the incoming state's timer.
+    #[track_caller]
+    fn set_state_with_timer(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        frames: u32,
+        ctx: &AiContext,
+    ) {
+        self.set_state(state, substate);
+        self.base.launch_timer(frames, ctx.frame);
+    }
 
     pub fn return_to_duty(
         &mut self,
@@ -3587,7 +3621,7 @@ impl EnemyAi {
             // the default `Substate::DefaultOnPost`.
             self.base.substate_at_last_timer_launch = self.base.current_substate;
             self.set_state(AiState::Default, Substate::DefaultEnroute);
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
 
         // Movement setup checks `think_method_recursion_depth > 0` and

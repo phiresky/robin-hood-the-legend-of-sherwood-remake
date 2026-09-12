@@ -915,7 +915,7 @@ impl EngineInner {
                 y: landing.y,
                 z: centre_z + 20.0,
             };
-            if !self.is_reachable_solid(assets, p_test, p_centre_high, layer.get()) {
+            if !self.is_reachable_solid(assets, p_test, p_centre_high) {
                 return true;
             }
 
@@ -924,7 +924,7 @@ impl EngineInner {
                 y: test_proj_y,
                 z: test_proj_z - 40.0,
             };
-            if self.is_reachable_solid(assets, p_test, p_drop, layer.get()) {
+            if self.is_reachable_solid(assets, p_test, p_drop) {
                 return true;
             }
         }
@@ -977,13 +977,11 @@ impl EngineInner {
         assets: &LevelAssets,
         origin: crate::coordinates::WorldPoint3D,
         destination: crate::coordinates::WorldPoint3D,
-        layer: u16,
     ) -> bool {
         let obstacles = self.sight_obstacles(assets);
         self.world.fast_grid.is_reachable_3d(
             origin,
             destination,
-            layer,
             crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
             obstacles,
         )

@@ -2221,125 +2221,11 @@ pub fn tick_ability(
     }
 
     let ability = actor.active_ability.clone();
-    let listen_phase = actor.listen_phase;
-    let receive_purse_phase = actor.receive_purse_phase;
     let kind = ability.kind.unwrap(); // safe: is_active() checked
 
-    // Player-character tying execution revalidates the antagonist every
-    // frame. The DONE callback itself changes Lying -> Tied, so the next
-    // Execute deliberately fails this check and aborts/releases the Tie
-    // element instead of playing the unused animation tail.
-    if kind == AbilityKind::Tie {
-        let target_id = ability
-            .target
-            .expect("active Tie ability must retain its antagonist");
-        let target_valid = entities.get(target_id).is_some_and(|target| {
-            target.human_data().is_some_and(|human| human.unconscious)
-                && target.element_data().posture() == Posture::Lying
-        });
-        if !target_valid {
-            results.push(AbilityTickResult::Aborted {
-                actor_id: entity_id,
-                kind,
-                seq_id: ability.sequence_id.expect("Tie ability sequence"),
-                elem_idx: ability.element_index,
-                order_id: ability.order_id,
-            });
-            return results;
-        }
-    }
-    if kind == AbilityKind::Untie && !ability.done_effect_applied {
-        let target_id = ability
-            .target
-            .expect("active Untie ability must retain its antagonist");
-        let target_valid = entities.get(target_id).is_some_and(|target| {
-            target.is_active()
-                && target.is_npc()
-                && !target.is_dead()
-                && target.human_data().is_some()
-                && target.element_data().posture() == Posture::Tied
-        });
-        if !target_valid {
-            results.push(AbilityTickResult::Aborted {
-                actor_id: entity_id,
-                kind,
-                seq_id: ability.sequence_id.expect("Untie ability sequence"),
-                elem_idx: ability.element_index,
-                order_id: ability.order_id,
-            });
-            return results;
-        }
-    }
-
-    // Original-game strangling uses left-to-right conditional ordering:
-    // attacker fast turning runs first, and the victim is not advanced until a
-    // later tick where the attacker was already aligned. Action processing is
-    // likewise deferred until both calls return false. Direction goals and
-    // the victim FREEZE lock are installed by the engine at the original
-    // post-translation initialization boundary.
-    if kind == AbilityKind::Strangle {
-        let victim_id = ability
-            .target
-            .expect("active Strangle ability must retain its antagonist");
-        if entities
-            .get_mut(requested_actor)
-            .expect("validated strangle owner vanished before fast turning")
-            .position_iface_mut()
-            .turn_fast()
-        {
-            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
-            return results;
-        }
-        let victim = entities
-            .get_mut(victim_id)
-            .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished while turning"));
-        assert!(
-            victim.actor_data().is_some(),
-            "strangle victim {victim_id:?} lost required actor state while turning"
-        );
-        if victim.position_iface_mut().turn_fast() {
-            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
-            return results;
-        }
-    }
-
-    if kind == AbilityKind::ClimbOnShoulders {
-        let helper_id = ability
-            .target
-            .expect("active ClimbOnShoulders ability must retain its helper");
-        let helper_direction = entities
-            .get(helper_id)
-            .unwrap_or_else(|| {
-                panic!("climb-on-shoulders helper {helper_id:?} vanished during Execute")
-            })
-            .element_data()
-            .direction();
-        // Original reissues this progressive facing goal before Turn on every
-        // execution of the shoulder-climbing animation.
-        entities
-            .get_mut(requested_actor)
-            .expect("climb-on-shoulders owner vanished before facing update")
-            .element_data_mut()
-            .set_direction_goal((helper_direction + 8) & 15);
-    }
-
-    if kind == AbilityKind::Carry && !sprite_frozen {
-        let order_id = ability.order_id.expect("active Carry ability order");
-        let target_id = ability.target.expect("active Carry ability target");
-        initialize_carry_relationship(entities, requested_actor, target_id);
-        let carrier = entities
-            .get(requested_actor)
-            .expect("validated Carry owner vanished before initialization");
-        if carrier.element_data().sprite.last_processed_order_id != order_id.get() {
-            let carrier_position = carrier.element_data().position_map();
-            let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
-            let target = entities
-                .get_mut(target_id)
-                .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"));
-            let element = target.element_data_mut();
-            element.set_position_map(carrier_position);
-            element.set_direction_instantly(carried_direction);
-        }
+    if let Some(results) = tick_pre_action(sim, entities, requested_actor, &ability, sprite_frozen)
+    {
+        return results;
     }
 
     let entity = entities
@@ -2355,98 +2241,7 @@ pub fn tick_ability(
     // plus the `listen_wait_time` countdown in
     // the selected PC owner arm.
     if kind == AbilityKind::Listen {
-        let phase = listen_phase;
-        let order_type = match phase {
-            ListenPhase::EnterTransition => OrderType::TransitionWaitingUprightListening,
-            ListenPhase::ExitTransition => OrderType::TransitionListeningWaitingUpright,
-            ListenPhase::CountingDown => OrderType::Listening,
-            ListenPhase::Inactive => panic!(
-                "active Listen owner {entity_id:?} has Inactive phase for identity {:?}/{}/ {:?}",
-                ability.sequence_id, ability.element_index, ability.order_id
-            ),
-        };
-        // All three listen arms call `Turn()` ahead of their sprite action, so
-        // the row played this tick belongs to the already-stepped direction.
-        let _ = entity.position_iface_mut().turn();
-        let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
-            panic!("Listen owner {entity_id:?} has invalid animation direction")
-        });
-        let order_id = ability.order_id;
-
-        let motion = if sprite_frozen {
-            // The original-game sprite action returns an in-progress state while
-            // FreezeAll is active, and the PC
-            // The execution wrapper publishes that return through the actor update
-            // without advancing any sprite operand. The specialized Rust
-            // owner reads this transient field after `tick_ability` returns,
-            // so replace a stale pre-freeze DONE edge explicitly.
-            entity.element_data_mut().sprite.last_motion_state =
-                Some(SpriteMotionState::InProgress);
-            SpriteMotionState::InProgress
-        } else {
-            let elem = entity.element_data_mut();
-            elem.sprite.perform_action(
-                sim,
-                order_id,
-                order_type,
-                direction,
-                crate::sprite::FrameProgression::Default,
-                false,
-            )
-        };
-        if !matches!(
-            motion,
-            SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
-        ) {
-            return results;
-        }
-        let actor = entity.actor_data_mut().unwrap_or_else(|| {
-            panic!("asserted Listen owner {entity_id:?} lost required actor state")
-        });
-        let seq_id = actor
-            .active_ability
-            .sequence_id
-            .expect("Listen ability sequence");
-        let elem_idx = actor.active_ability.element_index;
-        match motion {
-            SpriteMotionState::Done if actor.active_ability.done_effect_applied => {}
-            SpriteMotionState::Done => {
-                actor.active_ability.done_effect_applied = true;
-                if phase == ListenPhase::EnterTransition {
-                    // Switch to the listening pose (driven by
-                    // animation.rs idle-pose fallback) and hand off
-                    // to the ai.rs countdown.
-                    actor.action_state = ActionState::Listening;
-                    actor.listen_wait_time = crate::abilities::TIME_LISTEN_WAIT;
-                    results.push(AbilityTickResult::ListenEntered {
-                        actor_id: entity_id,
-                    });
-                } else if phase == ListenPhase::ExitTransition {
-                    actor.action_state = ActionState::Waiting;
-                    actor.listen_wait_time = 0;
-                    results.push(AbilityTickResult::ListenDone {
-                        actor_id: entity_id,
-                        seq_id,
-                        elem_idx,
-                    });
-                }
-            }
-            SpriteMotionState::Terminated => results.push(AbilityTickResult::Terminated {
-                actor_id: entity_id,
-                kind,
-                seq_id,
-                elem_idx,
-            }),
-            SpriteMotionState::Aborted => results.push(AbilityTickResult::Aborted {
-                actor_id: entity_id,
-                kind,
-                seq_id,
-                elem_idx,
-                order_id: ability.order_id,
-            }),
-            _ => {}
-        }
-        return results;
+        return tick_listen(sim, entity, entity_id, &ability, sprite_frozen);
     }
 
     // ── ReceivePurse: phase-aware animation dispatch ──
@@ -2458,83 +2253,7 @@ pub fn tick_ability(
     // `reveal_scrolls`; on Transition→Inactive we emit
     // `ReceivePurseDone` to terminate the driving sequence element.
     if kind == AbilityKind::ReceivePurse {
-        let phase = receive_purse_phase;
-        let order_type = match phase {
-            ReceivePursePhase::Receiving => OrderType::ReceivingPurse,
-            ReceivePursePhase::Waiting => OrderType::WaitingWithPurse,
-            ReceivePursePhase::Transition => OrderType::TransitionWaitingWithPurseWaitingUpright,
-            ReceivePursePhase::Inactive => panic!(
-                "active ReceivePurse owner {entity_id:?} has Inactive phase for identity {:?}/{}/ {:?}",
-                ability.sequence_id, ability.element_index, ability.order_id
-            ),
-        };
-        let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
-            panic!("ReceivePurse owner {entity_id:?} has invalid animation direction")
-        });
-        let order_id = ability.order_id;
-
-        let motion = if sprite_frozen {
-            SpriteMotionState::InProgress
-        } else {
-            let elem = entity.element_data_mut();
-            elem.sprite.perform_action(
-                sim,
-                order_id,
-                order_type,
-                direction,
-                crate::sprite::FrameProgression::Default,
-                false,
-            )
-        };
-        if !matches!(
-            motion,
-            SpriteMotionState::Terminated | SpriteMotionState::Aborted
-        ) {
-            return results;
-        }
-
-        let actor = entity.actor_data_mut().unwrap_or_else(|| {
-            panic!("asserted ReceivePurse owner {entity_id:?} lost required actor state")
-        });
-        let seq_id = actor
-            .active_ability
-            .sequence_id
-            .expect("ReceivePurse sequence");
-        let elem_idx = actor.active_ability.element_index;
-        if motion == SpriteMotionState::Aborted {
-            results.push(AbilityTickResult::Aborted {
-                actor_id: entity_id,
-                kind,
-                seq_id,
-                elem_idx,
-                order_id: ability.order_id,
-            });
-            return results;
-        }
-        match phase {
-            ReceivePursePhase::Receiving => {}
-            ReceivePursePhase::Waiting => {
-                results.push(AbilityTickResult::ReceivePurseRevealing {
-                    beggar_id: entity_id,
-                });
-            }
-            ReceivePursePhase::Transition => {
-                actor.action_state = ActionState::Waiting;
-                results.push(AbilityTickResult::ReceivePurseDone {
-                    beggar_id: entity_id,
-                    seq_id,
-                    elem_idx,
-                });
-            }
-            ReceivePursePhase::Inactive => unreachable!(),
-        }
-        results.push(AbilityTickResult::Terminated {
-            actor_id: entity_id,
-            kind,
-            seq_id,
-            elem_idx,
-        });
-        return results;
+        return tick_receive_purse(sim, entity, entity_id, &ability, sprite_frozen);
     }
 
     let order_id = ability.order_id;
@@ -2708,6 +2427,351 @@ pub fn tick_ability(
         return results;
     }
 
+    results.push(completion_result(
+        entity,
+        entity_id,
+        &ability,
+        sequence_manager,
+    ));
+    results
+}
+
+fn tick_pre_action(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    requested_actor: EntityId,
+    ability: &ActiveAbility,
+    sprite_frozen: bool,
+) -> Option<Vec<AbilityTickResult>> {
+    let entity_id = requested_actor;
+    let kind = ability.kind.expect("active pre-action ability kind");
+    let mut results = Vec::new();
+    // Player-character tying execution revalidates the antagonist every
+    // frame. The DONE callback itself changes Lying -> Tied, so the next
+    // Execute deliberately fails this check and aborts/releases the Tie
+    // element instead of playing the unused animation tail.
+    if kind == AbilityKind::Tie {
+        let target_id = ability
+            .target
+            .expect("active Tie ability must retain its antagonist");
+        let target_valid = entities.get(target_id).is_some_and(|target| {
+            target.human_data().is_some_and(|human| human.unconscious)
+                && target.element_data().posture() == Posture::Lying
+        });
+        if !target_valid {
+            results.push(AbilityTickResult::Aborted {
+                actor_id: entity_id,
+                kind,
+                seq_id: ability.sequence_id.expect("Tie ability sequence"),
+                elem_idx: ability.element_index,
+                order_id: ability.order_id,
+            });
+            return Some(results);
+        }
+    }
+    if kind == AbilityKind::Untie && !ability.done_effect_applied {
+        let target_id = ability
+            .target
+            .expect("active Untie ability must retain its antagonist");
+        let target_valid = entities.get(target_id).is_some_and(|target| {
+            target.is_active()
+                && target.is_npc()
+                && !target.is_dead()
+                && target.human_data().is_some()
+                && target.element_data().posture() == Posture::Tied
+        });
+        if !target_valid {
+            results.push(AbilityTickResult::Aborted {
+                actor_id: entity_id,
+                kind,
+                seq_id: ability.sequence_id.expect("Untie ability sequence"),
+                elem_idx: ability.element_index,
+                order_id: ability.order_id,
+            });
+            return Some(results);
+        }
+    }
+
+    // Original-game strangling uses left-to-right conditional ordering:
+    // attacker fast turning runs first, and the victim is not advanced until a
+    // later tick where the attacker was already aligned. Action processing is
+    // likewise deferred until both calls return false. Direction goals and
+    // the victim FREEZE lock are installed by the engine at the original
+    // post-translation initialization boundary.
+    if kind == AbilityKind::Strangle {
+        let victim_id = ability
+            .target
+            .expect("active Strangle ability must retain its antagonist");
+        if entities
+            .get_mut(requested_actor)
+            .expect("validated strangle owner vanished before fast turning")
+            .position_iface_mut()
+            .turn_fast()
+        {
+            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
+            return Some(results);
+        }
+        let victim = entities
+            .get_mut(victim_id)
+            .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished while turning"));
+        assert!(
+            victim.actor_data().is_some(),
+            "strangle victim {victim_id:?} lost required actor state while turning"
+        );
+        if victim.position_iface_mut().turn_fast() {
+            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
+            return Some(results);
+        }
+    }
+
+    if kind == AbilityKind::ClimbOnShoulders {
+        let helper_id = ability
+            .target
+            .expect("active ClimbOnShoulders ability must retain its helper");
+        let helper_direction = entities
+            .get(helper_id)
+            .unwrap_or_else(|| {
+                panic!("climb-on-shoulders helper {helper_id:?} vanished during Execute")
+            })
+            .element_data()
+            .direction();
+        // Original reissues this progressive facing goal before Turn on every
+        // execution of the shoulder-climbing animation.
+        entities
+            .get_mut(requested_actor)
+            .expect("climb-on-shoulders owner vanished before facing update")
+            .element_data_mut()
+            .set_direction_goal((helper_direction + 8) & 15);
+    }
+
+    if kind == AbilityKind::Carry && !sprite_frozen {
+        let order_id = ability.order_id.expect("active Carry ability order");
+        let target_id = ability.target.expect("active Carry ability target");
+        initialize_carry_relationship(entities, requested_actor, target_id);
+        let carrier = entities
+            .get(requested_actor)
+            .expect("validated Carry owner vanished before initialization");
+        if carrier.element_data().sprite.last_processed_order_id != order_id.get() {
+            let carrier_position = carrier.element_data().position_map();
+            let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
+            let target = entities
+                .get_mut(target_id)
+                .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"));
+            let element = target.element_data_mut();
+            element.set_position_map(carrier_position);
+            element.set_direction_instantly(carried_direction);
+        }
+    }
+
+    None
+}
+
+fn tick_listen(
+    sim: &crate::sim_rng::SimulationContext,
+    entity: &mut Entity,
+    entity_id: EntityId,
+    ability: &ActiveAbility,
+    sprite_frozen: bool,
+) -> Vec<AbilityTickResult> {
+    let mut results = Vec::new();
+    let kind = AbilityKind::Listen;
+    let listen_phase = entity
+        .actor_data()
+        .expect("phase-aware ability requires actor")
+        .listen_phase;
+    let phase = listen_phase;
+    let order_type = match phase {
+        ListenPhase::EnterTransition => OrderType::TransitionWaitingUprightListening,
+        ListenPhase::ExitTransition => OrderType::TransitionListeningWaitingUpright,
+        ListenPhase::CountingDown => OrderType::Listening,
+        ListenPhase::Inactive => panic!(
+            "active Listen owner {entity_id:?} has Inactive phase for identity {:?}/{}/ {:?}",
+            ability.sequence_id, ability.element_index, ability.order_id
+        ),
+    };
+    // All three listen arms call `Turn()` ahead of their sprite action, so
+    // the row played this tick belongs to the already-stepped direction.
+    let _ = entity.position_iface_mut().turn();
+    let direction = u16::try_from(entity.element_data().direction())
+        .unwrap_or_else(|_| panic!("Listen owner {entity_id:?} has invalid animation direction"));
+    let order_id = ability.order_id;
+
+    let motion = if sprite_frozen {
+        // The original-game sprite action returns an in-progress state while
+        // FreezeAll is active, and the PC
+        // The execution wrapper publishes that return through the actor update
+        // without advancing any sprite operand. The specialized Rust
+        // owner reads this transient field after `tick_ability` returns,
+        // so replace a stale pre-freeze DONE edge explicitly.
+        entity.element_data_mut().sprite.last_motion_state = Some(SpriteMotionState::InProgress);
+        SpriteMotionState::InProgress
+    } else {
+        let elem = entity.element_data_mut();
+        elem.sprite.perform_action(
+            sim,
+            order_id,
+            order_type,
+            direction,
+            crate::sprite::FrameProgression::Default,
+            false,
+        )
+    };
+    if !matches!(
+        motion,
+        SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
+    ) {
+        return results;
+    }
+    let actor = entity
+        .actor_data_mut()
+        .unwrap_or_else(|| panic!("asserted Listen owner {entity_id:?} lost required actor state"));
+    let seq_id = actor
+        .active_ability
+        .sequence_id
+        .expect("Listen ability sequence");
+    let elem_idx = actor.active_ability.element_index;
+    match motion {
+        SpriteMotionState::Done if actor.active_ability.done_effect_applied => {}
+        SpriteMotionState::Done => {
+            actor.active_ability.done_effect_applied = true;
+            if phase == ListenPhase::EnterTransition {
+                // Switch to the listening pose (driven by
+                // animation.rs idle-pose fallback) and hand off
+                // to the ai.rs countdown.
+                actor.action_state = ActionState::Listening;
+                actor.listen_wait_time = crate::abilities::TIME_LISTEN_WAIT;
+                results.push(AbilityTickResult::ListenEntered {
+                    actor_id: entity_id,
+                });
+            } else if phase == ListenPhase::ExitTransition {
+                actor.action_state = ActionState::Waiting;
+                actor.listen_wait_time = 0;
+                results.push(AbilityTickResult::ListenDone {
+                    actor_id: entity_id,
+                    seq_id,
+                    elem_idx,
+                });
+            }
+        }
+        SpriteMotionState::Terminated => results.push(AbilityTickResult::Terminated {
+            actor_id: entity_id,
+            kind,
+            seq_id,
+            elem_idx,
+        }),
+        SpriteMotionState::Aborted => results.push(AbilityTickResult::Aborted {
+            actor_id: entity_id,
+            kind,
+            seq_id,
+            elem_idx,
+            order_id: ability.order_id,
+        }),
+        _ => {}
+    }
+    return results;
+}
+
+fn tick_receive_purse(
+    sim: &crate::sim_rng::SimulationContext,
+    entity: &mut Entity,
+    entity_id: EntityId,
+    ability: &ActiveAbility,
+    sprite_frozen: bool,
+) -> Vec<AbilityTickResult> {
+    let mut results = Vec::new();
+    let kind = AbilityKind::ReceivePurse;
+    let receive_purse_phase = entity
+        .actor_data()
+        .expect("phase-aware ability requires actor")
+        .receive_purse_phase;
+    let phase = receive_purse_phase;
+    let order_type = match phase {
+        ReceivePursePhase::Receiving => OrderType::ReceivingPurse,
+        ReceivePursePhase::Waiting => OrderType::WaitingWithPurse,
+        ReceivePursePhase::Transition => OrderType::TransitionWaitingWithPurseWaitingUpright,
+        ReceivePursePhase::Inactive => panic!(
+            "active ReceivePurse owner {entity_id:?} has Inactive phase for identity {:?}/{}/ {:?}",
+            ability.sequence_id, ability.element_index, ability.order_id
+        ),
+    };
+    let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
+        panic!("ReceivePurse owner {entity_id:?} has invalid animation direction")
+    });
+    let order_id = ability.order_id;
+
+    let motion = if sprite_frozen {
+        SpriteMotionState::InProgress
+    } else {
+        let elem = entity.element_data_mut();
+        elem.sprite.perform_action(
+            sim,
+            order_id,
+            order_type,
+            direction,
+            crate::sprite::FrameProgression::Default,
+            false,
+        )
+    };
+    if !matches!(
+        motion,
+        SpriteMotionState::Terminated | SpriteMotionState::Aborted
+    ) {
+        return results;
+    }
+
+    let actor = entity.actor_data_mut().unwrap_or_else(|| {
+        panic!("asserted ReceivePurse owner {entity_id:?} lost required actor state")
+    });
+    let seq_id = actor
+        .active_ability
+        .sequence_id
+        .expect("ReceivePurse sequence");
+    let elem_idx = actor.active_ability.element_index;
+    if motion == SpriteMotionState::Aborted {
+        results.push(AbilityTickResult::Aborted {
+            actor_id: entity_id,
+            kind,
+            seq_id,
+            elem_idx,
+            order_id: ability.order_id,
+        });
+        return results;
+    }
+    match phase {
+        ReceivePursePhase::Receiving => {}
+        ReceivePursePhase::Waiting => {
+            results.push(AbilityTickResult::ReceivePurseRevealing {
+                beggar_id: entity_id,
+            });
+        }
+        ReceivePursePhase::Transition => {
+            actor.action_state = ActionState::Waiting;
+            results.push(AbilityTickResult::ReceivePurseDone {
+                beggar_id: entity_id,
+                seq_id,
+                elem_idx,
+            });
+        }
+        ReceivePursePhase::Inactive => unreachable!(),
+    }
+    results.push(AbilityTickResult::Terminated {
+        actor_id: entity_id,
+        kind,
+        seq_id,
+        elem_idx,
+    });
+    return results;
+}
+
+fn completion_result(
+    entity: &mut Entity,
+    entity_id: EntityId,
+    ability: &ActiveAbility,
+    sequence_manager: &SequenceManager,
+) -> AbilityTickResult {
+    let kind = ability.kind.expect("active ability kind");
+    let seq_id = ability.sequence_id.expect("active ability sequence");
+    let elem_idx = ability.element_index;
     // Animation finished — collect the result and clear the ability.
     let actor_pos = entity.element_data().position_map();
 
@@ -2721,7 +2785,12 @@ pub fn tick_ability(
         actor.whistle_wait_time = 0;
     }
 
-    let result = match kind {
+    let target = || {
+        ability
+            .target
+            .expect("target-bearing completion requires its antagonist")
+    };
+    match kind {
         AbilityKind::Carry => {
             let carried_posture = entity
                 .pc_data()
@@ -2733,7 +2802,7 @@ pub fn tick_ability(
             entity.set_posture(Posture::CarryingCorpse);
             AbilityTickResult::CarryDone {
                 carrier_id: entity_id,
-                target_id: ability.target.unwrap(),
+                target_id: target(),
                 carried_posture,
                 seq_id,
                 elem_idx,
@@ -2751,7 +2820,7 @@ pub fn tick_ability(
             entity.set_posture(Posture::Upright);
             AbilityTickResult::DropDone {
                 carrier_id: entity_id,
-                target_id: ability.target.unwrap(),
+                target_id: target(),
                 drop_posture: carried_posture,
                 carrier_pos: actor_pos,
                 carrier_direction: actor_direction,
@@ -2761,19 +2830,19 @@ pub fn tick_ability(
         }
         AbilityKind::Tie => AbilityTickResult::TieDone {
             actor_id: entity_id,
-            target_id: ability.target.unwrap(),
+            target_id: target(),
             seq_id,
             elem_idx,
         },
         AbilityKind::Untie => AbilityTickResult::UntieDone {
             actor_id: entity_id,
-            target_id: ability.target.unwrap(),
+            target_id: target(),
             seq_id,
             elem_idx,
         },
         AbilityKind::Heal => AbilityTickResult::HealDone {
             healer_id: entity_id,
-            target_id: ability.target.unwrap(),
+            target_id: target(),
             seq_id,
             elem_idx,
         },
@@ -2928,10 +2997,7 @@ pub fn tick_ability(
                 elem_idx,
             }
         }
-    };
-
-    results.push(result);
-    results
+    }
 }
 
 /// Match the strangling tail while its attacker-and-victim fast-turn guard
