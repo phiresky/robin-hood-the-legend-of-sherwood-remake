@@ -777,12 +777,12 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
             atlas_h,
             frames.len()
         );
-        let rgba_ll = run_cjxl(&rgba_png, &rgba_ll_jxl, true, 7).unwrap_or(0);
-        let rgba_q90 = run_cjxl_lossy(&rgba_png, &rgba_q90_jxl, 90, 7).unwrap_or(0);
-        let rgb_ll = run_cjxl(&rgb_png, &rgb_ll_jxl, true, 7).unwrap_or(0);
-        let rgb_q90 = run_cjxl_lossy(&rgb_png, &rgb_q90_jxl, 90, 7).unwrap_or(0);
-        let rgba_webp = run_webp_lossless(&rgba_png, &rgba_webp).unwrap_or(0);
-        let rgb_webp = run_webp_lossless(&rgb_png, &rgb_webp).unwrap_or(0);
+        let rgba_ll = run_cjxl(&rgba_png, &rgba_ll_jxl, true, 7)?;
+        let rgba_q90 = run_cjxl_lossy(&rgba_png, &rgba_q90_jxl, 90, 7)?;
+        let rgb_ll = run_cjxl(&rgb_png, &rgb_ll_jxl, true, 7)?;
+        let rgb_q90 = run_cjxl_lossy(&rgb_png, &rgb_q90_jxl, 90, 7)?;
+        let rgba_webp = run_webp_lossless(&rgba_png, &rgba_webp)?;
+        let rgb_webp = run_webp_lossless(&rgb_png, &rgb_webp)?;
 
         let best = z22_orig
             .min(rgba_ll)
@@ -1179,19 +1179,16 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
         let jxl_ll_path = tmp.path().join(format!("{id}.ll.jxl"));
         let jxl_q90_path = tmp.path().join(format!("{id}.q90.jxl"));
         write_png_rgba(&png_path, *w as u32, *h as u32, &rgba)?;
-        let jxl_ll = run_cjxl(&png_path, &jxl_ll_path, true, 7).unwrap_or(0);
-        let jxl_q90 = run_cjxl_lossy(&png_path, &jxl_q90_path, 90, 7).unwrap_or(0);
+        let jxl_ll = run_cjxl(&png_path, &jxl_ll_path, true, 7)?;
+        let jxl_q90 = run_cjxl_lossy(&png_path, &jxl_q90_path, 90, 7)?;
 
         // Packed bytes + zstd22 — the "already-in-shipping-format" baseline.
         let pkd_z22 = s
             .packed_data
             .as_ref()
-            .map(|pd| {
-                zstd::stream::encode_all(bytemuck::cast_slice::<u16, u8>(pd), 22)
-                    .map(|v| v.len() as u64)
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
+            .map(|pd| zstd_size(bytemuck::cast_slice::<u16, u8>(pd), 22))
+            .transpose()
+            .with_context(|| format!("zstd22 packed sprite {id}"))?;
 
         sum_packed += *packed;
         sum_jxl_ll += jxl_ll;
@@ -1201,7 +1198,7 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
             id,
             format!("{w}×{h}"),
             human(*packed),
-            human(pkd_z22),
+            pkd_z22.map(human).unwrap_or_else(|| "n/a".into()),
             human(jxl_ll),
             human(jxl_q90),
             tag,
@@ -1261,8 +1258,8 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
         let jxl_ll_path = tmp.path().join(format!("all_{id}.ll.jxl"));
         let jxl_q90_path = tmp.path().join(format!("all_{id}.q90.jxl"));
         write_png_rgba(&png_path, pw, ph, &rgba)?;
-        let jxl_ll = run_cjxl(&png_path, &jxl_ll_path, true, 7).unwrap_or(0);
-        let jxl_q90 = run_cjxl_lossy(&png_path, &jxl_q90_path, 90, 7).unwrap_or(0);
+        let jxl_ll = run_cjxl(&png_path, &jxl_ll_path, true, 7)?;
+        let jxl_q90 = run_cjxl_lossy(&png_path, &jxl_q90_path, 90, 7)?;
         sum_packed += packed;
         sum_jxl_ll += jxl_ll;
         sum_jxl_q90 += jxl_q90;
@@ -1272,14 +1269,8 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
         stream_packed.extend_from_slice(&s.height.to_le_bytes());
         stream_packed.extend_from_slice(&(pd.len() as u32).to_le_bytes());
         stream_packed.extend_from_slice(bytemuck::cast_slice::<u16, u8>(pd));
-        if let Ok(b) = fs::read(&jxl_ll_path) {
-            stream_jxl_ll.extend_from_slice(&(b.len() as u32).to_le_bytes());
-            stream_jxl_ll.extend_from_slice(&b);
-        }
-        if let Ok(b) = fs::read(&jxl_q90_path) {
-            stream_jxl_q90.extend_from_slice(&(b.len() as u32).to_le_bytes());
-            stream_jxl_q90.extend_from_slice(&b);
-        }
+        append_encoded_artifact(&mut stream_jxl_ll, &jxl_ll_path)?;
+        append_encoded_artifact(&mut stream_jxl_q90, &jxl_q90_path)?;
 
         let _ = fs::remove_file(&png_path);
         let _ = fs::remove_file(&jxl_ll_path);
@@ -1347,14 +1338,8 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
         // we write each blob verbatim to test the "cross-sprite" angle too.
         let jxl_ll_path = tmp.path().join(format!("{id}.ll.jxl"));
         let jxl_q90_path = tmp.path().join(format!("{id}.q90.jxl"));
-        if let Ok(b) = fs::read(&jxl_ll_path) {
-            blob_jxl_ll.extend_from_slice(&(b.len() as u32).to_le_bytes());
-            blob_jxl_ll.extend_from_slice(&b);
-        }
-        if let Ok(b) = fs::read(&jxl_q90_path) {
-            blob_jxl_q90.extend_from_slice(&(b.len() as u32).to_le_bytes());
-            blob_jxl_q90.extend_from_slice(&b);
-        }
+        append_encoded_artifact(&mut blob_jxl_ll, &jxl_ll_path)?;
+        append_encoded_artifact(&mut blob_jxl_q90, &jxl_q90_path)?;
     }
     let z_packed = zstd_size(&blob_packed, 22)?;
     let z_jxl_ll = zstd_size(&blob_jxl_ll, 22)?;
@@ -1423,7 +1408,7 @@ fn measure_single_image(
         let avif_path = tmp.join(format!("{key}.avif"));
         let qoi_path = tmp.join(format!("{key}.qoi"));
         m.png_raw = png_raw_size;
-        m.avif_lossless = run_avifenc(&png_path, &avif_path, codec.avif_speed).unwrap_or(0);
+        m.avif_lossless = run_avifenc(&png_path, &avif_path, codec.avif_speed)?;
         m.qoi = write_qoi(&qoi_path, w, h, rgba)?;
         m.rgb565_zstd3 = zstd_size(rgb565, 3)?;
         m.rgba_zstd22 = zstd_size(rgba, 22)?;
@@ -1468,6 +1453,126 @@ fn write_qoi(path: &Path, w: u32, h: u32, rgba: &[u8]) -> Result<u64> {
     Ok(encoded.len() as u64)
 }
 
+fn run_codec_command(command: &mut Command, codec: &str, input: &Path, out: &Path) -> Result<u64> {
+    let status = command
+        .status()
+        .with_context(|| format!("spawn {codec} for {} -> {}", input.display(), out.display()))?;
+    anyhow::ensure!(
+        status.success(),
+        "{codec} failed for {} -> {}: {status}",
+        input.display(),
+        out.display()
+    );
+    let metadata = fs::metadata(out).with_context(|| {
+        format!(
+            "read {codec} output {} for {}",
+            out.display(),
+            input.display()
+        )
+    })?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "{codec} output {} is not a file",
+        out.display()
+    );
+    Ok(metadata.len())
+}
+
+fn append_encoded_artifact(stream: &mut Vec<u8>, path: &Path) -> Result<()> {
+    let bytes = fs::read(path)
+        .with_context(|| format!("read encoded comparison artifact {}", path.display()))?;
+    stream.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    stream.extend_from_slice(&bytes);
+    Ok(())
+}
+
+#[cfg(test)]
+mod codec_measurement_tests {
+    use super::*;
+
+    #[test]
+    fn spawn_failure_has_codec_and_paths_instead_of_a_size() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let output = directory.path().join("output.jxl");
+        let mut command = Command::new(directory.path().join("missing-codec"));
+        let error = run_codec_command(&mut command, "fixture codec", &input, &output).unwrap_err();
+        let error = format!("{error:#}");
+        for expected in [
+            "fixture codec",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ] {
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_failure_or_missing_output_cannot_become_a_measurement() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let output = directory.path().join("output.jxl");
+        for script in ["exit 7", "exit 0"] {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", script]);
+            let error =
+                run_codec_command(&mut command, "fixture codec", &input, &output).unwrap_err();
+            let error = format!("{error:#}");
+            assert!(error.contains("fixture codec"), "{error}");
+            assert!(error.contains(output.to_str().unwrap()), "{error}");
+        }
+        fs::create_dir(&output).unwrap();
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        assert!(
+            run_codec_command(&mut command, "fixture codec", &input, &output)
+                .unwrap_err()
+                .to_string()
+                .contains("not a file")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_command_measures_exact_output_and_failed_command_ignores_existing_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let output = directory.path().join("output.jxl");
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "printf abcde > \"$1\"", "fixture"])
+            .arg(&output);
+        assert_eq!(
+            run_codec_command(&mut command, "fixture codec", &input, &output).unwrap(),
+            5
+        );
+        let mut failed = Command::new("/bin/sh");
+        failed.args(["-c", "exit 7"]);
+        assert!(run_codec_command(&mut failed, "fixture codec", &input, &output).is_err());
+    }
+
+    #[test]
+    fn comparison_artifact_reads_preserve_framing_and_reject_missing_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sprite.jxl");
+        fs::write(&path, b"encoded").unwrap();
+        let mut stream = vec![99];
+        append_encoded_artifact(&mut stream, &path).unwrap();
+        let mut expected = vec![99];
+        expected.extend_from_slice(&7u32.to_le_bytes());
+        expected.extend_from_slice(b"encoded");
+        assert_eq!(stream, expected);
+        let missing = directory.path().join("missing.jxl");
+        let error = append_encoded_artifact(&mut stream, &missing).unwrap_err();
+        assert!(error.to_string().contains(missing.to_str().unwrap()));
+        assert_eq!(
+            stream, expected,
+            "failed read must not append a partial frame"
+        );
+    }
+}
+
 fn run_cjxl(png: &Path, out: &Path, is_sprite: bool, effort: u8) -> Result<u64> {
     let effort = effort.clamp(1, 9).to_string();
     let mut cmd = Command::new("cjxl");
@@ -1476,33 +1581,26 @@ fn run_cjxl(png: &Path, out: &Path, is_sprite: bool, effort: u8) -> Result<u64> 
         cmd.args(["--modular=1"]);
     }
     cmd.arg(png).arg(out).stdout(std::process::Stdio::null());
-    let status = cmd.status().context("spawn cjxl")?;
-    if !status.success() {
-        bail!("cjxl failed for {}", png.display());
-    }
-    Ok(fs::metadata(out)?.len())
+    run_codec_command(&mut cmd, "cjxl lossless", png, out)
 }
 
 /// cjxl in lossy mode (VarDCT) at a given quality (0-100, 90 ≈ visually lossless).
 fn run_cjxl_lossy(png: &Path, out: &Path, quality: u8, effort: u8) -> Result<u64> {
     let effort = effort.clamp(1, 9).to_string();
     let q = quality.clamp(1, 100).to_string();
-    let status = Command::new("cjxl")
+    let mut command = Command::new("cjxl");
+    command
         .args(["-q", &q, "-e", &effort])
         .arg(png)
         .arg(out)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .context("spawn cjxl (lossy)")?;
-    if !status.success() {
-        bail!("cjxl (lossy) failed");
-    }
-    Ok(fs::metadata(out)?.len())
+        .stderr(std::process::Stdio::null());
+    run_codec_command(&mut command, "cjxl lossy", png, out)
 }
 
 fn run_webp_lossless(png: &Path, out: &Path) -> Result<u64> {
-    let status = Command::new("magick")
+    let mut command = Command::new("magick");
+    command
         .arg(png)
         .args([
             "-define",
@@ -1514,29 +1612,20 @@ fn run_webp_lossless(png: &Path, out: &Path) -> Result<u64> {
         ])
         .arg(out)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .context("spawn magick (lossless WebP)")?;
-    if !status.success() {
-        bail!("magick lossless WebP failed");
-    }
-    Ok(fs::metadata(out)?.len())
+        .stderr(std::process::Stdio::null());
+    run_codec_command(&mut command, "magick lossless WebP", png, out)
 }
 
 fn run_avifenc(png: &Path, out: &Path, speed: u8) -> Result<u64> {
     let speed = speed.clamp(0, 10).to_string();
-    let status = Command::new("avifenc")
+    let mut command = Command::new("avifenc");
+    command
         .args(["--lossless", "-s", &speed, "--ignore-icc"])
         .arg(png)
         .arg(out)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .context("spawn avifenc")?;
-    if !status.success() {
-        bail!("avifenc failed");
-    }
-    Ok(fs::metadata(out)?.len())
+        .stderr(std::process::Stdio::null());
+    run_codec_command(&mut command, "avifenc lossless", png, out)
 }
 
 fn zstd_size(data: &[u8], level: i32) -> Result<u64> {
