@@ -1029,18 +1029,20 @@ pub(super) async fn setup_multiplayer_session(
                 .transpose()?;
             let started = start_server_in_campaign(
                 campaign,
-                nickname.clone(),
-                authoritative_mission_id.to_string(),
-                authoritative_rng_seed,
-                authoritative_sim_config,
-                speech_timing_locale.clone(),
+                crate::multiplayer::ServerConfig {
+                    host_nickname: nickname.clone(),
+                    mission_id: authoritative_mission_id.to_string(),
+                    mission_seed: authoritative_rng_seed,
+                    sim_config: authoritative_sim_config,
+                    speech_timing_locale: speech_timing_locale.clone(),
+                    expected_players: args.mp_expected_players.unwrap_or(1),
+                    browser_join_enabled: publish_browser_links,
+                },
                 in_tx,
                 out_rx,
                 frame_cursor,
                 snapshot_slot,
-                args.mp_expected_players.unwrap_or(1),
                 content,
-                publish_browser_links,
             );
             match started {
                 Ok(handle) => {

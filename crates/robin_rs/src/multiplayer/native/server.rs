@@ -480,18 +480,20 @@ pub fn start_server_with_key(
     start_server_inner(
         &MultiplayerCampaignSession::default(),
         key,
-        host_nickname,
-        mission_id,
-        mission_seed,
-        sim_config,
-        speech_timing_locale,
+        ServerConfig {
+            host_nickname: host_nickname,
+            mission_id: mission_id,
+            mission_seed: mission_seed,
+            sim_config: sim_config,
+            speech_timing_locale: speech_timing_locale,
+            expected_players: expected_players,
+            browser_join_enabled: false,
+        },
         incoming_tx,
         outgoing_rx,
         frame_cursor,
         initial_snapshot,
-        expected_players,
         None,
-        false,
     )
 }
 
@@ -516,53 +518,54 @@ pub(super) fn start_server_with_key_and_content(
     start_server_inner(
         &MultiplayerCampaignSession::default(),
         key,
-        host_nickname,
-        mission_id,
-        mission_seed,
-        sim_config,
-        None,
+        ServerConfig {
+            host_nickname: host_nickname,
+            mission_id: mission_id,
+            mission_seed: mission_seed,
+            sim_config: sim_config,
+            speech_timing_locale: None,
+            expected_players: expected_players,
+            browser_join_enabled: false,
+        },
         incoming_tx,
         outgoing_rx,
         frame_cursor,
         initial_snapshot,
-        expected_players,
         content,
-        false,
     )
 }
 
+/// Immutable identity and admission policy for one hosted mission.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServerConfig {
+    pub host_nickname: String,
+    pub mission_id: String,
+    pub mission_seed: u64,
+    pub sim_config: robin_engine::engine::SimConfig,
+    pub speech_timing_locale: Option<String>,
+    pub expected_players: u32,
+    pub browser_join_enabled: bool,
+}
+
 /// Start a mission transport within an explicitly owned campaign.
-#[allow(clippy::too_many_arguments)]
 pub fn start_server_in_campaign(
     campaign: &MultiplayerCampaignSession,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<String>,
+    config: ServerConfig,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
-    expected_players: u32,
     content: Option<HostedModContent>,
-    browser_join_enabled: bool,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
         campaign,
         game_secret_key().map_err(std::io::Error::other)?,
-        host_nickname,
-        mission_id,
-        mission_seed,
-        sim_config,
-        speech_timing_locale,
+        config,
         incoming_tx,
         outgoing_rx,
         frame_cursor,
         initial_snapshot,
-        expected_players,
         content,
-        browser_join_enabled,
     )
 }
 
@@ -570,19 +573,22 @@ pub fn start_server_in_campaign(
 pub(super) fn start_server_inner(
     campaign: &MultiplayerCampaignSession,
     key: SecretKey,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<String>,
+    config: ServerConfig,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
-    expected_players: u32,
     content: Option<HostedModContent>,
-    browser_join_enabled: bool,
 ) -> std::io::Result<ServerHandle> {
+    let ServerConfig {
+        host_nickname,
+        mission_id,
+        mission_seed,
+        sim_config,
+        speech_timing_locale,
+        expected_players,
+        browser_join_enabled,
+    } = config;
     let campaign_lease = campaign.reserve_server()?;
     robin_engine::multiplayer::validate_display_name(&host_nickname)
         .map_err(std::io::Error::other)?;

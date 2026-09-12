@@ -104,8 +104,8 @@ mod native;
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub use native::{
-    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerHandle, connect_client,
-    connect_client_in_campaign, start_server_in_campaign,
+    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerConfig, ServerHandle,
+    connect_client, connect_client_in_campaign, start_server_in_campaign,
 };
 
 #[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
