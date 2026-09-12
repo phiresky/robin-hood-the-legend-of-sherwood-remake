@@ -9,14 +9,12 @@
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
-#[cfg(test)]
-use robin_run_protocol::InitialStateExpectationV1;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
     CampaignChainStateV1, CampaignContinuationAuthorizationClaimV1,
     CampaignContinuationPreflightGrantV1, CampaignContinuationPreflightRequestClaimV1,
     CampaignContinuationPreflightRequestV1, CampaignRosterContinuityV1, CanonicalDocument as _,
-    CompetitionRunGrantV1, Digest32, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
+    Digest32, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
     FreshRunPreflightRequestV1, FreshRunScopeV1, NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1,
     OpaqueId, ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32,
     RANKED_CAMPAIGN_MEDIA_TYPE_V1, RankedSessionConfigV1, ReplaySeatLifecycleEventV1,
@@ -25,6 +23,8 @@ use robin_run_protocol::{
     SignatureAlgorithmV1, SubmissionArtifactsV1, SubmissionEnvelopeV1, SubmissionOfferRequestV1,
     SubmissionOfferV1, Validate as _,
 };
+#[cfg(test)]
+use robin_run_protocol::{CompetitionRunGrantV1, InitialStateExpectationV1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
