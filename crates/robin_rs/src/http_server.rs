@@ -479,13 +479,7 @@ impl std::fmt::Debug for HttpTransport {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for HttpTransport {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live HTTP transport cannot be deserialized",
-        ))
-    }
-}
+robin_util::deny_deserialize!(HttpTransport, "live HTTP transport cannot be deserialized");
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {

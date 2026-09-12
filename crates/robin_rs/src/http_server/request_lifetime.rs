@@ -32,20 +32,8 @@ pub(super) struct ReplyWait {
     phase: Arc<Mutex<Phase>>,
 }
 
-impl<'de> Deserialize<'de> for Responder {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live RPC responder cannot be deserialized",
-        ))
-    }
-}
-impl<'de> Deserialize<'de> for ReplyWait {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live RPC reply wait cannot be deserialized",
-        ))
-    }
-}
+robin_util::deny_deserialize!(Responder, "live RPC responder cannot be deserialized");
+robin_util::deny_deserialize!(ReplyWait, "live RPC reply wait cannot be deserialized");
 
 impl Responder {
     /// Read-only work may release its resources after the reply consumer leaves,

@@ -133,13 +133,10 @@ impl Serialize for MissionFrame {
     }
 }
 
-impl<'de> Deserialize<'de> for MissionFrame {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live mission frame authority cannot be deserialized; decode MissionFrameSnapshot instead",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    MissionFrame,
+    "live mission frame authority cannot be deserialized; decode MissionFrameSnapshot instead"
+);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FrameExecution {

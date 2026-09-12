@@ -28,13 +28,10 @@ fn serialize_reservations<S: serde::Serializer>(
     serde::Serialize::serialize(&reservations.iter().collect::<Vec<_>>(), serializer)
 }
 
-impl<'de> serde::Deserialize<'de> for PeerSessions {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "peer session authority must be constructed by the live server",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    PeerSessions,
+    "peer session authority must be constructed by the live server"
+);
 
 /// One authenticated stream generation's metadata. Writer detachment is a
 /// separate transition from release: snapshot commits must retain ownership

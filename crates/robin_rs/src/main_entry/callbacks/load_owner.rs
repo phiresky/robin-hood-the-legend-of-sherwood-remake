@@ -24,13 +24,10 @@ enum LoadSource {
     CommittedRemote,
 }
 
-impl<'de> serde::Deserialize<'de> for PreparedLoad {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "prepared load ownership cannot be deserialized",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    PreparedLoad,
+    "prepared load ownership cannot be deserialized"
+);
 
 impl PreparedLoad {
     pub(crate) fn preflight(
