@@ -281,7 +281,14 @@ impl EngineInner {
                 e.element_data().sector(),
                 e.element_data().posture(),
             ),
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?actor,
+                    ?target,
+                    "interaction actor disappeared before route construction"
+                );
+                return;
+            }
         };
         // When `b_use_action_point` is set, the gating distance check
         // uses the antagonist's action-point (sprite hotspot of the
@@ -326,7 +333,14 @@ impl EngineInner {
                     },
                 )
             }
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?actor,
+                    ?target,
+                    "interaction target disappeared before route construction"
+                );
+                return;
+            }
         };
         // Per-object Take tolerance is `radius + 15` — non-trivial
         // for Purse (22), Coin (18) and Net (25 crumpled / 55
@@ -340,18 +354,22 @@ impl EngineInner {
             // the fractional value and adds 10
             // for the pickup command.
             None if pc_in_coma_carry => {
-                match self.actor_action_distance(
+                let Some(distance) = self.actor_action_distance(
                     actor,
                     crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
-                ) {
-                    Some(distance) => distance + 10.0,
-                    None => return,
-                }
+                ) else {
+                    // No matching sprite action means this interaction is unavailable.
+                    return;
+                };
+                distance + 10.0
             }
-            None => match self.interaction_action_distance(actor, command) {
-                Some(distance) => distance,
-                None => return,
-            },
+            None => {
+                let Some(distance) = self.interaction_action_distance(actor, command) else {
+                    // No matching sprite action means this interaction is unavailable.
+                    return;
+                };
+                distance
+            }
         };
 
         let dx = pc_pos.x - tgt_pos.x;
@@ -794,7 +812,10 @@ impl EngineInner {
 
         let (pc_pos, pc_posture) = match self.get_entity(actor) {
             Some(e) => (e.element_data().position_map(), e.element_data().posture()),
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "scroll interaction actor disappeared");
+                return;
+            }
         };
         let (npc_pos, attached_scroll, npc_ai_script_locked) = match self.get_entity(target) {
             Some(e) => {
@@ -806,7 +827,10 @@ impl EngineInner {
                 let locked = e.ai_controller().is_some_and(|ai| ai.ai_is_script_locked());
                 (e.element_data().position_map(), attached_scroll, locked)
             }
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "scroll interaction target disappeared");
+                return;
+            }
         };
         let Some(scroll_id) = attached_scroll else {
             tracing::warn!(
@@ -916,11 +940,17 @@ impl EngineInner {
     ) {
         let (pc_pos, pc_posture) = match self.get_entity(actor) {
             Some(e) => (e.element_data().position_map(), e.element_data().posture()),
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "shoulder interaction actor disappeared");
+                return;
+            }
         };
         let tgt_pos = match self.get_entity(target) {
             Some(e) => e.element_data().position_map(),
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "shoulder interaction target disappeared");
+                return;
+            }
         };
 
         // Player-character clicking authors this point seek with the
