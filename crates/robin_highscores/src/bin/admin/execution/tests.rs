@@ -619,7 +619,7 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
             &status,
             b"pre-rename-failure",
             sync_cap_directory,
-            || anyhow::bail!("injected pre-rename failure"),
+            || anyhow::bail!("injected pre-rename failure")
         )
         .is_err()
     );
@@ -631,9 +631,12 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
             .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp"))
     );
 
-    let durability = publish_private_atomic_with(&status, b"new-envelope", |_| {
-        anyhow::bail!("injected parent fsync failure")
-    })
+    let durability = publish_private_atomic_with_hooks(
+        &status,
+        b"new-envelope",
+        |_| anyhow::bail!("injected parent fsync failure"),
+        || Ok(()),
+    )
     .unwrap();
     assert!(matches!(
         durability,
@@ -641,22 +644,32 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     ));
     assert_eq!(std::fs::read(&status).unwrap(), b"new-envelope");
 
-    let identity = publish_private_atomic_with(&status, b"authenticated-envelope", |_| {
-        std::fs::remove_file(&status)?;
-        std::fs::write(&status, b"substituted")?;
-        std::fs::set_permissions(&status, std::fs::Permissions::from_mode(0o400))?;
-        Ok(())
-    })
+    let identity = publish_private_atomic_with_hooks(
+        &status,
+        b"authenticated-envelope",
+        |_| {
+            std::fs::remove_file(&status)?;
+            std::fs::write(&status, b"substituted")?;
+            std::fs::set_permissions(&status, std::fs::Permissions::from_mode(0o400))?;
+            Ok(())
+        },
+        || Ok(()),
+    )
     .unwrap();
     assert!(matches!(
         identity,
         StatusPublicationOutcome::PublishedButIdentityUncertain(_)
     ));
 
-    let parent_mode_race = publish_private_atomic_with(&status, b"mode-race", |_| {
-        std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o777))?;
-        Ok(())
-    })
+    let parent_mode_race = publish_private_atomic_with_hooks(
+        &status,
+        b"mode-race",
+        |_| {
+            std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o777))?;
+            Ok(())
+        },
+        || Ok(()),
+    )
     .unwrap();
     assert!(matches!(
         parent_mode_race,
@@ -687,12 +700,17 @@ fn status_publication_detects_parent_replacement_after_install() {
     std::fs::create_dir(&status_parent).unwrap();
     std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700)).unwrap();
     let status = status_parent.join("backup-status.json");
-    let outcome = publish_private_atomic_with(&status, b"envelope", |_| {
-        std::fs::rename(&status_parent, &detached_parent)?;
-        std::fs::create_dir(&status_parent)?;
-        std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700))?;
-        Ok(())
-    })
+    let outcome = publish_private_atomic_with_hooks(
+        &status,
+        b"envelope",
+        |_| {
+            std::fs::rename(&status_parent, &detached_parent)?;
+            std::fs::create_dir(&status_parent)?;
+            std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700))?;
+            Ok(())
+        },
+        || Ok(()),
+    )
     .unwrap();
     assert!(matches!(
         outcome,
@@ -705,72 +723,525 @@ fn status_publication_detects_parent_replacement_after_install() {
     );
 }
 
+// These fixtures retain the temporary authority tree across every phase.
+// They are process-local test resources, not serializable backup documents.
+struct PublicationFixture {
+    directory: tempfile::TempDir,
+    release_manifest: PathBuf,
+    release_identity: BackupReleaseIdentityV2,
+    backup_root: PathBuf,
+    api_secrets: PathBuf,
+    status_root: PathBuf,
+    status_path: PathBuf,
+    config: ServerConfig,
+    restore_sources: BTreeMap<PathBuf, PathBuf>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct PublishedBackup {
+    first: PathBuf,
+    status: BackupStatusV4,
+    status_bytes: Vec<u8>,
+    first_manifest: BackupManifest,
+}
+
 #[tokio::test]
 async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
-    let directory = tempfile::tempdir().unwrap();
-    let data = directory.path().join("data");
-    let configuration = directory.path().join("configuration");
-    let release_manifest = directory.path().join("vps-release-manifest-v2.json");
-    let backup_root = data.join("backups");
-    let api_secrets = data.join("api-secrets");
-    let status_root = data.join("status");
-    let status_path = status_root.join("backup-status.json");
-    tokio::fs::create_dir_all(&data).await.unwrap();
-    #[cfg(unix)]
-    std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
-    tokio::fs::create_dir(&status_root).await.unwrap();
-    #[cfg(unix)]
-    std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o700)).unwrap();
-    tokio::fs::create_dir(&api_secrets).await.unwrap();
-    #[cfg(unix)]
-    std::fs::set_permissions(&api_secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
-    tokio::fs::create_dir(&configuration).await.unwrap();
-    write_private_file(&configuration.join("server.toml"), b"bind = 'loopback'\n")
-        .await
-        .unwrap();
-    write_private_file(
-        &configuration.join("api-moderation.token"),
-        b"private-token",
-    )
-    .await
-    .unwrap();
-    let release_identity = write_test_release_manifest(&release_manifest).await;
+    let fixture = PublicationFixture::new().await;
+    let (admission_partial, stale_partial) = fixture.assert_admission_and_key_boundaries().await;
+    let published = fixture
+        .publish_and_assert_manifest(admission_partial, stale_partial)
+        .await;
+    #[cfg(target_os = "linux")]
+    fixture.assert_pinned_authority(&published).await;
+    fixture
+        .assert_publication_failure_and_retention(&published)
+        .await;
+}
 
-    let mut config = ServerConfig::default();
-    config.database_path = data.join("highscores.sqlite3");
-    config.replay_directory = data.join("replays");
-    config.campaign_state_directory = data.join("campaigns");
-    config.cursor_secret_path = data.join("cursor-hmac.key");
-    config.backup_authority_hmac_secret_path = api_secrets.join("backup-authority-hmac.key");
-    config.competition_run_grant_secret_path = data.join("competition-run-grant.key");
-    config.run_preflight_grant_secret_path = data.join("run-preflight-grant.key");
-    config.moderation_bearer_token_path = Some(configuration.join("api-moderation.token"));
-    config.backup_manifest_path = Some(status_path.clone());
-    config.release_manifest_path = Some(release_manifest.clone());
-    config.maximum_backup_age_hours = Some(32);
-    config.minimum_storage_free_bytes = 64 * 1024 * 1024;
-    write_private_file(&config.cursor_secret_path, &[0x31; 32])
+impl PublicationFixture {
+    async fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let data = directory.path().join("data");
+        let configuration = directory.path().join("configuration");
+        let release_manifest = directory.path().join("vps-release-manifest-v2.json");
+        let backup_root = data.join("backups");
+        let api_secrets = data.join("api-secrets");
+        let status_root = data.join("status");
+        let status_path = status_root.join("backup-status.json");
+        tokio::fs::create_dir_all(&data).await.unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        tokio::fs::create_dir(&status_root).await.unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        tokio::fs::create_dir(&api_secrets).await.unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&api_secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
+        tokio::fs::create_dir(&configuration).await.unwrap();
+        write_private_file(&configuration.join("server.toml"), b"bind = 'loopback'\n")
+            .await
+            .unwrap();
+        write_private_file(
+            &configuration.join("api-moderation.token"),
+            b"private-token",
+        )
         .await
         .unwrap();
-    write_private_file(&config.backup_authority_hmac_secret_path, &[0x31; 32])
+        let release_identity = write_test_release_manifest(&release_manifest).await;
+
+        let mut config = ServerConfig::default();
+        config.database_path = data.join("highscores.sqlite3");
+        config.replay_directory = data.join("replays");
+        config.campaign_state_directory = data.join("campaigns");
+        config.cursor_secret_path = data.join("cursor-hmac.key");
+        config.backup_authority_hmac_secret_path = api_secrets.join("backup-authority-hmac.key");
+        config.competition_run_grant_secret_path = data.join("competition-run-grant.key");
+        config.run_preflight_grant_secret_path = data.join("run-preflight-grant.key");
+        config.moderation_bearer_token_path = Some(configuration.join("api-moderation.token"));
+        config.backup_manifest_path = Some(status_path.clone());
+        config.release_manifest_path = Some(release_manifest.clone());
+        config.maximum_backup_age_hours = Some(32);
+        config.minimum_storage_free_bytes = 64 * 1024 * 1024;
+        write_private_file(&config.cursor_secret_path, &[0x31; 32])
+            .await
+            .unwrap();
+        write_private_file(&config.backup_authority_hmac_secret_path, &[0x31; 32])
+            .await
+            .unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &config.backup_authority_hmac_secret_path,
+            std::fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        write_private_file(&config.competition_run_grant_secret_path, &[0x32; 32])
+            .await
+            .unwrap();
+        write_private_file(&config.run_preflight_grant_secret_path, &[0x33; 32])
+            .await
+            .unwrap();
+        Database::migrate(&config).await.unwrap();
+        let restore_sources = test_restore_sources(&config, directory.path()).await;
+
+        Self {
+            directory,
+            release_manifest,
+            release_identity,
+            backup_root,
+            api_secrets,
+            status_root,
+            status_path,
+            config,
+            restore_sources,
+        }
+    }
+    async fn assert_admission_and_key_boundaries(&self) -> (PathBuf, PathBuf) {
+        let directory = &self.directory;
+        let release_manifest = self.release_manifest.clone();
+        let release_identity = self.release_identity.clone();
+        let backup_root = self.backup_root.clone();
+        let api_secrets = self.api_secrets.clone();
+        let status_root = self.status_root.clone();
+        let status_path = self.status_path.clone();
+        let mut config = self.config.clone();
+        let restore_sources = self.restore_sources.clone();
+        assert!(
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
+            .await
+            .is_err(),
+            "backup authority must reject a missing production backup root"
+        );
+        assert!(
+            !backup_root.exists(),
+            "backup authority must not provision a missing production backup root"
+        );
+        tokio::fs::create_dir(&backup_root).await.unwrap();
+        #[cfg(unix)]
+        {
+            std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o750)).unwrap();
+            assert!(
+                backup_and_publish_status(BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                })
+                .await
+                .is_err(),
+                "backup authority must reject a misprovisioned backup root"
+            );
+            assert_eq!(
+                std::fs::metadata(&backup_root)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o750,
+                "backup authority must not repair production root metadata"
+            );
+            std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let admission_partial =
+            backup_root.join(format!(".backup-v4-3-{}.partial", "c".repeat(32)));
+        tokio::fs::create_dir(&admission_partial).await.unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&admission_partial, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        write_private_file(&admission_partial.join("must-remain"), b"pre-admission")
+            .await
+            .unwrap();
+        #[cfg(unix)]
+        {
+            std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o750)).unwrap();
+            assert!(
+                backup_and_publish_status(BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                })
+                .await
+                .is_err(),
+                "a non-0700 status authority parent must fail before cleanup"
+            );
+            assert!(admission_partial.join("must-remain").is_file());
+            std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+            std::fs::write(&status_path, b"{}").unwrap();
+            std::fs::set_permissions(&status_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert!(
+                backup_and_publish_status(BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                })
+                .await
+                .is_err(),
+                "a non-0400 status authority must fail before cleanup"
+            );
+            assert!(admission_partial.join("must-remain").is_file());
+            std::fs::remove_file(&status_path).unwrap();
+        }
+        let mutable_estimate = estimate_backup_space(
+            &config,
+            &release_identity,
+            &backup_root,
+            &status_path,
+            &restore_sources,
+        )
         .await
         .unwrap();
-    #[cfg(unix)]
-    std::fs::set_permissions(
-        &config.backup_authority_hmac_secret_path,
-        std::fs::Permissions::from_mode(0o400),
-    )
-    .unwrap();
-    write_private_file(&config.competition_run_grant_secret_path, &[0x32; 32])
+        let estimate_bytes = canonical_json_bytes(&mutable_estimate).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<BackupSpaceEstimateV1>(&estimate_bytes).unwrap(),
+            mutable_estimate,
+            "deployment evidence must round-trip as one canonical typed document"
+        );
+        assert!(
+            mutable_estimate.manifest_logical_upper_bound_bytes > 0
+                && mutable_estimate.status_temp_logical_upper_bound_bytes
+                    < mutable_estimate.manifest_logical_upper_bound_bytes
+                && mutable_estimate.status_temp_logical_upper_bound_bytes
+                    <= u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES).unwrap(),
+            "the estimator must size the full payload manifest and compact status independently"
+        );
+        assert_eq!(
+            mutable_estimate.concurrent_database_margin_bytes,
+            round_up_to_allocation(
+                robin_highscores::storage_admission::maximum_capacity_demand_bytes(&config)
+                    .unwrap()
+                    .database,
+                mutable_estimate.allocation_granularity_bytes,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mutable_estimate.concurrent_object_margin_bytes,
+            u64::try_from(config.max_concurrent_uploads).unwrap()
+                * round_up_to_allocation(
+                    config.max_replay_bytes,
+                    mutable_estimate.allocation_granularity_bytes,
+                )
+                .unwrap()
+                + (u64::try_from(config.max_concurrent_uploads).unwrap() + 1)
+                    * round_up_to_allocation(
+                        config.max_campaign_bytes,
+                        mutable_estimate.allocation_granularity_bytes,
+                    )
+                    .unwrap(),
+            "every concurrently admitted replay/campaign pair must fit after the scan"
+        );
+        assert_eq!(
+            mutable_estimate.restore_source_map_count,
+            u64::try_from(restore_sources.len()).unwrap()
+        );
+        assert_eq!(
+            mutable_estimate.required_scratch_bytes,
+            mutable_estimate.dense_payload_bytes
+                + mutable_estimate.directory_and_entry_overhead_bytes
+                + mutable_estimate.manifest_allocation_upper_bound_bytes
+                + mutable_estimate.status_temp_allocation_upper_bound_bytes
+                + mutable_estimate.concurrent_object_margin_bytes
+                + mutable_estimate.concurrent_database_margin_bytes,
+            "one scratch generation must include exact documents plus bounded in-flight growth"
+        );
+        let mut insufficient = mutable_estimate.clone();
+        insufficient.observed_available_bytes = insufficient.required_available_bytes - 1;
+        assert!(insufficient.ensure_available().is_err());
+        let mut inode_pressure = mutable_estimate.clone();
+        inode_pressure.observed_available_inode_count = inode_pressure.required_inode_count - 1;
+        assert!(inode_pressure.ensure_available().is_err());
+        assert_eq!(
+            std::fs::read_dir(&backup_root).unwrap().count(),
+            1,
+            "capacity rejection must not create anything beyond the pre-admission partial"
+        );
+        assert!(admission_partial.join("must-remain").is_file());
+        let immutable_release_bytes = directory.path().join("immutable-release");
+        tokio::fs::create_dir_all(immutable_release_bytes.join("static/datadir"))
+            .await
+            .unwrap();
+        write_private_file(
+            &immutable_release_bytes.join("static/datadir/not-a-backup-input"),
+            &vec![0x5a; 128 * 1024],
+        )
         .await
         .unwrap();
-    write_private_file(&config.run_preflight_grant_secret_path, &[0x33; 32])
+        config.manifest_directory = Some(immutable_release_bytes.join("manifests"));
+        let estimate_with_immutable_release = estimate_backup_space(
+            &config,
+            &release_identity,
+            &backup_root,
+            &status_path,
+            &restore_sources,
+        )
         .await
         .unwrap();
-    Database::migrate(&config).await.unwrap();
-    let restore_sources = test_restore_sources(&config, directory.path()).await;
-    assert!(
-        backup_and_publish_status(BackupRequest {
+        config.manifest_directory = None;
+        let contemporaneous_without_immutable_release = estimate_backup_space(
+            &config,
+            &release_identity,
+            &backup_root,
+            &status_path,
+            &restore_sources,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            estimate_with_immutable_release.required_scratch_bytes,
+            contemporaneous_without_immutable_release.required_scratch_bytes,
+            "release/static/datadir and manifest roots must not consume mutable backup capacity"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let unit_root = directory.path().join("installed-user-units");
+            tokio::fs::create_dir(unit_root.join("default.target.wants"))
+                .await
+                .unwrap();
+            tokio::fs::create_dir(unit_root.join("timers.target.wants"))
+                .await
+                .unwrap();
+            symlink(
+                unit_root.join("robin-highscores.target"),
+                unit_root
+                    .join("default.target.wants")
+                    .join("robin-highscores.target"),
+            )
+            .unwrap();
+            symlink(
+                unit_root.join("robin-highscores-backup.timer"),
+                unit_root
+                    .join("timers.target.wants")
+                    .join("robin-highscores-backup.timer"),
+            )
+            .unwrap();
+            write_private_file(
+                &unit_root.join("unrelated.service"),
+                b"must not be archived",
+            )
+            .await
+            .unwrap();
+        }
+
+        assert!(!status_path.exists());
+        assert!(
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 0,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
+            .await
+            .is_err()
+        );
+        assert!(!status_path.exists());
+
+        let stale_partial = backup_root.join(format!(".backup-v4-1-{}.partial", "a".repeat(32)));
+        tokio::fs::create_dir_all(stale_partial.join("restore/state"))
+            .await
+            .unwrap();
+        write_private_file(&stale_partial.join("restore/state/interrupted"), b"sigkill")
+            .await
+            .unwrap();
+        #[cfg(unix)]
+        {
+            std::fs::set_permissions(&stale_partial, std::fs::Permissions::from_mode(0o500))
+                .unwrap();
+            std::fs::set_permissions(
+                stale_partial.join("restore"),
+                std::fs::Permissions::from_mode(0o500),
+            )
+            .unwrap();
+            std::fs::set_permissions(
+                stale_partial.join("restore/state"),
+                std::fs::Permissions::from_mode(0o500),
+            )
+            .unwrap();
+
+            let key_path = config.backup_authority_hmac_secret_path.clone();
+            let displaced_key = api_secrets.join("backup-authority-hmac.displaced");
+            let swap_key_path = key_path.clone();
+            let swap_displaced_key = displaced_key.clone();
+            assert!(
+                backup_with_hooks(
+                    BackupRequest {
+                        config: &config,
+                        release_manifest_path: &release_manifest,
+                        release_identity: &release_identity,
+                        backup_root: &backup_root,
+                        status_path: &status_path,
+                        retain_complete: 2,
+                        restore_sources: &restore_sources,
+                        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                    },
+                    BackupHooks {
+                        publish_status: publish_private_atomic,
+                        before_install: move || {
+                            std::fs::rename(&swap_key_path, &swap_displaced_key)?;
+                            std::fs::write(&swap_key_path, [0x41; 32])?;
+                            std::fs::set_permissions(
+                                &swap_key_path,
+                                std::fs::Permissions::from_mode(0o400),
+                            )?;
+                            Ok(())
+                        },
+                        before_status_publication: || Ok(())
+                    }
+                )
+                .await
+                .is_err(),
+                "a pathname replacement of the pinned key must fail before backup installation"
+            );
+            assert!(!status_path.exists());
+            assert!(
+                std::fs::read_dir(&backup_root).unwrap().all(|entry| {
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("backup-v4-")
+                }),
+                "a key swap before install must not leave a completed generation"
+            );
+            std::fs::remove_file(&key_path).unwrap();
+            std::fs::rename(&displaced_key, &key_path).unwrap();
+
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let key_mutator = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&key_path)
+                .unwrap();
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o400)).unwrap();
+            let mutation_handle = key_mutator.try_clone().unwrap();
+            assert!(
+                backup_with_hooks(
+                    BackupRequest {
+                        config: &config,
+                        release_manifest_path: &release_manifest,
+                        release_identity: &release_identity,
+                        backup_root: &backup_root,
+                        status_path: &status_path,
+                        retain_complete: 2,
+                        restore_sources: &restore_sources,
+                        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                    },
+                    BackupHooks {
+                        publish_status: publish_private_atomic,
+                        before_install: || Ok(()),
+                        before_status_publication: move || {
+                            use std::os::unix::fs::FileExt as _;
+                            mutation_handle.write_all_at(&[0x42; 32], 0)?;
+                            mutation_handle.sync_all()?;
+                            Ok(())
+                        }
+                    }
+                )
+                .await
+                .is_err(),
+                "an in-place key mutation must fail before status publication"
+            );
+            assert!(!status_path.exists());
+            assert!(
+                std::fs::read_dir(&backup_root).unwrap().all(|entry| {
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("backup-v4-")
+                }),
+                "a key mutation before status publication must remove the unreferenced generation"
+            );
+            {
+                use std::os::unix::fs::FileExt as _;
+                key_mutator.write_all_at(&[0x31; 32], 0).unwrap();
+                key_mutator.sync_all().unwrap();
+            }
+        }
+
+        (admission_partial, stale_partial)
+    }
+    async fn publish_and_assert_manifest(
+        &self,
+        admission_partial: PathBuf,
+        stale_partial: PathBuf,
+    ) -> PublishedBackup {
+        let release_manifest = self.release_manifest.clone();
+        let release_identity = self.release_identity.clone();
+        let backup_root = self.backup_root.clone();
+        let status_root = self.status_root.clone();
+        let status_path = self.status_path.clone();
+        let config = self.config.clone();
+        let restore_sources = self.restore_sources.clone();
+        let first = backup_and_publish_status(BackupRequest {
             config: &config,
             release_manifest_path: &release_manifest,
             release_identity: &release_identity,
@@ -778,420 +1249,72 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
             status_path: &status_path,
             retain_complete: 2,
             restore_sources: &restore_sources,
-            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
         })
         .await
-        .is_err(),
-        "backup authority must reject a missing production backup root"
-    );
-    assert!(
-        !backup_root.exists(),
-        "backup authority must not provision a missing production backup root"
-    );
-    tokio::fs::create_dir(&backup_root).await.unwrap();
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o750)).unwrap();
-        assert!(
-            backup_and_publish_status(BackupRequest {
-                config: &config,
-                release_manifest_path: &release_manifest,
-                release_identity: &release_identity,
-                backup_root: &backup_root,
-                status_path: &status_path,
-                retain_complete: 2,
-                restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-            })
-            .await
-            .is_err(),
-            "backup authority must reject a misprovisioned backup root"
+        .unwrap();
+        assert!(!stale_partial.exists());
+        assert!(!admission_partial.exists());
+        assert!(first.is_dir());
+        let status_bytes = tokio::fs::read(&status_path).await.unwrap();
+        let status: BackupStatusV4 = serde_json::from_slice(&status_bytes).unwrap();
+        assert_eq!(canonical_json_bytes(&status).unwrap(), status_bytes);
+        status.verify(&[0x31; 32]).unwrap();
+        assert_eq!(status.release_identity, release_identity);
+        assert_eq!(Path::new(&status.backup_directory), first);
+        assert!(!status_root.join("backup-manifest.json").exists());
+        verify_backup(&first).await.unwrap();
+        let first_manifest: BackupManifest = serde_json::from_slice(
+            &tokio::fs::read(first.join("backup-manifest.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            status.backup_manifest_sha256,
+            first_manifest.sha256().unwrap()
         );
         assert_eq!(
-            std::fs::metadata(&backup_root)
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o750,
-            "backup authority must not repair production root metadata"
+            status.database_schema_version,
+            first_manifest.database_schema_version
         );
-        std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    let admission_partial = backup_root.join(format!(".backup-v4-3-{}.partial", "c".repeat(32)));
-    tokio::fs::create_dir(&admission_partial).await.unwrap();
-    #[cfg(unix)]
-    std::fs::set_permissions(&admission_partial, std::fs::Permissions::from_mode(0o700)).unwrap();
-    write_private_file(&admission_partial.join("must-remain"), b"pre-admission")
-        .await
-        .unwrap();
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o750)).unwrap();
-        assert!(
-            backup_and_publish_status(BackupRequest {
-                config: &config,
-                release_manifest_path: &release_manifest,
-                release_identity: &release_identity,
-                backup_root: &backup_root,
-                status_path: &status_path,
-                retain_complete: 2,
-                restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-            })
-            .await
-            .is_err(),
-            "a non-0700 status authority parent must fail before cleanup"
-        );
-        assert!(admission_partial.join("must-remain").is_file());
-        std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(status.file_count, first_manifest.files.len() as u64);
+        assert_eq!(status.total_bytes, first_manifest.total_bytes().unwrap());
 
-        std::fs::write(&status_path, b"{}").unwrap();
-        std::fs::set_permissions(&status_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(
-            backup_and_publish_status(BackupRequest {
-                config: &config,
-                release_manifest_path: &release_manifest,
-                release_identity: &release_identity,
-                backup_root: &backup_root,
-                status_path: &status_path,
-                retain_complete: 2,
-                restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-            })
-            .await
-            .is_err(),
-            "a non-0400 status authority must fail before cleanup"
-        );
-        assert!(admission_partial.join("must-remain").is_file());
-        std::fs::remove_file(&status_path).unwrap();
-    }
-    let mutable_estimate = estimate_backup_space(
-        &config,
-        &release_identity,
-        &backup_root,
-        &status_path,
-        &restore_sources,
-    )
-    .await
-    .unwrap();
-    let estimate_bytes = canonical_json_bytes(&mutable_estimate).unwrap();
-    assert_eq!(
-        serde_json::from_slice::<BackupSpaceEstimateV1>(&estimate_bytes).unwrap(),
-        mutable_estimate,
-        "deployment evidence must round-trip as one canonical typed document"
-    );
-    assert!(
-        mutable_estimate.manifest_logical_upper_bound_bytes > 0
-            && mutable_estimate.status_temp_logical_upper_bound_bytes
-                < mutable_estimate.manifest_logical_upper_bound_bytes
-            && mutable_estimate.status_temp_logical_upper_bound_bytes
-                <= u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES).unwrap(),
-        "the estimator must size the full payload manifest and compact status independently"
-    );
-    assert_eq!(
-        mutable_estimate.concurrent_database_margin_bytes,
-        round_up_to_allocation(
-            robin_highscores::storage_admission::maximum_capacity_demand_bytes(&config)
-                .unwrap()
-                .database,
-            mutable_estimate.allocation_granularity_bytes,
-        )
-        .unwrap()
-    );
-    assert_eq!(
-        mutable_estimate.concurrent_object_margin_bytes,
-        u64::try_from(config.max_concurrent_uploads).unwrap()
-            * round_up_to_allocation(
-                config.max_replay_bytes,
-                mutable_estimate.allocation_granularity_bytes,
-            )
-            .unwrap()
-            + (u64::try_from(config.max_concurrent_uploads).unwrap() + 1)
-                * round_up_to_allocation(
-                    config.max_campaign_bytes,
-                    mutable_estimate.allocation_granularity_bytes,
-                )
-                .unwrap(),
-        "every concurrently admitted replay/campaign pair must fit after the scan"
-    );
-    assert_eq!(
-        mutable_estimate.restore_source_map_count,
-        u64::try_from(restore_sources.len()).unwrap()
-    );
-    assert_eq!(
-        mutable_estimate.required_scratch_bytes,
-        mutable_estimate.dense_payload_bytes
-            + mutable_estimate.directory_and_entry_overhead_bytes
-            + mutable_estimate.manifest_allocation_upper_bound_bytes
-            + mutable_estimate.status_temp_allocation_upper_bound_bytes
-            + mutable_estimate.concurrent_object_margin_bytes
-            + mutable_estimate.concurrent_database_margin_bytes,
-        "one scratch generation must include exact documents plus bounded in-flight growth"
-    );
-    let mut insufficient = mutable_estimate.clone();
-    insufficient.observed_available_bytes = insufficient.required_available_bytes - 1;
-    assert!(insufficient.ensure_available().is_err());
-    let mut inode_pressure = mutable_estimate.clone();
-    inode_pressure.observed_available_inode_count = inode_pressure.required_inode_count - 1;
-    assert!(inode_pressure.ensure_available().is_err());
-    assert_eq!(
-        std::fs::read_dir(&backup_root).unwrap().count(),
-        1,
-        "capacity rejection must not create anything beyond the pre-admission partial"
-    );
-    assert!(admission_partial.join("must-remain").is_file());
-    let immutable_release_bytes = directory.path().join("immutable-release");
-    tokio::fs::create_dir_all(immutable_release_bytes.join("static/datadir"))
-        .await
-        .unwrap();
-    write_private_file(
-        &immutable_release_bytes.join("static/datadir/not-a-backup-input"),
-        &vec![0x5a; 128 * 1024],
-    )
-    .await
-    .unwrap();
-    config.manifest_directory = Some(immutable_release_bytes.join("manifests"));
-    let estimate_with_immutable_release = estimate_backup_space(
-        &config,
-        &release_identity,
-        &backup_root,
-        &status_path,
-        &restore_sources,
-    )
-    .await
-    .unwrap();
-    config.manifest_directory = None;
-    let contemporaneous_without_immutable_release = estimate_backup_space(
-        &config,
-        &release_identity,
-        &backup_root,
-        &status_path,
-        &restore_sources,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        estimate_with_immutable_release.required_scratch_bytes,
-        contemporaneous_without_immutable_release.required_scratch_bytes,
-        "release/static/datadir and manifest roots must not consume mutable backup capacity"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-        let unit_root = directory.path().join("installed-user-units");
-        tokio::fs::create_dir(unit_root.join("default.target.wants"))
-            .await
-            .unwrap();
-        tokio::fs::create_dir(unit_root.join("timers.target.wants"))
-            .await
-            .unwrap();
-        symlink(
-            unit_root.join("robin-highscores.target"),
-            unit_root
-                .join("default.target.wants")
-                .join("robin-highscores.target"),
-        )
-        .unwrap();
-        symlink(
-            unit_root.join("robin-highscores-backup.timer"),
-            unit_root
-                .join("timers.target.wants")
-                .join("robin-highscores-backup.timer"),
-        )
-        .unwrap();
-        write_private_file(
-            &unit_root.join("unrelated.service"),
-            b"must not be archived",
-        )
-        .await
-        .unwrap();
-    }
-
-    assert!(!status_path.exists());
-    assert!(
-        backup_and_publish_status(BackupRequest {
-            config: &config,
-            release_manifest_path: &release_manifest,
-            release_identity: &release_identity,
-            backup_root: &backup_root,
-            status_path: &status_path,
-            retain_complete: 0,
-            restore_sources: &restore_sources,
-            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-        })
-        .await
-        .is_err()
-    );
-    assert!(!status_path.exists());
-
-    let stale_partial = backup_root.join(format!(".backup-v4-1-{}.partial", "a".repeat(32)));
-    tokio::fs::create_dir_all(stale_partial.join("restore/state"))
-        .await
-        .unwrap();
-    write_private_file(&stale_partial.join("restore/state/interrupted"), b"sigkill")
-        .await
-        .unwrap();
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(&stale_partial, std::fs::Permissions::from_mode(0o500)).unwrap();
-        std::fs::set_permissions(
-            stale_partial.join("restore"),
-            std::fs::Permissions::from_mode(0o500),
-        )
-        .unwrap();
-        std::fs::set_permissions(
-            stale_partial.join("restore/state"),
-            std::fs::Permissions::from_mode(0o500),
-        )
-        .unwrap();
-
-        let key_path = config.backup_authority_hmac_secret_path.clone();
-        let displaced_key = api_secrets.join("backup-authority-hmac.displaced");
-        let swap_key_path = key_path.clone();
-        let swap_displaced_key = displaced_key.clone();
-        assert!(
-            backup_with_hooks(
-                BackupRequest {
-                    config: &config,
-                    release_manifest_path: &release_manifest,
-                    release_identity: &release_identity,
-                    backup_root: &backup_root,
-                    status_path: &status_path,
-                    retain_complete: 2,
-                    restore_sources: &restore_sources,
-                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-                },
-                BackupHooks {
-                    publish_status: publish_private_atomic,
-                    before_install: move || {
-                        std::fs::rename(&swap_key_path, &swap_displaced_key)?;
-                        std::fs::write(&swap_key_path, [0x41; 32])?;
-                        std::fs::set_permissions(
-                            &swap_key_path,
-                            std::fs::Permissions::from_mode(0o400),
-                        )?;
-                        Ok(())
-                    },
-                    before_status_publication: || Ok(())
-                }
-            )
-            .await
-            .is_err(),
-            "a pathname replacement of the pinned key must fail before backup installation"
-        );
-        assert!(!status_path.exists());
-        assert!(
-            std::fs::read_dir(&backup_root).unwrap().all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("backup-v4-")
-            }),
-            "a key swap before install must not leave a completed generation"
-        );
-        std::fs::remove_file(&key_path).unwrap();
-        std::fs::rename(&displaced_key, &key_path).unwrap();
-
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let key_mutator = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&key_path)
-            .unwrap();
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o400)).unwrap();
-        let mutation_handle = key_mutator.try_clone().unwrap();
-        assert!(
-            backup_with_hooks(
-                BackupRequest {
-                    config: &config,
-                    release_manifest_path: &release_manifest,
-                    release_identity: &release_identity,
-                    backup_root: &backup_root,
-                    status_path: &status_path,
-                    retain_complete: 2,
-                    restore_sources: &restore_sources,
-                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-                },
-                BackupHooks {
-                    publish_status: publish_private_atomic,
-                    before_install: || Ok(()),
-                    before_status_publication: move || {
-                        use std::os::unix::fs::FileExt as _;
-                        mutation_handle.write_all_at(&[0x42; 32], 0)?;
-                        mutation_handle.sync_all()?;
-                        Ok(())
-                    }
-                }
-            )
-            .await
-            .is_err(),
-            "an in-place key mutation must fail before status publication"
-        );
-        assert!(!status_path.exists());
-        assert!(
-            std::fs::read_dir(&backup_root).unwrap().all(|entry| {
-                !entry
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("backup-v4-")
-            }),
-            "a key mutation before status publication must remove the unreferenced generation"
-        );
-        {
-            use std::os::unix::fs::FileExt as _;
-            key_mutator.write_all_at(&[0x31; 32], 0).unwrap();
-            key_mutator.sync_all().unwrap();
+        PublishedBackup {
+            first,
+            status,
+            status_bytes,
+            first_manifest,
         }
     }
-
-    let first = backup_and_publish_status(BackupRequest {
-        config: &config,
-        release_manifest_path: &release_manifest,
-        release_identity: &release_identity,
-        backup_root: &backup_root,
-        status_path: &status_path,
-        retain_complete: 2,
-        restore_sources: &restore_sources,
-        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-    })
-    .await
-    .unwrap();
-    assert!(!stale_partial.exists());
-    assert!(!admission_partial.exists());
-    assert!(first.is_dir());
-    let status_bytes = tokio::fs::read(&status_path).await.unwrap();
-    let status: BackupStatusV4 = serde_json::from_slice(&status_bytes).unwrap();
-    assert_eq!(canonical_json_bytes(&status).unwrap(), status_bytes);
-    status.verify(&[0x31; 32]).unwrap();
-    assert_eq!(status.release_identity, release_identity);
-    assert_eq!(Path::new(&status.backup_directory), first);
-    assert!(!status_root.join("backup-manifest.json").exists());
-    verify_backup(&first).await.unwrap();
-    let first_manifest: BackupManifest = serde_json::from_slice(
-        &tokio::fs::read(first.join("backup-manifest.json"))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        status.backup_manifest_sha256,
-        first_manifest.sha256().unwrap()
-    );
-    assert_eq!(
-        status.database_schema_version,
-        first_manifest.database_schema_version
-    );
-    assert_eq!(status.file_count, first_manifest.files.len() as u64);
-    assert_eq!(status.total_bytes, first_manifest.total_bytes().unwrap());
     #[cfg(target_os = "linux")]
-    {
+    async fn assert_pinned_authority(&self, published: &PublishedBackup) {
+        // Keep the exact same pinned descriptors alive through all race probes.
+        let backup_directory_file = std::fs::File::open(&published.first).unwrap();
+        let status_file = std::fs::File::open(&self.status_path).unwrap();
+        self.assert_receipts_and_release_authority(published, &backup_directory_file, &status_file)
+            .await;
+        self.assert_pinned_path_replacement_races(published, &backup_directory_file, &status_file)
+            .await;
+        self.assert_pinned_descriptor_rejections(published, &backup_directory_file, &status_file)
+            .await;
+    }
+    #[cfg(target_os = "linux")]
+    async fn assert_receipts_and_release_authority(
+        &self,
+        published: &PublishedBackup,
+        backup_directory_file: &std::fs::File,
+        status_file: &std::fs::File,
+    ) {
         use std::os::fd::AsRawFd as _;
-
-        let backup_directory_file = std::fs::File::open(&first).unwrap();
-        let status_file = std::fs::File::open(&status_path).unwrap();
+        let directory = &self.directory;
+        let release_manifest = self.release_manifest.clone();
+        let release_identity = self.release_identity.clone();
+        let backup_root = self.backup_root.clone();
+        let status_path = self.status_path.clone();
+        let status = published.status.clone();
+        let first_manifest = published.first_manifest.clone();
         let release_file = std::fs::File::open(&release_manifest).unwrap();
         assert_eq!(
             load_backup_release_identity_oob_file(release_file)
@@ -1341,7 +1464,25 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
             .is_err(),
             "an embedded backup path outside canonical root/ID must never be opened"
         );
-
+    }
+    #[cfg(target_os = "linux")]
+    async fn assert_pinned_path_replacement_races(
+        &self,
+        published: &PublishedBackup,
+        backup_directory_file: &std::fs::File,
+        status_file: &std::fs::File,
+    ) {
+        use std::os::fd::AsRawFd as _;
+        let directory = &self.directory;
+        let release_manifest = self.release_manifest.clone();
+        let release_identity = self.release_identity.clone();
+        let backup_root = self.backup_root.clone();
+        let status_root = self.status_root.clone();
+        let status_path = self.status_path.clone();
+        let first = published.first.clone();
+        let status = published.status.clone();
+        let status_bytes = published.status_bytes.clone();
+        let first_manifest = published.first_manifest.clone();
         let canonical_lock = backup_root.join(".backup-operation.lock");
         let displaced_lock = backup_root.join(".displaced-backup-operation.lock");
         let second_lock = std::sync::Mutex::new(None);
@@ -1548,7 +1689,24 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         );
         std::fs::remove_file(&release_manifest).unwrap();
         std::fs::rename(displaced_release, &release_manifest).unwrap();
-
+    }
+    #[cfg(target_os = "linux")]
+    async fn assert_pinned_descriptor_rejections(
+        &self,
+        published: &PublishedBackup,
+        backup_directory_file: &std::fs::File,
+        status_file: &std::fs::File,
+    ) {
+        use std::os::fd::AsRawFd as _;
+        let directory = &self.directory;
+        let release_identity = self.release_identity.clone();
+        let backup_root = self.backup_root.clone();
+        let status_root = self.status_root.clone();
+        let status_path = self.status_path.clone();
+        let first = published.first.clone();
+        let status = published.status.clone();
+        let status_bytes = published.status_bytes.clone();
+        let first_manifest = published.first_manifest.clone();
         assert!(
             verify_backup_pinned_with_expected(
                 u32::try_from(status_file.as_raw_fd()).unwrap(),
@@ -1859,252 +2017,83 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         );
         std::fs::remove_file(unexpected_path).unwrap();
     }
-    let archived_units = first_manifest
-        .files
-        .iter()
-        .filter(|file| file.relative_path.starts_with("restore/systemd/user/"))
-        .map(|file| file.relative_path.as_str())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(archived_units.len(), SYSTEMD_UNIT_FILES.len());
-    assert!(
-        archived_units
+    async fn assert_publication_failure_and_retention(&self, published: &PublishedBackup) {
+        let directory = &self.directory;
+        let release_manifest = self.release_manifest.clone();
+        let release_identity = self.release_identity.clone();
+        let backup_root = self.backup_root.clone();
+        let status_root = self.status_root.clone();
+        let status_path = self.status_path.clone();
+        let mut config = self.config.clone();
+        let restore_sources = self.restore_sources.clone();
+        let first = published.first.clone();
+        let status = published.status.clone();
+        let first_manifest = &published.first_manifest;
+        let archived_units = first_manifest
+            .files
             .iter()
-            .all(|path| !path.contains("wants") && !path.contains("unrelated"))
-    );
-    assert!(first_manifest.files.iter().all(|file| {
-        !file.relative_path.contains("release")
-            && !file.relative_path.contains("static")
-            && !file.relative_path.contains("datadir")
-            && !file.relative_path.contains("manifest")
-    }));
-
-    let complete_names_before_publication_failure = std::fs::read_dir(&backup_root)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| parse_backup_id(name).is_some())
-        .collect::<BTreeSet<_>>();
-    let status_before_publication_failure = tokio::fs::read(&status_path).await.unwrap();
-    assert!(
-        backup_with_hooks(
-            BackupRequest {
-                config: &config,
-                release_manifest_path: &release_manifest,
-                release_identity: &release_identity,
-                backup_root: &backup_root,
-                status_path: &status_path,
-                retain_complete: 2,
-                restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-            },
-            BackupHooks {
-                publish_status: |_, _| anyhow::bail!(
-                    "injected definite pre-rename publication failure"
-                ),
-                before_install: || Ok(()),
-                before_status_publication: || Ok(())
-            }
-        )
-        .await
-        .is_err()
-    );
-    assert_eq!(
-        tokio::fs::read(&status_path).await.unwrap(),
-        status_before_publication_failure,
-        "a definite pre-rename error must leave the old envelope intact"
-    );
-    assert_eq!(
-        std::fs::read_dir(&backup_root)
+            .filter(|file| file.relative_path.starts_with("restore/systemd/user/"))
+            .map(|file| file.relative_path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(archived_units.len(), SYSTEMD_UNIT_FILES.len());
+        assert!(
+            archived_units
+                .iter()
+                .all(|path| !path.contains("wants") && !path.contains("unrelated"))
+        );
+        assert!(first_manifest.files.iter().all(|file| {
+            !file.relative_path.contains("release")
+                && !file.relative_path.contains("static")
+                && !file.relative_path.contains("datadir")
+                && !file.relative_path.contains("manifest")
+        }));
+        let complete_names_before_publication_failure = std::fs::read_dir(&backup_root)
             .unwrap()
             .filter_map(Result::ok)
             .filter_map(|entry| entry.file_name().into_string().ok())
             .filter(|name| parse_backup_id(name).is_some())
-            .collect::<BTreeSet<_>>(),
-        complete_names_before_publication_failure,
-        "a definite status error must not accumulate an unreferenced complete backup"
-    );
-
-    let status_before_oversize = tokio::fs::read(&status_path).await.unwrap();
-    assert!(
-        backup_and_publish_status(BackupRequest {
-            config: &config,
-            release_manifest_path: &release_manifest,
-            release_identity: &release_identity,
-            backup_root: &backup_root,
-            status_path: &status_path,
-            retain_complete: 2,
-            restore_sources: &restore_sources,
-            maximum_status_bytes: 1
-        })
-        .await
-        .is_err(),
-        "an unpublishable envelope must fail before partial installation"
-    );
-    assert_eq!(
-        tokio::fs::read(&status_path).await.unwrap(),
-        status_before_oversize,
-        "an oversized candidate must not replace the old readiness envelope"
-    );
-    assert!(
-        std::fs::read_dir(&backup_root)
-            .unwrap()
-            .filter_map(Result::ok)
-            .all(|entry| !entry.file_name().to_string_lossy().ends_with(".partial")),
-        "an oversized candidate must leave no partial backup"
-    );
-
-    let second = backup_and_publish_status(BackupRequest {
-        config: &config,
-        release_manifest_path: &release_manifest,
-        release_identity: &release_identity,
-        backup_root: &backup_root,
-        status_path: &status_path,
-        retain_complete: 2,
-        restore_sources: &restore_sources,
-        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-    })
-    .await
-    .unwrap();
-    assert!(second.is_dir());
-    assert_ne!(first, second);
-    assert!(first.exists());
-    verify_backup(&second).await.unwrap();
-    let two_complete_names = std::fs::read_dir(&backup_root)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| parse_backup_id(name).is_some())
-        .collect::<BTreeSet<_>>();
-    assert_eq!(two_complete_names.len(), 2);
-    assert!(
-        backup_with_hooks(
-            BackupRequest {
-                config: &config,
-                release_manifest_path: &release_manifest,
-                release_identity: &release_identity,
-                backup_root: &backup_root,
-                status_path: &status_path,
-                retain_complete: 2,
-                restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-            },
-            BackupHooks {
-                publish_status: |_, _| anyhow::bail!(
-                    "injected failed replacement before status publication"
-                ),
-                before_install: || Ok(()),
-                before_status_publication: || Ok(())
-            }
-        )
-        .await
-        .is_err()
-    );
-    assert_eq!(
-        std::fs::read_dir(&backup_root)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| parse_backup_id(name).is_some())
-            .collect::<BTreeSet<_>>(),
-        two_complete_names,
-        "a failed replacement must preserve both retained complete generations"
-    );
-
-    assert!(
-        backup_with_hooks(
-            BackupRequest {
-                config: &config,
-                release_manifest_path: &release_manifest,
-                release_identity: &release_identity,
-                backup_root: &backup_root,
-                status_path: &status_path,
-                retain_complete: 2,
-                restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
-            },
-            BackupHooks {
-                publish_status: |path, bytes| match publish_private_atomic(path, bytes)? {
-                    StatusPublicationOutcome::Published => {
-                        Ok(StatusPublicationOutcome::PublishedButIdentityUncertain(
-                            anyhow::anyhow!(
-                                "injected crash after status publication and before retention"
-                            ),
-                        ))
-                    }
-                    uncertain => Ok(uncertain),
+            .collect::<BTreeSet<_>>();
+        let status_before_publication_failure = tokio::fs::read(&status_path).await.unwrap();
+        assert!(
+            backup_with_hooks(
+                BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                 },
-                before_install: || Ok(()),
-                before_status_publication: || Ok(())
-            }
-        )
-        .await
-        .is_err(),
-        "publication uncertainty must preserve the truthful newly published generation"
-    );
-    let crash_status: BackupStatusV4 =
-        serde_json::from_slice(&std::fs::read(&status_path).unwrap()).unwrap();
-    crash_status.verify(&[0x31; 32]).unwrap();
-    let crash_generation = PathBuf::from(&crash_status.backup_directory);
-    assert!(crash_generation.is_dir());
-    assert_eq!(
-        std::fs::read_dir(&backup_root)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| parse_backup_id(&entry.file_name().to_string_lossy()).is_some())
-            .count(),
-        3,
-        "a crash after status publication may leave exactly retain+1 generations"
-    );
-
-    let third = backup_and_publish_status(BackupRequest {
-        config: &config,
-        release_manifest_path: &release_manifest,
-        release_identity: &release_identity,
-        backup_root: &backup_root,
-        status_path: &status_path,
-        retain_complete: 2,
-        restore_sources: &restore_sources,
-        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-    })
-    .await
-    .unwrap();
-    assert!(third.is_dir());
-    assert!(!first.exists());
-    assert!(!second.exists());
-    assert!(crash_generation.exists());
-    verify_backup(&third).await.unwrap();
-    let managed_count = std::fs::read_dir(&backup_root)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("backup-v4-")
-        })
-        .count();
-    assert_eq!(managed_count, 2);
-    assert!(
-        std::fs::read_dir(&status_root)
-            .unwrap()
-            .filter_map(Result::ok)
-            .all(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                !name.starts_with(".backup-status.json-")
-            })
-    );
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-        let outside = directory.path().join("outside-partial-target");
-        tokio::fs::create_dir(&outside).await.unwrap();
-        write_private_file(&outside.join("preserved"), b"outside")
+                BackupHooks {
+                    publish_status: |_, _| anyhow::bail!(
+                        "injected definite pre-rename publication failure"
+                    ),
+                    before_install: || Ok(()),
+                    before_status_publication: || Ok(())
+                }
+            )
             .await
-            .unwrap();
-        let hostile_partial = backup_root.join(format!(".backup-v4-2-{}.partial", "b".repeat(32)));
-        symlink(&outside, &hostile_partial).unwrap();
+            .is_err()
+        );
+        assert_eq!(
+            tokio::fs::read(&status_path).await.unwrap(),
+            status_before_publication_failure,
+            "a definite pre-rename error must leave the old envelope intact"
+        );
+        assert_eq!(
+            std::fs::read_dir(&backup_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .filter(|name| parse_backup_id(name).is_some())
+                .collect::<BTreeSet<_>>(),
+            complete_names_before_publication_failure,
+            "a definite status error must not accumulate an unreferenced complete backup"
+        );
+
+        let status_before_oversize = tokio::fs::read(&status_path).await.unwrap();
         assert!(
             backup_and_publish_status(BackupRequest {
                 config: &config,
@@ -2114,33 +2103,215 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
                 status_path: &status_path,
                 retain_complete: 2,
                 restore_sources: &restore_sources,
-                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                maximum_status_bytes: 1
             })
             .await
-            .is_err()
+            .is_err(),
+            "an unpublishable envelope must fail before partial installation"
         );
         assert_eq!(
-            tokio::fs::read(outside.join("preserved")).await.unwrap(),
-            b"outside"
+            tokio::fs::read(&status_path).await.unwrap(),
+            status_before_oversize,
+            "an oversized candidate must not replace the old readiness envelope"
         );
-        tokio::fs::remove_file(hostile_partial).await.unwrap();
-    }
+        assert!(
+            std::fs::read_dir(&backup_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".partial")),
+            "an oversized candidate must leave no partial backup"
+        );
 
-    let nested_status = backup_root.join("backup-status.json");
-    config.backup_manifest_path = Some(nested_status.clone());
-    assert!(
-        backup_and_publish_status(BackupRequest {
+        let second = backup_and_publish_status(BackupRequest {
             config: &config,
             release_manifest_path: &release_manifest,
             release_identity: &release_identity,
             backup_root: &backup_root,
-            status_path: &nested_status,
+            status_path: &status_path,
             retain_complete: 2,
             restore_sources: &restore_sources,
-            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
         })
         .await
-        .is_err(),
-        "backup payload roots must never double as the API-readable status authority"
-    );
+        .unwrap();
+        assert!(second.is_dir());
+        assert_ne!(first, second);
+        assert!(first.exists());
+        verify_backup(&second).await.unwrap();
+        let two_complete_names = std::fs::read_dir(&backup_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| parse_backup_id(name).is_some())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(two_complete_names.len(), 2);
+        assert!(
+            backup_with_hooks(
+                BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                },
+                BackupHooks {
+                    publish_status: |_, _| anyhow::bail!(
+                        "injected failed replacement before status publication"
+                    ),
+                    before_install: || Ok(()),
+                    before_status_publication: || Ok(())
+                }
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_dir(&backup_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .filter(|name| parse_backup_id(name).is_some())
+                .collect::<BTreeSet<_>>(),
+            two_complete_names,
+            "a failed replacement must preserve both retained complete generations"
+        );
+
+        assert!(
+            backup_with_hooks(
+                BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                },
+                BackupHooks {
+                    publish_status: |path, bytes| match publish_private_atomic(path, bytes)? {
+                        StatusPublicationOutcome::Published => {
+                            Ok(StatusPublicationOutcome::PublishedButIdentityUncertain(
+                                anyhow::anyhow!(
+                                    "injected crash after status publication and before retention"
+                                ),
+                            ))
+                        }
+                        uncertain => Ok(uncertain),
+                    },
+                    before_install: || Ok(()),
+                    before_status_publication: || Ok(())
+                }
+            )
+            .await
+            .is_err(),
+            "publication uncertainty must preserve the truthful newly published generation"
+        );
+        let crash_status: BackupStatusV4 =
+            serde_json::from_slice(&std::fs::read(&status_path).unwrap()).unwrap();
+        crash_status.verify(&[0x31; 32]).unwrap();
+        let crash_generation = PathBuf::from(&crash_status.backup_directory);
+        assert!(crash_generation.is_dir());
+        assert_eq!(
+            std::fs::read_dir(&backup_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| parse_backup_id(&entry.file_name().to_string_lossy()).is_some())
+                .count(),
+            3,
+            "a crash after status publication may leave exactly retain+1 generations"
+        );
+
+        let third = backup_and_publish_status(BackupRequest {
+            config: &config,
+            release_manifest_path: &release_manifest,
+            release_identity: &release_identity,
+            backup_root: &backup_root,
+            status_path: &status_path,
+            retain_complete: 2,
+            restore_sources: &restore_sources,
+            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
+        })
+        .await
+        .unwrap();
+        assert!(third.is_dir());
+        assert!(!first.exists());
+        assert!(!second.exists());
+        assert!(crash_generation.exists());
+        verify_backup(&third).await.unwrap();
+        let managed_count = std::fs::read_dir(&backup_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("backup-v4-")
+            })
+            .count();
+        assert_eq!(managed_count, 2);
+        assert!(
+            std::fs::read_dir(&status_root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .all(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    !name.starts_with(".backup-status.json-")
+                })
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = directory.path().join("outside-partial-target");
+            tokio::fs::create_dir(&outside).await.unwrap();
+            write_private_file(&outside.join("preserved"), b"outside")
+                .await
+                .unwrap();
+            let hostile_partial =
+                backup_root.join(format!(".backup-v4-2-{}.partial", "b".repeat(32)));
+            symlink(&outside, &hostile_partial).unwrap();
+            assert!(
+                backup_and_publish_status(BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+                })
+                .await
+                .is_err()
+            );
+            assert_eq!(
+                tokio::fs::read(outside.join("preserved")).await.unwrap(),
+                b"outside"
+            );
+            tokio::fs::remove_file(hostile_partial).await.unwrap();
+        }
+
+        let nested_status = backup_root.join("backup-status.json");
+        config.backup_manifest_path = Some(nested_status.clone());
+        assert!(
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &nested_status,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
+            .await
+            .is_err(),
+            "backup payload roots must never double as the API-readable status authority"
+        );
+    }
 }
