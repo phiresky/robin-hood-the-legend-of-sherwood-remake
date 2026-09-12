@@ -5450,98 +5450,7 @@ impl EngineInner {
             )
         };
 
-        // Hit-damage translation only appends a FALLING_HIT_* order. Original
-        // Hit-induced falling samples live geometry and prepares takeoff
-        // during initialization, so actors whose creation slot has already
-        // passed retain their old facing and no flight state until next frame.
-        let initial_hit_flight = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| actor.execute_order_initialising)
-            .then(|| {
-                self.orders
-                    .sequence_manager
-                    .current_order_for_actor(entity_id)
-                    .map(|(_, _, order)| (order.order_type, order.antagonist))
-            })
-            .flatten()
-            .filter(|(anim, _)| {
-                matches!(
-                    anim,
-                    OrderType::FallingHitUpright
-                        | OrderType::FallingHitWithBow
-                        | OrderType::FallingHitWithSword
-                        | OrderType::FallingHitCrouched
-                )
-            });
-        if let Some((anim, antagonist)) = initial_hit_flight {
-            self.initialize_hit_flight(assets, entity_id, antagonist, anim);
-        }
-
-        // Push-damage translation likewise only authors the falling order.
-        // Pushed falling initializes takeoff from live strike
-        // geometry immediately before its first flight update.
-        let initial_push_flight = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| actor.execute_order_initialising)
-            .then(|| {
-                self.orders
-                    .sequence_manager
-                    .current_order_for_actor(entity_id)
-                    .map(|(sequence_id, element_index, order)| {
-                        (sequence_id, element_index, order.order_type)
-                    })
-            })
-            .flatten()
-            .filter(|(_, _, anim)| {
-                matches!(
-                    anim,
-                    OrderType::FallingPushedUpright
-                        | OrderType::FallingPushedWithBow
-                        | OrderType::FallingPushedWithSword
-                        | OrderType::FallingPushedCrouched
-                )
-            });
-        if let Some((sequence_id, element_index, anim)) = initial_push_flight {
-            self.initialize_push_flight(assets, entity_id, (sequence_id, element_index), anim);
-        }
-
-        // The human actor's eight dying/falling branches run
-        // death-place selection during initialization immediately before
-        // action processing. Do this before borrowing the actor for the generic
-        // sprite dispatch so same-stack animation side effects and callbacks
-        // observe the relocated position in Original order.
-        let find_place_to_die_on_initialisation = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| actor.execute_order_initialising)
-            && self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(entity_id)
-                .is_some_and(|(_, _, order)| {
-                    matches!(
-                        order.order_type,
-                        OrderType::DyingSword
-                            | OrderType::DyingBow
-                            | OrderType::FallingBackSword
-                            | OrderType::FallingBackBow
-                            | OrderType::DyingUpright
-                            | OrderType::FallingBackUpright
-                            | OrderType::FallingBackCrouched
-                            | OrderType::DyingCrouched
-                    )
-                });
-        if find_place_to_die_on_initialisation {
-            self.find_place_to_die(entity_id);
-        }
+        self.initialize_actor_animation_placement(assets, entity_id);
 
         // Original-game human execution advances the
         // STRIKING_DOWN_SWORD sprite and then revalidates the selected
@@ -6916,6 +6825,102 @@ impl EngineInner {
             completion_outcomes,
             execute_result,
         )
+    }
+
+    /// Initialize live takeoff and death placement before generic sprite dispatch.
+    fn initialize_actor_animation_placement(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+        // Hit-damage translation only appends a FALLING_HIT_* order. Original
+        // Hit-induced falling samples live geometry and prepares takeoff
+        // during initialization, so actors whose creation slot has already
+        // passed retain their old facing and no flight state until next frame.
+        let initial_hit_flight = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            .then(|| {
+                self.orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .map(|(_, _, order)| (order.order_type, order.antagonist))
+            })
+            .flatten()
+            .filter(|(anim, _)| {
+                matches!(
+                    anim,
+                    OrderType::FallingHitUpright
+                        | OrderType::FallingHitWithBow
+                        | OrderType::FallingHitWithSword
+                        | OrderType::FallingHitCrouched
+                )
+            });
+        if let Some((anim, antagonist)) = initial_hit_flight {
+            self.initialize_hit_flight(assets, entity_id, antagonist, anim);
+        }
+
+        // Push-damage translation likewise only authors the falling order.
+        // Pushed falling initializes takeoff from live strike
+        // geometry immediately before its first flight update.
+        let initial_push_flight = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            .then(|| {
+                self.orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .map(|(sequence_id, element_index, order)| {
+                        (sequence_id, element_index, order.order_type)
+                    })
+            })
+            .flatten()
+            .filter(|(_, _, anim)| {
+                matches!(
+                    anim,
+                    OrderType::FallingPushedUpright
+                        | OrderType::FallingPushedWithBow
+                        | OrderType::FallingPushedWithSword
+                        | OrderType::FallingPushedCrouched
+                )
+            });
+        if let Some((sequence_id, element_index, anim)) = initial_push_flight {
+            self.initialize_push_flight(assets, entity_id, (sequence_id, element_index), anim);
+        }
+
+        // The human actor's eight dying/falling branches run
+        // death-place selection during initialization immediately before
+        // action processing. Do this before borrowing the actor for the generic
+        // sprite dispatch so same-stack animation side effects and callbacks
+        // observe the relocated position in Original order.
+        let find_place_to_die_on_initialisation = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            && self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .is_some_and(|(_, _, order)| {
+                    matches!(
+                        order.order_type,
+                        OrderType::DyingSword
+                            | OrderType::DyingBow
+                            | OrderType::FallingBackSword
+                            | OrderType::FallingBackBow
+                            | OrderType::DyingUpright
+                            | OrderType::FallingBackUpright
+                            | OrderType::FallingBackCrouched
+                            | OrderType::DyingCrouched
+                    )
+                });
+        if find_place_to_die_on_initialisation {
+            self.find_place_to_die(entity_id);
+        }
     }
 
     /// Dispatch animation sound triggers at the deferred presentation boundary.

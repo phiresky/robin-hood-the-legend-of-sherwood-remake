@@ -659,13 +659,8 @@ impl EngineInner {
         if command != Command::Move && command != Command::MoveOk && command != Command::PassDoor {
             return false;
         }
-        let (mut animation_movement, flags, tolerance, owner) = match &elem.data {
-            SequenceElementData::Movement {
-                action,
-                flags,
-                tolerance,
-                ..
-            } => (*action, *flags, *tolerance, elem.owner),
+        let (mut animation_movement, flags, owner) = match &elem.data {
+            SequenceElementData::Movement { action, flags, .. } => (*action, *flags, elem.owner),
             _ => return false,
         };
         let Some(owner) = owner else {
@@ -764,8 +759,6 @@ impl EngineInner {
             .and_then(|anim| self.sprite_distance_for_animation(owner, anim));
         let end_distance =
             animation_end.and_then(|anim| self.sprite_distance_for_animation(owner, anim));
-
-        let _ = tolerance; // `tolerance` is folded into insert_transition_end internally
 
         // ── Apply transitions in order ──────────────────────────
         let next_order_id = &mut self.orders.next_order_id;

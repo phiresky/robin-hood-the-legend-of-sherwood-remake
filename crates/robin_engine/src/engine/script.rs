@@ -1058,6 +1058,9 @@ impl EngineInner {
                         true
                     };
                     if filter_accepted {
+                        // The return flag reports whether this particular
+                        // owner needed another Think. The native continuation
+                        // below always runs after that optional Think settles.
                         let _ = self.start_script_ai_native_think_post_filter(owner);
                     }
                 }
@@ -2509,7 +2512,7 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(sim, assets, |script, _, _| {
+        let bound = self.with_script_session(sim, assets, |script, _, _| {
             // Bind every instance before dispatching Initialize through the shared driver.
             // ── Phase 1: Per-actor binding ──
             // Each actor's script class gets a ScriptInstance that persists for the
@@ -2585,6 +2588,10 @@ impl EngineInner {
                 );
             }
         });
+
+        if bound.is_none() {
+            tracing::warn!("mission script binding skipped because no mission script is loaded");
+        }
 
         for (handle, _) in &per_actor_scripts {
             if let Err(error) = self.call_script_vm(

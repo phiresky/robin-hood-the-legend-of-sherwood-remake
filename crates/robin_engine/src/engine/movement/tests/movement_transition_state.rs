@@ -1957,6 +1957,7 @@ mod suite {
         distance: f32,
     ) -> (EngineInner, EntityId, EntityId) {
         let mut engine = EngineInner::new();
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
         let transition = OrderType::TransitionWalkingUprightWaitingUpright;
         let script = SpriteScript {
             action_id: transition as u16,

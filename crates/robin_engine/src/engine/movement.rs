@@ -3081,6 +3081,10 @@ impl PendingPathRequestQueue {
                 sequence_id: processed.request.seq_id,
                 element_index: processed.request.elem_idx,
                 in_flight: true,
+                // Original's diagnostic in-flight slot represents a failed
+                // completed search with an empty waypoint list. This is only
+                // the parity projection; `processed.waypoints` retains None
+                // so the scheduler still dispatches its real failure outcome.
                 waypoints: Some(processed.waypoints.clone().unwrap_or_default()),
             });
         }
@@ -11803,7 +11807,8 @@ impl EngineInner {
             return MovePathOutcome::Pending;
         }
 
-        self.finish_move_path(sim, request, vec![source, dest])
+        self.finish_move_path(sim, request, vec![source, dest]);
+        MovePathOutcome::Success
     }
 
     pub(super) fn finish_move_path(
@@ -11811,7 +11816,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         request: PendingPathRequest,
         mut waypoints: Vec<MapPoint>,
-    ) -> MovePathOutcome {
+    ) {
         let PendingPathRequest {
             restored_from_v48,
             owner,
@@ -12043,8 +12048,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .element_in_progress(seq_id, elem_idx);
-
-        MovePathOutcome::Success
     }
 }
 

@@ -4483,6 +4483,8 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
 
     for pruner_before_mutated in [true, false] {
         let mut engine = EngineInner::new();
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 2, 0);
         let first = engine.add_entity(make_scripted_soldier(""));
         let second = engine.add_entity(make_scripted_soldier(""));
         let (pruner, mutated) = if pruner_before_mutated {

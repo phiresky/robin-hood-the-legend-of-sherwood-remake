@@ -3096,7 +3096,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                let _ = self.finish_move_path(sim, request, waypoints);
+                self.finish_move_path(sim, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(
@@ -7589,6 +7589,7 @@ mod bow_command_body_parity_tests {
         let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
         engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
         engine
             .script_domains
