@@ -687,11 +687,6 @@ impl Converter {
 
         match ext.as_str() {
             // ── Structured → JSON ────────────────────────────────────
-            "cpf" => {
-                let dst = self.out_path(&format!("{rel}.json"), locale);
-                convert_cpf(&src, &dst)?;
-                self.converted += 1;
-            }
             "red" => {
                 let dst = self.out_path(&format!("{rel}.json"), locale);
                 convert_red(&src, &dst)?;
@@ -814,25 +809,15 @@ impl Converter {
             .ok_or_else(|| anyhow!("mission missing: {mission_name}"))?
             .src;
 
-        let proto_file = SbFile::open(&proto_path.to_string_lossy(), SB_FILE_READ)
-            .map_err(|e| anyhow!("open rhp: {e}"))?;
-        let mut proto_reader = ChunkReader::new(proto_file);
-        let format = {
-            let tag = proto_reader
-                .peek_next_chunk()
-                .map_err(|e| anyhow!("peek proto tag: {e:?}"))?;
-            LevelFormat::detect(&tag).map_err(|e| anyhow!("detect format: {e:?}"))?
-        };
-        let proto = load_proto_level(&mut proto_reader, format)
-            .map_err(|e| anyhow!("load proto: {e:?}"))?;
-
-        let mission_file = SbFile::open(&mission_path.to_string_lossy(), SB_FILE_READ)
-            .map_err(|e| anyhow!("open rhm: {e}"))?;
-        let mut mission_reader = ChunkReader::new(mission_file);
-        let beggar = self.beggar_civ_indices.clone();
-        let mission = load_mission(&mut mission_reader, format, &|idx| beggar.contains(&idx))
-            .map_err(|e| anyhow!("load mission: {e:?}"))?;
-        Ok((proto, mission))
+        parse_level_pair(&proto_path, &mission_path, &self.beggar_civ_indices).with_context(|| {
+            format!(
+                "parse level {}/{} ({} / {})",
+                proto_name,
+                mission_name,
+                proto_path.display(),
+                mission_path.display()
+            )
+        })
     }
 
     /// Load the shared sprite bank lazily; .rhs conversion is the only
@@ -1047,6 +1032,46 @@ mod tests {
     use robin_rs::multiplayer::content_identity::WebContentEdition;
     use std::fs;
     use std::path::Path;
+
+    #[test]
+    fn discovery_level_pair_preserves_resolution_and_parser_error_context() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("Data");
+        fs::create_dir_all(data.join("Levels")).unwrap();
+        let converter = super::Converter::new(data.clone(), temp.path().join("output"));
+        assert_eq!(
+            converter
+                .parse_level("proto", "mission")
+                .unwrap_err()
+                .to_string(),
+            "proto missing: proto"
+        );
+        let proto = data.join("Levels/proto.rhp");
+        fs::write(&proto, b"malformed proto").unwrap();
+        assert_eq!(
+            converter
+                .parse_level("proto", "mission")
+                .unwrap_err()
+                .to_string(),
+            "mission missing: mission"
+        );
+        let mission = data.join("Levels/mission.rhm");
+        fs::write(&mission, b"malformed mission").unwrap();
+        let direct =
+            super::parse_level_pair(&proto, &mission, &converter.beggar_civ_indices).unwrap_err();
+        let discovery = converter.parse_level("proto", "mission").unwrap_err();
+        assert_eq!(
+            discovery.root_cause().to_string(),
+            direct.root_cause().to_string()
+        );
+        let context = discovery.to_string();
+        assert!(context.contains("parse level proto/mission"), "{context}");
+        assert!(context.contains(&proto.display().to_string()), "{context}");
+        assert!(
+            context.contains(&mission.display().to_string()),
+            "{context}"
+        );
+    }
 
     #[test]
     fn level_animation_rhs_paths_follow_runtime_ambiance_lookup() {
@@ -1611,17 +1636,6 @@ fn collect_level_refs(proto: &LoadedProtoLevel, mission: &LoadedMission, out: &m
 // ---------------------------------------------------------------------------
 // Concrete file-format converters
 // ---------------------------------------------------------------------------
-
-fn convert_cpf(src: &Path, dst: &Path) -> Result<()> {
-    let mut file =
-        SbFile::open(&src.to_string_lossy(), SB_FILE_READ).map_err(|e| anyhow!("open cpf: {e}"))?;
-    let mut mgr = ProfileManager::new();
-    mgr.load_all_legacy_cpf(&mut file)
-        .map_err(|e| anyhow!("parse cpf: {e}"))?;
-    let document =
-        robin_engine::content_patch::profile_document(&mgr).map_err(anyhow::Error::msg)?;
-    write_json_pretty(dst, &document)
-}
 
 fn convert_red(src: &Path, dst: &Path) -> Result<()> {
     let desc = res_descr::load(&src.to_string_lossy()).context("loading .red")?;
