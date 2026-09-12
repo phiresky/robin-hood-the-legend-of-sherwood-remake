@@ -220,17 +220,18 @@ impl MissionBootstrap {
         &mut self,
         callbacks: &mut RustCallbacks,
         args: &crate::main_entry::MissionLaunch,
-    ) {
+    ) -> Result<(), String> {
         // A lost Sherwood campaign still needs a runtime for debriefing and
         // network/HTTP draining, but must not start play time or restart state.
         if !(self.game.is_sherwood && self.loaded.engine.campaign().get_ares() == 0) {
             self.start_campaign_clock();
-            self.setup_restart_or_sherwood(callbacks, args);
+            self.setup_restart_or_sherwood(callbacks, args)?;
         } else {
             self.loaded
                 .engine
                 .finish_mission_bootstrap(engine_api::MissionBootstrapCompletion::DebriefOnly);
         }
+        Ok(())
     }
 
     /// Capture the pristine restart state for a tactical mission. Fresh
@@ -241,7 +242,7 @@ impl MissionBootstrap {
         &mut self,
         callbacks: &mut RustCallbacks,
         args: &crate::main_entry::MissionLaunch,
-    ) {
+    ) -> Result<(), String> {
         let descriptor = self
             .game
             .mission_assets()
@@ -255,7 +256,7 @@ impl MissionBootstrap {
             descriptor.clone(),
             self.loaded.engine_rng_seed,
             self.loaded.engine_sim_config,
-        );
+        )?;
         let playing_back = args.replay_data.is_some() || args.replay.is_some();
         // Playback pins its frame-0 save markers in TimelineRuntime and replays
         // load-back records from those immutable snapshots. It must not create
@@ -293,6 +294,7 @@ impl MissionBootstrap {
                 }
             };
         }
+        Ok(())
     }
 
     /// Resolve persistence before opening recorder frame zero. Polling uses
@@ -397,7 +399,7 @@ impl MissionBootstrap {
         args: &crate::main_entry::MissionLaunch,
         contract: FrameContract,
         wait_for_multiplayer_start: bool,
-    ) -> MissionRuntime {
+    ) -> Result<MissionRuntime, MissionOutcome> {
         let mission_assets = self
             .game
             .mission_assets()
@@ -429,7 +431,7 @@ impl MissionBootstrap {
             )
         });
         let assets = Arc::new(self.loaded.assets);
-        let replay = init_replay_and_rollback(
+        let replay = match init_replay_and_rollback(
             &self.loaded.replay_campaign,
             Arc::clone(&assets),
             args,
@@ -439,7 +441,19 @@ impl MissionBootstrap {
             self.loaded.engine_sim_config,
             self.host.transport.net().is_some(),
             self.recorder.take(),
-        );
+        ) {
+            Ok(replay) => replay,
+            Err(error) => {
+                let (campaign, rng_seed, sim_config) =
+                    self.loaded.engine.into_campaign_and_simulation();
+                return Err(MissionOutcome::new(
+                    campaign,
+                    rng_seed,
+                    sim_config,
+                    Err(error),
+                ));
+            }
+        };
         let mut timeline = TimelineRuntime::new(
             replay,
             contract,
@@ -477,13 +491,13 @@ impl MissionBootstrap {
             .application_context()
             .attach_http_ingress()
             .expect("mission RPC requires initialized application transport");
-        MissionRuntime::new(
+        Ok(MissionRuntime::new(
             http,
             MissionWorld::new(self.host, self.game, manager, assets, self.loaded.dev),
             timeline,
             control,
             leaderboard,
-        )
+        ))
     }
 
     fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
@@ -502,27 +516,27 @@ impl AudioPreparedBootstrap {
         width: u32,
         height: u32,
         args: &crate::main_entry::MissionLaunch,
-    ) -> InteractiveMission {
+    ) -> Result<InteractiveMission, MissionOutcome> {
         let bootstrap = self.0;
         assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Interactive);
         let frontend = frontend.finish(width, height);
         let wait_for_multiplayer_start = bootstrap.host.transport.net().is_some();
-        InteractiveMission {
+        Ok(InteractiveMission {
             runtime: bootstrap.finish_runtime(
                 args,
                 FrameContract::Graphical,
                 wait_for_multiplayer_start,
-            ),
+            )?,
             frontend,
             campaign_transition: None,
-        }
+        })
     }
 
     fn finish_headless(
         self,
         args: &crate::main_entry::MissionLaunch,
         policy: HeadlessPolicy,
-    ) -> HeadlessMission {
+    ) -> Result<HeadlessMission, MissionOutcome> {
         let mut bootstrap = self.0;
         assert_eq!(bootstrap.spec.frontend, MissionFrontendKind::Headless);
         // Match graphical assembly's hashed name registration and seat
@@ -541,15 +555,15 @@ impl AudioPreparedBootstrap {
         );
         bootstrap.start_campaign_clock();
         let wait_for_multiplayer_start = bootstrap.host.transport.net().is_some();
-        HeadlessMission {
+        Ok(HeadlessMission {
             modals: super::session_policy::SessionModalScheduler::default(),
             runtime: bootstrap.finish_runtime(
                 args,
                 FrameContract::Headless,
                 wait_for_multiplayer_start,
-            ),
+            )?,
             policy,
-        }
+        })
     }
 
     /// Frontend resources may be consumed on failure, but mission ownership
@@ -1444,7 +1458,10 @@ impl HeadlessMissionBuilder {
                 ));
             }
         };
-        let mission = bootstrap.finish_headless(args, HeadlessPolicy::replay_runner());
+        let mission = match bootstrap.finish_headless(args, HeadlessPolicy::replay_runner()) {
+            Ok(mission) => mission,
+            Err(outcome) => return HeadlessBuildOutcome::Finished(outcome),
+        };
         HeadlessBuildOutcome::Ready(BuiltHeadlessMission { mission })
     }
 }
@@ -1692,9 +1709,21 @@ impl InteractiveMissionBuilder {
         };
         timer.step("frontend assembly");
 
-        bootstrap.0.prepare_interactive_entry(callbacks, args);
+        if let Err(error) = bootstrap.0.prepare_interactive_entry(callbacks, args) {
+            let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
+            return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                campaign,
+                rng_seed,
+                sim_config,
+                Err(error),
+            ));
+        }
         bootstrap.0.complete_restart_save(callbacks).await;
-        let mission = bootstrap.finish_interactive(frontend, window.width, window.height, args);
+        let mission =
+            match bootstrap.finish_interactive(frontend, window.width, window.height, args) {
+                Ok(mission) => mission,
+                Err(outcome) => return InteractiveBuildOutcome::Finished(outcome),
+            };
         timer.step("mission entry + HUD finish + runtime/replay init");
         timer.total();
         InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
@@ -2028,7 +2057,9 @@ mod tests {
             },
             ..Default::default()
         };
-        bootstrap.prepare_interactive_entry(&mut callbacks, &args);
+        bootstrap
+            .prepare_interactive_entry(&mut callbacks, &args)
+            .unwrap();
         assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert_eq!(
             bootstrap.loaded.engine.campaign().values[CampaignValue::MissionLength],
@@ -2037,7 +2068,8 @@ mod tests {
 
         let mut lost = scratch_bootstrap_fixture();
         lost.game.is_sherwood = true;
-        lost.prepare_interactive_entry(&mut callbacks, &args);
+        lost.prepare_interactive_entry(&mut callbacks, &args)
+            .unwrap();
         assert_eq!(
             lost.loaded.engine.campaign().values[CampaignValue::MissionLength],
             23
@@ -2117,7 +2149,9 @@ mod tests {
         assert!(matches!(prepared.0.restart_save, RestartSaveState::Absent));
         let mut bootstrap = *prepared.0;
         let files_before = std::fs::read_dir(directory.path()).unwrap().count();
-        bootstrap.prepare_interactive_entry(&mut callbacks, &args);
+        bootstrap
+            .prepare_interactive_entry(&mut callbacks, &args)
+            .unwrap();
         assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert!(!callbacks.save_manager.has_restart_save());
         let replay = super::super::replay_init::init_replay_and_rollback(
@@ -2130,7 +2164,8 @@ mod tests {
             bootstrap.loaded.engine_sim_config,
             false,
             None,
-        );
+        )
+        .unwrap();
         assert!(replay.player.is_some());
         assert!(replay.start_paused);
         let header = replay.player.as_ref().unwrap().header();
