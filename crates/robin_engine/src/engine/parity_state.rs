@@ -52,6 +52,7 @@ struct ParityEntityReference {
     index: u32,
 }
 
+#[cfg(test)]
 fn parity_entity_reference(id: EntityId) -> serde_json::Value {
     serde_json::to_value(typed_entity_reference(id))
         .expect("typed parity entity reference must serialize")
