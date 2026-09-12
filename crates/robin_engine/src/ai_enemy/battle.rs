@@ -1485,42 +1485,20 @@ impl EnemyAi {
         for _ in 0..5 {
             match decision {
                 Decision::Fight => {
-                    let target = self.get_new_primary_target_with_mult_override(
-                        PrimaryTargetFlags::UNOCCUPIED_PREFERRED,
-                        ctx,
-                        tick,
-                        Some(target_multiplicity),
-                    );
-                    if let Some(target) = target {
-                        self.base.primary_target = Some(target);
-                        self.attack_enemy(target.get(), ctx, tick, grid);
-                        if self
-                            .base
-                            .outbox
-                            .reentrant
-                            .reconsider_approach_completion_pending
-                        {
-                            // Attacking an enemy reconsiders the approach.
-                            // The original game constructs that approach synchronously,
-                            // so this couldn't-reach test runs only after its
-                            // typed route continuation. Keep the enclosing
-                            // decision loop on the same owner FIFO instead of
-                            // prematurely accepting/logging DECISION_FIGHT.
-                            self.base
-                                .outbox
-                                .reentrant
-                                .owner_work
-                                .push(crate::ai::AiOwnerWork::ResumeBattleFightAfterReconsider);
-                            return false;
-                        }
-                        if self.base.couldnt_reachpoint {
-                            self.base.couldnt_reachpoint = false;
-                            decision = Decision::Observe;
+                    match self.execute_fight_decision(
+                        target_multiplicity,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
                             continue;
                         }
-                    } else {
-                        decision = Decision::Observe;
-                        continue;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
@@ -1533,219 +1511,57 @@ impl EnemyAi {
                 }
 
                 Decision::LastReserve => {
-                    let target = self.get_new_primary_target_with_mult_override(
-                        PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-                        ctx,
-                        tick,
-                        Some(target_multiplicity),
-                    );
-                    self.base.primary_target = target;
-                    if ctx.self_action_state.is_sword() {
-                        if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BattleProvoke, 0..4)
-                            == 0
-                        {
-                            self.base
-                                .outbox
-                                .actor
-                                .launch_commands
-                                .push(crate::element::Command::Provoke);
-                        } else if let Some(target_pos) = self
-                            .find_fighter(target, tick)
-                            .map(|f| f.position)
-                            .or_else(|| ctx.entity_view(target).map(|view| view.position))
-                        {
-                            let d = pos_diff(&target_pos, &ctx.position);
-                            let dir = vec_to_sector(d.0, d.1);
-                            self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+                    match self.execute_last_reserve_decision(
+                        target_multiplicity,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
                         }
-                    } else {
-                        self.base.outbox.actor.enter_swordfight =
-                            Some(EnterSwordfightRequest::RaiseSword);
-                        self.base.outbox.actor.enter_swordfight_jump_line = None;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
-                    self.base.outbox.actor.set_focus(target);
-                    self.set_state_with_timer(
-                        AiState::Attacking,
-                        Substate::AttackingLastReserve,
-                        50,
-                        ctx,
-                    );
                 }
 
                 Decision::Observe => {
-                    let target = self.get_new_primary_target_with_mult_override(
-                        PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-                        ctx,
-                        tick,
-                        Some(target_multiplicity),
-                    );
-                    self.base.primary_target = target;
-                    self.base.outbox.actor.set_focus(target);
-                    if self.combat_trainer {
-                        self.base.set_emoticon(EmoticonType::XMark);
-                        self.set_state_with_timer(
-                            AiState::Attacking,
-                            Substate::AttackingApproachToObserve,
-                            1,
+                    match self.execute_observe_decision(
+                        target_multiplicity,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
                             ctx,
-                        );
-                    } else {
-                        // DECISION_OBSERVE uses the swordfight-observer
-                        // courage distance, not the proud-observer constant,
-                        // and launches a 50-tick timer even while approaching
-                        // so observers keep reconsidering if the active
-                        // fighter drops or the formation changes.
-                        // Primary-target replacement selects from the persistent
-                        // Them list, which can include an opponent outside
-                        // the nearby-fighter snapshot. Original dereferences
-                        // that selected actor directly for Position().
-                        let target = target
-                            .expect("Observe decision requires a primary target")
-                            .get();
-                        let target_pos = ctx
-                            .entity_view(target)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "Observe target {} is absent from owner {}'s live entity view",
-                                    target, self.base.me
-                                )
-                            })
-                            .position;
-                        self.base.seek_position = target_pos;
-                        let observe_distance = AiController::value_between(
-                            parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
-                            parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-                            self.get_courage() as u8,
-                        );
-                        // Original issues approach movement before changing state. Keep the
-                        // movement in the state change's synchronous actor-effect
-                        // prefix so a preceding stop-all request and its walking
-                        // replacement settle before FilterAIEvent.
-                        let first_new_order = self.base.outbox.actor.orders.len();
-                        self.base.go_near(
-                            target_pos,
-                            observe_distance as i32,
-                            GotoFlags::empty(),
-                            ctx,
-                        );
-                        if self.base.outbox.actor.orders.len() > first_new_order {
-                            // The original game constructs the nearby route before the
-                            // following emoticon, state-change, and timer updates
-                            // and inline unreachable-point test. Rust's path
-                            // construction is engine-owned, so suspend that
-                            // exact tail behind the movement actor boundary.
-                            let route_effects = std::mem::take(&mut self.base.outbox.actor);
-                            self.base
-                                .outbox
-                                .reentrant
-                                .owner_work
-                                .push(crate::ai::AiOwnerWork::ActorEffects(route_effects));
-                            self.base.outbox.reentrant.battle_observe_completion_pending = true;
-                            self.base.outbox.reentrant.owner_work.push(
-                                crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
-                                    target,
-                                    target_position: target_pos,
-                                },
-                            );
-                        } else {
-                            // Local approach fast exits already own their result,
-                            // so no engine round trip is required.
-                            self.resume_battle_observe_after_go_near(
-                                target,
-                                target_pos,
-                                tick.avenger_wait_position_for(target),
-                                ctx,
-                            );
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
                         }
-                        // The typed continuation owns normal logging and the
-                        // roof-fallback early return in both paths.
-                        return false;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
                 Decision::Shoot => {
-                    if ctx.remaining_arrows == 0 {
-                        decision = Decision::RunForNewArrows;
-                        continue;
-                    }
-                    // Pick best shot target.
-                    let target = self.propose_shot_target(sim, ctx, tick);
-                    // Shot-target selection uses the actors' shared multiplicity
-                    // scratch field: it resets every current Them entry, then
-                    // rebuilds claims from nearby friends in bow substates.
-                    // Preserve that side effect for a failed-shot fallback to
-                    // Observe/Fight, which immediately reuses the field in
-                    // primary-target replacement.
-                    let bow_targets: Vec<_> = self
-                        .base
-                        .list_us
-                        .iter()
-                        .copied()
-                        .filter(|&friend_handle| friend_handle != self.base.me)
-                        .filter_map(|friend_handle| {
-                            let friend = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
-                                panic!(
-                                    "friend {friend_handle} in list_us is absent from fighter snapshot"
-                                )
-                            });
-                            (friend.is_soldier
-                                && matches!(
-                                    friend.current_substate,
-                                    x if x == Substate::AttackingBowShooting as u32
-                                        || x == Substate::AttackingBowLoading as u32
-                                        || x == Substate::AttackingBowAiming as u32
-                                )
-                                && friend.primary_target.is_some())
-                                .then(|| friend.primary_target.map(AiEntityHandle::get))
-                                .flatten()
-                        })
-                        .collect();
-                    rebuild_battle_target_multiplicity_for_shot(
+                    match self.execute_shoot_decision(
                         target_multiplicity,
-                        &self.list_them,
-                        bow_targets.iter().copied(),
-                    );
-                    for target in self.list_them.iter().chain(bow_targets.iter()) {
-                        let count = target_multiplicity.get(target).copied().unwrap_or(0);
-                        global
-                            .primary_target_multiplicity_scratch
-                            .insert(*target, count);
-                    }
-                    if let Some(target) = target {
-                        self.base.primary_target = Some(target);
-                        self.base.outbox.actor.set_focus(target.get());
-                        // AIMING_TIME_FORMULA = (110 - shooting_ability) / 2.
-                        // Use the soldier's modified shooting ability
-                        // (with alcohol penalty) — *not* IQ — so the
-                        // bow-aim timer tracks `shooting`.
-                        if ctx.self_action_state.is_bow() {
-                            if self.base.current_substate == Substate::AttackingBowAiming {
-                                self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
-                                self.shoot_arrow_at(target.get(), ctx, tick);
-                            } else {
-                                let aim_time = ((110u32)
-                                    .saturating_sub(self.get_shooting_ability(ctx) as u32))
-                                    / 2;
-                                self.set_state(AiState::Attacking, Substate::AttackingBowAiming);
-                                self.base.launch_timer(aim_time.max(5), ctx.frame);
-                            }
-                        } else {
-                            self.base.stop_all();
-                            self.set_state(AiState::Attacking, Substate::AttackingBowLoading);
-                            self.base
-                                .outbox
-                                .actor
-                                .launch_commands
-                                .push(if self.enemy_seen_below {
-                                    crate::element::Command::EquipBowDown
-                                } else {
-                                    crate::element::Command::EquipBow
-                                });
+                        global,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
                         }
-                    } else {
-                        // No valid target — fall back to observe
-                        decision = Decision::ArcherObserve;
-                        continue;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
@@ -1780,86 +1596,35 @@ impl EnemyAi {
                 }
 
                 Decision::LookForHelp => {
-                    let target =
-                        self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
-                    self.base.primary_target = target;
-                    self.base.friends_are_alerted = true;
-                    // The original game immediately evaluates the primary target's position
-                    // for officer alerting. The selected target must still
-                    // resolve in the live entity view; neither cached fighter
-                    // geometry nor an older seek point can substitute for it.
-                    let center = ctx
-                        .expect_entity_view(
-                            target.expect("LookForHelp requires a primary target"),
-                            "LookForHelp primary target",
-                        )
-                        .position;
-                    // The original game derives this while building the ally list; reuse
-                    // that admission result rather than issuing a second set
-                    // of 360-degree visibility queries.
-                    let alerting_soldier_near = has_nearby_alerting_soldier(
-                        self.base.me,
-                        &self.base.list_us,
-                        tick.camp_soldiers
-                            .iter()
-                            .map(|cs| (cs.handle, cs.ai_substate)),
-                    );
-                    if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
-                        decision = Decision::Cassos;
-                        continue;
-                    } else {
-                        // Officer alerting requests an approach synchronously. Its route
-                        // construction can consume the paired random building
-                        // exit wait before control returns here to draw the
-                        // Cassos/Panic remark. Close the approach actor prefix
-                        // and resume this statement at the owner boundary so
-                        // Rust preserves that call-stack ordering.
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                &mut self.base.outbox.actor,
-                            )),
-                        );
-                        self.base.outbox.reentrant.look_for_help_completion_pending = true;
-                        self.base
-                            .outbox
-                            .reentrant
-                            .owner_work
-                            .push(crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer);
-                        // The continuation owns the single final battle log:
-                        // LookForHelp after success, Cassos after route failure.
-                        return false;
+                    match self.execute_look_for_help_decision(crate::ai_enemy::ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    }) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
+                        }
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
                 Decision::AlertSoldiers => {
-                    let target =
-                        self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
-                    self.base.primary_target = target;
-                    // The battle overview can become stale while membership is
-                    // rebuilt synchronously. Original treats a vanished target
-                    // exactly like a rejected officer attack command and falls
-                    // back to reserve; do not resolve the legal handle-0 sentinel
-                    // as a required entity view.
-                    let Some(target) = target else {
-                        tracing::warn!(
-                            me = self.base.me,
-                            "alert-soldiers decision lost its primary target; reserving instead"
-                        );
-                        decision = Decision::Reserve;
-                        continue;
-                    };
-                    self.base.friends_are_alerted = true;
-                    // DECISION_ALERT_SOLDIERS issues officer attack commands,
-                    // NOT AlertSoldiers, with the live target position.
-                    let center = ctx
-                        .expect_entity_view(target, "alert-soldiers primary target")
-                        .position;
-                    match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
-                        super::alert::CommandSoldiersStart::Pending => return true,
-                        super::alert::CommandSoldiersStart::Rejected => {
-                            decision = Decision::Reserve;
+                    match self.execute_alert_soldiers_decision(
+                        global,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
                             continue;
                         }
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
@@ -1935,341 +1700,71 @@ impl EnemyAi {
                 }
 
                 Decision::RunForNewArrows => {
-                    // Find nearest door with arrow reserves and run to it.
-                    self.base.say(Remark::OutOfAmmunition);
-
-                    // Remember target's position so the archer can sprint
-                    // back toward where the fight was after picking up
-                    // arrows. Writes unconditionally when
-                    // `primary_target != 0`; mirror that by falling back
-                    // to the entity view when the target isn't in the
-                    // per-tick fighter snapshot (off-grid /
-                    // dead-but-not-cleared / out of proximity range), so
-                    // we never leave a stale seek_position from a
-                    // previous state.
-                    if self.base.primary_target.is_some() {
-                        let target_pos = tick
-                            .nearby_fighters
-                            .iter()
-                            .find(|f| {
-                                Some(AiEntityHandle::new(f.handle)) == self.base.primary_target
-                            })
-                            .map(|f| f.position)
-                            .or_else(|| {
-                                ctx.entity_view(self.base.primary_target)
-                                    .map(|v| v.position)
-                            });
-                        if let Some(p) = target_pos {
-                            self.base.seek_position = p;
-                        }
-                    } else {
-                        self.base.seek_position = ctx.position;
-                    }
-
-                    // nearest-door search without a reference point. The same filter chain
-                    // as the civilian Panic flee: building doors only,
-                    // authorized for this NPC, skip the actor's own
-                    // building, distance by maximum norm with +500
-                    // sector-change / +300 layer-change malus. The
-                    // `arrow_reserves=true` arg adds the per-house
-                    // `HasArrowReserve` predicate (read from
-                    // `House::arrow_reserve`, loaded at level time from
-                    // the GUYS/CAVE tenant chunk). The `dangerous_house`
-                    // check is Lacklandist-only; the archer
-                    // RunForNewArrows path fires on Royalists, so the
-                    // gate is inert here — but we still mirror the camp
-                    // guard for correctness if a modded level ever runs
-                    // a Lacklandist archer.
-                    // PC-in-house checks are represented through the
-                    // shared house/door snapshot available on `global`.
-                    let my_building_num: Option<u16> = ctx
-                        .in_building
-                        .then_some(ctx.building_sector)
-                        .flatten()
-                        .map(u16::from);
-                    let my_sector_num: Option<u16> = ctx.position.sector.map(u16::from);
-                    let my_layer = ctx.position.level;
-                    let nearest_door_pos = {
-                        let mut best = None;
-                        let mut minimum_distance = u16::MAX;
-                        for door in global.door_seek_infos.iter() {
-                            if !matches!(door.door_type, crate::gate::DoorType::Building) {
-                                continue;
-                            }
-                            if !door.npc_villain_authorized_direct {
-                                continue;
-                            }
-                            if my_building_num == Some(door.sector_in) {
-                                continue;
-                            }
-                            // Arrow-reserve filter.
-                            let has_reserve = global
-                                .houses
-                                .iter()
-                                .find(|h| h.sector_index == door.sector_in as u32)
-                                .map(|h| h.arrow_reserve)
-                                .unwrap_or(false);
-                            if !has_reserve {
-                                continue;
-                            }
-                            let dx = (door.point_out.x - ctx.position.x).abs();
-                            let dy = (door.point_out.y - ctx.position.y).abs();
-                            let distance = crate::ai::legacy_nearest_door_distance(
-                                dx,
-                                dy,
-                                Some(door.sector_out) != my_sector_num,
-                                door.layer_out != my_layer,
-                            );
-                            if distance < minimum_distance {
-                                // Nearest-door selection rejects a Lacklandist's
-                                // otherwise-best candidate when its interior
-                                // already contains any PC. A rejected house
-                                // does not update the running minimum.
-                                let dangerous_house = ctx.is_hostile_to_player()
-                                    && global
-                                        .houses
-                                        .iter()
-                                        .find(|h| h.sector_index == door.sector_in as u32)
-                                        .is_some_and(|h| {
-                                            h.occupant_ids.iter().any(|id| {
-                                                matches!(id, crate::element::EntityId::Pc(_))
-                                            })
-                                        });
-                                if !dangerous_house {
-                                    best = Some(door.position_in);
-                                    minimum_distance = distance;
-                                }
-                            }
-                        }
-                        best
-                    };
-
-                    if let Some(door_pos) = nearest_door_pos {
-                        self.base
-                            .set_transient_emoticon(EmoticonType::XMark, 100, 0);
-                        self.go_to(
-                            AiState::Fleeing,
-                            Substate::FleeingRunForArrowReserves,
-                            door_pos,
-                            GotoFlags::RUN,
+                    match self.execute_run_for_new_arrows_decision(
+                        global,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
                             ctx,
-                        );
-                    } else {
-                        // No door found — fall back to flee
-                        decision = Decision::Cassos;
-                        continue;
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
+                        }
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
                 Decision::TooProudToAttack => {
-                    // Stand back and observe from a comfortable distance
-                    // while lesser soldiers fight.
-                    let target =
-                        self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
-                    self.base.primary_target = target;
-                    // The original game queries the primary target's position, whose actor
-                    // semantics differ from the literal fighter position: a
-                    // target currently passing a door resolves to the
-                    // committed destination-side gate point.  Prefer the
-                    // full Position() snapshot when target selection retained
-                    // the target for which this tick was built.  A target
-                    // selected synchronously during this decision has no
-                    // equivalent door snapshot yet, so use its live entity
-                    // view rather than silently substituting our own point.
-                    let target = target.expect("TooProudToAttack requires a primary target");
-                    let target_pos = if Some(target) == tick.primary_target_snapshot_handle {
-                        tick.primary_target_position.unwrap_or_else(|| {
-                            panic!("TooProudToAttack target {target} has no Position() snapshot")
-                        })
-                    } else {
-                        ctx.entity_view(target)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "TooProudToAttack newly selected target {target} disappeared"
-                                )
-                            })
-                            .position
-                    };
-                    let d = pos_diff(&target_pos, &ctx.position);
-                    let distance = iso_norm(d, ASPECT_RATIO);
-
-                    if distance < parameters_ai::PROUD_OBSERVER_MIN_DISTANCE as f32 {
-                        // Too close — step back.
-                        if let Some(goal) = self.propose_good_step_back_goal(
-                            target_pos,
-                            parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE,
-                            parameters_ai::PROUD_OBSERVER_MIN_DISTANCE,
+                    match self.execute_too_proud_to_attack_decision(
+                        old_substate,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
                             ctx,
+                            tick,
                             grid,
-                            ASPECT_RATIO,
-                        ) {
-                            self.go_to(
-                                AiState::Attacking,
-                                Substate::AttackingTooProudToAttackRetire,
-                                goal,
-                                GotoFlags::empty(),
-                                ctx,
-                            );
-                        } else {
-                            // Can't retreat — fight instead.
-                            decision = Decision::Fight;
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
                             continue;
                         }
-                    } else if distance > parameters_ai::PROUD_OBSERVER_MAX_DISTANCE as f32 {
-                        // Too far — approach.
-                        self.go_near(
-                            AiState::Attacking,
-                            Substate::AttackingTooProudToAttackApproach,
-                            target_pos,
-                            parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE as i32,
-                            GotoFlags::empty(),
-                            ctx,
-                        );
-                        if self.base.already_on_point {
-                            self.base.already_on_point = false;
-                            self.base.face_entity(target, ctx);
-                            self.set_state_with_timer(
-                                AiState::Attacking,
-                                Substate::AttackingTooProudToAttack,
-                                20,
-                                ctx,
-                            );
-                        }
-                    } else {
-                        // Good distance — face and observe.
-                        self.base.face_entity(target, ctx);
-                        self.base.outbox.actor.set_focus(self.base.primary_target);
-                        self.set_state_with_timer(
-                            AiState::Attacking,
-                            Substate::AttackingTooProudToAttack,
-                            20,
-                            ctx,
-                        );
-                    }
-
-                    // Only on first battle decision entry.
-                    if old_substate == Substate::AttackingReactiontime
-                        || old_substate == Substate::AttackingReactiontimeRunning
-                    {
-                        if self.is_vip {
-                            self.base.say(Remark::VipProudDontFight);
-                        } else {
-                            self.base.say(Remark::ProudDontFight);
-                        }
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
                 Decision::ArcherStepBack => {
-                    // Archer steps back from enemy that's too close, then
-                    // re-evaluates.
-                    let target =
-                        self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
-                    self.base.primary_target = target;
-                    // The target selected while choosing ArcherStepBack can
-                    // disappear before this execution-time reselection.
-                    // Original reports that lifecycle race and retries the
-                    // decision as Shoot, whose own no-target path falls back
-                    // to ArcherObserve.
-                    let Some(target) = target else {
-                        tracing::warn!(
-                            me = self.base.me,
-                            "archer step-back decision lost its primary target; shooting instead"
-                        );
-                        decision = Decision::Shoot;
-                        continue;
-                    };
-                    // The original game re-reads the primary target's position after
-                    // primary-target replacement. In particular, a door-passing
-                    // target contributes its committed gate side rather than
-                    // the raw interpolated fighter position.
-                    let enemy_pos = self.archer_enemy_position(target, ctx);
-                    self.base.seek_position = enemy_pos;
-                    if let Some(goal) = self.propose_good_step_back_goal(
-                        enemy_pos,
-                        parameters_ai::ARCHER_GOOD_DISTANCE,
-                        parameters_ai::ARCHER_MIN_DISTANCE,
+                    match self.execute_archer_step_back_decision(crate::ai_enemy::ThinkEnv {
+                        sim,
                         ctx,
+                        tick,
                         grid,
-                        ASPECT_RATIO,
-                    ) {
-                        let debug_step_back = archer_step_back_lifecycle_debug_matches(
-                            ctx.frame,
-                            ctx.original_creation_order,
-                            self.base.me,
-                        );
-                        if debug_step_back {
-                            eprintln!(
-                                "[ARCHERSTEP frame={} co={:?} me={} phase=decision old_substate={old_substate:?} target={target} owner_pos={:?} enemy_pos={enemy_pos:?} goal={goal:?} animation={:?} action_state={:?} reached_done={} timer_running={} timer_ring={} already_on_point={}]",
-                                ctx.frame,
-                                ctx.original_creation_order,
-                                self.base.me,
-                                ctx.position,
-                                ctx.self_animation,
-                                ctx.self_action_state,
-                                ctx.self_animation_reached_action_done,
-                                self.base.timer_is_running,
-                                self.base.when_does_timer_ring,
-                                self.base.already_on_point,
-                            );
+                    }) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
                         }
-                        self.go_to(
-                            AiState::Attacking,
-                            Substate::AttackingArcherRetireFromCombat,
-                            goal,
-                            GotoFlags::RUN,
-                            ctx,
-                        );
-                        if debug_step_back {
-                            eprintln!(
-                                "[ARCHERSTEP frame={} co={:?} me={} phase=after_goto state={:?} substate={:?} already_on_point={} couldnt_reachpoint={} halt={} additional_halts={} order_count={}]",
-                                ctx.frame,
-                                ctx.original_creation_order,
-                                self.base.me,
-                                self.base.current_state,
-                                self.base.current_substate,
-                                self.base.already_on_point,
-                                self.base.couldnt_reachpoint,
-                                self.base.outbox.actor.halt,
-                                self.base.outbox.actor.additional_halts,
-                                self.base.outbox.actor.orders.len(),
-                            );
-                        }
-                    } else {
-                        // Can't step back — fall back to shooting.
-                        decision = Decision::Shoot;
-                        continue;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
                 Decision::ArcherObserve => {
-                    let target = self.get_new_primary_target_with_mult_override(
-                        PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-                        ctx,
-                        tick,
-                        Some(target_multiplicity),
-                    );
-                    self.base.primary_target = target;
-                    self.base.outbox.actor.set_focus(target);
-
-                    if ctx.self_action_state.is_bow() {
-                        self.set_state_with_timer(
-                            AiState::Attacking,
-                            Substate::AttackingBowObserving,
-                            50,
+                    match self.execute_archer_observe_decision(
+                        target_multiplicity,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
                             ctx,
-                        );
-                    } else {
-                        self.base.stop_all();
-                        self.base
-                            .outbox
-                            .actor
-                            .launch_commands
-                            .push(if self.enemy_seen_below {
-                                crate::element::Command::EquipBowDown
-                            } else {
-                                crate::element::Command::EquipBow
-                            });
-                        self.set_state(AiState::Attacking, Substate::AttackingBowObservingLoading);
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
+                        }
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
@@ -2285,168 +1780,38 @@ impl EnemyAi {
                 }
 
                 Decision::CoverBehindShieldBearer => {
-                    // Run to cover position behind shield bearer.
-                    self.update_shield_bearer_before_me(Some(AiEntityHandle::new(
+                    match self.execute_cover_behind_shield_bearer_decision(
                         cover_shield_bearer,
-                    )));
-                    // Adopt the shield bearer's primary target.
-                    let Some(sb_snap) = self.find_fighter(cover_shield_bearer, tick) else {
-                        self.update_shield_bearer_before_me(None);
-                        decision = Decision::Shoot;
-                        continue;
-                    };
-                    self.base.primary_target = sb_snap.primary_target;
-
-                    // The original game's behind-shield-bearer position calculation returns false
-                    // when the shield bearer has no primary target.  Do not
-                    // invent a target position here: the failed cover decision
-                    // must flow through Shoot (and potentially ArcherObserve).
-                    if self.base.primary_target.is_none() {
-                        self.update_shield_bearer_before_me(None);
-                        decision = Decision::Shoot;
-                        continue;
-                    }
-                    if let Some(cover_pos) = self.compute_position_behind_shield_bearer(
-                        self.shield_bearer_before_me
-                            .expect("cover formation lost its shield bearer")
-                            .get(),
-                        ctx,
-                        tick,
-                        grid,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
                     ) {
-                        // The original game passes the seek position as the output
-                        // argument to the position calculation behind the shield bearer.
-                        // The candidate therefore becomes observable as soon
-                        // as that call succeeds, even when the following view
-                        // radius check rejects it and the decision falls back
-                        // to Shoot/ArcherObserve.
-                        self.base.seek_position = cover_pos;
-                        // Cover point must be within view radius of the
-                        // primary target, otherwise the archer can't see
-                        // the enemy from behind the shield bearer.
-                        let target_pos = self
-                            .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.position)
-                            .or_else(|| {
-                                ctx.entity_view(self.base.primary_target)
-                                    .map(|view| view.position)
-                            })
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "shield bearer target {:?} is missing from the live AI snapshot",
-                                    self.base.primary_target
-                                )
-                            });
-                        let d = pos_diff(&target_pos, &cover_pos);
-                        if crate::ai_enemy::battle_decision_debug_enabled() {
-                            eprintln!(
-                                "COVER_ARM frame={} me={} bearer={} cover={:?} target={:?} target_pos={:?} sq={} sq_view={} grid={}",
-                                ctx.frame,
-                                self.base.me,
-                                cover_shield_bearer,
-                                cover_pos,
-                                self.base.primary_target,
-                                target_pos,
-                                square_norm(d),
-                                ctx.sq_standard_view_radius,
-                                grid.is_some(),
-                            );
-                        }
-                        if square_norm(d) >= ctx.sq_standard_view_radius {
-                            // Cover point too far from target — fall back to shoot
-                            self.update_shield_bearer_before_me(None);
-                            decision = Decision::Shoot;
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
                             continue;
                         }
-
-                        self.go_to(
-                            AiState::Attacking,
-                            Substate::AttackingBowRunningBehindShieldBearer,
-                            cover_pos,
-                            GotoFlags::RUN,
-                            ctx,
-                        );
-
-                        if self.base.already_on_point {
-                            // Already in position — check facing
-                            let target_pos = self
-                                .find_fighter(self.base.primary_target, tick)
-                                .map(|f| f.position)
-                                .unwrap_or(cover_pos);
-                            let dx = target_pos.x - ctx.position.x;
-                            let dy = target_pos.y - ctx.position.y;
-                            let desired_dir = vec_to_sector(dx, dy);
-                            if ctx.direction == desired_dir {
-                                self.base.already_on_point = false;
-                                decision = Decision::Shoot;
-                                continue;
-                            }
-                        }
-                        // Tell the shield bearer to announce the formation.
-                        self.base
-                            .outbox
-                            .reentrant
-                            .cross_npc_actions
-                            .push(CrossNpcAction::Say {
-                                target: cover_shield_bearer,
-                                remark: Remark::ArchersBehindShieldBearers,
-                            });
-                    } else {
-                        if crate::ai_enemy::battle_decision_debug_enabled() {
-                            eprintln!(
-                                "COVER_ARM frame={} me={} bearer={} cover=None grid={}",
-                                ctx.frame,
-                                self.base.me,
-                                cover_shield_bearer,
-                                grid.is_some(),
-                            );
-                        }
-                        // Can't compute position — give up cover attempt.
-                        self.update_shield_bearer_before_me(None);
-                        decision = Decision::Shoot;
-                        continue;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
                 Decision::RunToArcheryPoint => {
-                    // Run to the next waypoint on the archery path.
-                    if let Some(wp) = self.archery_path_get_waypoint(global) {
-                        // Remember enemy elevation for later bend decision
-                        self.enemy_had_this_elevation = self
-                            .find_fighter(self.base.primary_target, tick)
-                            .map(|f| f.elevation as u16)
-                            .unwrap_or(0);
-                        if wp.is_shooting_point {
-                            // Run directly to shooting point (final
-                            // sprint). Shooting-point selection writes the
-                            // owner back so other archers scanning
-                            // `pt.owner.is_none()` see the point as
-                            // reserved.
-                            if let Some(sec_idx) = self.my_archery_sector {
-                                let pt_idx = u16::from(self.my_archery_point_index);
-                                self.set_my_shooting_point(global, Some((sec_idx, pt_idx)));
-                            }
-                            self.go_to(
-                                AiState::Attacking,
-                                Substate::AttackingArcherRunOnShootingPathFinalSprint,
-                                wp.position,
-                                GotoFlags::RUN,
-                                ctx,
-                            );
-                        } else {
-                            // Run to first waypoint on path
-                            self.go_to(
-                                AiState::Attacking,
-                                Substate::AttackingArcherRunOnShootingPath,
-                                wp.position,
-                                GotoFlags::RUN | GotoFlags::DONT_STOP,
-                                ctx,
-                            );
+                    match self.execute_run_to_archery_point_decision(
+                        global,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
+                    ) {
+                        std::ops::ControlFlow::Continue(next) => {
+                            decision = next;
+                            continue;
                         }
-                    } else {
-                        // Something went wrong — fall back to shoot
-                        decision = Decision::Shoot;
-                        continue;
+                        std::ops::ControlFlow::Break(result) => return result,
                     }
                 }
 
@@ -4449,4 +3814,888 @@ fn battle_friend_claim_uses_primary_target_not_swordfight_opponent() {
 
     assert_eq!(multiplicity[&live_primary_target], 2);
     assert_eq!(multiplicity[&swordfight_opponent], 0);
+}
+
+impl EnemyAi {
+    fn execute_fight_decision(
+        &mut self,
+        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        let target = self.get_new_primary_target_with_mult_override(
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED,
+            ctx,
+            tick,
+            Some(target_multiplicity),
+        );
+        if let Some(target) = target {
+            self.base.primary_target = Some(target);
+            self.attack_enemy(target.get(), ctx, tick, grid);
+            if self
+                .base
+                .outbox
+                .reentrant
+                .reconsider_approach_completion_pending
+            {
+                // Attacking an enemy reconsiders the approach.
+                // The original game constructs that approach synchronously,
+                // so this couldn't-reach test runs only after its
+                // typed route continuation. Keep the enclosing
+                // decision loop on the same owner FIFO instead of
+                // prematurely accepting/logging DECISION_FIGHT.
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ResumeBattleFightAfterReconsider);
+                return std::ops::ControlFlow::Break(false);
+            }
+            if self.base.couldnt_reachpoint {
+                self.base.couldnt_reachpoint = false;
+                return std::ops::ControlFlow::Continue(Decision::Observe);
+            }
+        } else {
+            return std::ops::ControlFlow::Continue(Decision::Observe);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_last_reserve_decision(
+        &mut self,
+        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { sim, ctx, tick, .. } = env;
+        let target = self.get_new_primary_target_with_mult_override(
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+            ctx,
+            tick,
+            Some(target_multiplicity),
+        );
+        self.base.primary_target = target;
+        if ctx.self_action_state.is_sword() {
+            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::BattleProvoke, 0..4) == 0 {
+                self.base
+                    .outbox
+                    .actor
+                    .launch_commands
+                    .push(crate::element::Command::Provoke);
+            } else if let Some(target_pos) = self
+                .find_fighter(target, tick)
+                .map(|f| f.position)
+                .or_else(|| ctx.entity_view(target).map(|view| view.position))
+            {
+                let d = pos_diff(&target_pos, &ctx.position);
+                let dir = vec_to_sector(d.0, d.1);
+                self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
+            }
+        } else {
+            self.base.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
+            self.base.outbox.actor.enter_swordfight_jump_line = None;
+        }
+        self.base.outbox.actor.set_focus(target);
+        self.set_state_with_timer(AiState::Attacking, Substate::AttackingLastReserve, 50, ctx);
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_observe_decision(
+        &mut self,
+        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        let target = self.get_new_primary_target_with_mult_override(
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+            ctx,
+            tick,
+            Some(target_multiplicity),
+        );
+        self.base.primary_target = target;
+        self.base.outbox.actor.set_focus(target);
+        if self.combat_trainer {
+            self.base.set_emoticon(EmoticonType::XMark);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingApproachToObserve,
+                1,
+                ctx,
+            );
+        } else {
+            // DECISION_OBSERVE uses the swordfight-observer
+            // courage distance, not the proud-observer constant,
+            // and launches a 50-tick timer even while approaching
+            // so observers keep reconsidering if the active
+            // fighter drops or the formation changes.
+            // Primary-target replacement selects from the persistent
+            // Them list, which can include an opponent outside
+            // the nearby-fighter snapshot. Original dereferences
+            // that selected actor directly for Position().
+            let target = target
+                .expect("Observe decision requires a primary target")
+                .get();
+            let target_pos = ctx
+                .entity_view(target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Observe target {} is absent from owner {}'s live entity view",
+                        target, self.base.me
+                    )
+                })
+                .position;
+            self.base.seek_position = target_pos;
+            let observe_distance = AiController::value_between(
+                parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
+                parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
+                self.get_courage() as u8,
+            );
+            // Original issues approach movement before changing state. Keep the
+            // movement in the state change's synchronous actor-effect
+            // prefix so a preceding stop-all request and its walking
+            // replacement settle before FilterAIEvent.
+            let first_new_order = self.base.outbox.actor.orders.len();
+            self.base
+                .go_near(target_pos, observe_distance as i32, GotoFlags::empty(), ctx);
+            if self.base.outbox.actor.orders.len() > first_new_order {
+                // The original game constructs the nearby route before the
+                // following emoticon, state-change, and timer updates
+                // and inline unreachable-point test. Rust's path
+                // construction is engine-owned, so suspend that
+                // exact tail behind the movement actor boundary.
+                let route_effects = std::mem::take(&mut self.base.outbox.actor);
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::ActorEffects(route_effects));
+                self.base.outbox.reentrant.battle_observe_completion_pending = true;
+                self.base.outbox.reentrant.owner_work.push(
+                    crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
+                        target,
+                        target_position: target_pos,
+                    },
+                );
+            } else {
+                // Local approach fast exits already own their result,
+                // so no engine round trip is required.
+                self.resume_battle_observe_after_go_near(
+                    target,
+                    target_pos,
+                    tick.avenger_wait_position_for(target),
+                    ctx,
+                );
+            }
+            // The typed continuation owns normal logging and the
+            // roof-fallback early return in both paths.
+            return std::ops::ControlFlow::Break(false);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_shoot_decision(
+        &mut self,
+        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        global: &mut AiGlobalState,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { sim, ctx, tick, .. } = env;
+        if ctx.remaining_arrows == 0 {
+            return std::ops::ControlFlow::Continue(Decision::RunForNewArrows);
+        }
+        // Pick best shot target.
+        let target = self.propose_shot_target(sim, ctx, tick);
+        // Shot-target selection uses the actors' shared multiplicity
+        // scratch field: it resets every current Them entry, then
+        // rebuilds claims from nearby friends in bow substates.
+        // Preserve that side effect for a failed-shot fallback to
+        // Observe/Fight, which immediately reuses the field in
+        // primary-target replacement.
+        let bow_targets: Vec<_> = self
+            .base
+            .list_us
+            .iter()
+            .copied()
+            .filter(|&friend_handle| friend_handle != self.base.me)
+            .filter_map(|friend_handle| {
+                let friend = self.find_fighter(friend_handle, tick).unwrap_or_else(|| {
+                    panic!("friend {friend_handle} in list_us is absent from fighter snapshot")
+                });
+                (friend.is_soldier
+                    && matches!(
+                        friend.current_substate,
+                        x if x == Substate::AttackingBowShooting as u32
+                            || x == Substate::AttackingBowLoading as u32
+                            || x == Substate::AttackingBowAiming as u32
+                    )
+                    && friend.primary_target.is_some())
+                .then(|| friend.primary_target.map(AiEntityHandle::get))
+                .flatten()
+            })
+            .collect();
+        rebuild_battle_target_multiplicity_for_shot(
+            target_multiplicity,
+            &self.list_them,
+            bow_targets.iter().copied(),
+        );
+        for target in self.list_them.iter().chain(bow_targets.iter()) {
+            let count = target_multiplicity.get(target).copied().unwrap_or(0);
+            global
+                .primary_target_multiplicity_scratch
+                .insert(*target, count);
+        }
+        if let Some(target) = target {
+            self.base.primary_target = Some(target);
+            self.base.outbox.actor.set_focus(target.get());
+            // AIMING_TIME_FORMULA = (110 - shooting_ability) / 2.
+            // Use the soldier's modified shooting ability
+            // (with alcohol penalty) — *not* IQ — so the
+            // bow-aim timer tracks `shooting`.
+            if ctx.self_action_state.is_bow() {
+                if self.base.current_substate == Substate::AttackingBowAiming {
+                    self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
+                    self.shoot_arrow_at(target.get(), ctx, tick);
+                } else {
+                    let aim_time =
+                        ((110u32).saturating_sub(self.get_shooting_ability(ctx) as u32)) / 2;
+                    self.set_state(AiState::Attacking, Substate::AttackingBowAiming);
+                    self.base.launch_timer(aim_time.max(5), ctx.frame);
+                }
+            } else {
+                self.base.stop_all();
+                self.set_state(AiState::Attacking, Substate::AttackingBowLoading);
+                self.base
+                    .outbox
+                    .actor
+                    .launch_commands
+                    .push(if self.enemy_seen_below {
+                        crate::element::Command::EquipBowDown
+                    } else {
+                        crate::element::Command::EquipBow
+                    });
+            }
+        } else {
+            // No valid target — fall back to observe
+            return std::ops::ControlFlow::Continue(Decision::ArcherObserve);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_look_for_help_decision(
+        &mut self,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { sim, ctx, tick, .. } = env;
+        let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
+        self.base.primary_target = target;
+        self.base.friends_are_alerted = true;
+        // The original game immediately evaluates the primary target's position
+        // for officer alerting. The selected target must still
+        // resolve in the live entity view; neither cached fighter
+        // geometry nor an older seek point can substitute for it.
+        let center = ctx
+            .expect_entity_view(
+                target.expect("LookForHelp requires a primary target"),
+                "LookForHelp primary target",
+            )
+            .position;
+        // The original game derives this while building the ally list; reuse
+        // that admission result rather than issuing a second set
+        // of 360-degree visibility queries.
+        let alerting_soldier_near = has_nearby_alerting_soldier(
+            self.base.me,
+            &self.base.list_us,
+            tick.camp_soldiers
+                .iter()
+                .map(|cs| (cs.handle, cs.ai_substate)),
+        );
+        if alerting_soldier_near || !self.alert_officer(sim, center, 0, ctx, tick) {
+            return std::ops::ControlFlow::Continue(Decision::Cassos);
+        } else {
+            // Officer alerting requests an approach synchronously. Its route
+            // construction can consume the paired random building
+            // exit wait before control returns here to draw the
+            // Cassos/Panic remark. Close the approach actor prefix
+            // and resume this statement at the owner boundary so
+            // Rust preserves that call-stack ordering.
+            self.base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                    &mut self.base.outbox.actor,
+                )));
+            self.base.outbox.reentrant.look_for_help_completion_pending = true;
+            self.base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer);
+            // The continuation owns the single final battle log:
+            // LookForHelp after success, Cassos after route failure.
+            return std::ops::ControlFlow::Break(false);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_alert_soldiers_decision(
+        &mut self,
+        global: &mut AiGlobalState,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
+        self.base.primary_target = target;
+        // The battle overview can become stale while membership is
+        // rebuilt synchronously. Original treats a vanished target
+        // exactly like a rejected officer attack command and falls
+        // back to reserve; do not resolve the legal handle-0 sentinel
+        // as a required entity view.
+        let Some(target) = target else {
+            tracing::warn!(
+                me = self.base.me,
+                "alert-soldiers decision lost its primary target; reserving instead"
+            );
+            return std::ops::ControlFlow::Continue(Decision::Reserve);
+        };
+        self.base.friends_are_alerted = true;
+        // DECISION_ALERT_SOLDIERS issues officer attack commands,
+        // NOT AlertSoldiers, with the live target position.
+        let center = ctx
+            .expect_entity_view(target, "alert-soldiers primary target")
+            .position;
+        match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
+            super::alert::CommandSoldiersStart::Pending => return true,
+            super::alert::CommandSoldiersStart::Rejected => {
+                return std::ops::ControlFlow::Continue(Decision::Reserve);
+            }
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_run_for_new_arrows_decision(
+        &mut self,
+        global: &mut AiGlobalState,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        // Find nearest door with arrow reserves and run to it.
+        self.base.say(Remark::OutOfAmmunition);
+
+        // Remember target's position so the archer can sprint
+        // back toward where the fight was after picking up
+        // arrows. Writes unconditionally when
+        // `primary_target != 0`; mirror that by falling back
+        // to the entity view when the target isn't in the
+        // per-tick fighter snapshot (off-grid /
+        // dead-but-not-cleared / out of proximity range), so
+        // we never leave a stale seek_position from a
+        // previous state.
+        if self.base.primary_target.is_some() {
+            let target_pos = tick
+                .nearby_fighters
+                .iter()
+                .find(|f| Some(AiEntityHandle::new(f.handle)) == self.base.primary_target)
+                .map(|f| f.position)
+                .or_else(|| {
+                    ctx.entity_view(self.base.primary_target)
+                        .map(|v| v.position)
+                });
+            if let Some(p) = target_pos {
+                self.base.seek_position = p;
+            }
+        } else {
+            self.base.seek_position = ctx.position;
+        }
+
+        // nearest-door search without a reference point. The same filter chain
+        // as the civilian Panic flee: building doors only,
+        // authorized for this NPC, skip the actor's own
+        // building, distance by maximum norm with +500
+        // sector-change / +300 layer-change malus. The
+        // `arrow_reserves=true` arg adds the per-house
+        // `HasArrowReserve` predicate (read from
+        // `House::arrow_reserve`, loaded at level time from
+        // the GUYS/CAVE tenant chunk). The `dangerous_house`
+        // check is Lacklandist-only; the archer
+        // RunForNewArrows path fires on Royalists, so the
+        // gate is inert here — but we still mirror the camp
+        // guard for correctness if a modded level ever runs
+        // a Lacklandist archer.
+        // PC-in-house checks are represented through the
+        // shared house/door snapshot available on `global`.
+        let my_building_num: Option<u16> = ctx
+            .in_building
+            .then_some(ctx.building_sector)
+            .flatten()
+            .map(u16::from);
+        let my_sector_num: Option<u16> = ctx.position.sector.map(u16::from);
+        let my_layer = ctx.position.level;
+        let nearest_door_pos = {
+            let mut best = None;
+            let mut minimum_distance = u16::MAX;
+            for door in global.door_seek_infos.iter() {
+                if !matches!(door.door_type, crate::gate::DoorType::Building) {
+                    continue;
+                }
+                if !door.npc_villain_authorized_direct {
+                    continue;
+                }
+                if my_building_num == Some(door.sector_in) {
+                    continue;
+                }
+                // Arrow-reserve filter.
+                let has_reserve = global
+                    .houses
+                    .iter()
+                    .find(|h| h.sector_index == door.sector_in as u32)
+                    .map(|h| h.arrow_reserve)
+                    .unwrap_or(false);
+                if !has_reserve {
+                    continue;
+                }
+                let dx = (door.point_out.x - ctx.position.x).abs();
+                let dy = (door.point_out.y - ctx.position.y).abs();
+                let distance = crate::ai::legacy_nearest_door_distance(
+                    dx,
+                    dy,
+                    Some(door.sector_out) != my_sector_num,
+                    door.layer_out != my_layer,
+                );
+                if distance < minimum_distance {
+                    // Nearest-door selection rejects a Lacklandist's
+                    // otherwise-best candidate when its interior
+                    // already contains any PC. A rejected house
+                    // does not update the running minimum.
+                    let dangerous_house = ctx.is_hostile_to_player()
+                        && global
+                            .houses
+                            .iter()
+                            .find(|h| h.sector_index == door.sector_in as u32)
+                            .is_some_and(|h| {
+                                h.occupant_ids
+                                    .iter()
+                                    .any(|id| matches!(id, crate::element::EntityId::Pc(_)))
+                            });
+                    if !dangerous_house {
+                        best = Some(door.position_in);
+                        minimum_distance = distance;
+                    }
+                }
+            }
+            best
+        };
+
+        if let Some(door_pos) = nearest_door_pos {
+            self.base
+                .set_transient_emoticon(EmoticonType::XMark, 100, 0);
+            self.go_to(
+                AiState::Fleeing,
+                Substate::FleeingRunForArrowReserves,
+                door_pos,
+                GotoFlags::RUN,
+                ctx,
+            );
+        } else {
+            // No door found — fall back to flee
+            return std::ops::ControlFlow::Continue(Decision::Cassos);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_too_proud_to_attack_decision(
+        &mut self,
+        old_substate: Substate,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        // Stand back and observe from a comfortable distance
+        // while lesser soldiers fight.
+        let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
+        self.base.primary_target = target;
+        // The original game queries the primary target's position, whose actor
+        // semantics differ from the literal fighter position: a
+        // target currently passing a door resolves to the
+        // committed destination-side gate point.  Prefer the
+        // full Position() snapshot when target selection retained
+        // the target for which this tick was built.  A target
+        // selected synchronously during this decision has no
+        // equivalent door snapshot yet, so use its live entity
+        // view rather than silently substituting our own point.
+        let target = target.expect("TooProudToAttack requires a primary target");
+        let target_pos = if Some(target) == tick.primary_target_snapshot_handle {
+            tick.primary_target_position.unwrap_or_else(|| {
+                panic!("TooProudToAttack target {target} has no Position() snapshot")
+            })
+        } else {
+            ctx.entity_view(target)
+                .unwrap_or_else(|| {
+                    panic!("TooProudToAttack newly selected target {target} disappeared")
+                })
+                .position
+        };
+        let d = pos_diff(&target_pos, &ctx.position);
+        let distance = iso_norm(d, ASPECT_RATIO);
+
+        if distance < parameters_ai::PROUD_OBSERVER_MIN_DISTANCE as f32 {
+            // Too close — step back.
+            if let Some(goal) = self.propose_good_step_back_goal(
+                target_pos,
+                parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE,
+                parameters_ai::PROUD_OBSERVER_MIN_DISTANCE,
+                ctx,
+                grid,
+                ASPECT_RATIO,
+            ) {
+                self.go_to(
+                    AiState::Attacking,
+                    Substate::AttackingTooProudToAttackRetire,
+                    goal,
+                    GotoFlags::empty(),
+                    ctx,
+                );
+            } else {
+                // Can't retreat — fight instead.
+                return std::ops::ControlFlow::Continue(Decision::Fight);
+            }
+        } else if distance > parameters_ai::PROUD_OBSERVER_MAX_DISTANCE as f32 {
+            // Too far — approach.
+            self.go_near(
+                AiState::Attacking,
+                Substate::AttackingTooProudToAttackApproach,
+                target_pos,
+                parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE as i32,
+                GotoFlags::empty(),
+                ctx,
+            );
+            if self.base.already_on_point {
+                self.base.already_on_point = false;
+                self.base.face_entity(target, ctx);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingTooProudToAttack,
+                    20,
+                    ctx,
+                );
+            }
+        } else {
+            // Good distance — face and observe.
+            self.base.face_entity(target, ctx);
+            self.base.outbox.actor.set_focus(self.base.primary_target);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingTooProudToAttack,
+                20,
+                ctx,
+            );
+        }
+
+        // Only on first battle decision entry.
+        if old_substate == Substate::AttackingReactiontime
+            || old_substate == Substate::AttackingReactiontimeRunning
+        {
+            if self.is_vip {
+                self.base.say(Remark::VipProudDontFight);
+            } else {
+                self.base.say(Remark::ProudDontFight);
+            }
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_archer_step_back_decision(
+        &mut self,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        // Archer steps back from enemy that's too close, then
+        // re-evaluates.
+        let target = self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
+        self.base.primary_target = target;
+        // The target selected while choosing ArcherStepBack can
+        // disappear before this execution-time reselection.
+        // Original reports that lifecycle race and retries the
+        // decision as Shoot, whose own no-target path falls back
+        // to ArcherObserve.
+        let Some(target) = target else {
+            tracing::warn!(
+                me = self.base.me,
+                "archer step-back decision lost its primary target; shooting instead"
+            );
+            return std::ops::ControlFlow::Continue(Decision::Shoot);
+        };
+        // The original game re-reads the primary target's position after
+        // primary-target replacement. In particular, a door-passing
+        // target contributes its committed gate side rather than
+        // the raw interpolated fighter position.
+        let enemy_pos = self.archer_enemy_position(target, ctx);
+        self.base.seek_position = enemy_pos;
+        if let Some(goal) = self.propose_good_step_back_goal(
+            enemy_pos,
+            parameters_ai::ARCHER_GOOD_DISTANCE,
+            parameters_ai::ARCHER_MIN_DISTANCE,
+            ctx,
+            grid,
+            ASPECT_RATIO,
+        ) {
+            let debug_step_back = archer_step_back_lifecycle_debug_matches(
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+            );
+            if debug_step_back {
+                eprintln!(
+                    "[ARCHERSTEP frame={} co={:?} me={} phase=decision old_substate={old_substate:?} target={target} owner_pos={:?} enemy_pos={enemy_pos:?} goal={goal:?} animation={:?} action_state={:?} reached_done={} timer_running={} timer_ring={} already_on_point={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    ctx.position,
+                    ctx.self_animation,
+                    ctx.self_action_state,
+                    ctx.self_animation_reached_action_done,
+                    self.base.timer_is_running,
+                    self.base.when_does_timer_ring,
+                    self.base.already_on_point,
+                );
+            }
+            self.go_to(
+                AiState::Attacking,
+                Substate::AttackingArcherRetireFromCombat,
+                goal,
+                GotoFlags::RUN,
+                ctx,
+            );
+            if debug_step_back {
+                eprintln!(
+                    "[ARCHERSTEP frame={} co={:?} me={} phase=after_goto state={:?} substate={:?} already_on_point={} couldnt_reachpoint={} halt={} additional_halts={} order_count={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    self.base.current_state,
+                    self.base.current_substate,
+                    self.base.already_on_point,
+                    self.base.couldnt_reachpoint,
+                    self.base.outbox.actor.halt,
+                    self.base.outbox.actor.additional_halts,
+                    self.base.outbox.actor.orders.len(),
+                );
+            }
+        } else {
+            // Can't step back — fall back to shooting.
+            return std::ops::ControlFlow::Continue(Decision::Shoot);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_archer_observe_decision(
+        &mut self,
+        target_multiplicity: &mut std::collections::BTreeMap<HumanHandle, u32>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        let target = self.get_new_primary_target_with_mult_override(
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+            ctx,
+            tick,
+            Some(target_multiplicity),
+        );
+        self.base.primary_target = target;
+        self.base.outbox.actor.set_focus(target);
+
+        if ctx.self_action_state.is_bow() {
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingBowObserving, 50, ctx);
+        } else {
+            self.base.stop_all();
+            self.base
+                .outbox
+                .actor
+                .launch_commands
+                .push(if self.enemy_seen_below {
+                    crate::element::Command::EquipBowDown
+                } else {
+                    crate::element::Command::EquipBow
+                });
+            self.set_state(AiState::Attacking, Substate::AttackingBowObservingLoading);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_cover_behind_shield_bearer_decision(
+        &mut self,
+        cover_shield_bearer: HumanHandle,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        // Run to cover position behind shield bearer.
+        self.update_shield_bearer_before_me(Some(AiEntityHandle::new(cover_shield_bearer)));
+        // Adopt the shield bearer's primary target.
+        let Some(sb_snap) = self.find_fighter(cover_shield_bearer, tick) else {
+            self.update_shield_bearer_before_me(None);
+            return std::ops::ControlFlow::Continue(Decision::Shoot);
+        };
+        self.base.primary_target = sb_snap.primary_target;
+
+        // The original game's behind-shield-bearer position calculation returns false
+        // when the shield bearer has no primary target.  Do not
+        // invent a target position here: the failed cover decision
+        // must flow through Shoot (and potentially ArcherObserve).
+        if self.base.primary_target.is_none() {
+            self.update_shield_bearer_before_me(None);
+            return std::ops::ControlFlow::Continue(Decision::Shoot);
+        }
+        if let Some(cover_pos) = self.compute_position_behind_shield_bearer(
+            self.shield_bearer_before_me
+                .expect("cover formation lost its shield bearer")
+                .get(),
+            ctx,
+            tick,
+            grid,
+        ) {
+            // The original game passes the seek position as the output
+            // argument to the position calculation behind the shield bearer.
+            // The candidate therefore becomes observable as soon
+            // as that call succeeds, even when the following view
+            // radius check rejects it and the decision falls back
+            // to Shoot/ArcherObserve.
+            self.base.seek_position = cover_pos;
+            // Cover point must be within view radius of the
+            // primary target, otherwise the archer can't see
+            // the enemy from behind the shield bearer.
+            let target_pos = self
+                .find_fighter(self.base.primary_target, tick)
+                .map(|f| f.position)
+                .or_else(|| {
+                    ctx.entity_view(self.base.primary_target)
+                        .map(|view| view.position)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "shield bearer target {:?} is missing from the live AI snapshot",
+                        self.base.primary_target
+                    )
+                });
+            let d = pos_diff(&target_pos, &cover_pos);
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "COVER_ARM frame={} me={} bearer={} cover={:?} target={:?} target_pos={:?} sq={} sq_view={} grid={}",
+                    ctx.frame,
+                    self.base.me,
+                    cover_shield_bearer,
+                    cover_pos,
+                    self.base.primary_target,
+                    target_pos,
+                    square_norm(d),
+                    ctx.sq_standard_view_radius,
+                    grid.is_some(),
+                );
+            }
+            if square_norm(d) >= ctx.sq_standard_view_radius {
+                // Cover point too far from target — fall back to shoot
+                self.update_shield_bearer_before_me(None);
+                return std::ops::ControlFlow::Continue(Decision::Shoot);
+            }
+
+            self.go_to(
+                AiState::Attacking,
+                Substate::AttackingBowRunningBehindShieldBearer,
+                cover_pos,
+                GotoFlags::RUN,
+                ctx,
+            );
+
+            if self.base.already_on_point {
+                // Already in position — check facing
+                let target_pos = self
+                    .find_fighter(self.base.primary_target, tick)
+                    .map(|f| f.position)
+                    .unwrap_or(cover_pos);
+                let dx = target_pos.x - ctx.position.x;
+                let dy = target_pos.y - ctx.position.y;
+                let desired_dir = vec_to_sector(dx, dy);
+                if ctx.direction == desired_dir {
+                    self.base.already_on_point = false;
+                    return std::ops::ControlFlow::Continue(Decision::Shoot);
+                }
+            }
+            // Tell the shield bearer to announce the formation.
+            self.base
+                .outbox
+                .reentrant
+                .cross_npc_actions
+                .push(CrossNpcAction::Say {
+                    target: cover_shield_bearer,
+                    remark: Remark::ArchersBehindShieldBearers,
+                });
+        } else {
+            if crate::ai_enemy::battle_decision_debug_enabled() {
+                eprintln!(
+                    "COVER_ARM frame={} me={} bearer={} cover=None grid={}",
+                    ctx.frame,
+                    self.base.me,
+                    cover_shield_bearer,
+                    grid.is_some(),
+                );
+            }
+            // Can't compute position — give up cover attempt.
+            self.update_shield_bearer_before_me(None);
+            return std::ops::ControlFlow::Continue(Decision::Shoot);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
+
+    fn execute_run_to_archery_point_decision(
+        &mut self,
+        global: &mut AiGlobalState,
+        env: crate::ai_enemy::ThinkEnv<'_>,
+    ) -> std::ops::ControlFlow<bool, Decision> {
+        let crate::ai_enemy::ThinkEnv { ctx, tick, .. } = env;
+        // Run to the next waypoint on the archery path.
+        if let Some(wp) = self.archery_path_get_waypoint(global) {
+            // Remember enemy elevation for later bend decision
+            self.enemy_had_this_elevation = self
+                .find_fighter(self.base.primary_target, tick)
+                .map(|f| f.elevation as u16)
+                .unwrap_or(0);
+            if wp.is_shooting_point {
+                // Run directly to shooting point (final
+                // sprint). Shooting-point selection writes the
+                // owner back so other archers scanning
+                // `pt.owner.is_none()` see the point as
+                // reserved.
+                if let Some(sec_idx) = self.my_archery_sector {
+                    let pt_idx = u16::from(self.my_archery_point_index);
+                    self.set_my_shooting_point(global, Some((sec_idx, pt_idx)));
+                }
+                self.go_to(
+                    AiState::Attacking,
+                    Substate::AttackingArcherRunOnShootingPathFinalSprint,
+                    wp.position,
+                    GotoFlags::RUN,
+                    ctx,
+                );
+            } else {
+                // Run to first waypoint on path
+                self.go_to(
+                    AiState::Attacking,
+                    Substate::AttackingArcherRunOnShootingPath,
+                    wp.position,
+                    GotoFlags::RUN | GotoFlags::DONT_STOP,
+                    ctx,
+                );
+            }
+        } else {
+            // Something went wrong — fall back to shoot
+            return std::ops::ControlFlow::Continue(Decision::Shoot);
+        }
+        std::ops::ControlFlow::Break(true)
+    }
 }

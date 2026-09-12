@@ -569,7 +569,7 @@ impl NativeContext<'_, '_> {
                     let ddx = door.point_mid.x - lx;
                     let ddy = door.point_mid.y - ly;
                     let sq = ddx * ddx + ddy * ddy;
-                    if sq < max_sq_dist && (best.is_none() || sq < best.unwrap().0) {
+                    if sq < max_sq_dist && (best.is_none_or(|(best_sq, _)| sq < best_sq)) {
                         let mut sector =
                             crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
                                 .expect("door interior uses null sector sentinel");

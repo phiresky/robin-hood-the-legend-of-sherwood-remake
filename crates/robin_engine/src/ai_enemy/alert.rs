@@ -784,7 +784,6 @@ impl EnemyAi {
         // until formation placement succeeds.
         let mut chosen_slots: Option<Vec<Position>> = None;
         let mut chosen_direction_raw: u16 = avg_dir_start;
-        let mut chosen_officer_pt: MapPoint = MapPoint::new(my_pos.x, my_pos.y);
         let mut chosen_officer_position: Position = my_pos;
 
         if let Some(grid) = grid {
@@ -820,7 +819,6 @@ impl EnemyAi {
                         ) {
                             chosen_slots = Some(slots);
                             chosen_direction_raw = try_direction_raw;
-                            chosen_officer_pt = try_pt;
                             // Officer's future
                             // position = doorPositionOut overlaid with
                             // try-point x/y.
@@ -858,8 +856,6 @@ impl EnemyAi {
                 }
             }
         }
-
-        let _ = chosen_officer_pt;
 
         let placement_ok = chosen_slots.is_some();
 

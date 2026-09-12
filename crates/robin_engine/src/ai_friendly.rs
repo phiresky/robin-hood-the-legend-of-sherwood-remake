@@ -1962,7 +1962,6 @@ impl FriendlyAi {
                     } else {
                         false
                     };
-                    let _ = grid;
                     if unreachable {
                         continue;
                     }

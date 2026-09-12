@@ -656,12 +656,12 @@ pub(super) fn sector_to_vector(sector: u16) -> (f32, f32) {
 
 /// Dot product of two 2D vectors.
 pub(super) fn dot2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.0 + a.1 * b.1
+    crate::geo2d::dot(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
 }
 
 /// 2D determinant (cross product Z component): positive if b is to the left of a.
 pub(super) fn det2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.1 - a.1 * b.0
+    crate::geo2d::cross(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
 }
 
 /// Max-norm (Chebyshev distance) of a 2D vector.
