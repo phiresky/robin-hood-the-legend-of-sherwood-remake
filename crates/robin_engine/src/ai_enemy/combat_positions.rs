@@ -1794,11 +1794,8 @@ impl EnemyAi {
     /// processes these after our think() returns.
     fn break_phalanx(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
         carried_them_list: Option<&[HumanHandle]>,
     ) {
         // Original recursively descends all the way left and runs each
@@ -2030,7 +2027,6 @@ impl EnemyAi {
     pub(super) fn reconsider_phalanx(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -2082,7 +2078,7 @@ impl EnemyAi {
                 );
             }
             if sq < atk_dist * atk_dist {
-                self.break_phalanx(sim, global, ctx, tick, grid, None);
+                self.break_phalanx(ctx, tick, None);
                 return true;
             }
         }
@@ -2213,7 +2209,7 @@ impl EnemyAi {
                         frame = ctx.frame,
                         "reconsider_phalanx: encircled, breaking phalanx"
                     );
-                    self.break_phalanx(sim, global, ctx, tick, grid, Some(&merged_them_list));
+                    self.break_phalanx(ctx, tick, Some(&merged_them_list));
                     return true;
                 }
                 (true, false) // unused when enemies_in_front
@@ -2366,7 +2362,7 @@ impl EnemyAi {
 
             if !found_pivot {
                 // Not enough space to hold the phalanx — break formation
-                self.break_phalanx(sim, global, ctx, tick, grid, Some(&merged_them_list));
+                self.break_phalanx(ctx, tick, Some(&merged_them_list));
                 return true;
             }
 
@@ -4618,13 +4614,7 @@ mod tests {
             ..FighterSnapshot::default()
         });
 
-        assert!(!ai.reconsider_phalanx(
-            &SimulationContext::with_seed(0),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        ));
+        assert!(!ai.reconsider_phalanx(&SimulationContext::with_seed(0), &ctx, &tick, None));
         assert_eq!(ai.base.current_substate, Substate::AttackingPhalanx);
         assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     }

@@ -166,7 +166,7 @@ impl EnemyAi {
             }
 
             Substate::AttackingDoorFightWaiting => {
-                self.attacking_door_fight_waiting(sim, stimulus_type, global, ctx, tick, grid)
+                self.attacking_door_fight_waiting(stimulus_type, ctx, tick)
             }
 
             Substate::AttackingProtectingWithShield => {
@@ -182,7 +182,7 @@ impl EnemyAi {
             }
 
             Substate::AttackingPhalanx => {
-                self.attacking_phalanx(sim, stimulus_type, global, ctx, tick, grid)
+                self.attacking_phalanx(sim, stimulus_type, ctx, tick, grid)
             }
 
             Substate::AttackingReserveOverview => {
@@ -1272,12 +1272,9 @@ impl EnemyAi {
 
     pub(super) fn attacking_door_fight_waiting(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
-        _global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if super::super::them_lifecycle_debug_matches(ctx) {
@@ -1474,7 +1471,6 @@ impl EnemyAi {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
-        global: &mut AiGlobalState,
         ctx: &AiContext,
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
@@ -1579,7 +1575,7 @@ impl EnemyAi {
                         });
                     self.base.raise_shield(target_pos, target_elevation);
                     self.base.launch_timer(20, ctx.frame);
-                } else if !self.reconsider_phalanx(sim, global, ctx, tick, grid) {
+                } else if !self.reconsider_phalanx(sim, ctx, tick, grid) {
                     if self.base.primary_target.is_some() {
                         // No phalanx correction — maybe correct direction
                         let target_pos = self

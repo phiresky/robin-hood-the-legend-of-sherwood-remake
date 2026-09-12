@@ -1010,7 +1010,6 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
 }
 
 pub(crate) fn make_arrow_falling_down(
-    _sim: &crate::sim_rng::SimulationContext,
     proj: &mut ElementProjectile,
     thrown_away_by_shield: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1920,7 +1919,7 @@ fn tick_arrows_matching(
             // (no human / FX-target check), so `continue` after
             // reporting.
             if matches!(proj.object.object_type, ObjectType::Arrow) {
-                make_arrow_falling_down(sim, proj, true, obstacle_check);
+                make_arrow_falling_down(proj, true, obstacle_check);
 
                 results.push(ArrowTickResult {
                     arrow: arrow_id,

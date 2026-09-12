@@ -3670,12 +3670,7 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
         .set_position(WorldPoint3D::new(0.0, 0.0, 25.0));
     arrow.projectile.dive = false;
 
-    make_arrow_falling_down(
-        &crate::sim_rng::test_context(),
-        &mut arrow,
-        false,
-        Some(&check),
-    );
+    make_arrow_falling_down(&mut arrow, false, Some(&check));
 
     assert!(arrow.projectile.falling);
     assert!(arrow.projectile.dive);
@@ -3686,12 +3681,7 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
         water_zones: Some(&dry_zones),
         ..check
     };
-    make_arrow_falling_down(
-        &crate::sim_rng::test_context(),
-        &mut arrow,
-        false,
-        Some(&dry_check),
-    );
+    make_arrow_falling_down(&mut arrow, false, Some(&dry_check));
     assert!(
         arrow.projectile.dive,
         "trajectory calculation does not clear an earlier dive flag when a ricochet recomputes a dry fall"
@@ -4253,7 +4243,7 @@ fn non_shield_arrow_ricochet_advances_immediately() {
         projectile.element.set_direction_instantly(4);
         let impact_position = projectile.element.position();
 
-        make_arrow_falling_down(sim, &mut projectile, false, None);
+        make_arrow_falling_down(&mut projectile, false, None);
 
         assert!(projectile.projectile.falling);
         assert!(projectile.projectile.flying);
@@ -4285,54 +4275,52 @@ fn non_shield_arrow_ricochet_advances_immediately() {
 
 #[test]
 fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
-    crate::sim_rng::with_seed(1, |sim| {
-        // Savegame_linux2/Profile_002/Savegame_017/replay-016, frame 566:
-        // the arrow reaches a ground endpoint a fraction below zero.  Its
-        // shield-deflection trajectory is empty, but Original's nested
-        // The update still handles obstacle impact and publishes the ground snap.
-        let endpoint = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
-        let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: endpoint,
-            trajectory_origin: endpoint.to_map(),
-            target: EntityId::Pc(crate::entity_id::PcId(1)),
-            target_pos: endpoint.to_map(),
-            trajectory: vec![],
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664),
-        }) else {
-            panic!("spawn_arrow returned a non-projectile entity");
-        };
-        arrow.element.set_position(endpoint);
-        arrow
-            .element
-            .set_position_map_preserving_3d(endpoint.to_map());
-        arrow.element.set_direction_instantly(10);
-        arrow.projectile.trajectory.clear();
-        arrow.projectile.trajectory_frame_count = 0;
-        arrow.projectile.launch_segment_start = None;
-        arrow.projectile.flying = true;
+    // Savegame_linux2/Profile_002/Savegame_017/replay-016, frame 566:
+    // the arrow reaches a ground endpoint a fraction below zero.  Its
+    // shield-deflection trajectory is empty, but Original's nested
+    // The update still handles obstacle impact and publishes the ground snap.
+    let endpoint = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
+    let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+        bow_point: endpoint,
+        trajectory_origin: endpoint.to_map(),
+        target: EntityId::Pc(crate::entity_id::PcId(1)),
+        target_pos: endpoint.to_map(),
+        trajectory: vec![],
+        damage: 30,
+        layer: 0,
+        lands_in_hole: false,
+        initial_velocity: WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664),
+    }) else {
+        panic!("spawn_arrow returned a non-projectile entity");
+    };
+    arrow.element.set_position(endpoint);
+    arrow
+        .element
+        .set_position_map_preserving_3d(endpoint.to_map());
+    arrow.element.set_direction_instantly(10);
+    arrow.projectile.trajectory.clear();
+    arrow.projectile.trajectory_frame_count = 0;
+    arrow.projectile.launch_segment_start = None;
+    arrow.projectile.flying = true;
 
-        make_arrow_falling_down(sim, &mut arrow, true, None);
+    make_arrow_falling_down(&mut arrow, true, None);
 
-        let position = arrow.element.position();
-        assert_eq!(position.x.to_bits(), endpoint.x.to_bits());
-        assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
-        assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
-        assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
-        assert_eq!(arrow.element.optional_layer(), None);
-        assert_eq!(arrow.element.sector(), None);
-        assert!(!arrow.projectile.flying);
-        assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);
-        assert_eq!(arrow.projectile.velocity_increment, WorldVec3D::ZERO);
-        assert_eq!(
-            arrow.element.sprite.position_iface.map_position()
-                - arrow.element.sprite.position_iface.old_map_position(),
-            MapVec::new(0.0, -0.000_976_562_5)
-        );
-    });
+    let position = arrow.element.position();
+    assert_eq!(position.x.to_bits(), endpoint.x.to_bits());
+    assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
+    assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
+    assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
+    assert_eq!(arrow.element.optional_layer(), None);
+    assert_eq!(arrow.element.sector(), None);
+    assert!(!arrow.projectile.flying);
+    assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);
+    assert_eq!(arrow.projectile.velocity_increment, WorldVec3D::ZERO);
+    assert_eq!(
+        arrow.element.sprite.position_iface.map_position()
+            - arrow.element.sprite.position_iface.old_map_position(),
+        MapVec::new(0.0, -0.000_976_562_5)
+    );
 }
 
 #[test]

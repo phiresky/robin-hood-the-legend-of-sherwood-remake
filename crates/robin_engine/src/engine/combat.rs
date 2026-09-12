@@ -1116,12 +1116,7 @@ impl EngineInner {
     /// branch: inverse sector (xor 8), `y * 10`, z velocity zero.  Used
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
-    fn start_arrow_ricochet(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        arrow_id: EntityId,
-    ) {
+    fn start_arrow_ricochet(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
@@ -1139,7 +1134,7 @@ impl EngineInner {
             return;
         };
 
-        bow_shot::make_arrow_falling_down(sim, proj, false, Some(&obstacle_check));
+        bow_shot::make_arrow_falling_down(proj, false, Some(&obstacle_check));
     }
 
     /// Classify an arrow impact on a candidate victim.
@@ -3807,7 +3802,7 @@ impl EngineInner {
                                     victim = ?victim,
                                     "Arrow ricocheted from armor"
                                 );
-                                self.start_arrow_ricochet(sim, assets, result.arrow);
+                                self.start_arrow_ricochet(assets, result.arrow);
                                 continue;
                             }
                             ArrowHitOutcome::Damage => {}
