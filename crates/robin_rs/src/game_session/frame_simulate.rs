@@ -1165,7 +1165,6 @@ impl InteractiveFrameSimulation {
             world,
             timeline: runtime,
             leaderboard,
-            http,
             ..
         } = runtime;
         let MissionMutation {
