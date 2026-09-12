@@ -98,7 +98,7 @@ pub fn draw_requirements_bar(
                     .map(|k| k.required_pc_sub_id())
                 else {
                     tracing::warn!(
-                        character_profile_idx,
+                        ?character_profile_idx,
                         "required character has no portrait mapping"
                     );
                     continue;

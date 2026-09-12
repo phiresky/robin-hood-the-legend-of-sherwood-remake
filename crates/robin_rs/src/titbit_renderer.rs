@@ -115,7 +115,7 @@ impl TitbitRenderer {
     pub fn load(
         &mut self,
         resource_manager: &mut ResourceManager,
-        gpu: &crate::window::GpuContext,
+        renderer: &crate::renderer::Renderer,
         shadow_color: u16,
     ) {
         let shadow_color = if shadow_color == 0 {
@@ -150,7 +150,7 @@ impl TitbitRenderer {
             };
             let frames = load_row(
                 resource_manager,
-                gpu,
+                renderer,
                 resource_id,
                 shadow_color,
                 wipe_shadow,
@@ -815,7 +815,7 @@ fn floor_bottom(anchor: f32, extent: u16) -> i32 {
 /// the same dim grey shadow effect as the original software blit path.
 fn load_row(
     resource_manager: &mut ResourceManager,
-    gpu: &crate::window::GpuContext,
+    renderer: &crate::renderer::Renderer,
     resource_id: i32,
     shadow_color: u16,
     wipe_shadow: bool,
@@ -877,8 +877,7 @@ fn load_row(
             alpha_mode,
         );
 
-        let (tex, view) = crate::renderer::upload_rgba_texture(
-            gpu,
+        let (tex, view) = renderer.create_static_rgba_texture(
             &rgba,
             crop_w as u32,
             crop_h as u32,

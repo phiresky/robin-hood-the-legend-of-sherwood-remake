@@ -601,7 +601,7 @@ fn is_pc_in_coma(engine: &PresentationView<'_>, entity: &Entity) -> bool {
     };
     let Some(desc) = engine.campaign().characters.get(usize::from(profile_idx)) else {
         tracing::warn!(
-            profile_idx,
+            ?profile_idx,
             "portrait PC is missing its campaign character descriptor"
         );
         return false;
@@ -1134,8 +1134,8 @@ pub fn draw_pc_info_overlay(
     // Archer iff the PC's profile lists a Bow action.
     let Some(profile) = profiles.get_character(pc.pc.profile_index) else {
         tracing::warn!(
-            pc_id,
-            profile_index = pc.pc.profile_index,
+            ?pc_id,
+            profile_index = ?pc.pc.profile_index,
             "PC-info overlay is missing its character profile"
         );
         return;
