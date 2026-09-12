@@ -1,10 +1,7 @@
 use super::*;
 use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
-use crate::element::{
-    ActiveFlight, ActorCivilian, ActorData, ActorPc, ActorSoldier, CivilianData, ElementData,
-    ElementKind, HumanData, NpcData, PcData, SoldierData,
-};
+use crate::element::ActiveFlight;
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 fn make_engine() -> EngineInner {

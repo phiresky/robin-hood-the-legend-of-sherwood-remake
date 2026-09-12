@@ -179,25 +179,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         engine
             .build_gate_movement_sequence(
                 &sim,
-                owner,
-                Some(source_sector),
-                vec![GatePathStep {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct: true,
-                }],
-                GoalShape::Point {
-                    point: MapPoint::new(140.0, 100.0),
-                    tolerance: 0.0,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: Some(source_sector),
+                    gate_path: vec![GatePathStep {
+                        door_index: DoorIndex::new(0).expect("valid door index"),
+                        direct: true,
+                    }],
+                    goal: GoalShape::Point {
+                        point: MapPoint::new(140.0, 100.0),
+                        tolerance: 0.0,
+                    },
+                    goal_layer: 0,
+                    base_action: OrderType::WalkingUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.0,
+                    initial_flags: MoveFlags::empty(),
+                    prefix_elements: Vec::new(),
+                    tail_elements: Vec::new(),
+                    append_arrival_speech: false,
+                    append_recovery: false,
                 },
-                0,
-                OrderType::WalkingUpright,
-                true,
-                1.0,
-                MoveFlags::empty(),
-                Vec::new(),
-                Vec::new(),
-                false,
-                false,
             )
             .expect("building-exit route")
     });
@@ -228,25 +230,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            crate::position_interface::SectorHandle::new(64),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(0).expect("valid door index"),
-                direct: true,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(140.0, 100.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: crate::position_interface::SectorHandle::new(64),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(0).expect("valid door index"),
+                    direct: true,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(140.0, 100.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -272,25 +276,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            crate::position_interface::SectorHandle::new(274),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(3).expect("valid door index"),
-                direct: false,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(240.0, 100.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: crate::position_interface::SectorHandle::new(274),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(3).expect("valid door index"),
+                    direct: false,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(240.0, 100.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -319,25 +325,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            Some(exact_ordinary_alias),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(3).expect("valid door index"),
-                direct: false,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(240.0, 100.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: Some(exact_ordinary_alias),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(3).expect("valid door index"),
+                    direct: false,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(240.0, 100.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -355,31 +363,33 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            Some(exact_building_alias),
-            vec![
-                GatePathStep {
-                    door_index: DoorIndex::new(1).expect("valid door index"),
-                    direct: true,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: Some(exact_building_alias),
+                gate_path: vec![
+                    GatePathStep {
+                        door_index: DoorIndex::new(1).expect("valid door index"),
+                        direct: true,
+                    },
+                    GatePathStep {
+                        door_index: DoorIndex::new(2).expect("valid door index"),
+                        direct: false,
+                    },
+                ],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(380.0, 100.0),
+                    tolerance: 0.0,
                 },
-                GatePathStep {
-                    door_index: DoorIndex::new(2).expect("valid door index"),
-                    direct: false,
-                },
-            ],
-            GoalShape::Point {
-                point: MapPoint::new(380.0, 100.0),
-                tolerance: 0.0,
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -436,26 +446,28 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
     let sequence_id = engine
         .build_gate_movement_sequence(
             &crate::sim_rng::test_context(),
-            owner,
-            SectorHandle::new(1),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(0).expect("valid door index"),
-                direct: true,
-            }],
-            GoalShape::Line {
-                line_index: source_line,
-                midpoint: MapPoint::new(60.0, 70.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: SectorHandle::new(1),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(0).expect("valid door index"),
+                    direct: true,
+                }],
+                goal: GoalShape::Line {
+                    line_index: source_line,
+                    midpoint: MapPoint::new(60.0, 70.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 2,
+                base_action: OrderType::RunningUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: tail,
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            2,
-            OrderType::RunningUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            tail,
-            false,
-            false,
         )
         .expect("cross-sector line-jump route");
     let sequence = engine
@@ -1030,25 +1042,27 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let sequence_id = engine
             .build_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
-                owner,
-                crate::position_interface::SectorHandle::new(22),
-                vec![GatePathStep {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct,
-                }],
-                GoalShape::Point {
-                    point: MapPoint::new(1381.5, 480.3),
-                    tolerance: 0.0,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: crate::position_interface::SectorHandle::new(22),
+                    gate_path: vec![GatePathStep {
+                        door_index: DoorIndex::new(0).expect("valid door index"),
+                        direct,
+                    }],
+                    goal: GoalShape::Point {
+                        point: MapPoint::new(1381.5, 480.3),
+                        tolerance: 0.0,
+                    },
+                    goal_layer: 0,
+                    base_action: OrderType::WalkingUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.0,
+                    initial_flags: MoveFlags::empty(),
+                    prefix_elements: Vec::new(),
+                    tail_elements: Vec::new(),
+                    append_arrival_speech: true,
+                    append_recovery: false,
                 },
-                0,
-                OrderType::WalkingUpright,
-                true,
-                1.0,
-                MoveFlags::empty(),
-                Vec::new(),
-                Vec::new(),
-                true,
-                false,
             )
             .expect("door route");
         let sequence = engine
@@ -1159,25 +1173,27 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let sequence_id = engine
             .build_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
-                owner,
-                crate::position_interface::SectorHandle::new(22),
-                vec![GatePathStep {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct,
-                }],
-                GoalShape::Point {
-                    point: MapPoint::new(1400.0, 600.0),
-                    tolerance: 0.0,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: crate::position_interface::SectorHandle::new(22),
+                    gate_path: vec![GatePathStep {
+                        door_index: DoorIndex::new(0).expect("valid door index"),
+                        direct,
+                    }],
+                    goal: GoalShape::Point {
+                        point: MapPoint::new(1400.0, 600.0),
+                        tolerance: 0.0,
+                    },
+                    goal_layer: 0,
+                    base_action: OrderType::RunningUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.0,
+                    initial_flags: MoveFlags::empty(),
+                    prefix_elements: Vec::new(),
+                    tail_elements: Vec::new(),
+                    append_arrival_speech: false,
+                    append_recovery: false,
                 },
-                0,
-                OrderType::RunningUpright,
-                true,
-                1.0,
-                MoveFlags::empty(),
-                Vec::new(),
-                Vec::new(),
-                false,
-                false,
             )
             .expect("locked door route");
         let sequence = engine
