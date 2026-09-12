@@ -1138,14 +1138,17 @@ impl<'a> ShieldCommandContext<'a> {
         elem_idx: usize,
         order_type: crate::order::OrderType,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
         // All four Original shield translators explicitly disable direction
         // recomputation. These are
         // posture-local animations: facing is controlled by Focus/the shield
         // danger point before translation, and selecting the new order must
         // not derive a fresh goal from its zero-valued destination.
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = false;
+        let order = crate::engine::sequence_runtime::new_translation_order(
+            self.next_order_id,
+            order_type,
+            (0.0, 0.0),
+            false,
+        );
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
