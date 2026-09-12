@@ -12,20 +12,15 @@
 mod native_storage;
 mod runner;
 use native_storage::*;
-#[cfg(test)]
-mod historical_golden;
-mod v66;
-mod v67;
-mod v67_late;
-use v66::{BinaryTraceHeaderV66, BinaryTraceRecordV66};
-use v67::{BinaryTraceHeaderV67, BinaryTraceRecordV67};
-use v67_late::{BinaryTraceHeaderV67Late, BinaryTraceRecordV67Late};
+
 mod trace_codec;
 use trace_codec::*;
 mod comparison;
 use comparison::*;
 mod projection;
-use projection::*;
+use projection::{
+    canonicalize_original_runtime_representation, project_missing_draw_view_sprite_cache,
+};
 pub use runner::main;
 
 use std::fmt::Write as _;
@@ -40,7 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque};
 
-// Version 67 native parity traces are authoritative artifacts. Keep their
+// Version 68 native parity traces are authoritative artifacts. Keep their
 // codec pinned independently of the game's intentionally evolving formats.
 use bitcode_parity as bitcode;
 use fs2::FileExt as _;
@@ -72,22 +67,15 @@ use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    hex
-}
+use crate::sha256_hex;
 mod trace_model;
 use trace_model::*;
 mod trace_admission;
 use trace_admission::*;
 mod reconstruction;
 use reconstruction::*;
-mod legacy_compatibility;
-use legacy_compatibility::*;
+mod recorder_omissions;
+use recorder_omissions::*;
 mod motion_comparison;
 use motion_comparison::*;
 mod route_reconstruction;
@@ -95,9 +83,19 @@ use route_reconstruction::*;
 mod reporting;
 use reporting::*;
 mod native_model;
-use native_model::*;
+use native_model::{
+    BinaryTraceFooter, BinaryTraceHeaderV68, BinaryTraceReader, BinaryTraceRecord,
+    NativeReblockBinding, NativeStoragePolicy, TRACE_CONVERSION_QUARANTINE_SUFFIX,
+    TRACE_NATIVE_BLOCK_RECORDS, TRACE_NATIVE_FOOTER_LEN, TRACE_NATIVE_FOOTER_MAGIC,
+    TRACE_NATIVE_LONG_DISTANCE_MATCHING, TRACE_NATIVE_MAX_REBLOCK_RECORDS,
+    TRACE_NATIVE_MAX_REBLOCK_WINDOW_LOG, TRACE_NATIVE_MIN_WINDOW_LOG, TRACE_NATIVE_SUFFIX,
+    TRACE_NATIVE_VERSION, TRACE_NATIVE_WINDOW_LOG, TRACE_NATIVE_ZSTD_LEVEL,
+    TRACE_REBLOCK_BINDING_SUFFIX, TRACE_REBLOCK_SOURCE_SUFFIX, TRACE_ZSTD_WINDOW_LOG_MAX,
+};
 mod cli;
-use cli::*;
+#[cfg(test)]
+use cli::CliOptions;
+use cli::{Options, parse_options};
 #[cfg(feature = "client")]
 mod client;
 #[cfg(feature = "client")]

@@ -6131,6 +6131,7 @@ dependencies = [
  "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
  "fs2",
+ "hex",
  "png",
  "robin_assets",
  "robin_engine",

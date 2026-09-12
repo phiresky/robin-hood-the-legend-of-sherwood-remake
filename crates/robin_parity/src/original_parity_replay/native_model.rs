@@ -5,8 +5,7 @@ use super::{
 };
 
 pub(super) const TRACE_NATIVE_VERSION: u32 = 68;
-pub(super) const TRACE_NATIVE_LEGACY_VERSION: u32 = 67;
-pub(super) const TRACE_NATIVE_V66_VERSION: u32 = 66;
+
 /// The native parity trace is the authoritative artifact once its JSONL
 /// source has been converted (and possibly deleted), so its name carries no
 /// version: compatibility is enforced through the versioned header/footer,
@@ -100,7 +99,7 @@ pub(super) struct BinaryTraceHeaderV68 {
 ///
 /// ON-DISK FORMAT INVARIANT: this enum and every transitively encoded child
 /// type are immutable for version 68. Shape changes require a version bump and
-/// an explicit legacy decoder such as [`BinaryTraceRecordV67`](super::v67::BinaryTraceRecordV67).
+/// an explicit offline migration from the frozen previous layout.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 pub(super) enum BinaryTraceRecord {
     Frame(TraceFrame),
@@ -117,13 +116,6 @@ pub(super) struct BinaryTraceReader {
     pub(super) footer: BinaryTraceFooter,
     /// Records of the current block not yet handed out by [`Self::read_record`].
     pub(super) pending: VecDeque<BinaryTraceRecord>,
-    /// V67 used an empty header transient vector to identify recorder builds
-    /// where `increment_map_valid` was absent and defaulted to false.
-    pub(super) v67_increment_map_valid_was_recorded: bool,
-    /// `1a932c148` accidentally changed both the v67 header and frame layouts
-    /// without changing their version number. This selects that late decoder
-    /// after the header payload has identified the generation.
-    pub(super) v67_late_layout: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
