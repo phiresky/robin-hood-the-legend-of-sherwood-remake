@@ -2924,15 +2924,58 @@ fn map_pc_initial_action(
 }
 
 /// Spawn the animation elements owned by proto- or mission-level patches.
+fn load_fx_sprite(
+    assets: &mut LevelAssets,
+    fname: &str,
+    profile: &str,
+    ambiance: Option<crate::sprite_script::Ambiance>,
+) -> Result<crate::sprite::Sprite, String> {
+    use crate::sprite_script::FrameKind;
+    let path = assets.sprite_scriptor.resolve_rhs_path(
+        FrameKind::Animation,
+        "Data/Animations",
+        fname,
+        ambiance,
+    )?;
+    let cache_key = format!("{fname}/{profile}");
+    let bank_signature = assets.bank_signature;
+    let info = assets.sprite_scriptor_mut().load(
+        &path,
+        profile,
+        &cache_key,
+        FrameKind::Animation,
+        |file| {
+            let signature = robin_data_io::legacy_io::LegacyReader::new(file)
+                .read_u32("bank signature")
+                .map_err(|error| error.to_string())?;
+            if signature != bank_signature {
+                return Err(format!(
+                    "bank signature mismatch: file {signature:#x} != bank {bank_signature:#x}"
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    Ok(crate::sprite::Sprite {
+        scripts: info.scripts.clone(),
+        conversion: info.conversion.clone(),
+        center: info.center,
+        current_width: info.size.x as u16,
+        current_height: info.size.y as u16,
+        frame_profile_name: fname.to_owned(),
+        profile_cache_key: cache_key,
+        ..Default::default()
+    })
+}
+
+/// Spawn the animation elements owned by proto- or mission-level patches.
 fn spawn_patch_fx_entities(
     engine: &mut EngineInner,
     assets: &mut LevelAssets,
     patches: &[crate::level_data::RawPatch],
     patch_index_offset: usize,
 ) -> Vec<Option<i32>> {
-    let anim_base_dir = "Data/Animations";
     let sprite_ambiance = Some(engine.world.weather.ambiance.to_sprite_ambiance());
-    let bank_signature = assets.bank_signature;
     let mut handles = Vec::with_capacity(patches.len());
 
     for (local_patch_idx, raw) in patches.iter().enumerate() {
@@ -2946,52 +2989,11 @@ fn spawn_patch_fx_entities(
         // profile.  Keep that identity for legacy topology/save ordering;
         // only the optional sprite lookup is absent in this case.
         if !fname.is_empty() {
-            match assets.sprite_scriptor.resolve_rhs_path(
-                crate::sprite_script::FrameKind::Animation,
-                anim_base_dir,
-                fname,
-                sprite_ambiance,
-            ) {
-                Ok(path) => {
-                    let cache_key = format!("{fname}/{profile}");
-                    match assets.sprite_scriptor_mut().load(
-                        &path,
-                        profile,
-                        &cache_key,
-                        crate::sprite_script::FrameKind::Animation,
-                        |file| {
-                            let sig = robin_data_io::legacy_io::LegacyReader::new(file).read_u32("bank signature").map_err(|error| error.to_string())?;
-                            if sig != bank_signature {
-                                return Err(format!(
-                                    "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                                ));
-                            }
-                            Ok(())
-                        },
-                    ) {
-                        Ok(info) => {
-                            sprite.scripts = info.scripts.clone();
-                            sprite.conversion = info.conversion.clone();
-                            sprite.center = info.center;
-                            sprite.current_width = info.size.x as u16;
-                            sprite.current_height = info.size.y as u16;
-                            sprite.frame_profile_name = fname.clone();
-                            sprite.profile_cache_key = cache_key;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to load sprite for patch {patch_idx} animation \
-                                 '{fname}' profile '{profile}': {e}"
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to resolve RHS path for patch {patch_idx} animation \
-                         '{fname}': {e}"
-                    );
-                }
+            match load_fx_sprite(assets, fname, profile, sprite_ambiance) {
+                Ok(loaded) => sprite = loaded,
+                Err(error) => tracing::error!(
+                    "Failed to load patch {patch_idx} animation '{fname}' profile '{profile}': {error}"
+                ),
             }
         }
 
@@ -3046,58 +3048,16 @@ fn spawn_proto_animation_fx_entities(
     assets: &mut LevelAssets,
     animations: &[crate::level_data::RawElementFx],
 ) {
-    let anim_base_dir = "Data/Animations";
     let sprite_ambiance = Some(engine.world.weather.ambiance.to_sprite_ambiance());
-    let bank_signature = assets.bank_signature;
 
     for raw in animations {
         let fname = &raw.sprite.frame_profile_name;
         let profile = &raw.sprite.profile_name;
         let mut sprite = crate::sprite::Sprite::default();
-        match assets.sprite_scriptor.resolve_rhs_path(
-            crate::sprite_script::FrameKind::Animation,
-            anim_base_dir,
-            fname,
-            sprite_ambiance,
-        ) {
-            Ok(path) => {
-                let cache_key = format!("{fname}/{profile}");
-                match assets.sprite_scriptor_mut().load(
-                    &path,
-                    profile,
-                    &cache_key,
-                    crate::sprite_script::FrameKind::Animation,
-                    |file| {
-                        let sig = robin_data_io::legacy_io::LegacyReader::new(file)
-                            .read_u32("bank signature")
-                            .map_err(|error| error.to_string())?;
-                        if sig != bank_signature {
-                            return Err(format!(
-                                "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                            ));
-                        }
-                        Ok(())
-                    },
-                ) {
-                    Ok(info) => {
-                        sprite.scripts = info.scripts.clone();
-                        sprite.conversion = info.conversion.clone();
-                        sprite.center = info.center;
-                        sprite.current_width = info.size.x as u16;
-                        sprite.current_height = info.size.y as u16;
-                        sprite.frame_profile_name = fname.clone();
-                        sprite.profile_cache_key = cache_key;
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to load sprite scripts for animation '{fname}' \
-                             profile '{profile}': {e}"
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to resolve animation RHS path for '{fname}': {e}");
+        match load_fx_sprite(assets, fname, profile, sprite_ambiance) {
+            Ok(loaded) => sprite = loaded,
+            Err(error) => {
+                tracing::error!("Failed to load animation '{fname}' profile '{profile}': {error}")
             }
         }
         apply_animation_sprite_placement(&mut sprite, &raw.sprite);

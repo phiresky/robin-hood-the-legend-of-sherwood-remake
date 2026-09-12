@@ -114,6 +114,7 @@ impl OwnerFrames {
 pub(super) struct DiagnosticConfig {
     drop_boundary: Option<OwnerFrames>,
     goal_owner: Option<OwnerFrames>,
+    turn_provenance: Option<OwnerFrames>,
     pub motion_latch: Option<ExactOwnerFrame>,
     pub attentive_owner: Option<ExactOwnerFrame>,
     pub damage_parry: Option<ExactOwnerFrame>,
@@ -126,6 +127,10 @@ pub(super) struct DiagnosticConfig {
 }
 
 impl DiagnosticConfig {
+    pub fn turn_provenance_matches(&self, frame: u32, owner: EntityId) -> bool {
+        self.turn_provenance
+            .is_some_and(|filter| filter.matches(frame, owner))
+    }
     pub fn goal_owner_enabled(&self) -> bool {
         self.goal_owner.is_some()
     }
@@ -226,6 +231,24 @@ impl DiagnosticConfig {
         } else {
             None
         };
+        let turn_provenance = if get("PARITY_DEBUG_TURN_PROVENANCE").is_some() {
+            let owner = owner("PARITY_DEBUG_TURN_OWNER", false)?;
+            let (from, until) = if let Some(frame) = number("PARITY_DEBUG_TURN_FRAME")? {
+                (frame, frame)
+            } else {
+                let from = required_number("PARITY_DEBUG_TURN_FROM")?;
+                let until = number("PARITY_DEBUG_TURN_UNTIL")?.unwrap_or(from);
+                if from > until {
+                    return Err(
+                        "PARITY_DEBUG_TURN_FROM must not exceed PARITY_DEBUG_TURN_UNTIL".into(),
+                    );
+                }
+                (from, until)
+            };
+            Some(OwnerFrames { owner, from, until })
+        } else {
+            None
+        };
         let path_owner = if get("PARITY_DEBUG_PATH_OWNER_LIFECYCLE").is_some() {
             Some(PathOwnerFilter {
                 frame: number("PARITY_DEBUG_PATH_OWNER_FRAME")?,
@@ -237,6 +260,7 @@ impl DiagnosticConfig {
         Ok(Self {
             drop_boundary,
             goal_owner,
+            turn_provenance,
             path_owner,
             motion_latch: exact(
                 "PARITY_DEBUG_MOTION_LATCH",

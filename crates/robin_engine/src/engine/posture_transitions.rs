@@ -688,9 +688,6 @@ impl EngineInner {
         let state = elem.state;
         let elem_posture_after = elem.posture_after_transition;
         let elem_action_state_after = elem.action_state_after_transition;
-        let distance_start_posture_anim = None::<OrderType>;
-        let _ = distance_start_posture_anim; // placeholder for clarity
-
         let (current_posture, current_action_state, position, current_sector) = {
             let Some(entity) = self.get_entity(owner) else {
                 return false;

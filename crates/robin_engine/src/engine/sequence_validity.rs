@@ -44,106 +44,17 @@ impl EngineInner {
         match element.command {
             // ── WakeUp ──────────────────────────────────────────
             Command::WakeUp => {
-                if !check_position {
-                    return true;
-                }
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                let action_distance = match actor
-                    .sprite()
-                    .action_distance(crate::order::OrderType::WakingUp)
-                {
-                    Ok(distance) => distance + 20.0,
-                    Err(err) => {
-                        tracing::warn!(
-                            ?actor_id,
-                            error = %err,
-                            "check_sequence_element_validity: missing WakingUp action distance"
-                        );
-                        return false;
-                    }
-                };
-                square_distance(actor, victim) <= action_distance * action_distance
+                self.sequence_validity_wake_up(actor_id, actor, element, check_position)
             }
 
             // ── Strangle / Hit ──────────────────────────────────
             Command::StrangleCmd | Command::HitCmd => {
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if !victim.is_human() {
-                    return false;
-                }
-                if actor.is_pc() {
-                    // Original-game actor building containment is
-                    // true both in a building sector and while the sprite
-                    // retains a live door pointer during traversal.
-                    let victim_element = victim.element_data();
-                    let in_building = self
-                        .entity_building_sector(victim_element.sector())
-                        .is_some()
-                        || victim_element.is_in_door_transit();
-                    let is_civilian = victim.is_civilian();
-                    let is_vip = self.is_entity_vip(assets, victim);
-                    let is_rider = victim.soldier_data().map(|s| s.rider).unwrap_or(false);
-                    let out_of_order = is_human_out_of_order(victim);
-                    let camp_ok = self.camps_are_hostile(victim.camp(), actor.camp());
-                    let hit_civilian_ok = element.command == Command::HitCmd || !is_civilian;
-                    if in_building
-                        || victim.element_data().blipped
-                        || !camp_ok
-                        || is_vip
-                        || is_rider
-                        || out_of_order
-                        || !hit_civilian_ok
-                    {
-                        return false;
-                    }
-                }
-                if !check_position {
-                    return true;
-                }
-                square_distance(actor, victim) <= 1600.0
+                self.sequence_validity_strangle_cmd(assets, actor, element, check_position)
             }
 
             // ── EnterSwordfight ─────────────────────────────────
             Command::EnterSwordfight => {
-                let opponent_id = match element.get_property(Field::Opponent) {
-                    Some(FieldValue::Integer(0)) => {
-                        // Intentional Original null-opponent form: this
-                        // ENTER_SWORDFIGHT only raises/holds the sword.
-                        return true;
-                    }
-                    Some(FieldValue::Element(id)) => *id,
-                    // Do not silently reinterpret a missing or mistyped
-                    // required field as the explicit legacy null.
-                    _ => return false,
-                };
-                let Some(opponent) = self.get_entity(opponent_id) else {
-                    return false;
-                };
-                if actor.is_pc() && opponent.element_data().blipped {
-                    return false;
-                }
-                let opp_is_rider = opponent.soldier_data().map(|s| s.rider).unwrap_or(false);
-                if opp_is_rider
-                    && opponent.actor_data().map(|a| a.action_state)
-                        == Some(crate::element::ActionState::MovingFast)
-                {
-                    return false;
-                }
-                let actor_vip = self.is_entity_vip(assets, actor);
-                let opp_vip = self.is_entity_vip(assets, opponent);
-                let actor_is_robin = is_entity_robin(actor);
-                let opp_is_robin = is_entity_robin(opponent);
-                if actor.is_soldier() && actor_vip && !opp_is_robin {
-                    return false;
-                }
-                if opponent.is_soldier() && opp_vip && !actor_is_robin {
-                    return false;
-                }
-                true
+                self.sequence_validity_enter_swordfight(assets, actor, element)
             }
 
             // ── Trivially-valid fight transitions ───────────────
@@ -154,215 +65,22 @@ impl EngineInner {
 
             // ── ShootBow / ShootBowOnce ─────────────────────────
             Command::ShootBow | Command::ShootBowOnce => {
-                if self.is_climbing_or_inside_building(actor_id) {
-                    return false;
-                }
-                let Some(victim_id) = interaction_victim_id(element) else {
-                    return false;
-                };
-                let Some(victim) = self.get_entity(victim_id) else {
-                    return false;
-                };
-                if actor.is_pc() {
-                    if victim.element_data().blipped {
-                        return false;
-                    }
-                    if victim.is_human() && is_human_out_of_order(victim) {
-                        return false;
-                    }
-                    if victim.is_npc() {
-                        let is_ally = self.camps_are_allied(victim.camp(), actor.camp());
-                        let is_civilian = victim.is_civilian();
-                        let is_vip = self.is_entity_vip(assets, victim);
-                        if is_ally || is_civilian || is_vip {
-                            return false;
-                        }
-                    }
-                    if !self.can_pc_execute_commands(actor_id, false) {
-                        return false;
-                    }
-                }
-                if is_human_out_of_order(actor) {
-                    return false;
-                }
-                let (status, _) = self.can_shoot_with_bow_at(assets, actor_id, victim_id);
-                status == BowTarget::Valid
+                self.sequence_validity_shoot_bow(assets, actor_id, actor, element)
             }
 
             // ── SwordstrikeDown ─────────────────────────────────
             Command::SwordstrikeDown => {
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if !striking_down_sword_valid_without_position(
-                    actor,
-                    victim,
-                    self.is_entity_vip(assets, victim),
-                ) {
-                    return false;
-                }
-                if !check_position {
-                    return true;
-                }
-                square_distance(actor, victim) <= 2025.0
+                self.sequence_validity_swordstrike_down(assets, actor, element, check_position)
             }
 
             // ── Take ─────────────────────────────────────────────
             Command::Take => {
-                let Some(victim_id) = interaction_victim_id(element) else {
-                    tracing::trace!(?actor_id, "Take validity failed: missing victim");
-                    return false;
-                };
-                let Some(object) = self.get_entity(victim_id) else {
-                    tracing::trace!(
-                        ?actor_id,
-                        ?victim_id,
-                        "Take validity failed: missing object"
-                    );
-                    return false;
-                };
-                if !object.is_object() {
-                    tracing::trace!(
-                        ?actor_id,
-                        ?victim_id,
-                        kind = ?object.kind(),
-                        "Take validity failed: victim is not an object"
-                    );
-                    return false;
-                }
-                let Some(obj_data) = object.object_data() else {
-                    tracing::trace!(
-                        ?actor_id,
-                        ?victim_id,
-                        "Take validity failed: object payload is missing"
-                    );
-                    return false;
-                };
-
-                let dist_sq = square_distance(actor, object);
-                if !actor.is_pc() {
-                    return match obj_data.object_type {
-                        ObjectType::Net => {
-                            object.is_active() && (!check_position || dist_sq <= 4900.0)
-                        }
-                        ObjectType::Purse => {
-                            !obj_data.taken && (!check_position || dist_sq <= 900.0)
-                        }
-                        ObjectType::Coin => {
-                            object.is_active() && (!check_position || dist_sq <= 900.0)
-                        }
-                        _ => false,
-                    };
-                }
-
-                match obj_data.object_type {
-                    ObjectType::Net => {
-                        if !object.is_active() {
-                            return false;
-                        }
-                        if check_position && dist_sq > 4900.0 {
-                            return false;
-                        }
-                        true
-                    }
-                    ObjectType::BonusNet if actor.is_pc() => {
-                        if !object.is_active() {
-                            return false;
-                        }
-                        if check_position && dist_sq > 4900.0 {
-                            return false;
-                        }
-                        true
-                    }
-                    // Scrolls track their own status field rather than
-                    // the generic `taken` flag.
-                    ObjectType::Scroll => {
-                        let status = self.scroll_status(victim_id);
-                        if !object.is_active() || status == ScrollStatus::Taken {
-                            tracing::trace!(
-                                ?actor_id,
-                                ?victim_id,
-                                active = object.is_active(),
-                                ?status,
-                                "Take validity failed: scroll is unavailable"
-                            );
-                            return false;
-                        }
-                        if check_position && dist_sq > 900.0 {
-                            tracing::trace!(
-                                ?actor_id,
-                                ?victim_id,
-                                dist_sq,
-                                "Take validity failed: scroll is out of range"
-                            );
-                            return false;
-                        }
-                        true
-                    }
-                    ObjectType::Purse | ObjectType::BonusPurse if actor.is_pc() => {
-                        if obj_data.taken {
-                            return false;
-                        }
-                        if check_position && dist_sq > 900.0 {
-                            return false;
-                        }
-                        true
-                    }
-                    ObjectType::Purse => {
-                        if obj_data.taken {
-                            return false;
-                        }
-                        if check_position && dist_sq > 900.0 {
-                            return false;
-                        }
-                        true
-                    }
-                    _ => {
-                        if !object.is_active() {
-                            return false;
-                        }
-                        if actor.is_pc()
-                            && !super::commands::is_pc_takable(self, assets, object, actor_id)
-                        {
-                            return false;
-                        }
-                        if check_position && dist_sq > 900.0 {
-                            return false;
-                        }
-                        true
-                    }
-                }
+                self.sequence_validity_take(assets, actor_id, actor, element, check_position)
             }
 
             // ── Search ──────────────────────────────────────────
             Command::SearchCmd => {
-                // PC command eligibility always allows buildings here.
-                if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if victim.element_data().blipped || !victim.is_active() {
-                    return false;
-                }
-                if victim.is_human() && !is_human_out_of_order(victim) {
-                    let is_searchable_tied_npc = self.control.sim_config.enable_unbinding
-                        && victim.is_npc()
-                        && !victim.is_dead()
-                        && victim.element_data().posture() == Posture::Tied;
-                    if !is_searchable_tied_npc {
-                        return false;
-                    }
-                }
-                if !check_position {
-                    return true;
-                }
-                // The PC override widens the SEARCH range to 3600
-                // squared norm; the shared human arm uses 1600. Branch by
-                // actor type so PC search keeps the wider reach.
-                let max_sq = if actor.is_pc() { 3600.0 } else { 1600.0 };
-                square_distance(actor, victim) < max_sq
+                self.sequence_validity_search_cmd(actor_id, actor, element, check_position)
             }
 
             // ── Move / MoveOk / MoveWaiting / CrouchDown / CrouchUp
@@ -380,22 +98,7 @@ impl EngineInner {
             // Command eligibility (allow buildings, check position) plus the target-active
             // check.  Post-seek re-validation (check_position=false)
             // still applies the gate.
-            Command::Seek => {
-                if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                let target_id = match &element.data {
-                    SequenceElementData::Movement { element, .. } => *element,
-                    _ => None,
-                };
-                if let Some(id) = target_id
-                    && let Some(target) = self.get_entity(id)
-                    && !target.is_active()
-                {
-                    return false;
-                }
-                true
-            }
+            Command::Seek => self.sequence_validity_seek(actor_id, actor, element),
 
             // ── Whistle ─────────────────────────────────────────
             // Command eligibility allows buildings without checking position.
@@ -430,71 +133,14 @@ impl EngineInner {
             // Reject when posture != OnShoulders, the source line's
             // upward jump-height > 0, AND the source line is flagged
             // helper-needed.  Jump height is `assoc.z_a - src.z_a`.
-            Command::JumpCmd => {
-                let Some(src_idx) = element
-                    .get_property(crate::sequence::Field::JumplineSource)
-                    .and_then(|v| match v {
-                        crate::sequence::FieldValue::LineId(id) => Some(*id),
-                        crate::sequence::FieldValue::Integer(id) => {
-                            crate::jump_line::JumpLineIndex::new(*id)
-                        }
-                        _ => None,
-                    })
-                else {
-                    return false;
-                };
-                let Some(src_line) = self
-                    .world
-                    .fast_grid
-                    .level
-                    .jump_lines
-                    .get(usize::from(src_idx))
-                else {
-                    return false;
-                };
-                let jump_height = src_line
-                    .associated_line_index
-                    .and_then(|i| self.world.fast_grid.level.jump_lines.get(i as usize))
-                    .map(|dst| dst.z_a - src_line.z_a)
-                    .unwrap_or(0.0);
-                !(actor.element_data().posture() != Posture::OnShoulders
-                    && jump_height > 0.0
-                    && src_line.helper_needed)
-            }
+            Command::JumpCmd => self.sequence_validity_jump_cmd(actor, element),
 
             // ── TakeCorpse ──────────────────────────────────────
             // Reject when actor is out-of-order, the corpse is gone,
             // not dead/unconscious, in a non-corpse posture, already
             // carried by someone else, or further than 40 maximum-norm units away.
             Command::TakeCorpse => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if is_human_out_of_order(actor) {
-                    return false;
-                }
-                let Some(corpse) = interaction_victim(self, element) else {
-                    return false;
-                };
-                let posture = corpse.element_data().posture();
-                let posture_ok = matches!(
-                    posture,
-                    Posture::Lying | Posture::Dead | Posture::DeadBack | Posture::Tied
-                );
-                let unconscious = corpse.human_data().is_some_and(|h| h.unconscious);
-                let dead = corpse.is_dead();
-                let carrier = corpse.human_data().and_then(|h| h.carrier);
-                let carrier_ok = match carrier {
-                    None => true,
-                    Some(c) => c == actor_id,
-                };
-                if !corpse.is_active() || (!unconscious && !dead) || !posture_ok || !carrier_ok {
-                    return false;
-                }
-                if check_position && max_norm_distance(actor, corpse) >= 40.0 {
-                    return false;
-                }
-                true
+                self.sequence_validity_take_corpse(actor_id, actor, element, check_position)
             }
 
             // ── DropCorpse ──────────────────────────────────────
@@ -511,32 +157,13 @@ impl EngineInner {
             // Execution eligibility + carrier posture==HelpingToClimb +
             // current_action==HelpToClimb + 40 maximum-norm units + ceiling
             // headroom (`can_carry_on_shoulders`).
-            Command::ClimbUpOnShoulders => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                let Some(carrier) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if !carrier.is_pc() {
-                    return false;
-                }
-                if carrier.element_data().posture() != Posture::HelpingToClimb
-                    || carrier.pc_data().map(|p| p.current_action)
-                        != Some(crate::profiles::Action::HelpToClimb)
-                {
-                    return false;
-                }
-                if check_position && max_norm_distance(actor, carrier) >= 40.0 {
-                    return false;
-                }
-                let carrier_pos_3d = carrier.element_data().position();
-                let obstacles = self.sight_obstacles(assets);
-                crate::abilities::can_carry_on_shoulders(carrier_pos_3d, obstacles)
-            }
+            Command::ClimbUpOnShoulders => self.sequence_validity_climb_up_on_shoulders(
+                assets,
+                actor_id,
+                actor,
+                element,
+                check_position,
+            ),
 
             // ── ClimbDownFromShoulders ──────────────────────────
             // Carrier slot occupied AND posture == OnShoulders.
@@ -552,21 +179,7 @@ impl EngineInner {
             // ── Eat ─────────────────────────────────────────────
             // Require command eligibility (buildings allowed), food remaining,
             // and life_points < LIFEPOINTS_PC.
-            Command::EatCmd => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::Eat) {
-                    return false;
-                }
-                actor
-                    .pc_data()
-                    .map(|p| p.life_points < crate::pc_status::LIFEPOINTS_PC)
-                    .unwrap_or(false)
-            }
+            Command::EatCmd => self.sequence_validity_eat_cmd(actor_id, actor),
 
             // ── DropAle ─────────────────────────────────────────
             // Command eligibility depends on the position-check mode:
@@ -585,60 +198,14 @@ impl EngineInner {
             // ── UnlockDoor ──────────────────────────────────────
             // Require command eligibility (buildings allowed, position checked)
             // and an unlockable door.
-            Command::UnlockDoor => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                let door_id = element
-                    .get_property(crate::sequence::Field::Door)
-                    .and_then(|v| match v {
-                        crate::sequence::FieldValue::DoorId(id) => Some(*id),
-                        crate::sequence::FieldValue::Integer(id) => {
-                            Some(crate::gate::DoorIndex::new(*id).expect("valid door index"))
-                        }
-                        _ => None,
-                    });
-                let Some(id) = door_id else {
-                    return false;
-                };
-                assert!(
-                    self.scripts.mission.is_some(),
-                    "UnlockDoor command validation requires an installed mission script"
-                );
-                self.script_domains
-                    .interactables
-                    .doors
-                    .get(usize::from(id))
-                    .map(|d| d.is_unlockable())
-                    .unwrap_or(false)
-            }
+            Command::UnlockDoor => self.sequence_validity_unlock_door(actor_id, actor, element),
 
             // ── Tie ─────────────────────────────────────────────
             // Command eligibility (buildings allowed) +
             // antagonist `unconscious && posture == Lying` +
             // (check_position == false || dist² <= 1600).
             Command::TieCmd => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                let unconscious = victim.human_data().is_some_and(|h| h.unconscious);
-                let lying = victim.element_data().posture() == Posture::Lying;
-                if !unconscious || !lying {
-                    return false;
-                }
-                if !check_position {
-                    return true;
-                }
-                square_distance(actor, victim) <= 1600.0
+                self.sequence_validity_tie_cmd(actor_id, actor, element, check_position)
             }
 
             // ── Untie (Rust extension) ─────────────────────────
@@ -646,78 +213,14 @@ impl EngineInner {
             // but accepts every active living tied NPC regardless of camp or
             // whether a script left it conscious.
             Command::Untie => {
-                if !actor.is_pc() {
-                    return false;
-                }
-                if !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                let pc = actor
-                    .pc_data()
-                    .expect("Untie validity PC must retain PC data");
-                let profile = assets
-                    .profile_manager
-                    .get_character(pc.profile_index)
-                    .unwrap_or_else(|| {
-                        panic!("Untie validity PC profile {} is missing", pc.profile_index)
-                    });
-                if !profile.has_contextual_action(crate::profiles::Action::Tie) {
-                    return false;
-                }
-                let Some(victim_id) = interaction_victim_id(element) else {
-                    return false;
-                };
-                let owns_active_release = actor.actor_data().is_some_and(|actor| {
-                    actor.active_ability.kind == Some(crate::movement::AbilityKind::Untie)
-                        && actor.active_ability.target == Some(victim_id)
-                });
-                if !self.control.sim_config.enable_unbinding && !owns_active_release {
-                    return false;
-                }
-                let Some(victim) = self.get_entity(victim_id) else {
-                    return false;
-                };
-                if !victim.is_active() || !victim.is_npc() || !victim.is_human() || victim.is_dead()
-                {
-                    return false;
-                }
-                let target_is_tied = victim.element_data().posture() == Posture::Tied;
-                // Untie changes the target at the authored DONE point, but
-                // the reversed Tying animation still owns the actor until
-                // TERMINATED. Keep that exact in-flight interaction valid so
-                // the remaining reversed frames play instead of turning the
-                // successful release into an Impossible sequence.
-                let finishing_successful_release = victim.element_data().posture()
-                    == Posture::Lying
-                    && actor.actor_data().is_some_and(|actor| {
-                        owns_active_release && actor.active_ability.done_effect_applied
-                    });
-                if !target_is_tied && !finishing_successful_release {
-                    return false;
-                }
-                !check_position || square_distance(actor, victim) <= 1600.0
+                self.sequence_validity_untie(assets, actor_id, actor, element, check_position)
             }
 
             // ── HitTarget / HandleTarget ────────────────────────
             // Command eligibility (buildings allowed only without position checking) +
             // target.is_active() + dist² <= 1600 (when checking).
             Command::HitTarget | Command::HandleTarget => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, !check_position) {
-                    return false;
-                }
-                let Some(target) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if !target.is_active() {
-                    return false;
-                }
-                if !check_position {
-                    return true;
-                }
-                square_distance(actor, target) <= 1600.0
+                self.sequence_validity_hit_target(actor_id, actor, element, check_position)
             }
 
             // ── UseLever ───────────────────────────────────────
@@ -727,40 +230,7 @@ impl EngineInner {
             // Execute-time check, within 40 map units.  Rust represents that
             // master through its masked FX child and `mobile_index`.
             Command::UseLever => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, !check_position) {
-                    return false;
-                }
-                let Some(antagonist_id) = interaction_victim_id(element) else {
-                    return false;
-                };
-                let Some(mobile_index) = self
-                    .get_entity(antagonist_id)
-                    .and_then(Entity::as_fx)
-                    .and_then(|fx| fx.fx.mobile_index)
-                else {
-                    return false;
-                };
-                let mobile = self
-                    .world
-                    .mobile_elements
-                    .get(usize::from(mobile_index))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "UseLever antagonist {antagonist_id:?} references missing mobile {mobile_index}"
-                        )
-                    });
-                if !mobile.stopped {
-                    return false;
-                }
-                if !check_position {
-                    return true;
-                }
-                let actor_position = actor.element_data().position_map();
-                let delta = actor_position - mobile.position;
-                delta.x * delta.x + delta.y * delta.y <= 1600.0
+                self.sequence_validity_use_lever(actor_id, actor, element, check_position)
             }
 
             // ── DropAmmo ────────────────────────────────────────
@@ -787,35 +257,7 @@ impl EngineInner {
             // squared norm < 1600. Non-human victims (FX targets) pass
             // once ammo is available.
             Command::HealCmd => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, true) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::Heal) {
-                    return false;
-                }
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if victim.is_human() {
-                    let life = victim
-                        .pc_data()
-                        .map(|p| p.life_points)
-                        .or_else(|| victim.npc_data().map(|n| n.life_points))
-                        .unwrap_or(0);
-                    if life <= 0 || life >= crate::abilities::LIFEPOINTS_PC {
-                        return false;
-                    }
-                    if !check_position {
-                        return true;
-                    }
-                    square_distance(actor, victim) < 1600.0
-                } else {
-                    // FX target — falls through to `return true`.
-                    true
-                }
+                self.sequence_validity_heal_cmd(actor_id, actor, element, check_position)
             }
 
             // ── ThrowApple ──────────────────────────────────────
@@ -823,135 +265,20 @@ impl EngineInner {
             // (!blipped && Soldier && camp != Royalists &&
             // !is_out_of_order)) + is_in_range_for_projectile.
             Command::ThrowApple => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::Apple) {
-                    return false;
-                }
-                let Some(victim_id) = interaction_victim_id(element) else {
-                    return false;
-                };
-                let Some(victim) = self.get_entity(victim_id) else {
-                    return false;
-                };
-                let target_ok = if victim.is_human() {
-                    !victim.element_data().blipped
-                        && victim.is_soldier()
-                        && self.camps_are_hostile(victim.camp(), actor.camp())
-                        && !is_human_out_of_order(victim)
-                } else {
-                    true
-                };
-                if !target_ok {
-                    return false;
-                }
-                self.is_in_range_for_projectile(
-                    assets,
-                    actor_id,
-                    victim.element_data().position_map(),
-                    crate::profiles::Action::Apple,
-                    Some(victim_id),
-                )
+                self.sequence_validity_throw_apple(assets, actor_id, actor, element)
             }
 
             // ── ThrowStone ──────────────────────────────────────
             // Same as apple but also rejects VIP human targets.
             Command::ThrowStone => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::Stone) {
-                    return false;
-                }
-                if element
-                    .get_property(crate::sequence::Field::NoiseDistractionTarget)
-                    .is_some()
-                {
-                    if !self
-                        .control
-                        .sim_config
-                        .item_gameplay
-                        .stone_ground_distraction
-                    {
-                        return false;
-                    }
-                    let target_3d = match element
-                        .get_property(crate::sequence::Field::NoiseDistractionTarget)
-                    {
-                        Some(crate::sequence::FieldValue::Point3D { x, y, z }) => {
-                            crate::coordinates::WorldPoint3D::new(*x, *y, *z)
-                        }
-                        Some(value) => {
-                            panic!("ground ThrowStone has invalid required 3D target {value:?}")
-                        }
-                        None => unreachable!("property presence was checked above"),
-                    };
-                    let target = target_3d.to_map();
-                    return self.is_mouse_sector_valid_for_ground_target(target)
-                        && self.is_in_range_for_projectile(
-                            assets,
-                            actor_id,
-                            target,
-                            crate::profiles::Action::Stone,
-                            None,
-                        );
-                }
-                let Some(victim_id) = interaction_victim_id(element) else {
-                    return false;
-                };
-                let Some(victim) = self.get_entity(victim_id) else {
-                    return false;
-                };
-                let target_ok = if victim.is_human() {
-                    !victim.element_data().blipped
-                        && victim.is_soldier()
-                        && self.camps_are_hostile(victim.camp(), actor.camp())
-                        && !is_human_out_of_order(victim)
-                        && !self.is_entity_vip(assets, victim)
-                } else {
-                    true
-                };
-                if !target_ok {
-                    return false;
-                }
-                self.is_in_range_for_projectile(
-                    assets,
-                    actor_id,
-                    victim.element_data().position_map(),
-                    crate::profiles::Action::Stone,
-                    Some(victim_id),
-                )
+                self.sequence_validity_throw_stone(assets, actor_id, actor, element)
             }
 
             // ── HideBehindShield ────────────────────────────────
             // Execution eligibility + holder.is_holding_shield + (holder's
             // shield_protected is None or this actor).
             Command::HideBehindShield => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                let Some(holder) = interaction_victim(self, element) else {
-                    return false;
-                };
-                if !holder.is_pc() {
-                    return false;
-                }
-                let holding = holder
-                    .actor_data()
-                    .map(|a| a.action_state.is_shield())
-                    .unwrap_or(false);
-                let shield_protected = holder.pc_data().and_then(|p| p.shield_protected);
-                holding && (shield_protected.is_none() || shield_protected == Some(actor_id))
+                self.sequence_validity_hide_behind_shield(actor_id, actor, element)
             }
 
             // ── ThrowPurse ──────────────────────────────────────
@@ -962,126 +289,1012 @@ impl EngineInner {
             // rejects when the resting projectile would have no valid
             // layer.
             Command::ThrowPurse => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::Purse) {
-                    return false;
-                }
-                let ransom = Some(&self.mission_domain.campaign)
-                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
-                    .unwrap_or(0);
-                let purse_cost = (crate::inventory::COINS_PER_PURSE as i32)
-                    * (crate::inventory::COIN_VALUE as i32);
-                if ransom < purse_cost {
-                    return false;
-                }
-                let Some(target_3d) =
-                    read_target_point_3d(element, crate::sequence::Field::PurseTarget)
-                else {
-                    return false;
-                };
-                if !self.is_in_range_for_projectile(
-                    assets,
-                    actor_id,
-                    crate::coordinates::MapPoint {
-                        x: target_3d.x,
-                        y: target_3d.y,
-                    },
-                    crate::profiles::Action::Purse,
-                    None,
-                ) {
-                    return false;
-                }
-                self.purse_trajectory_lands_on_layer(assets, actor, target_3d)
+                self.sequence_validity_throw_purse(assets, actor_id, actor, element)
             }
 
             // ── ThrowWaspNest ───────────────────────────────────
             // Execution eligibility + positive wasp-nest supplies + is_in_range_for_projectile.
             Command::ThrowWaspNest => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::WaspNest) {
-                    return false;
-                }
-                let Some(target_2d) =
-                    read_target_point_2d(element, crate::sequence::Field::WaspNestTarget)
-                else {
-                    return false;
-                };
-                self.is_in_range_for_projectile(
-                    assets,
-                    actor_id,
-                    crate::coordinates::MapPoint {
-                        x: target_2d.x,
-                        y: target_2d.y,
-                    },
-                    crate::profiles::Action::WaspNest,
-                    None,
-                )
+                self.sequence_validity_throw_wasp_nest(assets, actor_id, actor, element)
             }
 
             // ── ThrowNet ────────────────────────────────────────
             // Execution eligibility + positive net supplies + is_in_range_for_projectile.
-            Command::ThrowNet => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                if !self.can_pc_execute_commands(actor_id, false) {
-                    return false;
-                }
-                if !self.pc_has_ammo(actor_id, crate::profiles::Action::Net) {
-                    return false;
-                }
-                let Some(target_2d) =
-                    read_target_point_2d(element, crate::sequence::Field::NetTarget)
-                else {
-                    return false;
-                };
-                self.is_in_range_for_projectile(
-                    assets,
-                    actor_id,
-                    crate::coordinates::MapPoint {
-                        x: target_2d.x,
-                        y: target_2d.y,
-                    },
-                    crate::profiles::Action::Net,
-                    None,
-                )
-            }
+            Command::ThrowNet => self.sequence_validity_throw_net(assets, actor_id, actor, element),
 
             // ── Pay ─────────────────────────────────────────────
             // ransom_value >= BEGGAR_SALARY + dist² <= 2025
             // (when check_position is true).
-            Command::Pay => {
-                if !actor.is_pc() {
-                    return true;
-                }
-                let ransom = Some(&self.mission_domain.campaign)
-                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
-                    .unwrap_or(0);
-                if ransom < crate::engine::BEGGAR_SALARY {
-                    return false;
-                }
-                if !check_position {
-                    return true;
-                }
-                let Some(victim) = interaction_victim(self, element) else {
-                    return false;
-                };
-                square_distance(actor, victim) <= 2025.0
-            }
+            Command::Pay => self.sequence_validity_pay(actor, element, check_position),
 
             // Commands the switch doesn't cover — see doc-comment.
             _ => true,
         }
+    }
+
+    fn sequence_validity_wake_up(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !check_position {
+            return true;
+        }
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        let action_distance = match actor
+            .sprite()
+            .action_distance(crate::order::OrderType::WakingUp)
+        {
+            Ok(distance) => distance + 20.0,
+            Err(err) => {
+                tracing::warn!(
+                    ?actor_id,
+                    error = %err,
+                    "check_sequence_element_validity: missing WakingUp action distance"
+                );
+                return false;
+            }
+        };
+        square_distance(actor, victim) <= action_distance * action_distance
+    }
+
+    fn sequence_validity_strangle_cmd(
+        &self,
+        assets: &LevelAssets,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        if !victim.is_human() {
+            return false;
+        }
+        if actor.is_pc() {
+            // Original-game actor building containment is
+            // true both in a building sector and while the sprite
+            // retains a live door pointer during traversal.
+            let victim_element = victim.element_data();
+            let in_building = self
+                .entity_building_sector(victim_element.sector())
+                .is_some()
+                || victim_element.is_in_door_transit();
+            let is_civilian = victim.is_civilian();
+            let is_vip = self.is_entity_vip(assets, victim);
+            let is_rider = victim.soldier_data().map(|s| s.rider).unwrap_or(false);
+            let out_of_order = is_human_out_of_order(victim);
+            let camp_ok = self.camps_are_hostile(victim.camp(), actor.camp());
+            let hit_civilian_ok = element.command == Command::HitCmd || !is_civilian;
+            if in_building
+                || victim.element_data().blipped
+                || !camp_ok
+                || is_vip
+                || is_rider
+                || out_of_order
+                || !hit_civilian_ok
+            {
+                return false;
+            }
+        }
+        if !check_position {
+            return true;
+        }
+        square_distance(actor, victim) <= 1600.0
+    }
+
+    fn sequence_validity_enter_swordfight(
+        &self,
+        assets: &LevelAssets,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        let opponent_id = match element.get_property(Field::Opponent) {
+            Some(FieldValue::Integer(0)) => {
+                // Intentional Original null-opponent form: this
+                // ENTER_SWORDFIGHT only raises/holds the sword.
+                return true;
+            }
+            Some(FieldValue::Element(id)) => *id,
+            // Do not silently reinterpret a missing or mistyped
+            // required field as the explicit legacy null.
+            _ => return false,
+        };
+        let Some(opponent) = self.get_entity(opponent_id) else {
+            return false;
+        };
+        if actor.is_pc() && opponent.element_data().blipped {
+            return false;
+        }
+        let opp_is_rider = opponent.soldier_data().map(|s| s.rider).unwrap_or(false);
+        if opp_is_rider
+            && opponent.actor_data().map(|a| a.action_state)
+                == Some(crate::element::ActionState::MovingFast)
+        {
+            return false;
+        }
+        let actor_vip = self.is_entity_vip(assets, actor);
+        let opp_vip = self.is_entity_vip(assets, opponent);
+        let actor_is_robin = is_entity_robin(actor);
+        let opp_is_robin = is_entity_robin(opponent);
+        if actor.is_soldier() && actor_vip && !opp_is_robin {
+            return false;
+        }
+        if opponent.is_soldier() && opp_vip && !actor_is_robin {
+            return false;
+        }
+        true
+    }
+
+    fn sequence_validity_shoot_bow(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if self.is_climbing_or_inside_building(actor_id) {
+            return false;
+        }
+        let Some(victim_id) = interaction_victim_id(element) else {
+            return false;
+        };
+        let Some(victim) = self.get_entity(victim_id) else {
+            return false;
+        };
+        if actor.is_pc() {
+            if victim.element_data().blipped {
+                return false;
+            }
+            if victim.is_human() && is_human_out_of_order(victim) {
+                return false;
+            }
+            if victim.is_npc() {
+                let is_ally = self.camps_are_allied(victim.camp(), actor.camp());
+                let is_civilian = victim.is_civilian();
+                let is_vip = self.is_entity_vip(assets, victim);
+                if is_ally || is_civilian || is_vip {
+                    return false;
+                }
+            }
+            if !self.can_pc_execute_commands(actor_id, false) {
+                return false;
+            }
+        }
+        if is_human_out_of_order(actor) {
+            return false;
+        }
+        let (status, _) = self.can_shoot_with_bow_at(assets, actor_id, victim_id);
+        status == BowTarget::Valid
+    }
+
+    fn sequence_validity_swordstrike_down(
+        &self,
+        assets: &LevelAssets,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        if !striking_down_sword_valid_without_position(
+            actor,
+            victim,
+            self.is_entity_vip(assets, victim),
+        ) {
+            return false;
+        }
+        if !check_position {
+            return true;
+        }
+        square_distance(actor, victim) <= 2025.0
+    }
+
+    fn sequence_validity_take(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        let Some(victim_id) = interaction_victim_id(element) else {
+            tracing::trace!(?actor_id, "Take validity failed: missing victim");
+            return false;
+        };
+        let Some(object) = self.get_entity(victim_id) else {
+            tracing::trace!(
+                ?actor_id,
+                ?victim_id,
+                "Take validity failed: missing object"
+            );
+            return false;
+        };
+        if !object.is_object() {
+            tracing::trace!(
+                ?actor_id,
+                ?victim_id,
+                kind = ?object.kind(),
+                "Take validity failed: victim is not an object"
+            );
+            return false;
+        }
+        let Some(obj_data) = object.object_data() else {
+            tracing::trace!(
+                ?actor_id,
+                ?victim_id,
+                "Take validity failed: object payload is missing"
+            );
+            return false;
+        };
+
+        let dist_sq = square_distance(actor, object);
+        if !actor.is_pc() {
+            return match obj_data.object_type {
+                ObjectType::Net => object.is_active() && (!check_position || dist_sq <= 4900.0),
+                ObjectType::Purse => !obj_data.taken && (!check_position || dist_sq <= 900.0),
+                ObjectType::Coin => object.is_active() && (!check_position || dist_sq <= 900.0),
+                _ => false,
+            };
+        }
+
+        match obj_data.object_type {
+            ObjectType::Net => {
+                if !object.is_active() {
+                    return false;
+                }
+                if check_position && dist_sq > 4900.0 {
+                    return false;
+                }
+                true
+            }
+            ObjectType::BonusNet if actor.is_pc() => {
+                if !object.is_active() {
+                    return false;
+                }
+                if check_position && dist_sq > 4900.0 {
+                    return false;
+                }
+                true
+            }
+            // Scrolls track their own status field rather than
+            // the generic `taken` flag.
+            ObjectType::Scroll => {
+                let status = self.scroll_status(victim_id);
+                if !object.is_active() || status == ScrollStatus::Taken {
+                    tracing::trace!(
+                        ?actor_id,
+                        ?victim_id,
+                        active = object.is_active(),
+                        ?status,
+                        "Take validity failed: scroll is unavailable"
+                    );
+                    return false;
+                }
+                if check_position && dist_sq > 900.0 {
+                    tracing::trace!(
+                        ?actor_id,
+                        ?victim_id,
+                        dist_sq,
+                        "Take validity failed: scroll is out of range"
+                    );
+                    return false;
+                }
+                true
+            }
+            ObjectType::Purse | ObjectType::BonusPurse if actor.is_pc() => {
+                if obj_data.taken {
+                    return false;
+                }
+                if check_position && dist_sq > 900.0 {
+                    return false;
+                }
+                true
+            }
+            ObjectType::Purse => {
+                if obj_data.taken {
+                    return false;
+                }
+                if check_position && dist_sq > 900.0 {
+                    return false;
+                }
+                true
+            }
+            _ => {
+                if !object.is_active() {
+                    return false;
+                }
+                if actor.is_pc() && !super::commands::is_pc_takable(self, assets, object, actor_id)
+                {
+                    return false;
+                }
+                if check_position && dist_sq > 900.0 {
+                    return false;
+                }
+                true
+            }
+        }
+    }
+
+    fn sequence_validity_search_cmd(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        // PC command eligibility always allows buildings here.
+        if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        if victim.element_data().blipped || !victim.is_active() {
+            return false;
+        }
+        if victim.is_human() && !is_human_out_of_order(victim) {
+            let is_searchable_tied_npc = self.control.sim_config.enable_unbinding
+                && victim.is_npc()
+                && !victim.is_dead()
+                && victim.element_data().posture() == Posture::Tied;
+            if !is_searchable_tied_npc {
+                return false;
+            }
+        }
+        if !check_position {
+            return true;
+        }
+        // The PC override widens the SEARCH range to 3600
+        // squared norm; the shared human arm uses 1600. Branch by
+        // actor type so PC search keeps the wider reach.
+        let max_sq = if actor.is_pc() { 3600.0 } else { 1600.0 };
+        square_distance(actor, victim) < max_sq
+    }
+
+    fn sequence_validity_seek(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        let target_id = match &element.data {
+            SequenceElementData::Movement { element, .. } => *element,
+            _ => None,
+        };
+        if let Some(id) = target_id
+            && let Some(target) = self.get_entity(id)
+            && !target.is_active()
+        {
+            return false;
+        }
+        true
+    }
+
+    fn sequence_validity_jump_cmd(&self, actor: &Entity, element: &SequenceElement) -> bool {
+        let Some(src_idx) = element
+            .get_property(crate::sequence::Field::JumplineSource)
+            .and_then(|v| match v {
+                crate::sequence::FieldValue::LineId(id) => Some(*id),
+                crate::sequence::FieldValue::Integer(id) => {
+                    crate::jump_line::JumpLineIndex::new(*id)
+                }
+                _ => None,
+            })
+        else {
+            return false;
+        };
+        let Some(src_line) = self
+            .world
+            .fast_grid
+            .level
+            .jump_lines
+            .get(usize::from(src_idx))
+        else {
+            return false;
+        };
+        let jump_height = src_line
+            .associated_line_index
+            .and_then(|i| self.world.fast_grid.level.jump_lines.get(i as usize))
+            .map(|dst| dst.z_a - src_line.z_a)
+            .unwrap_or(0.0);
+        !(actor.element_data().posture() != Posture::OnShoulders
+            && jump_height > 0.0
+            && src_line.helper_needed)
+    }
+
+    fn sequence_validity_take_corpse(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if is_human_out_of_order(actor) {
+            return false;
+        }
+        let Some(corpse) = interaction_victim(self, element) else {
+            return false;
+        };
+        let posture = corpse.element_data().posture();
+        let posture_ok = matches!(
+            posture,
+            Posture::Lying | Posture::Dead | Posture::DeadBack | Posture::Tied
+        );
+        let unconscious = corpse.human_data().is_some_and(|h| h.unconscious);
+        let dead = corpse.is_dead();
+        let carrier = corpse.human_data().and_then(|h| h.carrier);
+        let carrier_ok = match carrier {
+            None => true,
+            Some(c) => c == actor_id,
+        };
+        if !corpse.is_active() || (!unconscious && !dead) || !posture_ok || !carrier_ok {
+            return false;
+        }
+        if check_position && max_norm_distance(actor, corpse) >= 40.0 {
+            return false;
+        }
+        true
+    }
+
+    fn sequence_validity_climb_up_on_shoulders(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        let Some(carrier) = interaction_victim(self, element) else {
+            return false;
+        };
+        if !carrier.is_pc() {
+            return false;
+        }
+        if carrier.element_data().posture() != Posture::HelpingToClimb
+            || carrier.pc_data().map(|p| p.current_action)
+                != Some(crate::profiles::Action::HelpToClimb)
+        {
+            return false;
+        }
+        if check_position && max_norm_distance(actor, carrier) >= 40.0 {
+            return false;
+        }
+        let carrier_pos_3d = carrier.element_data().position();
+        let obstacles = self.sight_obstacles(assets);
+        crate::abilities::can_carry_on_shoulders(carrier_pos_3d, obstacles)
+    }
+
+    fn sequence_validity_eat_cmd(&self, actor_id: EntityId, actor: &Entity) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::Eat) {
+            return false;
+        }
+        actor
+            .pc_data()
+            .map(|p| p.life_points < crate::pc_status::LIFEPOINTS_PC)
+            .unwrap_or(false)
+    }
+
+    fn sequence_validity_unlock_door(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        let door_id = element
+            .get_property(crate::sequence::Field::Door)
+            .and_then(|v| match v {
+                crate::sequence::FieldValue::DoorId(id) => Some(*id),
+                crate::sequence::FieldValue::Integer(id) => {
+                    Some(crate::gate::DoorIndex::new(*id).expect("valid door index"))
+                }
+                _ => None,
+            });
+        let Some(id) = door_id else {
+            return false;
+        };
+        assert!(
+            self.scripts.mission.is_some(),
+            "UnlockDoor command validation requires an installed mission script"
+        );
+        self.script_domains
+            .interactables
+            .doors
+            .get(usize::from(id))
+            .map(|d| d.is_unlockable())
+            .unwrap_or(false)
+    }
+
+    fn sequence_validity_tie_cmd(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        let unconscious = victim.human_data().is_some_and(|h| h.unconscious);
+        let lying = victim.element_data().posture() == Posture::Lying;
+        if !unconscious || !lying {
+            return false;
+        }
+        if !check_position {
+            return true;
+        }
+        square_distance(actor, victim) <= 1600.0
+    }
+
+    fn sequence_validity_untie(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return false;
+        }
+        if !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        let pc = actor
+            .pc_data()
+            .expect("Untie validity PC must retain PC data");
+        let profile = assets
+            .profile_manager
+            .get_character(pc.profile_index)
+            .unwrap_or_else(|| panic!("Untie validity PC profile {} is missing", pc.profile_index));
+        if !profile.has_contextual_action(crate::profiles::Action::Tie) {
+            return false;
+        }
+        let Some(victim_id) = interaction_victim_id(element) else {
+            return false;
+        };
+        let owns_active_release = actor.actor_data().is_some_and(|actor| {
+            actor.active_ability.kind == Some(crate::movement::AbilityKind::Untie)
+                && actor.active_ability.target == Some(victim_id)
+        });
+        if !self.control.sim_config.enable_unbinding && !owns_active_release {
+            return false;
+        }
+        let Some(victim) = self.get_entity(victim_id) else {
+            return false;
+        };
+        if !victim.is_active() || !victim.is_npc() || !victim.is_human() || victim.is_dead() {
+            return false;
+        }
+        let target_is_tied = victim.element_data().posture() == Posture::Tied;
+        // Untie changes the target at the authored DONE point, but
+        // the reversed Tying animation still owns the actor until
+        // TERMINATED. Keep that exact in-flight interaction valid so
+        // the remaining reversed frames play instead of turning the
+        // successful release into an Impossible sequence.
+        let finishing_successful_release = victim.element_data().posture() == Posture::Lying
+            && actor.actor_data().is_some_and(|actor| {
+                owns_active_release && actor.active_ability.done_effect_applied
+            });
+        if !target_is_tied && !finishing_successful_release {
+            return false;
+        }
+        !check_position || square_distance(actor, victim) <= 1600.0
+    }
+
+    fn sequence_validity_hit_target(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, !check_position) {
+            return false;
+        }
+        let Some(target) = interaction_victim(self, element) else {
+            return false;
+        };
+        if !target.is_active() {
+            return false;
+        }
+        if !check_position {
+            return true;
+        }
+        square_distance(actor, target) <= 1600.0
+    }
+
+    fn sequence_validity_use_lever(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, !check_position) {
+            return false;
+        }
+        let Some(antagonist_id) = interaction_victim_id(element) else {
+            return false;
+        };
+        let Some(mobile_index) = self
+            .get_entity(antagonist_id)
+            .and_then(Entity::as_fx)
+            .and_then(|fx| fx.fx.mobile_index)
+        else {
+            return false;
+        };
+        let mobile = self
+            .world
+            .mobile_elements
+            .get(usize::from(mobile_index))
+            .unwrap_or_else(|| {
+                panic!(
+                    "UseLever antagonist {antagonist_id:?} references missing mobile {mobile_index}"
+                )
+            });
+        if !mobile.stopped {
+            return false;
+        }
+        if !check_position {
+            return true;
+        }
+        let actor_position = actor.element_data().position_map();
+        let delta = actor_position - mobile.position;
+        delta.x * delta.x + delta.y * delta.y <= 1600.0
+    }
+
+    fn sequence_validity_heal_cmd(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, true) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::Heal) {
+            return false;
+        }
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        if victim.is_human() {
+            let life = victim
+                .pc_data()
+                .map(|p| p.life_points)
+                .or_else(|| victim.npc_data().map(|n| n.life_points))
+                .unwrap_or(0);
+            if life <= 0 || life >= crate::abilities::LIFEPOINTS_PC {
+                return false;
+            }
+            if !check_position {
+                return true;
+            }
+            square_distance(actor, victim) < 1600.0
+        } else {
+            // FX target — falls through to `return true`.
+            true
+        }
+    }
+
+    fn sequence_validity_throw_apple(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::Apple) {
+            return false;
+        }
+        let Some(victim_id) = interaction_victim_id(element) else {
+            return false;
+        };
+        let Some(victim) = self.get_entity(victim_id) else {
+            return false;
+        };
+        let target_ok = if victim.is_human() {
+            !victim.element_data().blipped
+                && victim.is_soldier()
+                && self.camps_are_hostile(victim.camp(), actor.camp())
+                && !is_human_out_of_order(victim)
+        } else {
+            true
+        };
+        if !target_ok {
+            return false;
+        }
+        self.is_in_range_for_projectile(
+            assets,
+            actor_id,
+            victim.element_data().position_map(),
+            crate::profiles::Action::Apple,
+            Some(victim_id),
+        )
+    }
+
+    fn sequence_validity_throw_stone(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::Stone) {
+            return false;
+        }
+        if element
+            .get_property(crate::sequence::Field::NoiseDistractionTarget)
+            .is_some()
+        {
+            if !self
+                .control
+                .sim_config
+                .item_gameplay
+                .stone_ground_distraction
+            {
+                return false;
+            }
+            let target_3d =
+                match element.get_property(crate::sequence::Field::NoiseDistractionTarget) {
+                    Some(crate::sequence::FieldValue::Point3D { x, y, z }) => {
+                        crate::coordinates::WorldPoint3D::new(*x, *y, *z)
+                    }
+                    Some(value) => {
+                        panic!("ground ThrowStone has invalid required 3D target {value:?}")
+                    }
+                    None => unreachable!("property presence was checked above"),
+                };
+            let target = target_3d.to_map();
+            return self.is_mouse_sector_valid_for_ground_target(target)
+                && self.is_in_range_for_projectile(
+                    assets,
+                    actor_id,
+                    target,
+                    crate::profiles::Action::Stone,
+                    None,
+                );
+        }
+        let Some(victim_id) = interaction_victim_id(element) else {
+            return false;
+        };
+        let Some(victim) = self.get_entity(victim_id) else {
+            return false;
+        };
+        let target_ok = if victim.is_human() {
+            !victim.element_data().blipped
+                && victim.is_soldier()
+                && self.camps_are_hostile(victim.camp(), actor.camp())
+                && !is_human_out_of_order(victim)
+                && !self.is_entity_vip(assets, victim)
+        } else {
+            true
+        };
+        if !target_ok {
+            return false;
+        }
+        self.is_in_range_for_projectile(
+            assets,
+            actor_id,
+            victim.element_data().position_map(),
+            crate::profiles::Action::Stone,
+            Some(victim_id),
+        )
+    }
+
+    fn sequence_validity_hide_behind_shield(
+        &self,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        let Some(holder) = interaction_victim(self, element) else {
+            return false;
+        };
+        if !holder.is_pc() {
+            return false;
+        }
+        let holding = holder
+            .actor_data()
+            .map(|a| a.action_state.is_shield())
+            .unwrap_or(false);
+        let shield_protected = holder.pc_data().and_then(|p| p.shield_protected);
+        holding && (shield_protected.is_none() || shield_protected == Some(actor_id))
+    }
+
+    fn sequence_validity_throw_purse(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::Purse) {
+            return false;
+        }
+        let ransom = Some(&self.mission_domain.campaign)
+            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
+            .unwrap_or(0);
+        let purse_cost =
+            (crate::inventory::COINS_PER_PURSE as i32) * (crate::inventory::COIN_VALUE as i32);
+        if ransom < purse_cost {
+            return false;
+        }
+        let Some(target_3d) = read_target_point_3d(element, crate::sequence::Field::PurseTarget)
+        else {
+            return false;
+        };
+        if !self.is_in_range_for_projectile(
+            assets,
+            actor_id,
+            crate::coordinates::MapPoint {
+                x: target_3d.x,
+                y: target_3d.y,
+            },
+            crate::profiles::Action::Purse,
+            None,
+        ) {
+            return false;
+        }
+        self.purse_trajectory_lands_on_layer(assets, actor, target_3d)
+    }
+
+    fn sequence_validity_throw_wasp_nest(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::WaspNest) {
+            return false;
+        }
+        let Some(target_2d) = read_target_point_2d(element, crate::sequence::Field::WaspNestTarget)
+        else {
+            return false;
+        };
+        self.is_in_range_for_projectile(
+            assets,
+            actor_id,
+            crate::coordinates::MapPoint {
+                x: target_2d.x,
+                y: target_2d.y,
+            },
+            crate::profiles::Action::WaspNest,
+            None,
+        )
+    }
+
+    fn sequence_validity_throw_net(
+        &self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        actor: &Entity,
+        element: &SequenceElement,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        if !self.can_pc_execute_commands(actor_id, false) {
+            return false;
+        }
+        if !self.pc_has_ammo(actor_id, crate::profiles::Action::Net) {
+            return false;
+        }
+        let Some(target_2d) = read_target_point_2d(element, crate::sequence::Field::NetTarget)
+        else {
+            return false;
+        };
+        self.is_in_range_for_projectile(
+            assets,
+            actor_id,
+            crate::coordinates::MapPoint {
+                x: target_2d.x,
+                y: target_2d.y,
+            },
+            crate::profiles::Action::Net,
+            None,
+        )
+    }
+
+    fn sequence_validity_pay(
+        &self,
+        actor: &Entity,
+        element: &SequenceElement,
+        check_position: bool,
+    ) -> bool {
+        if !actor.is_pc() {
+            return true;
+        }
+        let ransom = Some(&self.mission_domain.campaign)
+            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
+            .unwrap_or(0);
+        if ransom < crate::engine::BEGGAR_SALARY {
+            return false;
+        }
+        if !check_position {
+            return true;
+        }
+        let Some(victim) = interaction_victim(self, element) else {
+            return false;
+        };
+        square_distance(actor, victim) <= 2025.0
     }
 
     /// Per-arm `check_sequence_element_validity` pre-tick gate for the

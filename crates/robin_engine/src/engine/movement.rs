@@ -7423,25 +7423,18 @@ impl EngineInner {
         }
     }
 
-    /// Movement Execute body for the single movement owner. The caller's
-    /// actor-id collection filters the entity table down to `actor_id ==
-    /// owner`, so this runs at most once per `tick_entity_movement_owner`
-    /// call; every early `return` is a per-actor "done" exit.
+    /// Rider charge owns Execute completely; retain its callback/identity ordering.
     #[allow(clippy::too_many_arguments)]
-    fn tick_one_movement_actor(
+    fn tick_movement_rider_charge(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        owner: EntityId,
+        assets: &LevelAssets,
+        entity_id: EntityId,
         selected: MovementOwnerSelection,
-        actor_id: crate::entity_id::ActorId,
-        prepass: &MovementPrepass,
         prepared: &LiveMobileGeometry,
         anti_snapshots: &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
         deferred: &mut MovementDeferred,
-    ) {
-        let mut speed_factor = prepass.speed_factor;
-        let entity_id = actor_id.into();
+    ) -> bool {
         let rider_entry_compute_direction = self
             .orders
             .sequence_manager
@@ -7509,6 +7502,39 @@ impl EngineInner {
                     entity.position_iface_mut().reset_box_blocked();
                 }
             }
+            return true;
+        }
+        false
+    }
+
+    /// Movement Execute body for the single movement owner. The caller's
+    /// actor-id collection filters the entity table down to `actor_id ==
+    /// owner`, so this runs at most once per `tick_entity_movement_owner`
+    /// call; every early `return` is a per-actor "done" exit.
+    #[allow(clippy::too_many_arguments)]
+    fn tick_one_movement_actor(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+        actor_id: crate::entity_id::ActorId,
+        prepass: &MovementPrepass,
+        prepared: &LiveMobileGeometry,
+        anti_snapshots: &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
+        deferred: &mut MovementDeferred,
+    ) {
+        let mut speed_factor = prepass.speed_factor;
+        let entity_id = actor_id.into();
+        if self.tick_movement_rider_charge(
+            sim,
+            assets,
+            entity_id,
+            selected,
+            prepared,
+            anti_snapshots,
+            deferred,
+        ) {
             return;
         }
         let ft = prepass.final_tolerance;
