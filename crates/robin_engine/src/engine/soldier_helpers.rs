@@ -2038,22 +2038,24 @@ impl EngineInner {
                     self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
                     let _ = self.build_gate_movement_sequence(
                         sim,
-                        pc_id,
-                        Some(source_sector),
-                        path,
-                        GoalShape::Point {
-                            point: MapPoint::new(goal.x, goal.y),
-                            tolerance: 0.0,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: pc_id,
+                            source_sector: Some(source_sector),
+                            gate_path: path,
+                            goal: GoalShape::Point {
+                                point: MapPoint::new(goal.x, goal.y),
+                                tolerance: 0.0,
+                            },
+                            goal_layer: goal.level,
+                            base_action: crate::order::OrderType::RunningUpright,
+                            move_after_last_door: true,
+                            speed_factor: 1.0,
+                            initial_flags: MoveFlags::empty(),
+                            prefix_elements: vec![wait],
+                            tail_elements: tail_elements,
+                            append_arrival_speech: false,
+                            append_recovery: false,
                         },
-                        goal.level,
-                        crate::order::OrderType::RunningUpright,
-                        true,
-                        1.0,
-                        MoveFlags::empty(),
-                        vec![wait],
-                        tail_elements,
-                        false,
-                        false,
                     );
                     return;
                 }

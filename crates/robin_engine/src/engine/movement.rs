@@ -12,6 +12,7 @@ use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionSt
 mod combat_motion;
 mod diagnostics;
 mod door_traversal;
+pub(crate) use door_traversal::GateRouteRequest;
 mod elevation;
 mod formation;
 mod order_advancement;
@@ -2965,7 +2966,7 @@ pub(crate) fn mercenary_formation_destinations(
 /// Unifies the three goal flavours (point, door, line) into a single
 /// builder; the function switches on this enum to pick the right
 /// trailing-step shape.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) enum GoalShape {
     /// Point-goal. The actor walks to this map point after the last gate,
     /// retaining the caller's arrival tolerance (notably for AI approaches).

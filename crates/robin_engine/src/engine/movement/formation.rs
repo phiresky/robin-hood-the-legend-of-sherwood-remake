@@ -938,23 +938,26 @@ impl EngineInner {
                     };
                     self.build_gate_movement_sequence(
                         sim,
-                        approach_owner,
-                        (!source_and_line_are_same_sector).then_some(*src_sector),
-                        gate_path,
-                        GoalShape::Line {
-                            line_index: source_line_idx,
-                            midpoint: source_line_midpoint,
-                            tolerance: 0.0,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: approach_owner,
+                            source_sector: (!source_and_line_are_same_sector)
+                                .then_some(*src_sector),
+                            gate_path: gate_path,
+                            goal: GoalShape::Line {
+                                line_index: source_line_idx,
+                                midpoint: source_line_midpoint,
+                                tolerance: 0.0,
+                            },
+                            goal_layer: source_line.layer,
+                            base_action: player_group_move_action(run),
+                            move_after_last_door: true,
+                            speed_factor: 1.0,
+                            initial_flags: crate::sequence::MoveFlags::empty(),
+                            prefix_elements: Vec::new(),
+                            tail_elements: tail,
+                            append_arrival_speech: false,
+                            append_recovery: false,
                         },
-                        source_line.layer,
-                        player_group_move_action(run),
-                        true,
-                        1.0,
-                        crate::sequence::MoveFlags::empty(),
-                        Vec::new(),
-                        tail,
-                        false,
-                        false,
                     )
                     .unwrap_or_else(|| {
                         panic!(
@@ -1372,19 +1375,21 @@ impl EngineInner {
                     };
                     let _ = self.build_gate_movement_sequence(
                         sim,
-                        *pc_id,
-                        Some(path_src_sector),
-                        gate_steps,
-                        goal_shape,
-                        pc_effective_layer,
-                        player_group_move_action(run),
-                        door_goal.is_none(),
-                        1.0,
-                        crate::sequence::MoveFlags::empty(),
-                        Vec::new(),
-                        Vec::new(),
-                        owner_is_pc,
-                        true,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: *pc_id,
+                            source_sector: Some(path_src_sector),
+                            gate_path: gate_steps,
+                            goal: goal_shape,
+                            goal_layer: pc_effective_layer,
+                            base_action: player_group_move_action(run),
+                            move_after_last_door: door_goal.is_none(),
+                            speed_factor: 1.0,
+                            initial_flags: crate::sequence::MoveFlags::empty(),
+                            prefix_elements: Vec::new(),
+                            tail_elements: Vec::new(),
+                            append_arrival_speech: owner_is_pc,
+                            append_recovery: true,
+                        },
                     );
                     if show_marker && !is_door_click {
                         self.feedback.ground_mark.add_mark(

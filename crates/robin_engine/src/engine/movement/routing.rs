@@ -694,19 +694,21 @@ impl EngineInner {
             let route_assert_sector = route_identity_differs.then_some(source_sector);
             return self.build_gate_movement_sequence(
                 sim,
-                entity_id,
-                route_assert_sector,
-                gate_path,
-                goal,
-                goal_layer,
-                action,
-                door_goal.is_none(),
-                intent.speed_factor,
-                move_flags,
-                prefix,
-                tail,
-                false,
-                false,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: entity_id,
+                    source_sector: route_assert_sector,
+                    gate_path: gate_path,
+                    goal: goal,
+                    goal_layer: goal_layer,
+                    base_action: action,
+                    move_after_last_door: door_goal.is_none(),
+                    speed_factor: intent.speed_factor,
+                    initial_flags: move_flags,
+                    prefix_elements: prefix,
+                    tail_elements: tail,
+                    append_arrival_speech: false,
+                    append_recovery: false,
+                },
             );
         }
 
