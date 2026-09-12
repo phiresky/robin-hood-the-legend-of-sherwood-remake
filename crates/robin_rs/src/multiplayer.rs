@@ -104,8 +104,8 @@ mod native;
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub use native::{
-    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerHandle, connect_client,
-    connect_client_in_campaign, start_server, start_server_in_campaign, start_server_with_content,
+    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerConfig, ServerHandle,
+    connect_client, connect_client_in_campaign, start_server_in_campaign,
 };
 
 #[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
@@ -183,7 +183,7 @@ pub struct NetChannels {
 
 impl NetChannels {
     /// Build an unattached channel bundle. The caller must attach the runtime
-    /// returned by [`start_server`] or [`connect_client`] before publishing the
+    /// returned by [`start_server_in_campaign`] or [`connect_client`] before publishing the
     /// bundle to the game loop.
     pub fn new() -> (
         Self,
@@ -1192,10 +1192,6 @@ mod tests {
         let (client_out_tx, client_out_rx) = channel::<NetOutbound>();
         let _client = connect_client(&addr, "alice".into(), client_in_tx, client_out_rx)
             .expect("connect_client");
-        assert_eq!(_client.mission_id().as_deref(), Some("Dem_Lei_MP"));
-        assert_eq!(_client.mission_seed(), Some(42));
-        assert_eq!(_client.mission_sim_config(), Some(expected_config));
-        assert_eq!(_client.speech_timing_locale().as_deref(), Some("en-US"));
         let session = _client
             .session_metadata()
             .expect("complete Welcome publication");
@@ -1204,7 +1200,7 @@ mod tests {
         assert_eq!(session.mission_seed, 42);
         assert_eq!(session.sim_config, expected_config);
         assert_eq!(session.speech_timing_locale.as_deref(), Some("en-US"));
-        assert_eq!(Some(session.session_id), _client.session_id());
+        assert_eq!(session.session_id, _server.session_id());
         assert!(session.admitted_content.is_none());
 
         let assigned = loop {
@@ -1389,7 +1385,7 @@ mod tests {
             .content_offer()
             .expect("content offer before Welcome");
         assert_eq!(offer.full_mod_sha256, expected_hash);
-        assert!(client.mission_id().is_none());
+        assert!(client.session_metadata().is_none());
         assert!(matches!(
             client_in_rx.recv_timeout(Duration::from_secs(2)),
             Ok(NetEvent::ContentOffer(seen)) if seen == offer
@@ -1421,7 +1417,10 @@ mod tests {
         }
         assert_eq!(downloaded, encoded);
         DistributedModPackage::decode(&downloaded).expect("downloaded exact package validates");
-        assert!(client.mission_id().is_none(), "Welcome must still be gated");
+        assert!(
+            client.session_metadata().is_none(),
+            "Welcome must still be gated"
+        );
 
         client_out_tx
             .send(NetOutbound::ContentPrepared {
@@ -1432,7 +1431,7 @@ mod tests {
             client_in_rx.recv_timeout(Duration::from_secs(2)),
             Ok(NetEvent::Note(note)) if note.contains("without joining a gameplay seat")
         ));
-        assert!(client.mission_id().is_none());
+        assert!(client.session_metadata().is_none());
         client.shutdown();
 
         assert!(
@@ -1468,10 +1467,15 @@ mod tests {
             })
             .expect("exact mounted content ready");
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
-        while join.mission_id().is_none() && std::time::Instant::now() < deadline {
+        while join.session_metadata().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert_eq!(join.mission_id().as_deref(), Some("TestMission"));
+        assert_eq!(
+            join.session_metadata()
+                .expect("admitted Welcome")
+                .mission_id,
+            "TestMission"
+        );
         assert!(matches!(
             join_in_rx.recv_timeout(Duration::from_secs(2)),
             Ok(NetEvent::AssignedLocalSeat(PlayerId(1))) | Ok(NetEvent::MissionConfig { .. })

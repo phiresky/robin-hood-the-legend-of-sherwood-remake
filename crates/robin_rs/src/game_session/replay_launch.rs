@@ -75,18 +75,10 @@ pub(super) fn prepare_replay_mission(
     let location = profile.location;
     let rng_seed = data.header().rng_seed;
     let sim_config = data.header().sim_config;
-    let mut replay_args = args.clone();
-    replay_args.mission_restart = false;
-    replay_args.replay_data = Some(data);
-    replay_args.replay = None;
     // A queued replay can supersede a live custom/multiplayer mission. Its
     // persisted descriptor/package are the sole authority; never let ambient
     // launch metadata trigger a second archive or Lua lookup.
-    replay_args.custom_mission = None;
-    replay_args.pending_lua_mission = None;
-    replay_args.pending_distributed_mod = None;
-    replay_args.resolved_mission_assets = None;
-    replay_args.start_paused |= paused;
+    let replay_args = args.for_replay(data, paused);
     Ok(PreparedReplayLaunch {
         campaign,
         mission_idx,

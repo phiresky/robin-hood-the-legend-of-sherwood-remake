@@ -1546,18 +1546,20 @@ mod tests {
         let result = super::start_server_inner(
             &campaign,
             key,
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            None,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: None,
+                expected_players: 3,
+                browser_join_enabled: false,
+            },
             incoming,
             outgoing,
             cursor,
             snapshot,
-            3,
             None,
-            false,
         );
         let Err(error) = result else {
             panic!("mismatched replacement unexpectedly started");

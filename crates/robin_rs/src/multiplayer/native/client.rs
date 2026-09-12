@@ -25,16 +25,13 @@ impl ClientHandle {
         self.session_metadata.lock().clone()
     }
 
-    pub fn session_id(&self) -> Option<MultiplayerSessionId> {
-        self.session_metadata().map(|session| session.session_id)
-    }
-
     pub(crate) fn ranked_lifecycle(&self) -> SharedRankedSessionLifecycle {
         Arc::clone(&self.ranked_lifecycle)
     }
 
     pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, String> {
-        self.assigned_seat()
+        self.session_metadata()
+            .map(|session| session.seat)
             .ok_or_else(|| "ranked client seat is unavailable before handshake".to_string())
     }
 
@@ -61,34 +58,6 @@ impl ClientHandle {
         self.ranked_setup_tx
             .send(setup)
             .map_err(|_| "ranked client setup channel is closed".to_string())
-    }
-
-    pub fn assigned_seat(&self) -> Option<PlayerId> {
-        self.session_metadata().map(|session| session.seat)
-    }
-
-    pub fn mission_seed(&self) -> Option<u64> {
-        self.session_metadata().map(|session| session.mission_seed)
-    }
-
-    pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
-        self.session_metadata().map(|session| session.sim_config)
-    }
-
-    pub fn mission_id(&self) -> Option<String> {
-        self.session_metadata().map(|session| session.mission_id)
-    }
-
-    pub fn speech_timing_locale(&self) -> Option<String> {
-        self.session_metadata()
-            .and_then(|session| session.speech_timing_locale)
-    }
-
-    /// The outer option distinguishes a pending handshake from an explicit
-    /// `None`, which authoritatively selects base `Data/Sounds` timing.
-    pub fn speech_timing_authority(&self) -> Option<Option<String>> {
-        self.session_metadata()
-            .map(|session| session.speech_timing_locale)
     }
 
     pub fn content_offer(&self) -> Option<robin_engine::multiplayer::DistributedModOffer> {
