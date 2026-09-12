@@ -156,8 +156,7 @@ impl MaintenanceWriteClass {
 #[derive(Debug, Clone, Serialize)]
 pub struct IssuedChallenge {
     pub id: String,
-    #[serde(with = "hex_array")]
-    pub nonce: [u8; 32],
+    pub nonce: robin_run_protocol::ChallengeNonce32,
     pub expires_at_ms: u64,
 }
 
@@ -1263,7 +1262,7 @@ impl Database {
         tx.commit().await?;
         Ok(IssuedChallenge {
             id,
-            nonce,
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(nonce),
             expires_at_ms: u64::try_from(expires)
                 .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
         })
@@ -1461,7 +1460,7 @@ impl Database {
         }
         let issued = IssuedChallenge {
             id: uuid::Uuid::now_v7().to_string(),
-            nonce: rand::random(),
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(rand::random()),
             expires_at_ms: u64::try_from(expires)
                 .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
         };
@@ -1531,7 +1530,7 @@ impl Database {
               public_metadata_json) VALUES (?, ?, 'submission', ?, ?, ?, ?, ?, ?)",
         )
         .bind(&issued.id)
-        .bind(issued.nonce.as_slice())
+        .bind(issued.nonce.as_bytes().as_slice())
         .bind(public_key.as_slice())
         .bind(generation)
         .bind(now)
@@ -1577,7 +1576,7 @@ impl Database {
             .ok_or_else(|| DbError::Corrupt("challenge expiry overflow".to_owned()))?;
         let issued = IssuedChallenge {
             id: uuid::Uuid::now_v7().to_string(),
-            nonce: rand::random(),
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(rand::random()),
             expires_at_ms: u64::try_from(expires)
                 .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
         };
@@ -1604,7 +1603,7 @@ impl Database {
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&issued.id)
-        .bind(issued.nonce.as_slice())
+        .bind(issued.nonce.as_bytes().as_slice())
         .bind(controller_public_key.as_slice())
         .bind(submission_id)
         .bind(now)
@@ -1899,44 +1898,26 @@ impl Database {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let quota_public_key: [u8; 32] = match target_kind {
             "run" => {
-                let mission_ruleset =
-                    active_ruleset_predicate("run.ruleset_id", active_ruleset_ids);
-                let aggregate_ruleset =
-                    active_ruleset_predicate("aggregate.ruleset_id", active_ruleset_ids);
-                let statement = format!(
-                    "SELECT participant.public_key FROM verified_runs run \
-                     JOIN submissions submission ON submission.id = run.submission_id \
-                     JOIN submission_participants participant \
-                       ON participant.submission_id = submission.id AND participant.seat = 0 \
-                     WHERE run.id = ? AND submission.tombstoned_at_ms IS NULL \
-                       AND {mission_ruleset} \
-                       AND (run.campaign_session_kind IS NULL \
-                            OR run.campaign_session_kind = 'field_mission') \
-                     UNION ALL \
-                     SELECT participant.public_key FROM full_campaign_runs aggregate \
-                     JOIN full_campaign_sessions session \
-                       ON session.full_campaign_run_id = aggregate.id AND session.ordinal = 0 \
-                     JOIN verified_runs run ON run.id = session.run_id \
-                     JOIN submissions submission ON submission.id = run.submission_id \
-                     JOIN submission_participants participant \
-                       ON participant.submission_id = submission.id AND participant.seat = 0 \
-                     WHERE aggregate.id = ? AND aggregate.tombstoned_at_ms IS NULL \
-                       AND {aggregate_ruleset} \
-                       AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions linked_session \
-                           JOIN verified_runs linked_run ON linked_run.id = linked_session.run_id \
-                           JOIN submissions linked_submission \
-                             ON linked_submission.id = linked_run.submission_id \
-                           WHERE linked_session.full_campaign_run_id = aggregate.id \
-                             AND linked_submission.tombstoned_at_ms IS NOT NULL) \
-                     LIMIT 1"
+                let mut query = QueryBuilder::<Sqlite>::new("");
+                query.push("SELECT participant.public_key FROM verified_runs run JOIN submissions submission ON submission.id = run.submission_id JOIN submission_participants participant ON participant.submission_id = submission.id AND participant.seat = 0 WHERE run.id = ");
+                query.push_bind(target_id);
+                query.push(" AND submission.tombstoned_at_ms IS NULL AND ");
+                push_ruleset_filter(
+                    &mut query,
+                    "run.ruleset_id",
+                    active_ruleset_ids.iter().copied(),
                 );
-                // SQL contains only fixed column names and hex-encoded ruleset digests; values are bound.
+                query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') UNION ALL SELECT participant.public_key FROM full_campaign_runs aggregate JOIN full_campaign_sessions session ON session.full_campaign_run_id = aggregate.id AND session.ordinal = 0 JOIN verified_runs run ON run.id = session.run_id JOIN submissions submission ON submission.id = run.submission_id JOIN submission_participants participant ON participant.submission_id = submission.id AND participant.seat = 0 WHERE aggregate.id = ");
+                query.push_bind(target_id);
+                query.push(" AND aggregate.tombstoned_at_ms IS NULL AND ");
+                push_ruleset_filter(
+                    &mut query,
+                    "aggregate.ruleset_id",
+                    active_ruleset_ids.iter().copied(),
+                );
+                query.push(" AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions linked_session JOIN verified_runs linked_run ON linked_run.id = linked_session.run_id JOIN submissions linked_submission ON linked_submission.id = linked_run.submission_id WHERE linked_session.full_campaign_run_id = aggregate.id AND linked_submission.tombstoned_at_ms IS NOT NULL) LIMIT 1");
                 let key: Option<Vec<u8>> =
-                    sqlx::query_scalar(sqlx::AssertSqlSafe(statement.as_str()))
-                        .bind(target_id)
-                        .bind(target_id)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                    query.build_query_scalar().fetch_optional(&mut *tx).await?;
                 fixed_32(key.ok_or(DbError::NotFound)?)?
             }
             "player" => {
@@ -2270,12 +2251,16 @@ impl Database {
                     })?,
             )
             .map_err(|_| DbError::Corrupt("campaign session ordinal out of range".to_owned()))?,
-            max_concurrent_players: u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("player count out of range".to_owned()))?,
-            participant_instance_count: u16::try_from(
-                row.try_get::<i64, _>("participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("participant instance count out of range".to_owned()))?,
+            max_concurrent_players: checked_count(
+                &row,
+                "max_concurrent_players",
+                "player count out of range",
+            )?,
+            participant_instance_count: checked_count(
+                &row,
+                "participant_instance_count",
+                "participant instance count out of range",
+            )?,
             chain_owner_public_key,
             participants,
         })
@@ -2614,8 +2599,11 @@ impl Database {
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
                 .transpose()?,
-            max_concurrent_players: u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("campaign player count exceeds u16".to_owned()))?,
+            max_concurrent_players: checked_count(
+                &row,
+                "max_concurrent_players",
+                "campaign player count exceeds u16",
+            )?,
             completed_full_campaign_run_id: row.try_get("full_campaign_run_id")?,
             verification_request,
             verification_result,
@@ -2793,12 +2781,16 @@ impl Database {
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
                 .transpose()?;
-            let row_players = u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("campaign player count exceeds u16".to_owned()))?;
-            let row_instances = u16::try_from(row.try_get::<i64, _>("participant_instance_count")?)
-                .map_err(|_| {
-                    DbError::Corrupt("campaign participant count exceeds u16".to_owned())
-                })?;
+            let row_players = checked_count(
+                &row,
+                "max_concurrent_players",
+                "campaign player count exceeds u16",
+            )?;
+            let row_instances = checked_count(
+                &row,
+                "participant_instance_count",
+                "campaign participant count exceeds u16",
+            )?;
             if row_chain.as_deref() != Some(chain_id.as_str())
                 || row_campaign_content != campaign_content_manifest_id
                 || row_config != config_id
@@ -3650,20 +3642,37 @@ fn fixed_32(bytes: Vec<u8>) -> Result<[u8; 32], DbError> {
         .map_err(|_| DbError::Corrupt("expected a 32-byte digest".to_owned()))
 }
 
-fn active_ruleset_predicate(column: &str, active_ruleset_ids: &[[u8; 32]]) -> String {
-    if active_ruleset_ids.is_empty() {
-        return "0".to_owned();
+fn push_ruleset_filter(
+    query: &mut QueryBuilder<Sqlite>,
+    column: &'static str,
+    ids: impl IntoIterator<Item = [u8; 32]>,
+) {
+    let mut ids = ids.into_iter().peekable();
+    if ids.peek().is_none() {
+        query.push("0");
+        return;
     }
-    let digests = active_ruleset_ids
-        .iter()
-        .map(|digest| format!("X'{}'", hex::encode(digest)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{column} IN ({digests})")
+    query.push(column).push(" IN (");
+    let mut separated = query.separated(", ");
+    for digest in ids {
+        separated.push_bind(digest.to_vec());
+    }
+    query.push(")");
 }
 
 fn nonnegative_u64(value: i64, field: &str) -> Result<u64, DbError> {
     u64::try_from(value).map_err(|_| DbError::Corrupt(format!("{field} is negative")))
+}
+
+/// Decode a SQLite INTEGER into a bounded public count. Callers retain their
+/// domain-specific corruption message; SQL type/column errors remain SQLx
+/// errors instead of being disguised as an absent or zero count.
+fn checked_count<T: TryFrom<i64>>(
+    row: &SqliteRow,
+    column: &str,
+    corruption: &'static str,
+) -> Result<T, DbError> {
+    T::try_from(row.try_get::<i64, _>(column)?).map_err(|_| DbError::Corrupt(corruption.to_owned()))
 }
 
 fn optional_u32(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<Option<u32>, DbError> {
@@ -3947,20 +3956,74 @@ fn is_public_rejection_code(value: &str) -> bool {
         .is_ok()
 }
 
-mod hex_array {
-    use serde::Serializer;
-
-    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(value))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issued_nonce_uses_protocol_hex_representation() {
+        let issued = IssuedChallenge {
+            id: "nonce-fixture".into(),
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes([0xab; 32]),
+            expires_at_ms: 123,
+        };
+        assert_eq!(
+            serde_json::to_value(issued).unwrap(),
+            serde_json::json!({
+                "id": "nonce-fixture", "nonce": "ab".repeat(32), "expires_at_ms": 123,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn count_columns_preserve_bounds_and_corruption_errors() {
+        use sqlx::Connection;
+        let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+        for value in [-1, 0, 65_535, 65_536, i64::MAX] {
+            let row = sqlx::query("SELECT ? AS count")
+                .bind(value)
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            let result = checked_count::<u16>(&row, "count", "count out of range");
+            match u16::try_from(value) {
+                Ok(expected) => assert_eq!(result.unwrap(), expected),
+                Err(_) => assert!(
+                    matches!(result, Err(DbError::Corrupt(message)) if message == "count out of range")
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ruleset_filters_bind_values_in_order_and_reject_empty_allowlists() {
+        use sqlx::Connection;
+        let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+        for (allowed, expected) in [
+            (vec![], 0_i64),
+            (vec![[1; 32]], 1),
+            (vec![[2; 32]], 0),
+            (vec![[2; 32], [1; 32]], 1),
+        ] {
+            let mut query = QueryBuilder::<Sqlite>::new("WITH candidate AS (SELECT ");
+            query
+                .push_bind(vec![1_u8; 32])
+                .push(" AS ruleset_id) SELECT COUNT(*) FROM candidate WHERE ");
+            push_ruleset_filter(&mut query, "candidate.ruleset_id", allowed);
+            query
+                .push(" AND ")
+                .push_bind(7_i64)
+                .push(" = ")
+                .push_bind(7_i64);
+            assert!(!query.sql().contains("X'"));
+            let actual: i64 = query
+                .build_query_scalar()
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
     use robin_run_protocol::{
         ChallengeNonce32, CompetitionRunGrantClaimV1, CompetitionRunGrantRequestClaimV1,
         PublicKey32, RankedSessionConfigV1, ResourceLocaleRootV1, SCHEMA_VERSION_V1, Signature64,
@@ -4448,7 +4511,12 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, public_key, username)
+            .apply_username_update(
+                &challenge.id,
+                challenge.nonce.into_bytes(),
+                public_key,
+                username,
+            )
             .await
             .unwrap();
     }
@@ -4886,7 +4954,7 @@ mod tests {
                 .await
                 .unwrap();
             database
-                .apply_username_update(&challenge.id, challenge.nonce, key, username)
+                .apply_username_update(&challenge.id, challenge.nonce.into_bytes(), key, username)
                 .await
                 .unwrap();
         }
@@ -4919,7 +4987,7 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, key, "Marian")
+            .apply_username_update(&challenge.id, challenge.nonce.into_bytes(), key, "Marian")
             .await
             .unwrap();
         database
