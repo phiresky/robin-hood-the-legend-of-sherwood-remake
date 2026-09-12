@@ -193,7 +193,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     // Zero-alpha overlay still exercises framebuffer snapshot/pass ordering.
     renderer.render_framebuffer_alpha_rect(Rect::new(0, 0, 3, 2), [0.0, 0.0, 1.0, 1.0], 0, 0);
     renderer.begin_ui_layer();
-    renderer.render_gpu_rect(2, 0, 1, 1, 255, 255, 255, 255);
+    renderer.render_gpu_rect(2, 0, 1, 1, [255, 255, 255, 255]);
     let expected = vec![
         0, 0, 0, 255, 0, 255, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0,
         255,
@@ -231,7 +231,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
                 .unwrap();
             target.render_gpu_image(&image, None, None, BlendMode::None);
             target.begin_ui_layer();
-            target.render_gpu_rect(0, 0, 1, 1, 0, 255, 0, 255);
+            target.render_gpu_rect(0, 0, 1, 1, [0, 255, 0, 255]);
             if fail {
                 // Exercise the same early-return path as failed mapping,
                 // including unsubmitted capture-only world/UI commands.
@@ -272,10 +272,10 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     );
     // Detaching a submitted capture must preserve the old frame, even when
     // another frame overwrites the logical target before mapping starts.
-    renderer.render_gpu_rect(0, 0, 3, 2, 0, 255, 0, 255);
+    renderer.render_gpu_rect(0, 0, 3, 2, [0, 255, 0, 255]);
     let pending_capture = renderer.begin_capture_frame_rgba();
     assert_eq!(renderer.draw_queue_checkpoint(), 0);
-    renderer.render_gpu_rect(0, 0, 3, 2, 0, 0, 255, 255);
+    renderer.render_gpu_rect(0, 0, 3, 2, [0, 0, 255, 255]);
     assert_eq!(
         renderer.try_capture_frame_rgba().unwrap().2,
         [0, 0, 255, 255].repeat(6)
@@ -431,7 +431,7 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
         let mut captured = Vec::new();
         for id in [eager, deferred, deferred] {
             renderer.finish_loading_screen();
-            renderer.render_gpu_rect(0, 0, 3, 2, 255, 255, 255, 255);
+            renderer.render_gpu_rect(0, 0, 3, 2, [255, 255, 255, 255]);
             let draw_handle = renderer.surface_handle(id).unwrap();
             let drawn = match mode {
                 0 => renderer.draw_surface(draw_handle, None, None, 0),
@@ -487,7 +487,7 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
     // first mission frame, even when logical dimensions do not change.
     renderer.freeze_scene_for_modal();
     renderer.begin_ui_only_frame();
-    renderer.render_gpu_rect(0, 0, 3, 2, 255, 0, 0, 255);
+    renderer.render_gpu_rect(0, 0, 3, 2, [255, 0, 0, 255]);
     let identity = renderer.identity;
     renderer.finish_loading_screen();
     assert_eq!(
@@ -517,9 +517,9 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
     // Reproduce normal presentation's split world/UI composition before a
     // pause snapshot. Captures normally draw the full queue and would hide
     // the regression where only the world survived in the logical target.
-    renderer.render_gpu_rect(0, 0, 3, 2, 0, 255, 0, 255);
+    renderer.render_gpu_rect(0, 0, 3, 2, [0, 255, 0, 255]);
     renderer.begin_ui_layer();
-    renderer.render_gpu_rect(2, 0, 1, 2, 255, 0, 0, 255);
+    renderer.render_gpu_rect(2, 0, 1, 2, [255, 0, 0, 255]);
     renderer.frame.push_implicit_base_quad();
     renderer.frame.upload_queue_geometry(&renderer.gpu);
     let mut encoder = renderer
@@ -590,7 +590,7 @@ fn verify_mask_atlas_pixels(gpu: GpuContext) {
             ] {
                 let mut captures = Vec::new();
                 for id in [standalone_id, atlas_id] {
-                    renderer.render_gpu_rect(0, 0, 31, 19, 0, 0, 0, 255);
+                    renderer.render_gpu_rect(0, 0, 31, 19, [0, 0, 0, 255]);
                     let checkpoint = renderer.draw_queue_checkpoint();
                     renderer.render_gpu_image(&image, None, None, BlendMode::None);
                     renderer.mask_queued_draws_impl(

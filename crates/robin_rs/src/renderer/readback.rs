@@ -321,10 +321,10 @@ mod tests {
             surface_format: wgpu::TextureFormat::Rgba8UnormSrgb,
         };
         let mut renderer = crate::renderer::Renderer::offscreen(gpu, 2, 2);
-        renderer.render_gpu_rect(0, 0, 2, 2, 255, 0, 0, 255);
+        renderer.render_gpu_rect(0, 0, 2, 2, [255, 0, 0, 255]);
         let red = renderer.begin_capture_frame_rgba();
         let presented_red = renderer.begin_capture_presented_frame_rgba();
-        renderer.render_gpu_rect(0, 0, 2, 2, 0, 255, 0, 255);
+        renderer.render_gpu_rect(0, 0, 2, 2, [0, 255, 0, 255]);
         let green = renderer.begin_capture_frame_rgba();
         // All three submissions precede completion and reuse the logical
         // target. Returning to JS must not change any submitted frame.
