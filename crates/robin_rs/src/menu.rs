@@ -1,233 +1,13 @@
 //! Menu system — state management and logic for menu screens.
 //!
 //! This module covers:
-//! - Menu-screen timer management
-//! - Window layer stack (modal/non-modal window management)
-//! - Widget alignment helpers
 //! - Campaign map location/ARES mapping
 
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
-use serde::{Deserialize, Serialize};
 
 use robin_engine::campaign::{Campaign, CampaignValue};
 use robin_engine::profiles::{MissionLocation, MissionType};
-
-// ═══════════════════════════════════════════════════════════════════
-// Menu Screen — timer and window layer management
-// ═══════════════════════════════════════════════════════════════════
-
-/// Timer event message ID.
-pub const RHMS_TIMER: u32 = 0x1000;
-
-/// A timer managed by a menu screen.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MenuTimer {
-    pub id: u32,
-    pub delay_ms: u32,
-    pub last_trigger_tick: u32,
-}
-
-/// Identifies a window in the layer stack. Windows are identified by a
-/// unique ID assigned at registration time.
-pub type WindowId = u32;
-
-/// A layer in the window stack. A modal window creates a new layer;
-/// non-modal windows are added to the current top layer.
-#[derive(Debug, Clone, Default)]
-pub struct WindowLayer {
-    pub window_ids: Vec<WindowId>,
-}
-
-/// State management for a menu screen. Handles timers and the window
-/// layer stack.
-#[derive(Debug, Clone, Default)]
-pub struct MenuScreenState {
-    /// Stack of window layers. The top layer receives events.
-    window_layers: Vec<WindowLayer>,
-    /// Active timers.
-    timers: Vec<MenuTimer>,
-    /// Next timer ID to assign.
-    next_timer_id: u32,
-    /// Refresh counter for UI repainting.
-    pub refresh_counter: u32,
-}
-
-impl MenuScreenState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    // ── Timer management ────────────────────────────────────────────
-
-    /// Create a new timer with the given delay in milliseconds.
-    /// Returns the timer ID.
-    pub fn create_timer(&mut self, delay_ms: u32, current_tick: u32) -> u32 {
-        let id = self.next_timer_id;
-        self.timers.push(MenuTimer {
-            id,
-            delay_ms,
-            last_trigger_tick: current_tick,
-        });
-        self.next_timer_id += 1;
-        id
-    }
-
-    /// Delete a timer by ID.
-    pub fn delete_timer(&mut self, timer_id: u32) {
-        self.timers.retain(|t| t.id != timer_id);
-    }
-
-    /// Check which timers should fire at the given tick count.
-    /// Returns a list of timer IDs that triggered.
-    pub fn refresh_timers(&mut self, current_tick: u32) -> Vec<u32> {
-        let mut triggered = Vec::new();
-
-        for timer in &mut self.timers {
-            if current_tick.wrapping_sub(timer.last_trigger_tick) >= timer.delay_ms {
-                timer.last_trigger_tick = current_tick;
-                triggered.push(timer.id);
-            }
-        }
-
-        triggered
-    }
-
-    // ── Window layer stack ──────────────────────────────────────────
-
-    /// Register a window. If `modal`, creates a new layer and disables
-    /// the previous top layer. Otherwise adds to the current top layer.
-    pub fn register_window(&mut self, window_id: WindowId, modal: bool) {
-        if modal {
-            let mut new_layer = WindowLayer::default();
-            new_layer.window_ids.push(window_id);
-            self.window_layers.push(new_layer);
-        } else if let Some(top) = self.window_layers.last_mut()
-            && !top.window_ids.contains(&window_id)
-        {
-            top.window_ids.push(window_id);
-        }
-    }
-
-    /// Close a window, removing it from the layer stack.
-    ///
-    /// If the window is the modal root of the top layer, the entire layer
-    /// is popped. Otherwise the window is removed from the current layer.
-    ///
-    /// Returns the list of window IDs that were removed from the UI
-    /// (the caller must actually remove them from the rendering system).
-    pub fn close_window(&mut self, window_id: WindowId) -> Vec<WindowId> {
-        let mut removed = Vec::new();
-
-        if let Some(top) = self.window_layers.last() {
-            if top.window_ids.first() == Some(&window_id) {
-                // This is the modal root — pop the entire layer.
-                let layer = self.window_layers.pop().unwrap();
-                removed = layer.window_ids;
-            } else {
-                // Non-modal — just remove from the current layer.
-                if let Some(top) = self.window_layers.last_mut() {
-                    top.window_ids.retain(|&id| id != window_id);
-                }
-                removed.push(window_id);
-            }
-        }
-
-        removed
-    }
-
-    /// Get the IDs of all windows in the current top layer.
-    pub fn top_layer_windows(&self) -> &[WindowId] {
-        self.window_layers
-            .last()
-            .map(|l| l.window_ids.as_slice())
-            .unwrap_or(&[])
-    }
-
-    /// Number of window layers (for detecting modal pop in RefreshLoop).
-    pub fn layer_count(&self) -> usize {
-        self.window_layers.len()
-    }
-
-    // Legacy emergency-exit and input-translator flags are not owned here.
-    // The mission driver owns cooperative modal states and their exit results;
-    // nested mission-description/purchase states interpret their own input
-    // without saving or restoring a separate translator flag.
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Menu Window — widget alignment helpers
-// ═══════════════════════════════════════════════════════════════════
-
-/// A rectangle for widget positioning.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct Rect {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
-impl Rect {
-    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
-        Self {
-            x,
-            y,
-            width: w,
-            height: h,
-        }
-    }
-
-    pub fn bottom_right(&self) -> (f32, f32) {
-        (self.x + self.width, self.y + self.height)
-    }
-}
-
-/// Align a set of widget rects to the bottom-right corner of a container.
-pub fn align_bottom_right(container: &Rect, widgets: &mut [Rect], spacing: f32) {
-    if widgets.is_empty() {
-        return;
-    }
-
-    let total_height: f32 =
-        widgets.iter().map(|w| w.height).sum::<f32>() + (widgets.len() as f32 - 1.0) * spacing;
-    let max_width: f32 = widgets.iter().map(|w| w.width).fold(0.0f32, f32::max);
-
-    let (br_x, br_y) = container.bottom_right();
-    let mut cur_y = br_y - total_height;
-    let start_x = br_x - max_width;
-
-    for widget in widgets.iter_mut() {
-        widget.x = start_x;
-        // The original game describes this alignment as "center the widget
-        // horizontally" but actually writes the offset to the Y
-        // component, so a narrower widget is shifted up by half its
-        // width deficit. Replicated literally for parity; a no-op when
-        // all widgets share max_width.
-        widget.y = cur_y + (widget.width - max_width) / 2.0;
-        cur_y += widget.height + spacing;
-    }
-}
-
-/// Center widgets horizontally within a container.
-pub fn center_horizontally(container: &Rect, widgets: &mut [Rect], spacing: f32) {
-    if widgets.is_empty() {
-        return;
-    }
-
-    let line_width: f32 =
-        widgets.iter().map(|w| w.width).sum::<f32>() + spacing * (widgets.len() as f32 - 1.0);
-
-    let start_x = (container.width - line_width) / 2.0;
-    let y = widgets[0].y;
-    let mut cur_x = start_x;
-
-    for widget in widgets.iter_mut() {
-        widget.x = cur_x;
-        widget.y = y;
-        cur_x += widget.width + spacing;
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // Campaign Map — location management and ARES mapping
@@ -288,9 +68,6 @@ pub struct CampaignMapState {
     /// Which attack arrows are visible (indexed 0..ATTACK_ARROW_COUNT).
     pub attack_arrows_visible: [bool; ATTACK_ARROW_COUNT],
 
-    /// Timer ID for the announcement text, or None.
-    pub announcement_timer: Option<u32>,
-
     /// Timer ID for delayed debriefing display, or None.
     pub debriefing_timer: Option<u32>,
 
@@ -306,7 +83,6 @@ impl Default for CampaignMapState {
         Self {
             locations,
             attack_arrows_visible: [false; ATTACK_ARROW_COUNT],
-            announcement_timer: None,
             debriefing_timer: None,
             status_text: String::new(),
         }
@@ -467,33 +243,6 @@ impl CampaignMapState {
             format!("{ransom_str} -  {score_label} : {score}  -  {preserved_label} : {preserved}%");
     }
 
-    /// Set an announcement text and start the announcement timer.
-    pub fn set_announcement(
-        &mut self,
-        text: String,
-        screen: &mut MenuScreenState,
-        current_tick: u32,
-    ) {
-        if let Some(old_timer) = self.announcement_timer.take() {
-            screen.delete_timer(old_timer);
-        }
-        self.status_text = text;
-        self.announcement_timer = Some(screen.create_timer(3000, current_tick));
-    }
-
-    /// Handle the announcement timer firing — restore war crime text.
-    pub fn on_announcement_timer(
-        &mut self,
-        screen: &mut MenuScreenState,
-        campaign: &Campaign,
-        menu_text: &dyn engine_sherwood_stat::MenuTextLookup,
-    ) {
-        if let Some(timer_id) = self.announcement_timer.take() {
-            screen.delete_timer(timer_id);
-        }
-        self.update_war_crime_text(campaign, menu_text);
-    }
-
     // ── Campaign interaction ───────────────────────────────────────
 
     /// Handle the player clicking on a map location.
@@ -563,21 +312,6 @@ pub fn mission_location_from_index(idx: usize) -> Option<MissionLocation> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// User choice from mission description menu
-// ═══════════════════════════════════════════════════════════════════
-
-/// The user's choice from the mission description dialog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MissionDescriptionChoice {
-    /// User cancelled / closed the dialog.
-    Cancel,
-    /// User chose to start the mission.
-    StartMission,
-    /// User chose to show pending missions.
-    ShowPendingMissions,
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════
 
@@ -602,110 +336,6 @@ mod tests {
                 _ => String::new(),
             }
         }
-    }
-
-    // ── MenuScreenState tests ───────────────────────────────────────
-
-    #[test]
-    fn timer_create_and_delete() {
-        let mut screen = MenuScreenState::new();
-        let id1 = screen.create_timer(100, 0);
-        let id2 = screen.create_timer(200, 0);
-        assert_eq!(screen.timers.len(), 2);
-
-        screen.delete_timer(id1);
-        assert_eq!(screen.timers.len(), 1);
-        assert_eq!(screen.timers[0].id, id2);
-    }
-
-    #[test]
-    fn timer_refresh_triggers() {
-        let mut screen = MenuScreenState::new();
-        let id = screen.create_timer(100, 1000);
-
-        // Not enough time passed.
-        let triggered = screen.refresh_timers(1050);
-        assert!(triggered.is_empty());
-
-        // Enough time passed.
-        let triggered = screen.refresh_timers(1100);
-        assert_eq!(triggered, vec![id]);
-
-        // Timer was re-triggered, so it resets.
-        let triggered = screen.refresh_timers(1150);
-        assert!(triggered.is_empty());
-    }
-
-    #[test]
-    fn window_layer_modal() {
-        let mut screen = MenuScreenState::new();
-
-        // Register a modal window — creates layer 1.
-        screen.register_window(1, true);
-        assert_eq!(screen.layer_count(), 1);
-        assert_eq!(screen.top_layer_windows(), &[1]);
-
-        // Register a non-modal window in the same layer.
-        screen.register_window(2, false);
-        assert_eq!(screen.layer_count(), 1);
-        assert_eq!(screen.top_layer_windows(), &[1, 2]);
-
-        // Register another modal window — creates layer 2.
-        screen.register_window(3, true);
-        assert_eq!(screen.layer_count(), 2);
-        assert_eq!(screen.top_layer_windows(), &[3]);
-
-        // Close the modal — pops layer 2, restores layer 1.
-        let removed = screen.close_window(3);
-        assert_eq!(removed, vec![3]);
-        assert_eq!(screen.layer_count(), 1);
-        assert_eq!(screen.top_layer_windows(), &[1, 2]);
-    }
-
-    #[test]
-    fn window_layer_close_non_modal() {
-        let mut screen = MenuScreenState::new();
-        screen.register_window(1, true);
-        screen.register_window(2, false);
-
-        let removed = screen.close_window(2);
-        assert_eq!(removed, vec![2]);
-        assert_eq!(screen.top_layer_windows(), &[1]);
-    }
-
-    // ── Widget alignment tests ──────────────────────────────────────
-
-    #[test]
-    fn align_bottom_right_basic() {
-        let container = Rect::new(0.0, 0.0, 640.0, 480.0);
-        let mut widgets = vec![
-            Rect::new(0.0, 0.0, 100.0, 30.0),
-            Rect::new(0.0, 0.0, 80.0, 30.0),
-        ];
-
-        align_bottom_right(&container, &mut widgets, 10.0);
-
-        // Both should be right-aligned.
-        assert_eq!(widgets[0].x, 540.0); // 640 - 100
-        assert_eq!(widgets[1].x, 540.0);
-        // Vertically stacked from the bottom.
-        let total_h = 30.0 + 10.0 + 30.0;
-        assert_eq!(widgets[0].y, 480.0 - total_h);
-    }
-
-    #[test]
-    fn center_horizontally_basic() {
-        let container = Rect::new(0.0, 0.0, 400.0, 300.0);
-        let mut widgets = vec![
-            Rect::new(0.0, 50.0, 100.0, 30.0),
-            Rect::new(0.0, 50.0, 100.0, 30.0),
-        ];
-
-        center_horizontally(&container, &mut widgets, 20.0);
-
-        // Total width: 100 + 20 + 100 = 220, centered in 400 => start at 90.
-        assert_eq!(widgets[0].x, 90.0);
-        assert_eq!(widgets[1].x, 210.0);
     }
 
     // ── CampaignMapState tests ──────────────────────────────────────
@@ -817,24 +447,6 @@ mod tests {
         assert!(map.status_text.contains("500"));
         assert!(map.status_text.contains("1200"));
         assert!(map.status_text.contains("80%"));
-    }
-
-    #[test]
-    fn announcement_timer_lifecycle() {
-        let mut map = CampaignMapState::new();
-        let mut screen = MenuScreenState::new();
-        let campaign = Campaign::default();
-
-        map.set_announcement("Test!".into(), &mut screen, 1000);
-        assert!(map.announcement_timer.is_some());
-        assert_eq!(map.status_text, "Test!");
-        assert_eq!(screen.timers.len(), 1);
-
-        map.on_announcement_timer(&mut screen, &campaign, &StubMenuText);
-        assert!(map.announcement_timer.is_none());
-        assert_eq!(screen.timers.len(), 0);
-        // Status text is now war crime text (defaults to zeros).
-        assert!(map.status_text.contains("0"));
     }
 
     #[test]

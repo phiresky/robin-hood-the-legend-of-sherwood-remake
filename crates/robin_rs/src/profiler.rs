@@ -3,7 +3,7 @@
 //! Records per-key timing data each frame and can write a CSV log on
 //! demand.
 
-use std::sync::Mutex;
+use web_time::Instant;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +44,7 @@ impl ProfilerEntry {
 
 /// The profiler instance.
 pub struct Profiler {
+    clock_start: Instant,
     next_key: ProfilerKey,
     entries: Vec<ProfilerEntry>,
     /// One string per completed frame, recording events logged during that frame.
@@ -53,18 +54,11 @@ pub struct Profiler {
     filename: String,
 }
 
-/// A function pointer the host can supply for a monotonic millisecond clock.
-static GET_TICKS: Mutex<Option<extern "C" fn() -> u32>> = Mutex::new(None);
-
-/// Read current tick count via the registered callback, or return 0.
-fn get_ticks() -> u32 {
-    GET_TICKS.lock().unwrap().map(|f| f()).unwrap_or(0)
-}
-
 impl Profiler {
     /// Create a new profiler that will (eventually) write to `filename`.
     pub fn new(filename: &str) -> Self {
         let mut p = Self {
+            clock_start: Instant::now(),
             next_key: 1,
             entries: Vec::new(),
             events: Vec::new(),
@@ -95,7 +89,7 @@ impl Profiler {
     /// Begin a new frame.
     pub fn start_frame(&mut self) {
         self.current_event.clear();
-        self.entries[0].time = get_ticks();
+        self.entries[0].time = self.clock_start.elapsed().as_millis() as u32;
     }
 
     /// End the current frame, storing accumulated data.
@@ -104,7 +98,7 @@ impl Profiler {
 
         for i in 0..self.entries.len() {
             if i == 0 {
-                let frame_time = get_ticks();
+                let frame_time = self.clock_start.elapsed().as_millis() as u32;
                 let start_time = self.entries[0].time;
                 self.entries[0]
                     .time_history
@@ -131,7 +125,7 @@ impl Profiler {
         if k < self.entries.len() {
             let entry = &mut self.entries[k];
             if entry.recursion_depth == 0 {
-                entry.time = get_ticks();
+                entry.time = self.clock_start.elapsed().as_millis() as u32;
             }
             entry.recursion_depth += 1;
             true
@@ -149,7 +143,7 @@ impl Profiler {
             // 0xFFFF and skips the timing accumulation.
             entry.recursion_depth = entry.recursion_depth.wrapping_sub(1);
             if entry.recursion_depth == 0 {
-                let now = get_ticks();
+                let now = self.clock_start.elapsed().as_millis() as u32;
                 entry.current_amount += now.wrapping_sub(entry.time);
                 entry.time = 0;
             }
@@ -227,9 +221,18 @@ impl Profiler {
 mod tests {
     use super::*;
 
-    /// Helper: create a profiler with a fake tick source for deterministic tests.
+    /// Each profiler owns its monotonic clock; no process-global registration.
     fn make_profiler() -> Profiler {
         Profiler::new("test.csv")
+    }
+
+    #[test]
+    fn timing_uses_the_owned_clock_without_host_registration() {
+        let mut profiler = make_profiler();
+        profiler.start_frame();
+        profiler.clock_start -= std::time::Duration::from_millis(25);
+        profiler.end_frame();
+        assert!(profiler.entries[0].time_history[0] >= 25);
     }
 
     #[test]

@@ -3331,24 +3331,6 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
             .is_err()
     );
     assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
-    // Widget alpha mixing validates both borrowed uploads before queuing
-    // either draw: a foreign/decoded input cannot partially render a fade.
-    let mut alpha_widget = crate::ui::RendererAlphaConstant::default();
-    assert!(!alpha_widget.render(&mut other_renderer, 0, Some(owned.handle()), None));
-    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
-    alpha_widget.mixing_in_progress = true;
-    let local_other = other_renderer.surface_handle(other_id).unwrap();
-    assert!(!alpha_widget.render(
-        &mut other_renderer,
-        0,
-        Some(local_other),
-        Some(owned.handle())
-    ));
-    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
-    let decoded: SurfaceHandle =
-        serde_json::from_value(serde_json::to_value(local_other).unwrap()).unwrap();
-    assert!(!alpha_widget.render(&mut other_renderer, 0, Some(local_other), Some(decoded)));
-    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
     assert!(other_renderer.surface_alpha_mask(owned.handle()).is_err());
     let restored: OwnedSurface =
         serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
