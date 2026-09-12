@@ -46,94 +46,52 @@ fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
 
 #[cfg(test)]
 thread_local! {
-    static CONDOLATION_CARD_TRACE: std::cell::RefCell<Option<Vec<(EntityId, Command)>>> =
-        const { std::cell::RefCell::new(None) };
-    static CONDOLATION_STIMULUS_TRACE: std::cell::RefCell<Option<Vec<(EntityId, StimulusType)>>> =
-        const { std::cell::RefCell::new(None) };
+    static CONDOLATION_CARD_TRACE: super::test_support::Probe<(EntityId, Command)> =
+        const { super::test_support::Probe::new() };
+    static CONDOLATION_STIMULUS_TRACE: super::test_support::Probe<(EntityId, StimulusType)> =
+        const { super::test_support::Probe::new() };
     static CONDOLATION_NESTED_TERMINATION: std::cell::RefCell<Option<(EntityId, StimulusType, SequenceId, usize)>> =
         const { std::cell::RefCell::new(None) };
-    static OWNER_BOUNDARY_RESUME_TRACE: std::cell::RefCell<Option<Vec<EntityId>>> =
-        const { std::cell::RefCell::new(None) };
-    static OWNER_BOUNDARY_REENTRANT_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
-        const { std::cell::RefCell::new(None) };
-    static STRANGLE_CONDOLATION_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
-        const { std::cell::RefCell::new(None) };
+    static OWNER_BOUNDARY_RESUME_TRACE: super::test_support::Probe<EntityId> =
+        const { super::test_support::Probe::new() };
+    static OWNER_BOUNDARY_REENTRANT_TRACE: super::test_support::Probe<&'static str> =
+        const { super::test_support::Probe::new() };
+    static STRANGLE_CONDOLATION_TRACE: super::test_support::Probe<&'static str> =
+        const { super::test_support::Probe::new() };
 }
 
 #[cfg(test)]
 pub(super) fn capture_condolation_cards<T>(f: impl FnOnce() -> T) -> (T, Vec<(EntityId, Command)>) {
-    CONDOLATION_CARD_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = CONDOLATION_CARD_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("condolation card trace remains installed")
-    });
-    (result, observed)
+    CONDOLATION_CARD_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 fn observe_condolation_card(owner: EntityId, command: Command) {
-    CONDOLATION_CARD_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((owner, command));
-        }
-    });
+    CONDOLATION_CARD_TRACE.with(|trace| trace.record((owner, command)));
 }
 
 #[cfg(test)]
 pub(super) fn capture_strangle_condolation_order<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<&'static str>) {
-    STRANGLE_CONDOLATION_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = STRANGLE_CONDOLATION_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("strangle condolation trace remains installed")
-    });
-    (result, observed)
+    STRANGLE_CONDOLATION_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 pub(super) fn observe_strangle_condolation_step(step: &'static str) {
-    STRANGLE_CONDOLATION_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(step);
-        }
-    });
+    STRANGLE_CONDOLATION_TRACE.with(|trace| trace.record(step));
 }
 
 #[cfg(test)]
 pub(super) fn capture_condolation_stimuli<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, StimulusType)>) {
-    CONDOLATION_STIMULUS_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = CONDOLATION_STIMULUS_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("condolation trace remains installed")
-    });
-    (result, observed)
+    CONDOLATION_STIMULUS_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 fn observe_condolation_stimulus(owner: EntityId, stimulus: StimulusType) {
-    CONDOLATION_STIMULUS_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((owner, stimulus));
-        }
-    });
+    CONDOLATION_STIMULUS_TRACE.with(|trace| trace.record((owner, stimulus)));
 }
 
 #[cfg(test)]
@@ -155,43 +113,19 @@ pub(super) fn install_condolation_nested_termination(
 
 #[cfg(test)]
 pub(super) fn capture_owner_boundary_resumes<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
-    OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("owner-boundary resume trace remains installed")
-    });
-    (result, observed)
+    OWNER_BOUNDARY_RESUME_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 pub(super) fn capture_owner_boundary_reentrant_order<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<&'static str>) {
-    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("owner-boundary reentrant trace remains installed")
-    });
-    (result, observed)
+    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 fn observe_owner_boundary_reentrant_step(step: &'static str) {
-    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(step);
-        }
-    });
+    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| trace.record(step));
 }
 
 #[cfg(test)]
@@ -760,11 +694,7 @@ impl EngineInner {
         }
 
         #[cfg(test)]
-        OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
-            if let Some(trace) = trace.borrow_mut().as_mut() {
-                trace.push(card_owner);
-            }
-        });
+        OWNER_BOUNDARY_RESUME_TRACE.with(|trace| trace.record(card_owner));
         self.orders
             .sequence_manager
             .finish_pending_condolation(dispatch);
