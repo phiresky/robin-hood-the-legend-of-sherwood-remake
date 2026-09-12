@@ -2335,12 +2335,9 @@ impl EngineInner {
     ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
 
-        let pc_snapshots = world.pcs.as_slice();
-        let unconscious_soldiers = world.unconscious_soldiers.as_slice();
         let primary_target_multiplicity =
             self.ai.global.primary_target_multiplicity_scratch.clone();
         let detection_target_multiplicity = &world.detection_target_multiplicity;
-        let npc_jump_lines = &world.npc_jump_lines;
 
         // -- Read NPC state in a scoped borrow --
         let (viewer, viewer_inside_building) = {
