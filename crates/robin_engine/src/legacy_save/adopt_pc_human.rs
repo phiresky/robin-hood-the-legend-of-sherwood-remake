@@ -21,7 +21,7 @@ use crate::{
     pc_status::{HumanStatus, PcStatus, Skill},
     position_interface::SectorHandle,
     profiles::{Action, CharacterProfileIdx, ProfileManager},
-    sequence::{Sequence, SequenceElementData, SequenceElementRef},
+    sequence::{SequenceElementData, SequenceElementRef},
 };
 
 use super::{

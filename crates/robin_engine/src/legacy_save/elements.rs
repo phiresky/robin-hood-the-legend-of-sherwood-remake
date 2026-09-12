@@ -438,7 +438,6 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SbFile;
 
     use crate::legacy_save::test_support::with_reader;
 
