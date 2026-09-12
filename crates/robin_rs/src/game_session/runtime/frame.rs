@@ -28,7 +28,7 @@ pub(in crate::game_session) struct MissionFrame {
     pub(in crate::game_session) recorder_hash: Option<u64>,
     pub(super) timeline_before: Option<TimelineFrame>,
     pub(super) timeline_after: Option<TimelineFrame>,
-    replay_record_consumed: bool,
+    pub(super) replay_record_consumed: bool,
     pub(super) recorder_state: RecorderFrameState,
 }
 
