@@ -628,10 +628,21 @@ impl ResourceManager {
     ) -> std::result::Result<Option<()>, ResourceAttachmentError> {
         if let Some(dd) = shipping {
             let locale = dd.active_locale_name();
+            if let Some(locale) = locale.as_deref() {
+                dd.locale(locale)
+                    .with_context(|| format!("resource file '{path}': selected locale {locale:?}"))
+                    .map_err(ResourceAttachmentError::Unavailable)?
+                    .ok_or_else(|| {
+                        ResourceAttachmentError::Unavailable(anyhow!(
+                            "resource file '{path}': selected locale {locale:?} is not installed"
+                        ))
+                    })?;
+            }
             if crate::shipping_datadir::is_locale_overlay_key(path)
                 && let Some(locale) = locale.as_deref()
                 && let Some(src) = dd
                     .locale_resource(locale, path)
+                    .with_context(|| format!("resource file '{path}': selected locale {locale:?}"))
                     .map_err(ResourceAttachmentError::Unavailable)?
             {
                 let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
@@ -646,6 +657,7 @@ impl ResourceManager {
                 && crate::shipping_datadir::is_optional_english_fallback_key(path)
                 && let Some(src) = dd
                     .locale_resource("en-US", path)
+                    .with_context(|| format!("resource file '{path}': English fallback"))
                     .map_err(ResourceAttachmentError::Unavailable)?
             {
                 let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
@@ -1703,6 +1715,33 @@ mod tests {
             manager.try_attach_or_from_shipping("../forbidden.res", None),
             Err(ResourceAttachmentError::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn selected_locale_errors_cannot_fall_back_to_base_shipping_resources() {
+        for locale in ["/", "en-US"] {
+            let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+            let mut shipping = crate::shipping_datadir::ShippingDatadir::default();
+            let mut base = ResourceManager::new();
+            base.data.strings.insert(7, vec!["base".into()]);
+            shipping.res_files.insert("fixture.res".into(), base);
+            let installed = crate::shipping_datadir::ShippingAssets::install(
+                Arc::new(shipping),
+                assets.clone(),
+            )
+            .unwrap();
+            // Model a corrupt/stale shared selection, which the public
+            // ShippingDatadir locale setter normally prevents.
+            assets.select_locale(Some(locale.into()), None).unwrap();
+            let mut manager = ResourceManager::with_files(Arc::new(SbFileSystem::new(assets)));
+            let error = manager
+                .try_attach_or_from_shipping("fixture.res", Some(installed.datadir()))
+                .unwrap_err();
+            assert!(matches!(&error, ResourceAttachmentError::Unavailable(_)));
+            assert!(error.to_string().contains("fixture.res"));
+            assert!(error.to_string().contains(locale));
+            assert!(manager.is_empty());
+        }
     }
 
     #[test]
