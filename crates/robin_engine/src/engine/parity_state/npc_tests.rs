@@ -712,12 +712,37 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
             base.panic_center_x = -0.0;
             base.panic_center_y = f32::from_bits(0x7fc01234);
             base.detached_patrol_path_status.current_waypoint_index = 11;
+            base.stimulus_queue.push(crate::ai::Stimulus::with_position(
+                crate::ai::StimulusType::EventEnemyNear,
+                crate::ai::Position::default(),
+            ));
+            let mut index = crate::ai::Stimulus::new(crate::ai::StimulusType::EventEnemyNear);
+            index.info = crate::ai::StimulusInfo::Index(u16::MAX);
+            base.stimulus_queue.push(index);
         }
         if let AiBrain::Enemy(enemy) = &mut brain {
             enemy.previous_state = i32::MIN;
             enemy.previous_substate = -27;
             enemy.my_seek_points = vec![7, 2, 7];
             enemy.seek_point_view_directions = vec![9, 1];
+            enemy.personal_seek_point_1 = Some(crate::ai::SeekPoint {
+                position: Default::default(),
+                frame_when_full_interest: 23,
+                directions: vec![5, 1, 5],
+                last_calculated_interest: 77,
+                locked: true,
+                id: 1111,
+            });
+            enemy.my_shooting_point = Some((3, 7));
+            enemy.last_stimulus_dispatched_to_patrol = Some(crate::ai::Stimulus::with_door_combat(
+                crate::ai::StimulusType::EventDoorCombat,
+                crate::ai::DoorCombatInfo {
+                    delay: 29,
+                    goal: Default::default(),
+                    direction: 15,
+                    adversary: None,
+                },
+            ));
         }
         let mut element = ElementData::default();
         element.kind = ElementKind::ActorSoldier;
