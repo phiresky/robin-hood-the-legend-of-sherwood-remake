@@ -27,6 +27,39 @@ test('bounded workers drain in-flight work, preserve index error order and never
     await assert.rejects(forEachConcurrent([], 0, async () => {}), /positive integer/u);
 });
 
+test('worker errors use manifest order even when later failures finish first', async () => {
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const firstFailure = new Error('first manifest failure');
+    const completed: number[] = [];
+    await assert.rejects(forEachConcurrent([0, 1, 2], 2, async index => {
+        if (index === 0) {
+            await firstPending;
+            completed.push(index);
+            throw firstFailure;
+        }
+        completed.push(index);
+        if (index === 2) releaseFirst();
+        throw new Error(`failure ${index}`);
+    }), error => error === firstFailure);
+    assert.deepEqual(completed, [1, 2, 0]);
+    await assert.rejects(forEachConcurrent([0], 1, async () => { throw 'non-Error failure'; }),
+        { name: 'Error', message: 'non-Error failure' });
+});
+
+test('cancellation takes precedence over recorded worker failures', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancelled');
+    const visited: number[] = [];
+    await assert.rejects(forEachConcurrent([0, 1, 2], 1, async index => {
+        visited.push(index);
+        if (index === 1) controller.abort(reason);
+        throw new Error(`failure ${index}`);
+    }, controller.signal), error => error === reason);
+    assert.deepEqual(visited, [0, 1]);
+    await forEachConcurrent([], 1, async () => { assert.fail('empty queue must not run'); });
+});
+
 test('preload fetches and installs each asset before declaring completion', async () => {
     const installed: string[] = [], progress: number[] = [];
     await preloadRuntimeAssets({ default: async () => {}, wasm_boot: () => {},

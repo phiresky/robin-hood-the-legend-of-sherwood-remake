@@ -95,7 +95,7 @@ export async function forEachConcurrent<T>(
     if (!Number.isInteger(concurrency) || concurrency < 1) {
         throw new Error(`preload concurrency must be a positive integer, got ${concurrency}`);
     }
-    const errors = new Array<Error | undefined>(items.length);
+    let firstError: { index: number; error: Error } | undefined;
     let next = 0;
     const worker = async (): Promise<void> => {
         for (;;) {
@@ -107,15 +107,18 @@ export async function forEachConcurrent<T>(
             try {
                 await action(items[index] as T, index);
             } catch (error) {
-                errors[index] = error instanceof Error ? error : new Error(String(error));
+                const normalized = error instanceof Error ? error : new Error(String(error));
+                // Completion order may differ from manifest order.
+                if (firstError === undefined || index < firstError.index) {
+                    firstError = { index, error: normalized };
+                }
             }
         }
     };
     const workerCount = Math.min(concurrency, items.length);
     await Promise.all(Array.from({ length: workerCount }, worker));
     signal?.throwIfAborted();
-    const firstError = errors.find((error): error is Error => error !== undefined);
     if (firstError !== undefined) {
-        throw firstError;
+        throw firstError.error;
     }
 }
