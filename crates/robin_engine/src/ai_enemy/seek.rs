@@ -93,6 +93,121 @@ use super::{
     task_priority,
 };
 
+/// Immutable inputs shared by the candidate and personal-point phases.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct SeekAreaSpec {
+    center: Position,
+    standard_radius: u16,
+    flags: SeekFlags,
+    seek_direction: u16,
+}
+
+/// Candidate indices retain global-array order for equal distances. In particular,
+/// obligatory indices remain separate: their later insertion deliberately allows duplicates.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SeekAreaCandidates {
+    square_norms: Vec<f32>,
+    near_sorted: Vec<usize>,
+    obligatory_idx: Option<usize>,
+    obligatory2_idx: Option<usize>,
+    expected_points_for_one: u16,
+}
+
+impl SeekAreaCandidates {
+    fn new(spec: SeekAreaSpec, global: &AiGlobalState) -> Self {
+        let SeekAreaSpec {
+            center,
+            standard_radius,
+            seek_direction,
+            ..
+        } = spec;
+        let sq_standard_radius = (standard_radius as f32) * (standard_radius as f32);
+        let mut obligatory_idx: Option<usize> = None;
+        let mut obligatory2_idx: Option<usize> = None;
+        // The original game seeds both single-precision minima with its infinity sentinel
+        // (65432), not floating-point infinity. Direction candidates
+        // beyond that squared distance cannot become obligatory.
+        let mut min_sqr_norm: f32 = 65_432.0;
+        let mut min_sqr_norm2: f32 = 65_432.0;
+        let mut expected_points_for_one = 1u16;
+        let mut square_norms = vec![f32::MAX; global.seek_points.len()];
+
+        // ── Phase 1: compute distances, find obligatory point ──
+        for (i, sp) in global.seek_points.iter().enumerate() {
+            let dx = sp.position.x - center.x;
+            let dy = sp.position.y - center.y;
+            let mut square_norm = dx * dx + dy * dy;
+
+            // Penalty for layer changes
+            if sp.position.level != center.level {
+                square_norm += parameters_ai::LAYER_CHANGE_PENALTY
+                    * (sp.position.level as f32 - center.level as f32).abs();
+            }
+            square_norms[i] = square_norm;
+
+            // Count points in radius (for expected count)
+            if square_norm < sq_standard_radius {
+                expected_points_for_one += 1;
+            }
+
+            // Check if this point is in the seek direction.
+            // The original game uses modulo 15 rather than wrapping at 16,
+            // making case 15 unreachable — port the bug literally
+            // so sector-bucket assignments match for boundary
+            // sectors (e.g. seek_direction=0, sector 14:
+            // (14+16)%15 = 0 → "in direction"; & 15 would give 14
+            // → "almost").
+            if seek_direction != UNDEFINED_DIRECTION {
+                let dir_sector = vec_to_sector(dx, dy);
+                // All operands are original-game unsigned 16-bit values. Preserve their
+                // unsigned wrap when a script supplies a direction above
+                // `dir_sector + 16`; debug builds must not turn that
+                // defined legacy arithmetic into an overflow panic.
+                let diff = legacy_seek_direction_delta(dir_sector, seek_direction) % 15;
+                match diff {
+                    15 | 0 | 1
+                        if square_norm < min_sqr_norm && sp.position.level == center.level =>
+                    {
+                        obligatory_idx = Some(i);
+                        min_sqr_norm = square_norm;
+                    }
+                    14 | 2 if square_norm < min_sqr_norm2 && sp.position.level == center.level => {
+                        obligatory2_idx = Some(i);
+                        min_sqr_norm2 = square_norm;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Fallback obligatory
+        if obligatory_idx.is_none() {
+            obligatory_idx = obligatory2_idx;
+        }
+
+        // ── Phase 2: collect seek points within max radius, sorted by distance ──
+        let mut near_sorted: Vec<usize> = Vec::new();
+        for (i, &square_norm) in square_norms.iter().enumerate() {
+            if square_norm < parameters_ai::SEEK_POINT_MAX_SQR_RADIUS as f32 {
+                // Insert sorted by distance
+                let pos = near_sorted
+                    .iter()
+                    .position(|&idx| square_norms[idx] > square_norm)
+                    .unwrap_or(near_sorted.len());
+                near_sorted.insert(pos, i);
+            }
+        }
+
+        Self {
+            square_norms,
+            near_sorted,
+            obligatory_idx,
+            obligatory2_idx,
+            expected_points_for_one,
+        }
+    }
+}
+
 impl EnemyAi {
     pub(crate) fn seek_area_phase6_caller_debug_enabled() -> bool {
         seek_area_phase6_debug_enabled()
@@ -232,6 +347,69 @@ impl EnemyAi {
             return;
         }
 
+        self.rebuild_area_search_beggars(ctx);
+
+        // Store seek flags and center
+        self.seek_flags =
+            flags | (flags & (SeekFlags::LOOK_FOR_HELP_AFTER | SeekFlags::REPORT_OFFICER_AFTER));
+        self.seek_center = center;
+        self.my_seek_points.clear();
+        self.seek_point_view_directions.clear();
+
+        let spec = SeekAreaSpec {
+            center,
+            standard_radius,
+            flags,
+            seek_direction,
+        };
+
+        // ── Build seek point list from global array ──
+        // Gate on `standard_radius > 0 && !is_combat_trainer`. Combat
+        // trainers fall through to the `LOCATION_FIRST/END`
+        // assert/personal-seek-point branch.
+        if standard_radius > 0 && !self.combat_trainer {
+            self.append_global_area_seek_points(sim, spec, global, ctx, tick);
+        } else {
+            // standard_radius == 0: only personal seek points
+            debug_assert!(
+                flags.intersects(SeekFlags::LOCATION_FIRST | SeekFlags::LOCATION_END),
+                "area search with radius 0 must have LOCATION_FIRST or LOCATION_END"
+            );
+        }
+
+        self.append_personal_area_seek_points(sim, spec, global, ctx, tick);
+
+        tracing::trace!(
+            npc = self.base.me,
+            frame = ctx.frame,
+            seek_flags = ?self.seek_flags,
+            list = ?self.my_seek_points,
+            "area search built its seek point list"
+        );
+
+        // Clear actual seek point (critical — missing caused memory
+        // bugs).
+        self.actual_seek_point = None;
+
+        assert!(
+            !self.my_seek_points.is_empty(),
+            "area search must produce at least one seek point"
+        );
+
+        if !ctx.in_building {
+            self.seek_next_point(sim, global, ctx, tick);
+        } else {
+            // Inside a building: delay before seeking.
+            self.seek_point_view_directions.clear();
+            self.set_state(
+                AiState::Seeking,
+                Substate::SeekingSeekpointWatchingSidewards,
+            );
+            self.base.launch_timer(3, ctx.frame);
+        }
+    }
+
+    fn rebuild_area_search_beggars(&mut self, ctx: &AiContext) {
         // For sufficiently intelligent non-trainer soldiers, the original game
         // clears `DETECTABLE_BEGGAR` and immediately re-adds every actor for
         // who is a real or disguised beggar. This is authoritative list
@@ -272,313 +450,269 @@ impl EnemyAi {
                 }));
             self.beggar_to_examine = None;
         }
+    }
 
-        // Store seek flags and center
-        self.seek_flags =
-            flags | (flags & (SeekFlags::LOOK_FOR_HELP_AFTER | SeekFlags::REPORT_OFFICER_AFTER));
-        self.seek_center = center;
-        self.my_seek_points.clear();
-        self.seek_point_view_directions.clear();
-
+    fn append_global_area_seek_points(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        spec: SeekAreaSpec,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        let candidates = SeekAreaCandidates::new(spec, global);
+        let square_norms = &candidates.square_norms;
+        let near_sorted = &candidates.near_sorted;
+        let obligatory_idx = candidates.obligatory_idx;
+        let center = spec.center;
         let current_frame = ctx.frame;
-
-        // ── Build seek point list from global array ──
-        // Gate on `standard_radius > 0 && !is_combat_trainer`. Combat
-        // trainers fall through to the `LOCATION_FIRST/END`
-        // assert/personal-seek-point branch.
-        if standard_radius > 0 && !self.combat_trainer {
-            let sq_standard_radius = (standard_radius as f32) * (standard_radius as f32);
-            let mut obligatory_idx: Option<usize> = None;
-            let mut obligatory2_idx: Option<usize> = None;
-            // The original game seeds both single-precision minima with its infinity sentinel
-            // (65432), not floating-point infinity. Direction candidates
-            // beyond that squared distance cannot become obligatory.
-            let mut min_sqr_norm: f32 = 65_432.0;
-            let mut min_sqr_norm2: f32 = 65_432.0;
-            let mut expected_points_for_one = 1u16;
-            let mut square_norms = vec![f32::MAX; global.seek_points.len()];
-
-            // ── Phase 1: compute distances, find obligatory point ──
+        if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
             for (i, sp) in global.seek_points.iter().enumerate() {
-                let dx = sp.position.x - center.x;
-                let dy = sp.position.y - center.y;
-                let mut square_norm = dx * dx + dy * dy;
-
-                // Penalty for layer changes
-                if sp.position.level != center.level {
-                    square_norm += parameters_ai::LAYER_CHANGE_PENALTY
-                        * (sp.position.level as f32 - center.level as f32).abs();
-                }
-                square_norms[i] = square_norm;
-
-                // Count points in radius (for expected count)
-                if square_norm < sq_standard_radius {
-                    expected_points_for_one += 1;
-                }
-
-                // Check if this point is in the seek direction.
-                // The original game uses modulo 15 rather than wrapping at 16,
-                // making case 15 unreachable — port the bug literally
-                // so sector-bucket assignments match for boundary
-                // sectors (e.g. seek_direction=0, sector 14:
-                // (14+16)%15 = 0 → "in direction"; & 15 would give 14
-                // → "almost").
-                if seek_direction != UNDEFINED_DIRECTION {
-                    let dir_sector = vec_to_sector(dx, dy);
-                    // All operands are original-game unsigned 16-bit values. Preserve their
-                    // unsigned wrap when a script supplies a direction above
-                    // `dir_sector + 16`; debug builds must not turn that
-                    // defined legacy arithmetic into an overflow panic.
-                    let diff = legacy_seek_direction_delta(dir_sector, seek_direction) % 15;
-                    match diff {
-                        15 | 0 | 1
-                            if square_norm < min_sqr_norm && sp.position.level == center.level =>
-                        {
-                            obligatory_idx = Some(i);
-                            min_sqr_norm = square_norm;
-                        }
-                        14 | 2
-                            if square_norm < min_sqr_norm2 && sp.position.level == center.level =>
-                        {
-                            obligatory2_idx = Some(i);
-                            min_sqr_norm2 = square_norm;
-                        }
-                        _ => {}
-                    }
-                }
+                eprintln!(
+                    "SEEKAREA {{\"event\":\"point_dump\",\"frame\":{},\"index\":{},\"id\":{},\"x\":{},\"y\":{},\"level\":{},\"center\":[{},{},{}],\"norm\":{},\"norm_bits\":{},\"near\":{},\"frame_when_full_interest\":{}}}",
+                    ctx.frame,
+                    i,
+                    sp.id,
+                    sp.position.x,
+                    sp.position.y,
+                    sp.position.level,
+                    center.x,
+                    center.y,
+                    center.level,
+                    square_norms[i],
+                    square_norms[i].to_bits(),
+                    near_sorted.contains(&i),
+                    sp.frame_when_full_interest,
+                );
             }
+        }
 
-            // Fallback obligatory
-            if obligatory_idx.is_none() {
-                obligatory_idx = obligatory2_idx;
+        // If nearest point was recently examined, don't look for help
+        if let Some(&first_idx) = near_sorted.first()
+            && global.seek_points[first_idx].calculate_interest(current_frame) < 90
+        {
+            self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
+        }
+
+        let selected_random =
+            self.select_area_seek_points(sim, spec, &candidates, global, ctx, tick);
+        // ── Phase 5: reorder for optimal travel path ──
+        for &idx in &selected_random {
+            self.add_to_seek_point_list(idx, global);
+        }
+
+        // Add obligatory seek point at front. Insert with no
+        // dedup — if the obligatory point was already added via
+        // `add_to_seek_point_list`, it appears twice in the list
+        // (and gets visited twice). Mirror that.
+        if let Some(oblig_idx) = obligatory_idx {
+            let id = global.seek_points[oblig_idx].id;
+            self.my_seek_points.insert(0, id);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn select_area_seek_points(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        spec: SeekAreaSpec,
+        candidates: &SeekAreaCandidates,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> Vec<usize> {
+        let SeekAreaSpec {
+            center,
+            standard_radius,
+            flags,
+            seek_direction,
+        } = spec;
+        let square_norms = &candidates.square_norms;
+        let near_sorted = &candidates.near_sorted;
+        let obligatory_idx = candidates.obligatory_idx;
+        let obligatory2_idx = candidates.obligatory2_idx;
+        let expected_points_for_one = candidates.expected_points_for_one;
+        let current_frame = ctx.frame;
+        // ── Phase 3: friend coordination ──
+        // Walk every NPC and count visible friend soldiers within
+        // 500 units in alert > Green. Each friend multiplies the
+        // expected point count by `SEEK_POINT_NUMBER_FACTOR`. The
+        // engine pre-fills the count and the help-flag clear bit
+        // before think().
+        //
+        // The lock on each seek point provides real-time
+        // coordination (a soldier won't pick a point another
+        // soldier is already running to); the friend count
+        // determines how many points each soldier signs up for.
+        let mut friend_factor: f32 = 1.0;
+        for _ in 0..tick.visible_seeking_friends {
+            friend_factor *= parameters_ai::SEEK_POINT_NUMBER_FACTOR;
+        }
+        if tick.friend_seek_clears_help_flag {
+            self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
+        }
+
+        let mut expected_points = (expected_points_for_one as f32 * friend_factor) as u16;
+        let expected_points_before_help_random = expected_points;
+        let mut preselection_rng_draws = 0usize;
+
+        if self.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER) {
+            // Reduce seek count when planning to ask for help.
+            // The original game's courage consideration contributes
+            // neither value nor weight here. Its rectangular distribution
+            // is a plain `min + rand() % range` and ignores consideration
+            // scores, so courage does not bias this sample. Rust's uniform
+            // sample matches. The courage axis itself *is* implemented
+            // (`AiBrain::soldier_profile_courage` / `get_courage`),
+            // wired into the call sites that actually use it
+            // (`CHARGE_MIN_COURAGE`, `OBSERVE_SWORDFIGHT` distance,
+            // courage_distance, etc).
+            let min = (expected_points as f32
+                * parameters_ai::AI_MIN_LOOKFORHELPFLAG_SEEK_POINT_FACTOR)
+                as u16;
+
+            // The original game's rectangular random sampling returns
+            // `min + rand() % (max - min)`: the upper bound is excluded,
+            // and an empty span returns `min` without consuming RNG.
+            expected_points = if min == expected_points {
+                min
+            } else {
+                preselection_rng_draws += 1;
+                crate::sim_rng::u16(
+                    sim,
+                    crate::sim_rng::RngSite::SeekPointSelection,
+                    min..expected_points,
+                )
+            };
+        }
+
+        // ── Phase 4: select points by interest (randomised order) ──
+        let mut selected_random: Vec<usize> = Vec::new();
+        let mut count_f: f32 = 0.0;
+        let mut phase4_attempts = 0usize;
+        let mut phase4_accepts = 0usize;
+        let debug_selection =
+            seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order);
+
+        for &idx in near_sorted {
+            if count_f >= expected_points as f32 {
+                break;
             }
-
-            // ── Phase 2: collect seek points within max radius, sorted by distance ──
-            let mut near_sorted: Vec<usize> = Vec::new();
-            for (i, &square_norm) in square_norms.iter().enumerate() {
-                if square_norm < parameters_ai::SEEK_POINT_MAX_SQR_RADIUS as f32 {
-                    // Insert sorted by distance
-                    let pos = near_sorted
-                        .iter()
-                        .position(|&idx| square_norms[idx] > square_norm)
-                        .unwrap_or(near_sorted.len());
-                    near_sorted.insert(pos, i);
-                }
-            }
-
-            if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
-                for (i, sp) in global.seek_points.iter().enumerate() {
-                    eprintln!(
-                        "SEEKAREA {{\"event\":\"point_dump\",\"frame\":{},\"index\":{},\"id\":{},\"x\":{},\"y\":{},\"level\":{},\"center\":[{},{},{}],\"norm\":{},\"norm_bits\":{},\"near\":{},\"frame_when_full_interest\":{}}}",
-                        ctx.frame,
-                        i,
-                        sp.id,
-                        sp.position.x,
-                        sp.position.y,
-                        sp.position.level,
-                        center.x,
-                        center.y,
-                        center.level,
-                        square_norms[i],
-                        square_norms[i].to_bits(),
-                        near_sorted.contains(&i),
-                        sp.frame_when_full_interest,
-                    );
-                }
-            }
-
-            // If nearest point was recently examined, don't look for help
-            if let Some(&first_idx) = near_sorted.first()
-                && global.seek_points[first_idx].calculate_interest(current_frame) < 90
-            {
-                self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
-            }
-
-            // ── Phase 3: friend coordination ──
-            // Walk every NPC and count visible friend soldiers within
-            // 500 units in alert > Green. Each friend multiplies the
-            // expected point count by `SEEK_POINT_NUMBER_FACTOR`. The
-            // engine pre-fills the count and the help-flag clear bit
-            // before think().
-            //
-            // The lock on each seek point provides real-time
-            // coordination (a soldier won't pick a point another
-            // soldier is already running to); the friend count
-            // determines how many points each soldier signs up for.
-            let mut friend_factor: f32 = 1.0;
-            for _ in 0..tick.visible_seeking_friends {
-                friend_factor *= parameters_ai::SEEK_POINT_NUMBER_FACTOR;
-            }
-            if tick.friend_seek_clears_help_flag {
-                self.seek_flags &= !SeekFlags::LOOK_FOR_HELP_AFTER;
-            }
-
-            let mut expected_points = (expected_points_for_one as f32 * friend_factor) as u16;
-            let expected_points_before_help_random = expected_points;
-            let mut preselection_rng_draws = 0usize;
-
-            if self.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER) {
-                // Reduce seek count when planning to ask for help.
-                // The original game's courage consideration contributes
-                // neither value nor weight here. Its rectangular distribution
-                // is a plain `min + rand() % range` and ignores consideration
-                // scores, so courage does not bias this sample. Rust's uniform
-                // sample matches. The courage axis itself *is* implemented
-                // (`AiBrain::soldier_profile_courage` / `get_courage`),
-                // wired into the call sites that actually use it
-                // (`CHARGE_MIN_COURAGE`, `OBSERVE_SWORDFIGHT` distance,
-                // courage_distance, etc).
-                let min = (expected_points as f32
-                    * parameters_ai::AI_MIN_LOOKFORHELPFLAG_SEEK_POINT_FACTOR)
-                    as u16;
-
-                // The original game's rectangular random sampling returns
-                // `min + rand() % (max - min)`: the upper bound is excluded,
-                // and an empty span returns `min` without consuming RNG.
-                expected_points = if min == expected_points {
-                    min
-                } else {
-                    preselection_rng_draws += 1;
-                    crate::sim_rng::u16(
-                        sim,
-                        crate::sim_rng::RngSite::SeekPointSelection,
-                        min..expected_points,
-                    )
-                };
-            }
-
-            // ── Phase 4: select points by interest (randomised order) ──
-            let mut selected_random: Vec<usize> = Vec::new();
-            let mut count_f: f32 = 0.0;
-            let mut phase4_attempts = 0usize;
-            let mut phase4_accepts = 0usize;
-            let debug_selection =
-                seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order);
-
-            for &idx in &near_sorted {
-                if count_f >= expected_points as f32 {
-                    break;
-                }
-                let accumulator_before_bits = count_f.to_bits();
-                let interest = global.seek_points[idx].calculate_interest(current_frame);
-                phase4_attempts += 1;
-                let attempt =
-                    crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointSelection, 0..100);
-                let attempt_raw = debug_selection
+            let accumulator_before_bits = count_f.to_bits();
+            let interest = global.seek_points[idx].calculate_interest(current_frame);
+            phase4_attempts += 1;
+            let attempt =
+                crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointSelection, 0..100);
+            let attempt_raw = debug_selection
+                .then(|| crate::sim_rng::last_original_raw_draw(sim))
+                .flatten();
+            let accepted = attempt < interest;
+            let mut insertion_raw = None;
+            let mut insertion_index = None;
+            if accepted {
+                phase4_accepts += 1;
+                // Unconditionally call rand on every accepted
+                // point, including the first (where the count == 1
+                // consumes a draw deterministically returning 0).
+                // Match the RNG-step count exactly for replay
+                // determinism — no `is_empty()` short-circuit.
+                let insert_pos = crate::sim_rng::usize(
+                    sim,
+                    crate::sim_rng::RngSite::SeekPointSelection,
+                    0..=selected_random.len(),
+                );
+                insertion_raw = debug_selection
                     .then(|| crate::sim_rng::last_original_raw_draw(sim))
                     .flatten();
-                let accepted = attempt < interest;
-                let mut insertion_raw = None;
-                let mut insertion_index = None;
-                if accepted {
-                    phase4_accepts += 1;
-                    // Unconditionally call rand on every accepted
-                    // point, including the first (where the count == 1
-                    // consumes a draw deterministically returning 0).
-                    // Match the RNG-step count exactly for replay
-                    // determinism — no `is_empty()` short-circuit.
-                    let insert_pos = crate::sim_rng::usize(
-                        sim,
-                        crate::sim_rng::RngSite::SeekPointSelection,
-                        0..=selected_random.len(),
-                    );
-                    insertion_raw = debug_selection
-                        .then(|| crate::sim_rng::last_original_raw_draw(sim))
-                        .flatten();
-                    insertion_index = Some(insert_pos);
-                    selected_random.insert(insert_pos, idx);
-                    count_f = accumulate_seek_point_interest(count_f, interest);
-                }
-
-                if debug_selection {
-                    let optional_u32 = |value: Option<u32>| {
-                        value.map_or_else(|| "null".to_owned(), |value| value.to_string())
-                    };
-                    let optional_usize = |value: Option<usize>| {
-                        value.map_or_else(|| "null".to_owned(), |value| value.to_string())
-                    };
-                    eprintln!(
-                        "SEEKAREA {{\"event\":\"phase4_candidate\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"candidate_ordinal\":{},\"point_id\":{},\"point_index\":{},\"norm\":{},\"norm_bits\":{},\"frame_when_full_interest\":{},\"interest\":{},\"attempt_raw\":{},\"attempt_mod\":{},\"attempt_result\":{},\"insertion_raw\":{},\"insertion_index\":{},\"accumulator_before_bits\":{},\"accumulator_after_bits\":{}}}",
-                        ctx.frame,
-                        self.base.me,
-                        optional_u32(ctx.original_creation_order),
-                        phase4_attempts,
-                        global.seek_points[idx].id,
-                        idx,
-                        square_norms[idx],
-                        square_norms[idx].to_bits(),
-                        global.seek_points[idx].frame_when_full_interest,
-                        interest,
-                        optional_u32(attempt_raw),
-                        attempt,
-                        accepted,
-                        optional_u32(insertion_raw),
-                        optional_usize(insertion_index),
-                        accumulator_before_bits,
-                        count_f.to_bits(),
-                    );
-                }
+                insertion_index = Some(insert_pos);
+                selected_random.insert(insert_pos, idx);
+                count_f = accumulate_seek_point_interest(count_f, interest);
             }
 
             if debug_selection {
+                let optional_u32 = |value: Option<u32>| {
+                    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+                };
+                let optional_usize = |value: Option<usize>| {
+                    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+                };
                 eprintln!(
-                    "SEEKAREA {{\"event\":\"selection_summary\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"standard_radius\":{},\"near_points\":{},\"expected_for_one\":{},\"visible_friends\":{},\"clears_help\":{},\"expected_before_help_random\":{},\"expected_points\":{},\"phase4_attempts\":{},\"phase4_accepts\":{},\"preselection_rng_draws\":{},\"phase4_rng_draws\":{},\"selection_rng_draws\":{},\"accepted_interest_sum\":{}}}",
+                    "SEEKAREA {{\"event\":\"phase4_candidate\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"candidate_ordinal\":{},\"point_id\":{},\"point_index\":{},\"norm\":{},\"norm_bits\":{},\"frame_when_full_interest\":{},\"interest\":{},\"attempt_raw\":{},\"attempt_mod\":{},\"attempt_result\":{},\"insertion_raw\":{},\"insertion_index\":{},\"accumulator_before_bits\":{},\"accumulator_after_bits\":{}}}",
                     ctx.frame,
                     self.base.me,
-                    ctx.original_creation_order,
-                    center.x,
-                    center.y,
-                    standard_radius,
-                    near_sorted.len(),
-                    expected_points_for_one,
-                    tick.visible_seeking_friends,
-                    tick.friend_seek_clears_help_flag,
-                    expected_points_before_help_random,
-                    expected_points,
+                    optional_u32(ctx.original_creation_order),
                     phase4_attempts,
-                    phase4_accepts,
-                    preselection_rng_draws,
-                    phase4_attempts + phase4_accepts,
-                    preselection_rng_draws + phase4_attempts + phase4_accepts,
-                    count_f,
-                );
-                eprintln!(
-                    "SEEKAREA {{\"event\":\"selection_extra\",\"frame\":{},\"owner_creation_order\":{:?},\"flags\":{},\"seek_direction\":{},\"center_level\":{},\"obligatory\":{:?},\"obligatory2\":{:?},\"selected_random\":{:?}}}",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    flags.bits(),
-                    seek_direction,
-                    center.level,
-                    obligatory_idx.map(|i| global.seek_points[i].id),
-                    obligatory2_idx.map(|i| global.seek_points[i].id),
-                    selected_random
-                        .iter()
-                        .map(|&i| global.seek_points[i].id)
-                        .collect::<Vec<_>>(),
+                    global.seek_points[idx].id,
+                    idx,
+                    square_norms[idx],
+                    square_norms[idx].to_bits(),
+                    global.seek_points[idx].frame_when_full_interest,
+                    interest,
+                    optional_u32(attempt_raw),
+                    attempt,
+                    accepted,
+                    optional_u32(insertion_raw),
+                    optional_usize(insertion_index),
+                    accumulator_before_bits,
+                    count_f.to_bits(),
                 );
             }
+        }
 
-            // ── Phase 5: reorder for optimal travel path ──
-            for &idx in &selected_random {
-                self.add_to_seek_point_list(idx, global);
-            }
-
-            // Add obligatory seek point at front. Insert with no
-            // dedup — if the obligatory point was already added via
-            // `add_to_seek_point_list`, it appears twice in the list
-            // (and gets visited twice). Mirror that.
-            if let Some(oblig_idx) = obligatory_idx {
-                let id = global.seek_points[oblig_idx].id;
-                self.my_seek_points.insert(0, id);
-            }
-        } else {
-            // standard_radius == 0: only personal seek points
-            debug_assert!(
-                flags.intersects(SeekFlags::LOCATION_FIRST | SeekFlags::LOCATION_END),
-                "area search with radius 0 must have LOCATION_FIRST or LOCATION_END"
+        if debug_selection {
+            eprintln!(
+                "SEEKAREA {{\"event\":\"selection_summary\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"standard_radius\":{},\"near_points\":{},\"expected_for_one\":{},\"visible_friends\":{},\"clears_help\":{},\"expected_before_help_random\":{},\"expected_points\":{},\"phase4_attempts\":{},\"phase4_accepts\":{},\"preselection_rng_draws\":{},\"phase4_rng_draws\":{},\"selection_rng_draws\":{},\"accepted_interest_sum\":{}}}",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                center.x,
+                center.y,
+                standard_radius,
+                near_sorted.len(),
+                expected_points_for_one,
+                tick.visible_seeking_friends,
+                tick.friend_seek_clears_help_flag,
+                expected_points_before_help_random,
+                expected_points,
+                phase4_attempts,
+                phase4_accepts,
+                preselection_rng_draws,
+                phase4_attempts + phase4_accepts,
+                preselection_rng_draws + phase4_attempts + phase4_accepts,
+                count_f,
+            );
+            eprintln!(
+                "SEEKAREA {{\"event\":\"selection_extra\",\"frame\":{},\"owner_creation_order\":{:?},\"flags\":{},\"seek_direction\":{},\"center_level\":{},\"obligatory\":{:?},\"obligatory2\":{:?},\"selected_random\":{:?}}}",
+                ctx.frame,
+                ctx.original_creation_order,
+                flags.bits(),
+                seek_direction,
+                center.level,
+                obligatory_idx.map(|i| global.seek_points[i].id),
+                obligatory2_idx.map(|i| global.seek_points[i].id),
+                selected_random
+                    .iter()
+                    .map(|&i| global.seek_points[i].id)
+                    .collect::<Vec<_>>(),
             );
         }
 
+        selected_random
+    }
+
+    fn append_personal_area_seek_points(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        spec: SeekAreaSpec,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        let SeekAreaSpec {
+            flags,
+            seek_direction,
+            ..
+        } = spec;
         // ── Phase 6: personal seek points (postprocessing) ──
 
         let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
@@ -685,35 +819,6 @@ impl EnemyAi {
                 if insert_personal2 { "position" } else { "none" },
                 self.my_seek_points.len(),
             );
-        }
-
-        tracing::trace!(
-            npc = self.base.me,
-            frame = ctx.frame,
-            seek_flags = ?self.seek_flags,
-            list = ?self.my_seek_points,
-            "area search built its seek point list"
-        );
-
-        // Clear actual seek point (critical — missing caused memory
-        // bugs).
-        self.actual_seek_point = None;
-
-        assert!(
-            !self.my_seek_points.is_empty(),
-            "area search must produce at least one seek point"
-        );
-
-        if !ctx.in_building {
-            self.seek_next_point(sim, global, ctx, tick);
-        } else {
-            // Inside a building: delay before seeking.
-            self.seek_point_view_directions.clear();
-            self.set_state(
-                AiState::Seeking,
-                Substate::SeekingSeekpointWatchingSidewards,
-            );
-            self.base.launch_timer(3, ctx.frame);
         }
     }
 
