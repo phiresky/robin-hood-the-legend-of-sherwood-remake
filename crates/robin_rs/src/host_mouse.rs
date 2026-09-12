@@ -210,19 +210,61 @@ pub fn choose_mouse_pointer_for_no_action(
         return RHMOUSE_DEFAULT;
     }
 
+    if let Some(decision) = cursor_for_hovered_entity(engine, host, assets, mouse_map) {
+        return decision.apply(host);
+    }
+    cursor_for_environment(engine, host, assets, mouse_map, shift_held)
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct EntityHoverDecision {
+    cursor: i32,
+    focus: Option<engine_element::EntityId>,
+    double_status: Option<engine_element::EntityId>,
+    suppress_door: bool,
+}
+impl EntityHoverDecision {
+    fn focused(cursor: i32, entity: engine_element::EntityId) -> Self {
+        Self {
+            cursor,
+            focus: Some(entity),
+            double_status: None,
+            suppress_door: true,
+        }
+    }
+    fn apply(self, host: &mut Host) -> i32 {
+        if let Some(entity) = self.focus {
+            host.frontend.input.feedback.focused_entity_id = Some(entity);
+        }
+        if let Some(entity) = self.double_status {
+            host.frontend.input.feedback.double_status_bar_entity_id = Some(entity);
+        }
+        if self.suppress_door {
+            host.frontend.input.feedback.display_door = false;
+        }
+        self.cursor
+    }
+}
+
+fn cursor_for_hovered_entity(
+    engine: &Engine,
+    host: &Host,
+    assets: &LevelAssets,
+    mouse_map: MapPoint,
+) -> Option<EntityHoverDecision> {
+    use robin_engine::resource_ids::*;
+    let local_seat = host.transport.local_seat();
+    let selected = engine.hero_selection(local_seat);
     // Iterate display order checking select/use/sword.
     let is_swordfighting =
         crate::game_input::is_selected_unit_swordfighting(&engine.presentation_view(), local_seat);
     let selected_pc = selected.first().copied();
     let recording_macro = engine.is_recording_macro();
 
-    // Clone the id list (cheap) so the iteration doesn't hold an
-    // immutable borrow of `host` while the loop body mutates
-    // `host.frontend.input`.
-    let draw_order_ids = host.frontend.presentation.draw_order.ids.clone();
+    // Classification is read-only; feedback is applied after the borrow ends.
+    let draw_order_ids = &host.frontend.presentation.draw_order.ids;
     for &eid in draw_order_ids.iter().rev() {
-        // Borrow entity for read-only checks, then drop the borrow
-        // before mutating host.frontend.input.
+        // Classify against the immutable engine and presentation snapshot.
         let (is_pc, is_human, select_ok, use_ok, sword_ok, interact_ok) = {
             let entity = match engine.get_entity(eid) {
                 Some(e) => e,
@@ -277,13 +319,14 @@ pub fn choose_mouse_pointer_for_no_action(
         // must not fire while swordfighting.  Gate on
         // `!is_swordfighting`.
         if recording_macro && !is_swordfighting && is_human && interact_ok {
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            host.frontend.input.feedback.display_door = false;
-            return if is_pc {
-                RHMOUSE_INTERRACT_PC
-            } else {
-                RHMOUSE_INTERRACT_NPC
-            };
+            return Some(EntityHoverDecision::focused(
+                if is_pc {
+                    RHMOUSE_INTERRACT_PC
+                } else {
+                    RHMOUSE_INTERRACT_NPC
+                },
+                eid,
+            ));
         }
 
         // Unselected PC: for an alive, selectable PC the dispatch
@@ -293,9 +336,10 @@ pub fn choose_mouse_pointer_for_no_action(
         // HelpingToClimb posture and the selected PC has the Jump
         // contextual action.
         if select_ok && is_pc && !selected.contains(&eid) {
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            host.frontend.input.feedback.display_door = false;
-            return engine.choose_select_cursor(assets, eid, selected_pc);
+            return Some(EntityHoverDecision::focused(
+                engine.choose_select_cursor(assets, eid, selected_pc),
+                eid,
+            ));
         }
 
         // Contextual use — NPC/human dispatch returns
@@ -312,11 +356,12 @@ pub fn choose_mouse_pointer_for_no_action(
             // color is chosen by the renderer from this per-seat focus
             // flag; hover rendering must not mutate engine state.
             let cursor_marks = !matches!(cursor, RHMOUSE_PAY_NO | RHMOUSE_GET_NO);
-            if cursor_marks {
-                host.frontend.input.feedback.focused_entity_id = Some(eid);
-            }
-            host.frontend.input.feedback.display_door = false;
-            return cursor;
+            return Some(EntityHoverDecision {
+                cursor,
+                focus: cursor_marks.then_some(eid),
+                double_status: None,
+                suppress_door: true,
+            });
         }
 
         // Sword-targetable enemy.  Suppress the sword cursor while
@@ -328,7 +373,6 @@ pub fn choose_mouse_pointer_for_no_action(
             // under the cursor for one frame — both in the
             // VIP-not-Robin (CANTGOTHERE) branch and the regular
             // (SWORDFIGHT_YES) branch.  Set unconditionally.
-            host.frontend.input.feedback.double_status_bar_entity_id = Some(eid);
             // Override the sword cursor with the inaccessible-target cursor
             // when the target is a VIP and the selected PC isn't
             // Robin — only Robin can fight VIPs.  Only the non-VIP
@@ -342,16 +386,39 @@ pub fn choose_mouse_pointer_for_no_action(
                 .and_then(|e| e.pc_data())
                 .is_some_and(|pc| pc.robin);
             if target_is_vip && !selected_pc_is_robin {
-                return RHMOUSE_CANTGOTHERE;
+                return Some(EntityHoverDecision {
+                    cursor: RHMOUSE_CANTGOTHERE,
+                    focus: None,
+                    double_status: Some(eid),
+                    suppress_door: false,
+                });
             }
             // The per-seat focus flag drives the selection-display pass
             // directly so hover rendering stays outside engine state.
-            host.frontend.input.feedback.focused_entity_id = Some(eid);
-            host.frontend.input.feedback.display_door = false;
-            return RHMOUSE_SWORDFIGHT_YES;
+            return Some(EntityHoverDecision {
+                cursor: RHMOUSE_SWORDFIGHT_YES,
+                focus: Some(eid),
+                double_status: Some(eid),
+                suppress_door: true,
+            });
         }
     }
 
+    None
+}
+
+fn cursor_for_environment(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map: MapPoint,
+    shift_held: bool,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    let local_seat = host.transport.local_seat();
+    let selected = engine.hero_selection(local_seat);
+    let is_swordfighting =
+        crate::game_input::is_selected_unit_swordfighting(&engine.presentation_view(), local_seat);
     // ── Sector-based cursor ──
     //
     // When PCs are selected and no entity was focused, check the sector
@@ -363,7 +430,7 @@ pub fn choose_mouse_pointer_for_no_action(
             let elem = e.element_data();
             (elem.layer(), elem.position_map())
         })
-        .unwrap_or((0, mouse_map));
+        .expect("selected hero must exist while resolving its hover cursor");
 
     // Look up sector under mouse.
     let mouse_sector_result = engine.fast_grid().get_sector_screen(mouse_map, pc_pos);
