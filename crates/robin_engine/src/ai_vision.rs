@@ -751,19 +751,19 @@ pub fn compute_object_visibility(q: &ObjectVisibilityQuery<'_>) -> f32 {
     // eye-status and viewer-in-building short-circuits inside
     // `is_detecting` are redundant with the ones we already ran.
     if !is_detecting_cone_and_los(
-        q.viewer_los,
-        q.viewer_direction,
-        q.real_half_aperture,
-        q.layer,
-        q.sight_obstacles,
-        q.fast_grid,
+        ViewerContext {
+            position: q.viewer_los,
+            direction: q.viewer_direction,
+            real_half_aperture: q.real_half_aperture,
+            layer: q.layer,
+            forward: (fx, fy),
+        },
         q.target_los,
         Some((q.viewer_world, q.target_world)),
-        dx,
-        dy,
+        (dx, dy),
         sqr_distance,
-        fx,
-        fy,
+        q.sight_obstacles,
+        q.fast_grid,
     ) {
         return 0.0;
     }
@@ -819,19 +819,19 @@ fn is_detecting(
     }
 
     is_detecting_cone_and_los(
-        q.viewer_los,
-        q.viewer_direction,
-        q.real_half_aperture,
-        q.layer,
-        q.sight_obstacles,
-        q.fast_grid,
+        ViewerContext {
+            position: q.viewer_los,
+            direction: q.viewer_direction,
+            real_half_aperture: q.real_half_aperture,
+            layer: q.layer,
+            forward: (fx, fy),
+        },
         q.target_los,
         Some((q.viewer_world, q.target_world)),
-        view_x,
-        view_y,
+        (view_x, view_y),
         sqr_distance,
-        fx,
-        fy,
+        q.sight_obstacles,
+        q.fast_grid,
     )
 }
 
@@ -840,23 +840,34 @@ fn is_detecting(
 /// Shared by `compute_visibility` (human target) and
 /// `compute_object_visibility` (object target), both of which check
 /// those short-circuits earlier in their own bodies.
-#[allow(clippy::too_many_arguments)]
-#[track_caller]
-fn is_detecting_cone_and_los(
-    viewer: MapPoint,
-    viewer_direction: i16,
+/// Shared viewer-side geometry; target policies retain their own early exits.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ViewerContext {
+    position: MapPoint,
+    direction: i16,
     real_half_aperture: f32,
     layer: u16,
-    sight_obstacles: ObstacleList<'_>,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    forward: (f32, f32),
+}
+
+#[track_caller]
+fn is_detecting_cone_and_los(
+    viewer_context: ViewerContext,
     target: MapPoint,
     los_world: Option<(WorldPoint3D, WorldPoint3D)>,
-    view_x: f32,
-    view_y: f32,
+    view_delta: (f32, f32),
     sqr_distance: f32,
-    fx: f32,
-    fy: f32,
+    sight_obstacles: ObstacleList<'_>,
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
 ) -> bool {
+    let ViewerContext {
+        position: viewer,
+        direction: viewer_direction,
+        real_half_aperture,
+        layer,
+        forward: (fx, fy),
+    } = viewer_context;
+    let (view_x, view_y) = view_delta;
     if sqr_distance > SQR_HALFCIRCLE_VIEW_RADIUS {
         // ── Normal detection ─────────────────────────────────────
         //
@@ -1554,19 +1565,19 @@ pub fn is_detecting_target(
         return false;
     }
     is_detecting_cone_and_los(
-        viewer_los,
-        viewer_direction,
-        real_half_aperture,
-        layer,
-        obstacles,
-        fast_grid,
+        ViewerContext {
+            position: viewer_los,
+            direction: viewer_direction,
+            real_half_aperture: real_half_aperture,
+            layer: layer,
+            forward: (fx, fy),
+        },
         target_los,
         None,
-        dx,
-        dy,
+        (dx, dy),
         sqr_distance,
-        fx,
-        fy,
+        obstacles,
+        fast_grid,
     )
 }
 

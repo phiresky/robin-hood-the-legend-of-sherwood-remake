@@ -3419,128 +3419,121 @@ mod selection;
 //  Per-element make_* helpers (free functions for test reuse)
 // ═══════════════════════════════════════════════════════════════════
 
-/// Apply fast-movement conversion to a single element in-place. Returns with no effect
-/// for non-movement elements.
-pub fn make_fast_element(elem: &mut SequenceElement) {
-    use crate::order::OrderType;
-
+fn remap_movement_element(
+    elem: &mut SequenceElement,
+    fast: Option<bool>,
+    action_map: impl FnOnce(OrderType) -> OrderType,
+    order_map: impl Fn(OrderType) -> OrderType,
+) {
     let rewrite_orders = elem.state != SequenceState::Todo;
     let SequenceElementData::Movement { flags, action, .. } = &mut elem.data else {
         return;
     };
-    *flags |= MoveFlags::FAST;
-    *action = match *action {
-        OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
-        OrderType::WalkingWithSword => OrderType::RunningWithSword,
-        OrderType::WalkingWithShield => OrderType::RunningUpright,
-        other => other,
-    };
+    if let Some(fast) = fast {
+        flags.set(MoveFlags::FAST, fast);
+    }
+    *action = action_map(*action);
     if rewrite_orders {
         for order in elem.orders.iter_mut() {
-            order.order_type = match order.order_type {
-                OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
-                OrderType::WalkingWithSword => OrderType::RunningWithSword,
-                OrderType::WalkingWithShield => OrderType::RunningUpright,
-                OrderType::TransitionWaitingUprightWalkingUpright
-                | OrderType::TransitionWaitingCrouchedWalkingCrouched => OrderType::RunningUpright,
-                OrderType::TransitionWalkingUprightWaitingUpright
-                | OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::RunningUpright,
-                other => other,
-            };
+            order.order_type = order_map(order.order_type);
         }
     }
 }
 
+/// Apply fast-movement conversion to a single element in-place. Returns with no effect
+/// for non-movement elements.
+pub fn make_fast_element(elem: &mut SequenceElement) {
+    remap_movement_element(
+        elem,
+        Some(true),
+        |action| match action {
+            OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
+            OrderType::WalkingWithSword => OrderType::RunningWithSword,
+            OrderType::WalkingWithShield => OrderType::RunningUpright,
+            other => other,
+        },
+        |order| match order {
+            OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
+            OrderType::WalkingWithSword => OrderType::RunningWithSword,
+            OrderType::WalkingWithShield => OrderType::RunningUpright,
+            OrderType::TransitionWaitingUprightWalkingUpright
+            | OrderType::TransitionWaitingCrouchedWalkingCrouched => OrderType::RunningUpright,
+            OrderType::TransitionWalkingUprightWaitingUpright
+            | OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::RunningUpright,
+            other => other,
+        },
+    );
+}
+
 /// Apply slow-movement conversion to a single element in-place.
 pub fn make_slow_element(elem: &mut SequenceElement) {
-    use crate::order::OrderType;
-
-    let rewrite_orders = elem.state != SequenceState::Todo;
-    let SequenceElementData::Movement { flags, action, .. } = &mut elem.data else {
-        return;
-    };
-    *flags &= !MoveFlags::FAST;
-    *action = match *action {
-        // Walking variants stay as-is.
-        OrderType::WalkingUpright | OrderType::WalkingCrouched => *action,
-        OrderType::RunningUpright => OrderType::WalkingUpright,
-        OrderType::RunningWithSword => OrderType::WalkingWithSword,
-        other => other,
-    };
-    if rewrite_orders {
-        for order in elem.orders.iter_mut() {
-            order.order_type = match order.order_type {
-                OrderType::RunningUpright => OrderType::WalkingUpright,
-                OrderType::RunningWithSword => OrderType::WalkingWithSword,
-                OrderType::TransitionWaitingUprightRunningUpright
-                | OrderType::TransitionWalkingCrouchedRunningUpright => OrderType::WalkingUpright,
-                OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingUpright,
-                other => other,
-            };
-        }
-    }
+    remap_movement_element(
+        elem,
+        Some(false),
+        |action| match action {
+            // Walking variants stay as-is.
+            OrderType::WalkingUpright | OrderType::WalkingCrouched => action,
+            OrderType::RunningUpright => OrderType::WalkingUpright,
+            OrderType::RunningWithSword => OrderType::WalkingWithSword,
+            other => other,
+        },
+        |order| match order {
+            OrderType::RunningUpright => OrderType::WalkingUpright,
+            OrderType::RunningWithSword => OrderType::WalkingWithSword,
+            OrderType::TransitionWaitingUprightRunningUpright
+            | OrderType::TransitionWalkingCrouchedRunningUpright => OrderType::WalkingUpright,
+            OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingUpright,
+            other => other,
+        },
+    );
 }
 
 /// Apply upright-posture conversion to a single element in-place. Cancels a pending
 /// `CrouchDown` command by demoting it to `Null`.
 pub fn make_upright_element(elem: &mut SequenceElement) {
-    use crate::order::OrderType;
-
-    // Cancel pending crouch-down.
+    // Preserve cancellation even for a non-movement pending CrouchDown.
     if elem.command == Command::CrouchDown {
         elem.command = Command::Null;
     }
-
-    let rewrite_orders = elem.state != SequenceState::Todo;
-    let SequenceElementData::Movement { action, .. } = &mut elem.data else {
-        return;
-    };
-    *action = match *action {
-        OrderType::WalkingUpright | OrderType::RunningUpright => *action,
-        OrderType::WalkingCrouched => OrderType::WalkingUpright,
-        other => other,
-    };
-    if rewrite_orders {
-        for order in elem.orders.iter_mut() {
-            order.order_type = match order.order_type {
-                OrderType::WalkingCrouched => OrderType::WalkingUpright,
-                OrderType::TransitionWaitingCrouchedWalkingCrouched
-                | OrderType::TransitionWalkingUprightWalkingCrouched
-                | OrderType::TransitionRunningUprightWalkingCrouched => OrderType::WalkingUpright,
-                OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::WalkingUpright,
-                other => other,
-            };
-        }
-    }
+    remap_movement_element(
+        elem,
+        None,
+        |action| match action {
+            OrderType::WalkingUpright | OrderType::RunningUpright => action,
+            OrderType::WalkingCrouched => OrderType::WalkingUpright,
+            other => other,
+        },
+        |order| match order {
+            OrderType::WalkingCrouched => OrderType::WalkingUpright,
+            OrderType::TransitionWaitingCrouchedWalkingCrouched
+            | OrderType::TransitionWalkingUprightWalkingCrouched
+            | OrderType::TransitionRunningUprightWalkingCrouched => OrderType::WalkingUpright,
+            OrderType::TransitionWalkingCrouchedWaitingCrouched => OrderType::WalkingUpright,
+            other => other,
+        },
+    );
 }
 
 /// Apply crouched-posture conversion to a single element in-place.
 pub fn make_crouched_element(elem: &mut SequenceElement) {
-    use crate::order::OrderType;
-
-    let rewrite_orders = elem.state != SequenceState::Todo;
-    let SequenceElementData::Movement { flags, action, .. } = &mut elem.data else {
-        return;
-    };
-    *flags &= !MoveFlags::FAST;
-    *action = match *action {
-        OrderType::WalkingCrouched => *action,
-        OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
-        other => other,
-    };
-    if rewrite_orders {
-        for order in elem.orders.iter_mut() {
-            order.order_type = match order.order_type {
-                OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
-                OrderType::TransitionWaitingUprightWalkingUpright
-                | OrderType::TransitionRunningUprightWalkingUpright
-                | OrderType::TransitionWalkingCrouchedWalkingUpright => OrderType::WalkingCrouched,
-                OrderType::TransitionWalkingUprightWaitingUpright
-                | OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingCrouched,
-                other => other,
-            };
-        }
-    }
+    remap_movement_element(
+        elem,
+        Some(false),
+        |action| match action {
+            OrderType::WalkingCrouched => action,
+            OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
+            other => other,
+        },
+        |order| match order {
+            OrderType::WalkingUpright | OrderType::RunningUpright => OrderType::WalkingCrouched,
+            OrderType::TransitionWaitingUprightWalkingUpright
+            | OrderType::TransitionRunningUprightWalkingUpright
+            | OrderType::TransitionWalkingCrouchedWalkingUpright => OrderType::WalkingCrouched,
+            OrderType::TransitionWalkingUprightWaitingUpright
+            | OrderType::TransitionRunningUprightWaitingUpright => OrderType::WalkingCrouched,
+            other => other,
+        },
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════

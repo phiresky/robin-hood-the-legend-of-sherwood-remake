@@ -1256,3 +1256,14 @@ fn entity_position_iface_accessor() {
         crate::position_interface::Direction::NORTH
     );
 }
+
+#[test]
+fn action_slot_disabled_combines_sparse_permanent_and_temporary_state() {
+    let mut pc = PcData::default();
+    assert!(!pc.action_slot_disabled(0));
+    pc.disabled_actions = vec![false, true];
+    pc.disabled_actions_temp = vec![true];
+    assert!(pc.action_slot_disabled(0));
+    assert!(pc.action_slot_disabled(1));
+    assert!(!pc.action_slot_disabled(2));
+}

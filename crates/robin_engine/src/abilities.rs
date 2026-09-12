@@ -3571,6 +3571,23 @@ mod tests {
     use crate::sight_obstacle::ObstacleList;
     use crate::sprite_script::{SpriteScript, UNMAPPED};
 
+    fn carry_profiles() -> crate::profiles::ProfileManager {
+        let mut profiles = crate::profiles::ProfileManager::default();
+        profiles
+            .characters
+            .push(crate::profiles::CharacterProfile::default());
+        profiles
+    }
+
+    #[test]
+    #[should_panic(expected = "carrier references missing character profile")]
+    fn carry_style_rejects_missing_character_profile() {
+        uses_little_john_carry(
+            &crate::profiles::ProfileManager::default(),
+            crate::profiles::CharacterProfileIdx(0),
+        );
+    }
+
     fn launch_ability_element(
         manager: &mut SequenceManager,
         command: crate::element::Command,
@@ -3896,7 +3913,7 @@ mod tests {
             before.sprite.frame_count,
         );
 
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
 
         let body = entities.get(body).unwrap();
         assert_eq!(body.element_data().position_map(), position);
@@ -3922,7 +3939,7 @@ mod tests {
             carrier_sprite.frame_count = 7;
         }
 
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
 
         let sprite = &entities.get(body).unwrap().element_data().sprite;
         assert_eq!(sprite.last_action, OrderType::BeingCarriedPeasantC);
@@ -3949,7 +3966,7 @@ mod tests {
             sprite.scripts = std::sync::Arc::new(scripts);
         }
 
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
 
         let sprite = &entities.get(body).unwrap().element_data().sprite;
         assert_eq!(sprite.last_action, OrderType::BeingLiftedPeasantC);
@@ -3965,7 +3982,7 @@ mod tests {
         let sector = before.sector();
         let material = before.material();
 
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
 
         let body = entities.get(body).unwrap();
         assert_eq!(body.element_data().position_map(), carrier_position);
@@ -3994,11 +4011,7 @@ mod tests {
 
         // The body still faces 4 while the carrier faces 9. Original selects
         // the drop row with 4 here; DropCorpse changes the body to 5 later.
-        sync_terminal_corpse_drop_animation(
-            &mut entities,
-            &crate::profiles::ProfileManager::default(),
-            carrier,
-        );
+        sync_terminal_corpse_drop_animation(&mut entities, &carry_profiles(), carrier);
 
         let body = entities.get(body).unwrap();
         assert_eq!(body.element_data().direction(), 4);
@@ -5107,7 +5120,7 @@ mod tests {
         carrier_entity
             .element_data_mut()
             .set_direction_instantly(12);
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
         let target_entity = entities.get(target).unwrap();
         assert_eq!(
             target_entity.element_data().position_map(),
@@ -5403,7 +5416,7 @@ mod tests {
             .unwrap()
             .carrier = Some(helper_id);
 
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
 
         let helper = entities.get(helper_id).unwrap().element_data();
         assert_eq!(
@@ -5470,7 +5483,7 @@ mod tests {
             rider.sprite.frame_count = u16::MAX;
             rider.sprite.last_motion_state = None;
         }
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
         let rider = entities.get(climber_id).unwrap().element_data();
         assert_eq!(
             (
@@ -5491,7 +5504,7 @@ mod tests {
             climber.actor_data_mut().unwrap().active_ability.kind =
                 Some(AbilityKind::ClimbOnShoulders);
         }
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
         let helper = entities.get(helper_id).unwrap().element_data();
         assert_eq!(
             helper.sprite.last_action,
@@ -5553,7 +5566,7 @@ mod tests {
             .unwrap()
             .carrier = Some(helper_id);
 
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
 
         let climber = entities.get(climber_id).unwrap();
         assert_eq!(
@@ -5570,7 +5583,7 @@ mod tests {
             .unwrap()
             .active_ability
             .kind = None;
-        sync_carried_positions(&mut entities, &crate::profiles::ProfileManager::default());
+        sync_carried_positions(&mut entities, &carry_profiles());
         assert_eq!(
             entities.get(climber_id).unwrap().element_data().direction(),
             11,

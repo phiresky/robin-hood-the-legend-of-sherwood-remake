@@ -1169,7 +1169,7 @@ struct DoorEndpoints {
 /// identities compare only with numeric identities. This prevents a partly
 /// migrated graph from silently joining an exact endpoint to an unrelated
 /// number-only endpoint which happens to expose the same public number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum GateSectorKey {
     Exact(crate::fast_find_grid::SectorIndex),
     Numeric(crate::sector::SectorNumber),
@@ -1309,9 +1309,7 @@ fn add_to_open_gates_original(
 
 #[inline]
 fn dist(a: MapPoint, b: MapPoint) -> f32 {
-    let dx = a.x - b.x;
-    let dy = a.y - b.y;
-    (dx * dx + dy * dy).sqrt()
+    crate::geo2d::distance(a.to_geo(), b.to_geo())
 }
 
 /// A* on the gate connectivity graph from `source_sector` to `goal_sector`.
@@ -1387,18 +1385,20 @@ pub fn find_path_gates_with_sector_indices(
     }
     gate_astar(
         doors,
-        source,
-        source_key,
-        goal,
-        GateSearchGoal::Sector(goal_key),
+        GateSearchInputs {
+            source,
+            source_key,
+            goal: goal,
+            search_goal: GateSearchGoal::Sector(goal_key),
+            allow_leave_map,
+        },
         auth,
-        allow_leave_map,
         building_is_authorized,
         sector_lift_type,
     )
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 enum GateSearchGoal {
     Sector(GateSectorKey),
     Door(DoorIndex),
@@ -1413,18 +1413,30 @@ impl GateSearchGoal {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn gate_astar(
-    doors: &[Door],
+/// Query-specific search policy; graph and authorization remain borrowed inputs.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+struct GateSearchInputs {
     source: MapPoint,
     source_key: GateSectorKey,
     goal: MapPoint,
     search_goal: GateSearchGoal,
-    auth: Option<&ActorAuthInfo>,
     allow_leave_map: bool,
+}
+
+fn gate_astar(
+    doors: &[Door],
+    inputs: GateSearchInputs,
+    auth: Option<&ActorAuthInfo>,
     building_is_authorized: &impl Fn(SectorNumber) -> bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
+    let GateSearchInputs {
+        source,
+        source_key,
+        goal,
+        search_goal,
+        allow_leave_map,
+    } = inputs;
     if doors.is_empty() {
         return None;
     }
@@ -1711,12 +1723,14 @@ pub fn find_path_into_door_with_sector_index(
     // `rand() & 15` draws.
     gate_astar(
         doors,
-        source,
-        source_key,
-        goal_mid,
-        GateSearchGoal::Door(goal_door_index),
+        GateSearchInputs {
+            source,
+            source_key,
+            goal: goal_mid,
+            search_goal: GateSearchGoal::Door(goal_door_index),
+            allow_leave_map,
+        },
         auth,
-        allow_leave_map,
         building_is_authorized,
         sector_lift_type,
     )
