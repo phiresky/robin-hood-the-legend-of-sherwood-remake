@@ -287,36 +287,36 @@ pub enum LegacyElementResolution {
 /// Element kinds supported by the v48 save format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LegacyDynamicElementFactory {
-    ActorPc = 0x0001,
-    Apple = 0x3002,
-    Arrow = 0x3001,
-    Coin = 0x3008,
-    Net = 0x3007,
-    Purse = 0x3003,
-    WaspNest = 0x3005,
-    Wasp = 0x3006,
-    Stone = 0x3004,
-    Ale = 0x3009,
-    SpyCape = 0x300a,
-    BonusAle = 0x4001,
-    BonusArrow = 0x4003,
-    BonusApple = 0x4004,
-    BonusLambLeg = 0x4006,
-    BonusNet = 0x4007,
-    BonusPlants = 0x4008,
-    BonusPurse = 0x4009,
-    BonusStone = 0x400a,
-    BonusWaspNest = 0x400b,
-    Scroll = 0x400c,
-    BonusAmulet = 0x4002,
-    BonusRansom = 0x400d,
-    BonusAmpulla = 0x400e,
-    BonusCoronationSpoon = 0x400f,
-    BonusRichardsCrown = 0x4010,
-    BonusRoyalSeal = 0x4011,
-    BonusRoyalSceptre = 0x4012,
-    BonusDomesdayBook = 0x4013,
-    BonusSwordOfTheState = 0x4014,
+    ActorPc,
+    Apple,
+    Arrow,
+    Coin,
+    Net,
+    Purse,
+    WaspNest,
+    Wasp,
+    Stone,
+    Ale,
+    SpyCape,
+    BonusAle,
+    BonusArrow,
+    BonusApple,
+    BonusLambLeg,
+    BonusNet,
+    BonusPlants,
+    BonusPurse,
+    BonusStone,
+    BonusWaspNest,
+    Scroll,
+    BonusAmulet,
+    BonusRansom,
+    BonusAmpulla,
+    BonusCoronationSpoon,
+    BonusRichardsCrown,
+    BonusRoyalSeal,
+    BonusRoyalSceptre,
+    BonusDomesdayBook,
+    BonusSwordOfTheState,
 }
 
 /// Concrete type identifiers accepted in an original-game v48 element table.
@@ -324,7 +324,7 @@ pub enum LegacyDynamicElementFactory {
 #[repr(u16)]
 #[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive)]
 pub enum LegacyElementClass {
-    ActorPc,
+    ActorPc = 0x0001,
     ActorNpc = 0x0101,
     ActorNpcCivilian = 0x0102,
     ActorNpcSoldier = 0x0103,
@@ -336,36 +336,36 @@ pub enum LegacyElementClass {
     ActorBird = 0x0215,
     ActorCrocodile = 0x0216,
     Object = 0x0301,
-    Arrow,
-    Apple,
-    Purse,
-    Stone,
-    WaspNest,
-    Wasp,
-    Net,
-    Coin,
-    Ale,
-    SpyCape,
-    BonusAle,
-    BonusAmulet,
-    BonusArrow,
-    BonusApple,
+    Arrow = 0x3001,
+    Apple = 0x3002,
+    Purse = 0x3003,
+    Stone = 0x3004,
+    WaspNest = 0x3005,
+    Wasp = 0x3006,
+    Net = 0x3007,
+    Coin = 0x3008,
+    Ale = 0x3009,
+    SpyCape = 0x300a,
+    BonusAle = 0x4001,
+    BonusAmulet = 0x4002,
+    BonusArrow = 0x4003,
+    BonusApple = 0x4004,
     BonusBlazon = 0x4005,
-    BonusLambLeg,
-    BonusNet,
-    BonusPlants,
-    BonusPurse,
-    BonusStone,
-    BonusWaspNest,
-    Scroll,
-    BonusRansom,
-    BonusAmpulla,
-    BonusCoronationSpoon,
-    BonusRichardsCrown,
-    BonusRoyalSeal,
-    BonusRoyalSceptre,
-    BonusDomesdayBook,
-    BonusSwordOfTheState,
+    BonusLambLeg = 0x4006,
+    BonusNet = 0x4007,
+    BonusPlants = 0x4008,
+    BonusPurse = 0x4009,
+    BonusStone = 0x400a,
+    BonusWaspNest = 0x400b,
+    Scroll = 0x400c,
+    BonusRansom = 0x400d,
+    BonusAmpulla = 0x400e,
+    BonusCoronationSpoon = 0x400f,
+    BonusRichardsCrown = 0x4010,
+    BonusRoyalSeal = 0x4011,
+    BonusRoyalSceptre = 0x4012,
+    BonusDomesdayBook = 0x4013,
+    BonusSwordOfTheState = 0x4014,
     Target = 0x0800,
     Fx = 0x1001,
     FxMasked = 0x1002,
@@ -440,6 +440,101 @@ mod tests {
     use crate::legacy_io::LegacyIoErrorKind;
 
     use crate::legacy_save::test_support::with_reader;
+
+    // Frozen from the pre-refactor RHCLASSID decoder, not generated via raw().
+    // A self-round-trip would miss a wrong discriminant shared by both codecs.
+    const ORIGINAL_CLASS_IDS: &[(u16, LegacyElementClass)] = &[
+        (0x0001, LegacyElementClass::ActorPc),
+        (0x0101, LegacyElementClass::ActorNpc),
+        (0x0102, LegacyElementClass::ActorNpcCivilian),
+        (0x0103, LegacyElementClass::ActorNpcSoldier),
+        (0x0210, LegacyElementClass::ActorAnimal),
+        (0x0211, LegacyElementClass::ActorDog),
+        (0x0212, LegacyElementClass::ActorCow),
+        (0x0213, LegacyElementClass::ActorHen),
+        (0x0214, LegacyElementClass::ActorPig),
+        (0x0215, LegacyElementClass::ActorBird),
+        (0x0216, LegacyElementClass::ActorCrocodile),
+        (0x0301, LegacyElementClass::Object),
+        (0x3001, LegacyElementClass::Arrow),
+        (0x3002, LegacyElementClass::Apple),
+        (0x3003, LegacyElementClass::Purse),
+        (0x3004, LegacyElementClass::Stone),
+        (0x3005, LegacyElementClass::WaspNest),
+        (0x3006, LegacyElementClass::Wasp),
+        (0x3007, LegacyElementClass::Net),
+        (0x3008, LegacyElementClass::Coin),
+        (0x3009, LegacyElementClass::Ale),
+        (0x300a, LegacyElementClass::SpyCape),
+        (0x4001, LegacyElementClass::BonusAle),
+        (0x4002, LegacyElementClass::BonusAmulet),
+        (0x4003, LegacyElementClass::BonusArrow),
+        (0x4004, LegacyElementClass::BonusApple),
+        (0x4005, LegacyElementClass::BonusBlazon),
+        (0x4006, LegacyElementClass::BonusLambLeg),
+        (0x4007, LegacyElementClass::BonusNet),
+        (0x4008, LegacyElementClass::BonusPlants),
+        (0x4009, LegacyElementClass::BonusPurse),
+        (0x400a, LegacyElementClass::BonusStone),
+        (0x400b, LegacyElementClass::BonusWaspNest),
+        (0x400c, LegacyElementClass::Scroll),
+        (0x400d, LegacyElementClass::BonusRansom),
+        (0x400e, LegacyElementClass::BonusAmpulla),
+        (0x400f, LegacyElementClass::BonusCoronationSpoon),
+        (0x4010, LegacyElementClass::BonusRichardsCrown),
+        (0x4011, LegacyElementClass::BonusRoyalSeal),
+        (0x4012, LegacyElementClass::BonusRoyalSceptre),
+        (0x4013, LegacyElementClass::BonusDomesdayBook),
+        (0x4014, LegacyElementClass::BonusSwordOfTheState),
+        (0x0800, LegacyElementClass::Target),
+        (0x1001, LegacyElementClass::Fx),
+        (0x1002, LegacyElementClass::FxMasked),
+        (0x1003, LegacyElementClass::Mobile),
+    ];
+
+    #[test]
+    fn class_ids_match_original_wire_values_not_factory_ordinals() {
+        for &(raw, class) in ORIGINAL_CLASS_IDS {
+            assert_eq!(class.raw(), raw, "{class:?} Original wire encoding");
+        }
+        for raw in 0..=u16::MAX {
+            let expected = ORIGINAL_CLASS_IDS
+                .iter()
+                .find_map(|&(original, class)| (original == raw).then_some(class));
+            assert_eq!(
+                LegacyElementClass::from_raw(raw),
+                expected,
+                "RHCLASSID 0x{raw:04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn original_pc_and_projectile_header_bytes_preserve_phase_boundaries() {
+        // Three phase-one records: static soldier, dynamic PC (with campaign
+        // index), dynamic arrow; then a phase-two PC header and payload marker.
+        // Keep literal bytes independent of the production enum and fixture writer.
+        let bytes = [
+            3, 0, 0, 0, 0x03, 0x01, 3, 0, 0, 0, 0x01, 0x00, 10, 0, 0, 0, 1, 0, 0, 0, 0x01, 0x30,
+            11, 0, 0, 0, 0x01, 0x00, 10, 0, 0, 0, 1, 0, 0, 0, 0xaa,
+        ];
+        with_reader(&bytes, |reader| {
+            let decoded = LegacyElementEnvelope::read_phase1(reader, &config()).unwrap();
+            assert_eq!(decoded.phase2_offset, 26);
+            assert_eq!(
+                decoded.records[0].class,
+                LegacyElementClass::ActorNpcSoldier
+            );
+            assert_eq!(decoded.records[1].class, LegacyElementClass::ActorPc);
+            assert_eq!(decoded.records[1].pc_description_index, Some(1));
+            assert_eq!(decoded.records[2].class, LegacyElementClass::Arrow);
+            let header = read_payload_header(reader, &decoded.records[1], 2).unwrap();
+            assert_eq!(header.class, LegacyElementClass::ActorPc);
+            assert_eq!(header.pc_description_index, Some(1));
+            assert_eq!(reader.offset(), 36);
+            assert_eq!(reader.read_u8("payload_marker").unwrap(), 0xaa);
+        });
+    }
 
     fn config() -> LegacyElementReadConfig {
         LegacyElementReadConfig {
