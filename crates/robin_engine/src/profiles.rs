@@ -1734,7 +1734,7 @@ impl ProfileManager {
         path: &str,
         files: &crate::sbfile::SbFileSystem,
     ) -> Result<Self, ProfileJsonLoadError> {
-        let document = Self::load_json_document_with_files(path, files)?;
+        let document = Self::read_json_document_with_files(path, files)?;
         crate::content_patch::profiles_from_document(document).map_err(|message| {
             ProfileJsonLoadError::Schema {
                 path: path.into(),
@@ -1745,6 +1745,21 @@ impl ProfileManager {
 
     /// Read and validate canonical content without losing authored keys or order.
     pub fn load_json_document_with_files(
+        path: &str,
+        files: &crate::sbfile::SbFileSystem,
+    ) -> Result<serde_json::Value, ProfileJsonLoadError> {
+        let document = Self::read_json_document_with_files(path, files)?;
+        crate::content_patch::profiles_from_document(document.clone()).map_err(|message| {
+            ProfileJsonLoadError::Schema {
+                path: path.into(),
+                message,
+            }
+        })?;
+        Ok(document)
+    }
+
+    // Decode only; each public entry point validates its document before returning.
+    fn read_json_document_with_files(
         path: &str,
         files: &crate::sbfile::SbFileSystem,
     ) -> Result<serde_json::Value, ProfileJsonLoadError> {
@@ -1764,18 +1779,10 @@ impl ProfileManager {
             path: path.into(),
             source,
         })?;
-        let document: serde_json::Value =
-            serde_json::from_str(&data).map_err(|source| ProfileJsonLoadError::Json {
-                path: path.into(),
-                source,
-            })?;
-        crate::content_patch::profiles_from_document(document.clone()).map_err(|message| {
-            ProfileJsonLoadError::Schema {
-                path: path.into(),
-                message,
-            }
-        })?;
-        Ok(document)
+        serde_json::from_str(&data).map_err(|source| ProfileJsonLoadError::Json {
+            path: path.into(),
+            source,
+        })
     }
 }
 
@@ -1793,26 +1800,97 @@ mod tests {
             .unwrap();
         vfs.install_preloaded_asset("typed-profiles/syntax.json", b"{\n broken".to_vec())
             .unwrap();
-        let files = crate::sbfile::SbFileSystem::new(vfs);
-        let error = ProfileManager::load_json_with_files("typed-profiles/missing.json", &files)
-            .unwrap_err();
-        assert!(
-            matches!(error, ProfileJsonLoadError::Open { ref path, .. } if path == "typed-profiles/missing.json")
-        );
-        let error =
-            ProfileManager::load_json_with_files("typed-profiles/utf8.json", &files).unwrap_err();
-        assert!(matches!(error, ProfileJsonLoadError::Utf8 { .. }));
-        assert!(error.source().unwrap().is::<std::string::FromUtf8Error>());
-        let error =
-            ProfileManager::load_json_with_files("typed-profiles/syntax.json", &files).unwrap_err();
-        let source = error
-            .source()
-            .unwrap()
-            .downcast_ref::<serde_json::Error>()
+        vfs.install_preloaded_asset("typed-profiles/schema.json", b"{}".to_vec())
             .unwrap();
-        assert_eq!(source.line(), 2);
-        assert!(source.column() > 0);
-        assert!(error.to_string().contains("typed-profiles/syntax.json"));
+        let files = crate::sbfile::SbFileSystem::new(vfs);
+        for error in [
+            ProfileManager::load_json_with_files("typed-profiles/missing.json", &files)
+                .unwrap_err(),
+            ProfileManager::load_json_document_with_files("typed-profiles/missing.json", &files)
+                .unwrap_err(),
+        ] {
+            assert!(
+                matches!(error, ProfileJsonLoadError::Open { ref path, .. } if path == "typed-profiles/missing.json")
+            );
+        }
+        for error in [
+            ProfileManager::load_json_with_files("typed-profiles/utf8.json", &files).unwrap_err(),
+            ProfileManager::load_json_document_with_files("typed-profiles/utf8.json", &files)
+                .unwrap_err(),
+        ] {
+            assert!(
+                matches!(error, ProfileJsonLoadError::Utf8 { ref path, .. } if path == "typed-profiles/utf8.json")
+            );
+            assert!(error.source().unwrap().is::<std::string::FromUtf8Error>());
+        }
+        for error in [
+            ProfileManager::load_json_with_files("typed-profiles/syntax.json", &files).unwrap_err(),
+            ProfileManager::load_json_document_with_files("typed-profiles/syntax.json", &files)
+                .unwrap_err(),
+        ] {
+            let source = error
+                .source()
+                .unwrap()
+                .downcast_ref::<serde_json::Error>()
+                .unwrap();
+            assert_eq!(source.line(), 2);
+            assert!(source.column() > 0);
+            assert!(error.to_string().contains("typed-profiles/syntax.json"));
+        }
+        for error in [
+            ProfileManager::load_json_with_files("typed-profiles/schema.json", &files).unwrap_err(),
+            ProfileManager::load_json_document_with_files("typed-profiles/schema.json", &files)
+                .unwrap_err(),
+        ] {
+            assert!(
+                matches!(error, ProfileJsonLoadError::Schema { ref path, .. } if path == "typed-profiles/schema.json")
+            );
+        }
+    }
+
+    #[test]
+    fn json_entrypoints_preserve_authored_keys_and_profile_slot_order() {
+        let profiles = ProfileManager {
+            soldiers: vec![
+                SoldierProfile {
+                    filename: "Zulu".into(),
+                    life_point: 11,
+                    ..Default::default()
+                },
+                SoldierProfile {
+                    filename: "Alpha".into(),
+                    life_point: 22,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut document = crate::content_patch::profile_document(&profiles).unwrap();
+        let first = document["soldiers"]
+            .as_object_mut()
+            .unwrap()
+            .remove("Zulu")
+            .unwrap();
+        document["soldiers"]["authored-slot"] = first;
+        document["soldier_order"][0] = serde_json::json!("authored-slot");
+        let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset(
+            "typed-profiles/valid.json",
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        let files = crate::sbfile::SbFileSystem::new(vfs);
+        assert_eq!(
+            ProfileManager::load_json_document_with_files("typed-profiles/valid.json", &files)
+                .unwrap(),
+            document
+        );
+        let loaded =
+            ProfileManager::load_json_with_files("typed-profiles/valid.json", &files).unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded).unwrap(),
+            serde_json::to_value(profiles).unwrap()
+        );
     }
 
     #[allow(dead_code)]
