@@ -412,14 +412,7 @@ fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugCo
                 creation_order: 0,
             };
         }
-        let parse = |name: &str| {
-            let value = std::env::var(name).unwrap_or_else(|error| {
-                panic!("CIVRANDSPEECH diagnostic requires {name}: {error}")
-            });
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
-            })
-        };
+        let parse = crate::engine::diagnostics::required_u32_env;
         CivilianRandomSpeechDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_FRAME"),
@@ -446,13 +439,7 @@ fn speech_lifecycle_debug_config() -> &'static SpeechLifecycleDebugConfig {
                 actor: None,
             };
         }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for SPEECHLIFE diagnostic: {error}")
-                })
-            })
-        };
+        let parse = crate::engine::diagnostics::optional_u32_env;
         SpeechLifecycleDebugConfig {
             enabled: true,
             frame: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_FRAME"),
@@ -479,13 +466,7 @@ fn patrol_turn_lifecycle_debug_config() -> &'static PatrolTurnLifecycleDebugConf
                 creation_order: None,
             };
         }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for PATROLTURN diagnostic: {error}")
-                })
-            })
-        };
+        let parse = crate::engine::diagnostics::optional_u32_env;
         PatrolTurnLifecycleDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_PATROL_TURN_FRAME"),
@@ -515,13 +496,7 @@ fn archer_step_back_lifecycle_debug_config() -> &'static ArcherStepBackLifecycle
                 owner_handle: None,
             };
         }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for ARCHERSTEP diagnostic: {error}")
-                })
-            })
-        };
+        let parse = crate::engine::diagnostics::optional_u32_env;
         ArcherStepBackLifecycleDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_ARCHER_STEP_BACK_FRAME"),

@@ -350,3 +350,57 @@ mod tests {
         );
     }
 }
+
+/// Parse an optional diagnostic filter without treating malformed process
+/// configuration as an absent filter. Call only after the gate is enabled.
+pub(crate) fn optional_u32_env(name: &str) -> Option<u32> {
+    parse_u32_env_value(name, std::env::var(name))
+}
+
+pub(crate) fn required_u32_env(name: &str) -> u32 {
+    optional_u32_env(name).unwrap_or_else(|| panic!("missing required environment variable {name}"))
+}
+
+fn parse_u32_env_value(name: &str, value: Result<String, std::env::VarError>) -> Option<u32> {
+    match value {
+        Ok(value) => Some(
+            value
+                .parse()
+                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}")),
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(value)) => {
+            panic!("non-Unicode diagnostic filter {name}={value:?}")
+        }
+    }
+}
+
+#[cfg(test)]
+mod u32_filter_tests {
+    use super::parse_u32_env_value;
+
+    #[test]
+    fn optional_filters_distinguish_absence_from_zero() {
+        assert_eq!(
+            parse_u32_env_value("TEST", Err(std::env::VarError::NotPresent)),
+            None
+        );
+        assert_eq!(parse_u32_env_value("TEST", Ok("0".into())), Some(0));
+        assert_eq!(
+            parse_u32_env_value("TEST", Ok(u32::MAX.to_string())),
+            Some(u32::MAX)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid TEST")]
+    fn malformed_filter_is_not_absence() {
+        parse_u32_env_value("TEST", Ok("-1".into()));
+    }
+
+    #[test]
+    #[should_panic(expected = "non-Unicode diagnostic filter TEST")]
+    fn non_unicode_error_is_not_absence() {
+        parse_u32_env_value("TEST", Err(std::env::VarError::NotUnicode("opaque".into())));
+    }
+}

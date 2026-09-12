@@ -24,14 +24,7 @@ fn thrust_admission_debug_config() -> Option<&'static ThrustAdmissionDebugConfig
     CONFIG
         .get_or_init(|| {
             std::env::var_os("PARITY_DEBUG_THRUST_A_ADMISSION")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when thrust-A admission debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for thrust-A admission diagnostic: {error}")
-                })
-            };
+            let parse = crate::engine::diagnostics::required_u32_env;
             Some(ThrustAdmissionDebugConfig {
                 frame: parse("PARITY_DEBUG_THRUST_A_ADMISSION_FRAME"),
                 owner: parse("PARITY_DEBUG_THRUST_A_ADMISSION_OWNER"),
@@ -46,14 +39,7 @@ fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> 
     CONFIG
         .get_or_init(|| {
             std::env::var_os("PARITY_DEBUG_OPPONENT_CALLER")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when opponent-caller debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for opponent-caller diagnostic: {error}")
-                })
-            };
+            let parse = crate::engine::diagnostics::required_u32_env;
             Some(OpponentCallerDebugConfig {
                 frame: parse("PARITY_DEBUG_OPPONENT_CALLER_FRAME"),
                 participant: parse("PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT"),
