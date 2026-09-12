@@ -8,9 +8,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { AssetDescriptor, LibraryIndexEntry, MapDraft, ProtoLevel } from "@rle/shared";
+import { parseProtoLevel, type AssetDescriptor, type MapDraft } from "@rle/shared";
+import { readDocument, readOptionalImage, readTerrainSpec } from "./inputs.ts";
+import { readAssetDescriptor, readLibraryIndex } from "./library.ts";
 import { datadirPath, editorRoot, libraryDir, workDir } from "./env.ts";
-import { renderTerrain, type TerrainSpec } from "./terrain.ts";
+import { renderTerrain } from "./terrain.ts";
 import { expandWallRun, expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
 
 
@@ -18,14 +20,12 @@ async function main() {
   const map = process.argv[2];
   if (!map) throw new Error("usage: node src/recreate.ts <MapName>");
 
-  const index: LibraryIndexEntry[] = JSON.parse(
-    await fs.readFile(path.join(libraryDir, "index.json"), "utf8"),
-  );
+  const index = await readLibraryIndex(libraryDir, true);
   const assets: AssetDescriptor[] = [];
   for (const e of index) {
     if (e.source_map !== map) continue;
     assets.push(
-      JSON.parse(await fs.readFile(path.join(libraryDir, e.id, "asset.json"), "utf8")),
+      await readAssetDescriptor(path.join(libraryDir, e.id, "asset.json")),
     );
   }
   if (assets.length === 0) throw new Error(`no assets from map ${map} in the library`);
@@ -42,17 +42,8 @@ async function main() {
   const W = meta.width!;
   const H = meta.height!;
 
-  let spec: TerrainSpec = {};
-  try {
-    spec = JSON.parse(
-      await fs.readFile(
-        path.join(editorRoot, "drafts", `${map.toLowerCase()}-terrain.json`),
-        "utf8",
-      ),
-    );
-  } catch {
-    // no authored terrain spec for this map yet
-  }
+  const terrainFile = path.join(editorRoot, "drafts", `${map.toLowerCase()}-terrain.json`);
+  const spec = await readTerrainSpec(terrainFile);
   const prefix = map.toLowerCase();
 
   // draft: every asset at its original source position, plus authored walls
@@ -80,10 +71,7 @@ async function main() {
     notes: `Auto-generated litmus test: all ${assets.length} ${map} library assets at their source positions.`,
   };
   const draftsDir = path.join(editorRoot, "drafts");
-  await fs.mkdir(draftsDir, { recursive: true });
   const draftPath = path.join(draftsDir, `${map.toLowerCase()}-recreation.json`);
-  await fs.writeFile(draftPath, JSON.stringify(draft, null, 2));
-  console.log(`draft: ${draftPath} (${assets.length} placements)`);
 
   // draw order: static cutouts and wall stamps interleaved by world anchor Y,
   // then FX/patch sprites on top (in-game, patch roofs draw over buildings)
@@ -165,9 +153,7 @@ async function main() {
     left,
     top,
   }));
-  const level: ProtoLevel = JSON.parse(
-    await fs.readFile(path.join(levelsDir, `${map}.rhp.json`), "utf8"),
-  );
+  const level = parseProtoLevel(await readDocument(path.join(levelsDir, `${map}.rhp.json`), true));
   const terrain = await renderTerrain(level, W, H, spec, {
     grass: `${prefix}-grass-swatch`,
     dirt: `${prefix}-courtyard-dirt-swatch`,
@@ -182,16 +168,19 @@ async function main() {
   if (terrain) {
     const variants: { png: Buffer; w: number; h: number }[] = [];
     for (const id of [`${prefix}-orchard-tree-1`, `${prefix}-lone-tree`]) {
+      const file = path.join(libraryDir, id, "day.png");
+      const bytes = await readOptionalImage(file);
+      if (bytes === undefined) continue;
       for (const width of [88, 116, 148]) {
         try {
-          const png = await sharp(path.join(libraryDir, id, "day.png"))
+          const png = await sharp(bytes)
             .resize({ width })
             .png()
             .toBuffer();
           const m = await sharp(png).metadata();
           variants.push({ png, w: m.width!, h: m.height! });
-        } catch {
-          // asset missing
+        } catch (error) {
+          throw new Error(`cannot decode scatter image ${file}`, { cause: error });
         }
       }
     }
@@ -217,6 +206,10 @@ async function main() {
     .png()
     .toBuffer();
   const outPath = path.join(workDir, `${map.toLowerCase()}-recreated.png`);
+  // Do not publish a draft before its source documents and images are usable.
+  await fs.mkdir(draftsDir, { recursive: true });
+  await fs.writeFile(draftPath, JSON.stringify(draft, null, 2));
+  console.log(`draft: ${draftPath} (${assets.length} placements)`);
   await fs.writeFile(outPath, recreated);
 
   // side-by-side with the original, half scale

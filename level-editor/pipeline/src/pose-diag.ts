@@ -4,10 +4,9 @@
 // mean/median pre-snap tilt and how often it is the most upright one.
 //
 //   node src/pose-diag.ts --map york
-import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { AssetDescriptor, LibraryIndexEntry } from "@rle/shared";
+import { readAssetDescriptor, readLibraryIndex } from "./library.ts";
 import { libraryDir } from "./env.ts";
 import { loadProtoLevel } from "./asset-writer.ts";
 import { fitMapCamera } from "./map-camera.ts";
@@ -22,15 +21,13 @@ async function main() {
   const level = await loadProtoLevel(map);
   const fit = fitMapCamera(level);
   const cam = { kind: fit.kind, elevation_deg: fit.elevation_deg };
-  const index: LibraryIndexEntry[] = JSON.parse(
-    await fs.readFile(path.join(libraryDir, "index.json"), "utf8"),
-  );
+  const index = await readLibraryIndex(libraryDir, true);
   const stats = new Map<string, { tilts: number[]; ious: number[]; wins: number }>();
   let n = 0;
   for (const e of index) {
     if (e.source_map.toLowerCase() !== map.toLowerCase()) continue;
     const dir = path.join(libraryDir, e.id);
-    const desc: AssetDescriptor = JSON.parse(await fs.readFile(path.join(dir, "asset.json"), "utf8"));
+    const desc = await readAssetDescriptor(path.join(dir, "asset.json"));
     if (!desc.model?.pose_l2c) continue;
     const mesh = await loadGlb(path.join(dir, desc.model.glb));
     const mask = new Uint8Array(

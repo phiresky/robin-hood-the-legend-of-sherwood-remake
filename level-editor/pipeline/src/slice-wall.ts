@@ -5,20 +5,17 @@
 //
 // Writes <asset-id>-slice with the same wall_direction_deg; anchor is the
 // slice's bottom-center on the mask baseline.
-import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor } from "@rle/shared";
 import { libraryDir } from "./env.ts";
-import { writeAsset } from "./library.ts";
+import { readAssetDescriptor, writeAsset } from "./library.ts";
 
 async function main() {
   const id = process.argv[2];
   if (!id) throw new Error("usage: node src/slice-wall.ts <asset-id> [sliceWidthPx]");
   const srcDir = path.join(libraryDir, id);
-  const desc: AssetDescriptor = JSON.parse(
-    await fs.readFile(path.join(srcDir, "asset.json"), "utf8"),
-  );
+  const desc = await readAssetDescriptor(path.join(srcDir, "asset.json"));
   const day = sharp(path.join(srcDir, desc.images.day));
   const { width: W, height: H } = await day.metadata();
   const sliceW = Number(process.argv[3] ?? Math.round(W! / 3));

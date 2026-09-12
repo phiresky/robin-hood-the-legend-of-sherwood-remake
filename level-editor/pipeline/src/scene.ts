@@ -19,13 +19,13 @@ import { ALL_EXTENSIONS, KHRMaterialsUnlit } from "@gltf-transform/extensions";
 import { mergeDocuments, textureCompress, unpartition } from "@gltf-transform/functions";
 import type {
   AssetDescriptor,
-  LibraryIndexEntry,
   MapCamera,
   SceneDoc,
   ScenePlacement,
 } from "@rle/shared";
 import { groundToScene } from "@rle/shared";
 import { libraryDir, workDir } from "./env.ts";
+import { readAssetDescriptor, readLibraryIndex } from "./library.ts";
 import { findMapPng, loadProtoLevel } from "./asset-writer.ts";
 import { fitMapCamera } from "./map-camera.ts";
 import { loadGlb, transformPositions, type MeshData } from "./mesh.ts";
@@ -35,17 +35,13 @@ import { mapView, orbitView, render, type RenderInstance } from "./render.ts";
 const ZUP_TO_YUP: [number, number, number, number] = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
 
 async function collectAssets(map: string, exclude: Set<string>, minIou: number) {
-  const index: LibraryIndexEntry[] = JSON.parse(
-    await fs.readFile(path.join(libraryDir, "index.json"), "utf8"),
-  );
+  const index = await readLibraryIndex(libraryDir, true);
   const assets: AssetDescriptor[] = [];
   const skipped: string[] = [];
   const descs: AssetDescriptor[] = [];
   for (const e of index) {
     if (e.source_map.toLowerCase() !== map.toLowerCase()) continue;
-    const desc: AssetDescriptor = JSON.parse(
-      await fs.readFile(path.join(libraryDir, e.id, "asset.json"), "utf8"),
-    );
+    const desc = await readAssetDescriptor(path.join(libraryDir, e.id, "asset.json"));
     if (desc.model) descs.push(desc);
   }
   // a block (merged detection) replaces its members when it fits at least

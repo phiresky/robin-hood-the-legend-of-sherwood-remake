@@ -7,7 +7,7 @@ import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor } from "@rle/shared";
 import { libraryDir } from "./env.ts";
-import { writeAsset } from "./library.ts";
+import { readAssetDescriptor, writeAsset } from "./library.ts";
 
 async function shearPng(png: Buffer, slope: number): Promise<Buffer> {
   const img = sharp(png).ensureAlpha();
@@ -37,9 +37,7 @@ async function main() {
   const angle = Number(process.argv[3]);
   if (!id || Number.isNaN(angle)) throw new Error("usage: node src/shear-wall.ts <id> <angleDeg>");
   const srcDir = path.join(libraryDir, id);
-  const desc: AssetDescriptor = JSON.parse(
-    await fs.readFile(path.join(srcDir, "asset.json"), "utf8"),
-  );
+  const desc = await readAssetDescriptor(path.join(srcDir, "asset.json"));
   const baseDeg = desc.wall_direction_deg ?? 0;
   const slope = Math.tan(((angle - baseDeg) * Math.PI) / 180);
   const images: Record<string, Buffer> = {};
