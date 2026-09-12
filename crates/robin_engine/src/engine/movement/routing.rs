@@ -692,7 +692,7 @@ impl EngineInner {
             // an AssertPosition and postpone the real Move one manager-FIFO
             // position behind later actors.
             let route_assert_sector = route_identity_differs.then_some(source_sector);
-            return self.build_gate_movement_sequence(
+            return self.launch_gate_movement_sequence(
                 sim,
                 crate::engine::movement::GateRouteRequest {
                     entity_id: entity_id,

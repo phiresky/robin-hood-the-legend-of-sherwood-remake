@@ -1906,7 +1906,7 @@ impl EngineInner {
                     // Attribute only a route that is actually about to enter the
                     // gate builder, where RuntimeBuildingExitWait can be drawn.
                     self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
-                    let _ = self.build_gate_movement_sequence(
+                    self.launch_gate_movement_order(
                         sim,
                         crate::engine::movement::GateRouteRequest {
                             entity_id: pc_id,

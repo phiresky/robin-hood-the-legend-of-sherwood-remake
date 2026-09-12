@@ -966,7 +966,7 @@ fn ordinary_cross_sector_pc_move_still_appends_posture_recovery() {
     let owner = engine.add_test_entity(owner_entity);
 
     let sequence_id = engine
-        .build_gate_movement_sequence(
+        .launch_gate_movement_sequence(
             &sim,
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,

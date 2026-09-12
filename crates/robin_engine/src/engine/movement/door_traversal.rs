@@ -19,7 +19,61 @@ pub(crate) struct GateRouteRequest {
     pub append_recovery: bool,
 }
 
+/// Local sequence assembly state, carried between the gate and goal phases.
+/// Keeping the command level explicit preserves the original branch-specific increments.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GateRouteEmission {
+    seq: crate::sequence::Sequence,
+    level: u16,
+    prev_sector: Option<crate::position_interface::SectorHandle>,
+    ended_early: bool,
+}
+
+impl GateRouteRequest {
+    fn entity_goal(&self) -> Option<(EntityId, f32, bool)> {
+        match self.goal {
+            GoalShape::Seek {
+                target, tolerance, ..
+            } => Some((target, tolerance, true)),
+            GoalShape::Target {
+                target, tolerance, ..
+            } => Some((target, tolerance, false)),
+            _ => None,
+        }
+    }
+}
+
+// Public sector numbers are not unique; retained arena identity must win.
+fn is_building_sector(
+    engine: &EngineInner,
+    sector: crate::position_interface::SectorHandle,
+) -> bool {
+    route_sector_by_exact_handle(engine, sector)
+        .map(|gs| gs.sector_type.is_building())
+        .unwrap_or(false)
+}
+
+fn is_ladder_lift(engine: &EngineInner, sector: crate::position_interface::SectorHandle) -> bool {
+    route_sector_by_exact_handle(engine, sector)
+        .and_then(|gs| gs.lift_type)
+        .map(|lt| lt == crate::sector::LiftType::Ladder)
+        .unwrap_or(false)
+}
+
 impl EngineInner {
+    /// Launch a route for callers that do not retain the resulting sequence ID.
+    /// Invalid routes are rejected by the same builder and remain visible in diagnostics.
+    pub(crate) fn launch_gate_movement_order(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        request: GateRouteRequest,
+    ) {
+        let entity_id = request.entity_id;
+        if self.launch_gate_movement_sequence(sim, request).is_none() {
+            tracing::warn!(entity = ?entity_id, "gate movement order could not be launched");
+        }
+    }
+
     /// Build a movement sequence that traverses a gate path from
     /// `find_path_gates` and ends at `goal` on `goal_layer`.
     ///
@@ -63,69 +117,23 @@ impl EngineInner {
     ///   carrying `MoveFlags::LINE` and the line id so the actor's
     ///   arrival check snaps to line tolerance.  Intermediate gate
     ///   moves never carry `MoveFlags::LINE`.
-    pub(crate) fn build_gate_movement_sequence(
+    #[must_use]
+    pub(crate) fn launch_gate_movement_sequence(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        request: GateRouteRequest,
+        mut request: GateRouteRequest,
     ) -> Option<crate::sequence::SequenceId> {
         use crate::element::Command;
-        use crate::sequence::{
-            Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
-        };
-        let GateRouteRequest {
-            entity_id,
-            source_sector,
-            gate_path,
-            goal,
-            goal_layer,
-            base_action,
-            move_after_last_door,
-            speed_factor,
-            initial_flags,
-            prefix_elements,
-            tail_elements,
-            append_arrival_speech,
-            append_recovery,
-        } = request;
-
-        // Determine first jump gate.  Every gate *before* the first
-        // jump gets the `TO_JUMP` flag so its movement element sets
-        // the actor up for the jump.  Only the Point and Door goal
-        // variants apply this flag-mutation; the Line variant passes
-        // the input flags to every gate unmodified, so suppress the
-        // OR for `GoalShape::Line`.
-        let apply_to_jump = !matches!(goal, GoalShape::Line { .. });
-        let first_jump: Option<usize> = if apply_to_jump {
-            gate_path.iter().enumerate().find_map(|(i, step)| {
-                let is_jump = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .and_then(|_| {
-                        self.script_domains
-                            .interactables
-                            .doors
-                            .get(usize::from(step.door_index))
-                    })
-                    .map(|d| d.is_jump())
-                    .unwrap_or(false);
-                if is_jump { Some(i) } else { None }
-            })
-        } else {
-            None
-        };
-
-        let flags_at = |gate_idx: usize| -> MoveFlags {
-            match first_jump {
-                Some(j) if gate_idx <= j => initial_flags | MoveFlags::TO_JUMP,
-                _ => initial_flags,
-            }
-        };
+        use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
+        let entity_id = request.entity_id;
+        let source_sector = request.source_sector;
+        let base_action = request.base_action;
+        let speed_factor = request.speed_factor;
 
         // Snapshot the canonical gate data in one short borrow so the main
         // loop can call grid and sequence helpers on `self` without fighting
         // the borrow checker.
-        let gate_shots = self.snapshot_gate_route(&gate_path, base_action)?;
+        let gate_shots = self.snapshot_gate_route(&request.gate_path, base_action)?;
 
         // Does the entity have the lockpick contextual action?
         // Needed to choose the lockpick sub-element branch.
@@ -134,28 +142,10 @@ impl EngineInner {
             .actor_auth_info()
             .has_lockpick;
 
-        // The original game carries exact sector identity through the previous sector. Public
-        // numbers are not unique, so consult retained arena identity first;
-        // the number map is only the compatibility fallback for old saves.
-        let is_building_sector =
-            |this: &Self, sector: crate::position_interface::SectorHandle| -> bool {
-                route_sector_by_exact_handle(this, sector)
-                    .map(|gs| gs.sector_type.is_building())
-                    .unwrap_or(false)
-            };
-
-        let is_ladder_lift =
-            |this: &Self, sector: crate::position_interface::SectorHandle| -> bool {
-                route_sector_by_exact_handle(this, sector)
-                    .and_then(|gs| gs.lift_type)
-                    .map(|lt| lt == crate::sector::LiftType::Ladder)
-                    .unwrap_or(false)
-            };
-
         let mut seq = Sequence::new();
         let mut level: u16 = 1;
 
-        for mut elem in prefix_elements {
+        for mut elem in request.prefix_elements.drain(..) {
             elem.command_level = level;
             seq.append_element(elem);
             level += 1;
@@ -173,7 +163,7 @@ impl EngineInner {
             gate_shots.is_empty() || source_sector.is_some(),
             "gate movement route for {entity_id:?} has no source sector"
         );
-        let mut prev_sector = source_sector;
+        let prev_sector = source_sector;
 
         // Cross-sector source-sector sanity assert.  When the goal
         // sector differs from the source, prepend an `AssertPosition`
@@ -210,21 +200,130 @@ impl EngineInner {
             level += 1;
         }
 
-        let entity_goal = match goal {
-            GoalShape::Seek {
-                target, tolerance, ..
-            } => Some((target, tolerance, true)),
-            GoalShape::Target {
-                target, tolerance, ..
-            } => Some((target, tolerance, false)),
-            _ => None,
+        let emission = GateRouteEmission {
+            seq,
+            level,
+            prev_sector,
+            ended_early: false,
+        };
+        let emission =
+            self.append_gate_elements(sim, &request, &gate_shots, has_lockpick, emission);
+        let GateRouteEmission {
+            mut seq,
+            mut level,
+            ended_early,
+            ..
+        } = self.append_route_tail(sim, &request, &gate_shots, has_lockpick, emission);
+
+        for mut elem in request.tail_elements.drain(..) {
+            elem.command_level = level;
+            seq.append_element(elem);
+            level += 1;
+        }
+
+        // Append a `SpeakHeroReachDestination` element at the tail of
+        // the gate-movement sequence so the PC barks the "I have
+        // arrived" line once the destination is reached.
+        // The sequence receives the incremented count left by
+        // movement construction, so speech is the next command level,
+        // after the final movement has completed. The PC's instruction handling
+        // terminates it on dispatch and queues
+        // `HeroDoneCommand` via `arbitrate_instruct`.
+        if request.append_arrival_speech && !seq.is_empty() {
+            let speak_level = seq
+                .last()
+                .map(|element| element.command_level.saturating_add(1))
+                .unwrap_or(level);
+            let speak = SequenceElement::new(
+                speak_level,
+                Command::SpeakHeroReachDestination,
+                Some(entity_id),
+            );
+            seq.append_element(speak);
+        }
+
+        // Append posture-recovery sub-elements right after the Speak
+        // element so a PC mid-bow-aim / crouched / helping-climb /
+        // simulating-beggar ends the order in a neutral posture
+        // instead of frozen in their pre-move state.  Only fires for
+        // PCs; `append_posture_recovery` bails on non-PC entities.
+        if request.append_recovery {
+            self.append_posture_recovery(entity_id, &mut seq);
+        }
+
+        let seq_id = self.launch_sequence(seq);
+        tracing::trace!(
+            entity = ?entity_id,
+            ?seq_id,
+            gates = request.gate_path.len(),
+            early = ended_early,
+            goal = ?request.goal,
+            move_after_last_door = request.move_after_last_door,
+            "Launched gate-traversal movement sequence"
+        );
+
+        // Destination markers are emitted by player group-move callers
+        // only; AI/pathfinding callers use this helper without dropping
+        // a ground mark.
+        Some(seq_id)
+    }
+    /// Append the selected gates in path order, stopping after an intermediate lockpick.
+    fn append_gate_elements(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        request: &GateRouteRequest,
+        gate_shots: &[GateShot],
+        has_lockpick: bool,
+        emission: GateRouteEmission,
+    ) -> GateRouteEmission {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
+        let entity_id = request.entity_id;
+        let goal = request.goal;
+        let initial_flags = request.initial_flags;
+        let speed_factor = request.speed_factor;
+        let gate_path = &request.gate_path;
+        let entity_goal = request.entity_goal();
+        let GateRouteEmission {
+            mut seq,
+            mut level,
+            mut prev_sector,
+            ..
+        } = emission;
+
+        // Determine first jump gate.  Every gate *before* the first
+        // jump gets the `TO_JUMP` flag so its movement element sets
+        // the actor up for the jump.  Only the Point and Door goal
+        // variants apply this flag-mutation; the Line variant passes
+        // the input flags to every gate unmodified, so suppress the
+        // OR for `GoalShape::Line`.
+        let apply_to_jump = !matches!(goal, GoalShape::Line { .. });
+        let first_jump: Option<usize> = if apply_to_jump {
+            gate_path.iter().enumerate().find_map(|(i, step)| {
+                let is_jump = self
+                    .scripts
+                    .mission
+                    .as_ref()
+                    .and_then(|_| {
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(step.door_index))
+                    })
+                    .map(|d| d.is_jump())
+                    .unwrap_or(false);
+                if is_jump { Some(i) } else { None }
+            })
+        } else {
+            None
         };
 
-        // Goal-point used for the trailing MOVE (if any).  For Point
-        // goals this is the caller's point; for Line goals it's the
-        // line's midpoint; for Door goals it's the approach point on
-        // the near side of the goal door.
-        let goal_point = goal.goal_point();
+        let flags_at = |gate_idx: usize| -> MoveFlags {
+            match first_jump {
+                Some(j) if gate_idx <= j => initial_flags | MoveFlags::TO_JUMP,
+                _ => initial_flags,
+            }
+        };
 
         // Tracks whether a lockpick branch on an intermediate gate
         // terminated the sequence early.
@@ -548,6 +647,41 @@ impl EngineInner {
 
             prev_sector = Some(shot.new_sector);
         }
+
+        GateRouteEmission {
+            seq,
+            level,
+            prev_sector,
+            ended_early,
+        }
+    }
+
+    /// Append the goal-specific movement only when gate traversal did not stop for lockpicking.
+    fn append_route_tail(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        request: &GateRouteRequest,
+        gate_shots: &[GateShot],
+        has_lockpick: bool,
+        emission: GateRouteEmission,
+    ) -> GateRouteEmission {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
+        let entity_id = request.entity_id;
+        let goal = request.goal;
+        let goal_layer = request.goal_layer;
+        let base_action = request.base_action;
+        let initial_flags = request.initial_flags;
+        let speed_factor = request.speed_factor;
+        let move_after_last_door = request.move_after_last_door;
+        let entity_goal = request.entity_goal();
+        let goal_point = goal.goal_point();
+        let GateRouteEmission {
+            mut seq,
+            mut level,
+            prev_sector,
+            ended_early,
+        } = emission;
 
         // Clear TO_JUMP once we're past the last jump gate — the
         // trailing MOVE uses `initial_flags` unmodified.
@@ -880,57 +1014,12 @@ impl EngineInner {
             }
         }
 
-        for mut elem in tail_elements {
-            elem.command_level = level;
-            seq.append_element(elem);
-            level += 1;
+        GateRouteEmission {
+            seq,
+            level,
+            prev_sector,
+            ended_early,
         }
-
-        // Append a `SpeakHeroReachDestination` element at the tail of
-        // the gate-movement sequence so the PC barks the "I have
-        // arrived" line once the destination is reached.
-        // The sequence receives the incremented count left by
-        // movement construction, so speech is the next command level,
-        // after the final movement has completed. The PC's instruction handling
-        // terminates it on dispatch and queues
-        // `HeroDoneCommand` via `arbitrate_instruct`.
-        if append_arrival_speech && !seq.is_empty() {
-            let speak_level = seq
-                .last()
-                .map(|element| element.command_level.saturating_add(1))
-                .unwrap_or(level);
-            let speak = SequenceElement::new(
-                speak_level,
-                Command::SpeakHeroReachDestination,
-                Some(entity_id),
-            );
-            seq.append_element(speak);
-        }
-
-        // Append posture-recovery sub-elements right after the Speak
-        // element so a PC mid-bow-aim / crouched / helping-climb /
-        // simulating-beggar ends the order in a neutral posture
-        // instead of frozen in their pre-move state.  Only fires for
-        // PCs; `append_posture_recovery` bails on non-PC entities.
-        if append_recovery {
-            self.append_posture_recovery(entity_id, &mut seq);
-        }
-
-        let seq_id = self.launch_sequence(seq);
-        tracing::trace!(
-            entity = ?entity_id,
-            ?seq_id,
-            gates = gate_path.len(),
-            early = ended_early,
-            goal = ?goal,
-            move_after_last_door,
-            "Launched gate-traversal movement sequence"
-        );
-
-        // Destination markers are emitted by player group-move callers
-        // only; AI/pathfinding callers use this helper without dropping
-        // a ground mark.
-        Some(seq_id)
     }
 
     /// Append posture-cleanup sub-elements at the tail of a PC move
