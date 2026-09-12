@@ -2741,20 +2741,12 @@ async fn leaderboard(
                     run_id: entry.run_id.as_str().to_owned(),
                 };
                 let opaque_token = encode_cursor(&token, &state.cursor_hmac_key)?;
-                Ok::<LeaderboardCursorV1, ApiError>(LeaderboardCursorV1 {
-                    schema_version: SCHEMA_VERSION_V1,
-                    query_sha256: filter_sha,
-                    accepted_sequence_watermark,
-                    last: LeaderboardOrderAnchorV1 {
-                        position: entry.position,
-                        rank: entry.rank,
-                        metric_value: entry.metric_value.clone(),
-                        accepted_sequence: entry.accepted_sequence,
-                        verified_at_unix_ms: entry.verified_at_unix_ms,
-                        run_id: entry.run_id.clone(),
-                    },
+                leaderboard_cursor(
+                    &token,
                     opaque_token,
-                })
+                    query.metric,
+                    &published.manifest.tick_duration,
+                )
             })
             .transpose()?
     } else {
@@ -5894,6 +5886,97 @@ pub(crate) mod tests {
         };
         published.validate().unwrap();
         published
+    }
+
+    #[test]
+    fn next_cursor_conversion_matches_entry_based_response_for_both_metrics() {
+        let tick_duration = TickDurationV1 {
+            numerator_micros: 50_000,
+            denominator: 1,
+        };
+        for (metric, metric_value) in [
+            (BoardMetricV1::OriginalScore, -12_345),
+            (BoardMetricV1::FastestSuccess, 12_345),
+        ] {
+            let mut token = cursor();
+            token.metric_value = metric_value;
+            let row = BoardRow {
+                rank: token.rank,
+                run_id: token.run_id.clone(),
+                composition: BoardComposition::Mission {
+                    replay_sha256: [3; 32],
+                },
+                metric_value,
+                max_concurrent_players: 1,
+                participant_instance_count: 1,
+                named_participant_instance_count: 0,
+                anonymous_participant_instance_count: 1,
+                accepted_sequence: u64::try_from(token.accepted_sequence).unwrap(),
+                verified_at_ms: token.verified_at_unix_ms,
+                named_participants: Vec::new(),
+                aggregate_named_participants: Vec::new(),
+            };
+            let entry = board_entry(&row, token.position, metric, &tick_duration).unwrap();
+            let opaque_token = encode_cursor(&token, &[2; 32]).unwrap();
+            // The previous next-page mapping copied this already-checked entry.
+            let expected = LeaderboardCursorV1 {
+                schema_version: SCHEMA_VERSION_V1,
+                query_sha256: token.filter_sha256,
+                accepted_sequence_watermark: token.accepted_sequence_watermark,
+                last: LeaderboardOrderAnchorV1 {
+                    position: entry.position,
+                    rank: entry.rank,
+                    metric_value: entry.metric_value,
+                    accepted_sequence: entry.accepted_sequence,
+                    verified_at_unix_ms: entry.verified_at_unix_ms,
+                    run_id: entry.run_id,
+                },
+                opaque_token: opaque_token.clone(),
+            };
+            let actual = leaderboard_cursor(&token, opaque_token, metric, &tick_duration).unwrap();
+            assert_eq!(actual, expected);
+            let decoded =
+                decode_cursor(&actual.opaque_token, token.filter_sha256, &[2; 32]).unwrap();
+            assert_eq!(decoded.visibility_revision, token.visibility_revision);
+            assert_eq!(
+                decoded.accepted_sequence_watermark,
+                token.accepted_sequence_watermark
+            );
+            assert_eq!(decoded.metric_value, metric_value);
+        }
+        let mut invalid = cursor();
+        invalid.metric_value = -1;
+        assert!(
+            leaderboard_cursor(
+                &invalid,
+                String::new(),
+                BoardMetricV1::FastestSuccess,
+                &tick_duration
+            )
+            .is_err()
+        );
+        invalid = cursor();
+        invalid.accepted_sequence = -1;
+        assert!(
+            leaderboard_cursor(
+                &invalid,
+                String::new(),
+                BoardMetricV1::OriginalScore,
+                &tick_duration
+            )
+            .is_err()
+        );
+        invalid = cursor();
+        invalid.run_id.clear();
+        assert!(
+            leaderboard_cursor(
+                &invalid,
+                String::new(),
+                BoardMetricV1::OriginalScore,
+                &tick_duration
+            )
+            .is_err()
+        );
     }
 
     #[test]
