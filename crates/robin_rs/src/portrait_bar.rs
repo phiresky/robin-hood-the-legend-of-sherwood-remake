@@ -367,5 +367,4 @@ impl Default for PortraitBar {
 // ─── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[path = "portrait_bar_tests.rs"]
 mod tests;

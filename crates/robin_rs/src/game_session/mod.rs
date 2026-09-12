@@ -533,21 +533,6 @@ impl MissionOutcome {
             transition: None,
         }
     }
-
-    pub(crate) fn from_engine(
-        campaign: Campaign,
-        rng_seed: u64,
-        sim_config: engine_api::SimConfig,
-        result: Result<GameCode, String>,
-    ) -> Self {
-        Self {
-            campaign,
-            rng_seed,
-            sim_config,
-            result,
-            transition: None,
-        }
-    }
 }
 
 /// Consuming result of the outer mission-selection loop.

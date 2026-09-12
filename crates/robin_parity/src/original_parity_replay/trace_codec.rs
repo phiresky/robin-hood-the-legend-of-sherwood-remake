@@ -1,7 +1,7 @@
 //! Trace codec and lossless-conversion boundary.
 //!
-//! `trace_model` and `native_model` own current wire layouts; `v66`, `v67`, and `v67_late` own
-//! frozen historical layouts and their explicit conversion into current data.
+//! `trace_model` and `native_model` own the frozen current wire layout.
+//! Older native generations require offline migration before admission.
 use super::*;
 
 pub(super) fn trace_content_sha256(trace_path: &Path) -> String {
@@ -25,12 +25,7 @@ pub(super) fn trace_content_sha256(trace_path: &Path) -> String {
         }
         digest.update(&buffer[..read]);
     }
-    let digest = digest.finalize();
-    let mut content_sha256 = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        write!(&mut content_sha256, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    content_sha256
+    hex::encode(digest.finalize())
 }
 
 pub(super) fn trace_source_fingerprint(trace_path: &Path) -> String {

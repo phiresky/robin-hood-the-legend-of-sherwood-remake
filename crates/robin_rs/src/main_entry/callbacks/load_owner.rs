@@ -250,7 +250,7 @@ mod tests {
         transition.validate_slot(&callbacks.save_manager).unwrap();
         assert_eq!(transition.mission_id(), 17);
         assert_eq!(transition.save().engine.frame_counter(), 41);
-        let successful = crate::game_session::MissionOutcome::from_engine(
+        let successful = crate::game_session::MissionOutcome::new(
             robin_engine::campaign::Campaign::default(),
             4,
             robin_engine::engine::SimConfig::default(),
@@ -261,7 +261,7 @@ mod tests {
             successful.transition.unwrap().save().engine.frame_counter(),
             41
         );
-        let failed = crate::game_session::MissionOutcome::from_engine(
+        let failed = crate::game_session::MissionOutcome::new(
             robin_engine::campaign::Campaign::default(),
             4,
             robin_engine::engine::SimConfig::default(),

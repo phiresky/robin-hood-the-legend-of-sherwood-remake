@@ -445,10 +445,7 @@ pub(super) fn read_native_reblock_binding(path: &Path, native_path: &Path) -> Na
     let binding: NativeReblockBinding = serde_json::from_reader(BufReader::new(file))
         .unwrap_or_else(|error| panic!("read native reblock binding {}: {error}", path.display()));
     assert!(
-        matches!(
-            binding.version,
-            TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
-        ),
+        matches!(binding.version, TRACE_NATIVE_VERSION),
         "native reblock binding {} has unsupported version {}",
         path.display(),
         binding.version
@@ -1225,44 +1222,31 @@ impl BinaryTraceReader {
             reader: Box::new(decoder),
             footer,
             pending: VecDeque::new(),
-            v67_increment_map_valid_was_recorded: false,
-            v67_late_layout: false,
         }
     }
 
     pub(super) fn read_header(&mut self) -> BinaryTraceHeaderV68 {
-        let (header, v67_late_layout) =
-            read_binary_trace_header_record_with_layout(&mut self.reader, self.footer.version)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "read native parity trace header {}: {error}",
-                        self.path.display()
-                    )
-                });
-        self.v67_late_layout = v67_late_layout;
-        self.v67_increment_map_valid_was_recorded = self.footer.version
-            == TRACE_NATIVE_LEGACY_VERSION
-            && !self.v67_late_layout
-            && header.trace.initial_npc_transients.is_some();
-        header
+        read_binary_trace_header_record(&mut self.reader, self.footer.version).unwrap_or_else(
+            |error| {
+                panic!(
+                    "read native parity trace header {}: {error}",
+                    self.path.display()
+                )
+            },
+        )
     }
 
     pub(super) fn read_record(&mut self) -> BinaryTraceRecord {
         if let Some(record) = self.pending.pop_front() {
             return record;
         }
-        let block = read_binary_trace_block_record(
-            &mut self.reader,
-            self.footer.version,
-            self.v67_increment_map_valid_was_recorded,
-            self.v67_late_layout,
-        )
-        .unwrap_or_else(|error| {
-            panic!(
-                "read native parity trace block {}: {error}",
-                self.path.display()
-            )
-        });
+        let block = read_binary_trace_block_record(&mut self.reader, self.footer.version)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "read native parity trace block {}: {error}",
+                    self.path.display()
+                )
+            });
         self.pending.extend(block);
         self.pending.pop_front().unwrap_or_else(|| {
             panic!(
@@ -1348,13 +1332,13 @@ pub(super) fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter,
 }
 
 pub(super) fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String> {
-    if !matches!(
-        footer.version,
-        TRACE_NATIVE_V66_VERSION | TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
-    ) {
+    validate_native_version(footer.version)
+}
+
+fn validate_native_version(version: u32) -> Result<(), String> {
+    if version != TRACE_NATIVE_VERSION {
         return Err(format!(
-            "footer version {} is unsupported; this runner supports versions {TRACE_NATIVE_V66_VERSION}, {TRACE_NATIVE_LEGACY_VERSION}, and {TRACE_NATIVE_VERSION}",
-            footer.version
+            "native parity trace version {version} is unsupported; expected {TRACE_NATIVE_VERSION}; migrate this authoritative artifact offline with its original runner"
         ));
     }
     Ok(())
@@ -1527,81 +1511,16 @@ pub(super) fn read_binary_trace_header_record(
     reader: &mut dyn Read,
     version: u32,
 ) -> Result<BinaryTraceHeaderV68, String> {
-    read_binary_trace_header_record_with_layout(reader, version).map(|(header, _)| header)
-}
-
-pub(super) fn read_binary_trace_header_record_with_layout(
-    reader: &mut dyn Read,
-    version: u32,
-) -> Result<(BinaryTraceHeaderV68, bool), String> {
-    let label = "native parity trace header";
-    let encoded = read_binary_record_payload(reader, label)?;
-    match version {
-        TRACE_NATIVE_V66_VERSION => bitcode::decode::<BinaryTraceHeaderV66>(&encoded)
-            .map(|header| (header.into(), false))
-            .map_err(|error| format!("decode version-66 {label}: {error}")),
-        TRACE_NATIVE_LEGACY_VERSION => {
-            match bitcode::decode::<BinaryTraceHeaderV67>(&encoded) {
-                Ok(header) => Ok((header.into(), false)),
-                Err(early_error) => bitcode::decode::<BinaryTraceHeaderV67Late>(&encoded)
-                    .map(|header| (header.into(), true))
-                    .map_err(|late_error| {
-                        format!(
-                            "decode version-67 {label}: early layout: {early_error}; late layout: {late_error}"
-                        )
-                    }),
-            }
-        }
-        TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
-            .map(|header| (header, false))
-            .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
-        _ => Err(format!(
-            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_V66_VERSION}, {TRACE_NATIVE_LEGACY_VERSION}, and {TRACE_NATIVE_VERSION}"
-        )),
-    }
+    validate_native_version(version)?;
+    read_binary_record(reader, "native parity trace header")
 }
 
 pub(super) fn read_binary_trace_block_record(
     reader: &mut dyn Read,
     version: u32,
-    v67_increment_map_valid_was_recorded: bool,
-    v67_late_layout: bool,
 ) -> Result<Vec<BinaryTraceRecord>, String> {
-    let label = "native parity trace block";
-    let encoded = read_binary_record_payload(reader, label)?;
-    match version {
-        TRACE_NATIVE_V66_VERSION => bitcode::decode::<Vec<BinaryTraceRecordV66>>(&encoded)
-            .map(|records| {
-                records
-                    .into_iter()
-                    .map(BinaryTraceRecordV66::into_current)
-                    .collect()
-            })
-            .map_err(|error| format!("decode version-66 {label}: {error}")),
-        TRACE_NATIVE_LEGACY_VERSION if v67_late_layout => {
-            bitcode::decode::<Vec<BinaryTraceRecordV67Late>>(&encoded)
-                .map(|records| {
-                    records
-                        .into_iter()
-                        .map(BinaryTraceRecordV67Late::into_current)
-                        .collect()
-                })
-                .map_err(|error| format!("decode late-layout version-67 {label}: {error}"))
-        }
-        TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<Vec<BinaryTraceRecordV67>>(&encoded)
-            .map(|records| {
-                records
-                    .into_iter()
-                    .map(|record| record.into_current(v67_increment_map_valid_was_recorded))
-                    .collect()
-            })
-            .map_err(|error| format!("decode early-layout version-67 {label}: {error}")),
-        TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
-            .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
-        _ => Err(format!(
-            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_V66_VERSION}, {TRACE_NATIVE_LEGACY_VERSION}, and {TRACE_NATIVE_VERSION}"
-        )),
-    }
+    validate_native_version(version)?;
+    read_binary_record(reader, "native parity trace block")
 }
 
 /// Storage experiment for the canonical trace layout: re-encode the cached

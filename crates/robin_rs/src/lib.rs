@@ -191,7 +191,6 @@ pub mod corner_hud;
 pub mod cursor;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod datadir_locator;
-pub mod debug_stub;
 pub mod distributed_mod;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod distributed_mod_admission;
@@ -258,7 +257,6 @@ pub mod input;
 pub mod input_translator;
 pub mod key_config;
 pub mod key_config_store;
-pub mod leaderboard_account;
 pub mod leaderboard_browse;
 pub mod leaderboard_chains;
 pub mod leaderboard_http;
@@ -271,10 +269,6 @@ pub mod leaderboard_service;
 pub(crate) mod leaderboard_storage;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
-#[cfg(all(not(target_arch = "wasm32"), feature = "lua"))]
-pub mod lua_session;
-#[cfg(any(target_arch = "wasm32", not(feature = "lua")))]
-#[path = "lua_session_wasm.rs"]
 pub mod lua_session;
 pub mod main_entry;
 pub mod main_menu;
@@ -304,7 +298,6 @@ pub mod replay_service;
 pub mod rewind;
 pub mod rollback_checker;
 pub mod save_file;
-pub mod save_operation;
 pub mod save_recovery;
 pub mod savegame;
 pub mod scroll_view;

@@ -46,12 +46,20 @@ impl EngineInner {
                     member.index()
                 )
             });
-            let mut ctx = self.ai_context_from_entity(
+            let mut ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                &scratch,
-                assets,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             entity

@@ -14,13 +14,14 @@ fn drain_pre_tick_network(
     frame: &mut MissionFrame,
     mp_clock_pause: &mut bool,
     rewind_active: bool,
-) {
+) -> Result<(), String> {
     if host.transport.net().is_none() || rewind_active {
-        return;
+        return Ok(());
     }
 
     runtime.trace(FrameContractStage::SecondNetworkDrain);
-    let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms());
+    let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms())
+        .map_err(|error| error.to_string())?;
     if drain.rollback.is_some() {
         // Late input invalidates the capture opened before local input/UI.
         // Reconstruction returns to this same pre-tick frame; retain its
@@ -34,6 +35,7 @@ fn drain_pre_tick_network(
     {
         discard_abandoned_host_frame_inputs(frame);
     }
+    Ok(())
 }
 
 fn discard_abandoned_host_frame_inputs(frame: &mut MissionFrame) {
@@ -341,7 +343,7 @@ pub(super) fn finalize_pre_tick(
         &mut frame,
         &mut mp_clock_pause,
         rewind_active,
-    );
+    )?;
 
     // ── Multiplayer: state hash broadcast / verify ──
     // Sample after the final deterministic pre-tick network drain.
@@ -629,7 +631,8 @@ mod tests {
             &mut frame,
             &mut paused,
             false,
-        );
+        )
+        .expect("network drain succeeds");
         assert!(!paused);
         assert_eq!(
             timeline.last_mp_rollback.as_ref().unwrap().path,
@@ -692,7 +695,8 @@ mod tests {
             &mut next_frame,
             &mut paused,
             false,
-        );
+        )
+        .expect("network drain succeeds");
         assert_eq!(next_frame.recorder_hash, Some(0x55aa));
     }
 

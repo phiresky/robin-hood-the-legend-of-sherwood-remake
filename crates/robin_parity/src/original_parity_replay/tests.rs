@@ -1029,118 +1029,6 @@ fn write_synthetic_native_trace(path: &Path, source_fingerprint: &str, checksum:
     writer.get_ref().sync_all().unwrap();
 }
 
-fn write_synthetic_version_67_native_trace(path: &Path, source_fingerprint: &str) {
-    let file = File::create(path).unwrap();
-    let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
-    encoder.window_log(20).unwrap();
-    let header: BinaryTraceHeaderV67 = minimal_test_native_header(source_fingerprint).into();
-    write_binary_record(&mut encoder, &header, "synthetic version-67 native header");
-    let end = BinaryTraceRecordV67::End {
-        rng_suffix: Some(TraceRngBatch {
-            first_index: 0,
-            values: Vec::new(),
-            callsite_offsets: Vec::new(),
-            main_thread: Vec::new(),
-            domains: Vec::new(),
-        }),
-        final_frame: Some(0),
-        frame_count: Some(0),
-    };
-    write_binary_record(
-        &mut encoder,
-        std::slice::from_ref(&end),
-        "synthetic version-67 native block",
-    );
-    let mut writer = encoder.finish().unwrap();
-    write_binary_trace_footer(
-        &mut writer,
-        BinaryTraceFooter {
-            version: TRACE_NATIVE_LEGACY_VERSION,
-            frame_count: 0,
-            final_frame: 0,
-        },
-    )
-    .unwrap();
-    writer.flush().unwrap();
-    writer.get_ref().sync_all().unwrap();
-}
-
-fn write_synthetic_version_66_native_trace(path: &Path, source_fingerprint: &str) {
-    let file = File::create(path).unwrap();
-    let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
-    encoder.window_log(20).unwrap();
-    let header: BinaryTraceHeaderV66 = minimal_test_native_header(source_fingerprint).into();
-    write_binary_record(&mut encoder, &header, "synthetic version-66 native header");
-    let end = BinaryTraceRecordV66::End {
-        rng_suffix: Some(TraceRngBatch {
-            first_index: 0,
-            values: Vec::new(),
-            callsite_offsets: Vec::new(),
-            main_thread: Vec::new(),
-            domains: Vec::new(),
-        }),
-        final_frame: Some(0),
-        frame_count: Some(0),
-    };
-    write_binary_record(
-        &mut encoder,
-        std::slice::from_ref(&end),
-        "synthetic version-66 native block",
-    );
-    let mut writer = encoder.finish().unwrap();
-    write_binary_trace_footer(
-        &mut writer,
-        BinaryTraceFooter {
-            version: TRACE_NATIVE_V66_VERSION,
-            frame_count: 0,
-            final_frame: 0,
-        },
-    )
-    .unwrap();
-    writer.flush().unwrap();
-    writer.get_ref().sync_all().unwrap();
-}
-
-fn write_synthetic_late_version_67_native_trace(path: &Path, source_fingerprint: &str) {
-    let file = File::create(path).unwrap();
-    let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
-    encoder.window_log(20).unwrap();
-    let header: BinaryTraceHeaderV67Late = minimal_test_native_header(source_fingerprint).into();
-    write_binary_record(
-        &mut encoder,
-        &header,
-        "synthetic late version-67 native header",
-    );
-    let end = BinaryTraceRecordV67Late::End {
-        rng_suffix: Some(TraceRngBatch {
-            first_index: 0,
-            values: Vec::new(),
-            callsite_offsets: Vec::new(),
-            main_thread: Vec::new(),
-            domains: Vec::new(),
-        }),
-        final_frame: Some(0),
-        frame_count: Some(0),
-    };
-    write_binary_record(
-        &mut encoder,
-        std::slice::from_ref(&end),
-        "synthetic late version-67 native block",
-    );
-    let mut writer = encoder.finish().unwrap();
-    write_binary_trace_footer(
-        &mut writer,
-        BinaryTraceFooter {
-            version: TRACE_NATIVE_LEGACY_VERSION,
-            frame_count: 0,
-            final_frame: 0,
-        },
-    )
-    .unwrap();
-    writer.flush().unwrap();
-    writer.get_ref().sync_all().unwrap();
-}
-
 fn write_test_native_records_with_compression(
     records: &[BinaryTraceRecord],
     footer: Option<BinaryTraceFooter>,
@@ -1213,147 +1101,6 @@ fn complete_test_end(frame_count: u64, final_frame: u64) -> BinaryTraceRecord {
 }
 
 #[test]
-fn version_67_header_uses_legacy_vec_layout() {
-    let legacy: BinaryTraceHeaderV67 = minimal_test_native_header("legacy-v67").into();
-    let mut encoded_record = Vec::new();
-    write_binary_record(&mut encoded_record, &legacy, "test version-67 header");
-
-    let decoded = read_binary_trace_header_record(
-        &mut std::io::Cursor::new(encoded_record),
-        TRACE_NATIVE_LEGACY_VERSION,
-    )
-    .expect("decode version-67 header through its original bitcode layout");
-
-    assert_eq!(decoded.version, TRACE_NATIVE_LEGACY_VERSION);
-    assert_eq!(decoded.source_fingerprint, "legacy-v67");
-    assert!(decoded.trace.initial_npc_transients.is_none());
-}
-
-#[test]
-fn late_version_67_header_preserves_optional_transient_layout() {
-    let legacy: BinaryTraceHeaderV67Late = minimal_test_native_header("late-legacy-v67").into();
-    let mut encoded_record = Vec::new();
-    write_binary_record(&mut encoded_record, &legacy, "test late version-67 header");
-
-    let (decoded, late_layout) = read_binary_trace_header_record_with_layout(
-        &mut std::io::Cursor::new(encoded_record),
-        TRACE_NATIVE_LEGACY_VERSION,
-    )
-    .expect("decode late version-67 header through its historical bitcode layout");
-
-    assert!(late_layout);
-    assert_eq!(decoded.version, TRACE_NATIVE_LEGACY_VERSION);
-    assert_eq!(decoded.source_fingerprint, "late-legacy-v67");
-    assert_eq!(decoded.trace.initial_npc_transients, Some(Vec::new()));
-}
-
-#[test]
-fn version_66_header_uses_frozen_legacy_layout() {
-    let legacy: BinaryTraceHeaderV66 = minimal_test_native_header("legacy-v66").into();
-    let mut encoded_record = Vec::new();
-    write_binary_record(&mut encoded_record, &legacy, "test version-66 header");
-
-    let decoded = read_binary_trace_header_record(
-        &mut std::io::Cursor::new(encoded_record),
-        TRACE_NATIVE_V66_VERSION,
-    )
-    .expect("decode version-66 header through its original bitcode layout");
-
-    assert_eq!(decoded.version, TRACE_NATIVE_V66_VERSION);
-    assert_eq!(decoded.source_fingerprint, "legacy-v66");
-    assert_eq!(decoded.trace.initial_npc_transients, Some(Vec::new()));
-}
-
-#[test]
-fn reblock_migrates_version_67_to_current_without_semantic_drift() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("legacy.parity.bitcode.zst");
-    write_synthetic_version_67_native_trace(&native, "legacy-reblock");
-    let before = native_reblock_semantic_identity(&native);
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    let footer = read_binary_trace_footer(&native).unwrap();
-    let header = read_binary_trace_header(&native);
-    assert_eq!(footer.version, TRACE_NATIVE_VERSION);
-    assert_eq!(header.version, TRACE_NATIVE_VERSION);
-    assert_eq!(native_reblock_semantic_identity(&native), before);
-}
-
-#[test]
-fn reblock_migrates_late_version_67_to_current_without_semantic_drift() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("late-legacy.parity.bitcode.zst");
-    write_synthetic_late_version_67_native_trace(&native, "late-legacy-reblock");
-    let before = native_reblock_semantic_identity(&native);
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    let footer = read_binary_trace_footer(&native).unwrap();
-    let header = read_binary_trace_header(&native);
-    assert_eq!(footer.version, TRACE_NATIVE_VERSION);
-    assert_eq!(header.version, TRACE_NATIVE_VERSION);
-    assert_eq!(native_reblock_semantic_identity(&native), before);
-}
-
-#[test]
-fn reblock_resumes_version_67_recovery_binding() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("legacy-recovery.parity.bitcode.zst");
-    write_synthetic_version_67_native_trace(&native, "legacy-recovery");
-    let source = native_reblock_source_path(&native);
-    let binding_path = native_reblock_binding_path(&native);
-    let (source_bytes, source_content_sha256, source_device, source_inode) =
-        native_reblock_file_identity(&native);
-    let (frame_count, final_frame, source_semantic_sha256) =
-        native_reblock_semantic_identity_with_version_policy(&native, false);
-    let binding = NativeReblockBinding {
-        version: TRACE_NATIVE_LEGACY_VERSION,
-        canonical_path: native_reblock_canonical_path(&native),
-        source_content_sha256,
-        source_bytes,
-        source_semantic_sha256: format!("stale-{source_semantic_sha256}"),
-        frame_count,
-        final_frame,
-        #[cfg(unix)]
-        source_device,
-        #[cfg(unix)]
-        source_inode,
-    };
-    write_native_reblock_binding(&binding_path, &binding);
-    std::fs::hard_link(&native, &source).unwrap();
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    assert_eq!(
-        read_binary_trace_footer(&native).unwrap().version,
-        TRACE_NATIVE_VERSION
-    );
-    assert!(!source.exists());
-    assert!(!binding_path.exists());
-}
-
-#[test]
-fn reblock_migrates_version_66_to_small_current_blocks_without_semantic_drift() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("legacy-v66.parity.bitcode.zst");
-    write_synthetic_version_66_native_trace(&native, "legacy-v66-reblock");
-    let before = native_reblock_semantic_identity(&native);
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    assert_eq!(native_reblock_semantic_identity(&native), before);
-    assert_eq!(
-        read_binary_trace_footer(&native).unwrap().version,
-        TRACE_NATIVE_VERSION
-    );
-    assert_eq!(
-        read_binary_trace_header(&native).version,
-        TRACE_NATIVE_VERSION
-    );
-}
-
-#[test]
 fn reblock_refreshes_stale_semantic_digest_for_exact_bound_source() {
     let directory = tempfile::tempdir().unwrap();
     let native = directory.path().join("stale-binding.parity.bitcode.zst");
@@ -1376,9 +1123,33 @@ fn reblock_refreshes_stale_semantic_digest_for_exact_bound_source() {
 }
 
 #[test]
+fn retired_native_versions_are_rejected_before_reading_record_bytes() {
+    for version in [0, 66, 67, 69] {
+        let footer = BinaryTraceFooter {
+            version,
+            frame_count: 0,
+            final_frame: 0,
+        };
+        assert!(
+            validate_binary_trace_footer(&footer)
+                .unwrap_err()
+                .contains("migrate")
+        );
+        assert!(
+            read_binary_trace_header_record(&mut std::io::empty(), version)
+                .unwrap_err()
+                .contains("migrate")
+        );
+        assert!(
+            read_binary_trace_block_record(&mut std::io::empty(), version)
+                .unwrap_err()
+                .contains("migrate")
+        );
+    }
+}
+
+#[test]
 fn native_small_block_policy_round_trips_records_and_footer() {
-    assert_eq!(TRACE_NATIVE_V66_VERSION, 66);
-    assert_eq!(TRACE_NATIVE_LEGACY_VERSION, 67);
     assert_eq!(TRACE_NATIVE_VERSION, 68);
     assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
     const { assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING) };

@@ -31,6 +31,7 @@ use crate::save_file::{
 };
 
 mod catalog;
+mod operation;
 mod persistence;
 mod recovery;
 use catalog::SlotCatalog;
@@ -380,7 +381,7 @@ fn required_save_provenance(
 #[derive(Debug)]
 pub struct SaveGameManager {
     catalog: SlotCatalog,
-    operations: crate::save_operation::SaveOperationOwner,
+    operations: operation::SaveOperationOwner,
     operation_error: Option<String>,
     operation_error_reported: bool,
     save_directory: String,

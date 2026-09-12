@@ -390,14 +390,10 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .expect("instructed sequence element disappeared");
-        let antagonist = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|elem| match &elem.data {
-                crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
-                _ => None,
-            });
+        let antagonist = match &elem.data {
+            crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
+            _ => None,
+        };
         let Some(target) = antagonist else {
             tracing::warn!(?seq_id, elem_idx, "SwordstrikeDown missing antagonist");
             self.orders
@@ -453,14 +449,10 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .expect("instructed sequence element disappeared");
-        let killer = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|elem| match elem.data {
-                crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
-                _ => None,
-            });
+        let killer = match elem.data {
+            crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
+            _ => None,
+        };
         let already_in_coma = self
             .get_entity(owner)
             .and_then(crate::element::Entity::pc_data)

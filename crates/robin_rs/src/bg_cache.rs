@@ -64,13 +64,10 @@ impl Serialize for BackgroundDecals {
     }
 }
 
-impl<'de> Deserialize<'de> for BackgroundDecals {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "background decals must be reconstructed from current-level engine effects",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    BackgroundDecals,
+    "background decals must be reconstructed from current-level engine effects"
+);
 
 #[cfg(test)]
 mod tests {

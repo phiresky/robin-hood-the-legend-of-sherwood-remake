@@ -11,7 +11,7 @@ use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::ScrollDirection;
 use robin_engine::player_command as engine_player_command;
-use robin_engine::player_command::PlayerCommand;
+use robin_engine::player_command::{PlayerCommand, PlayerId};
 use serde::{Deserialize, Serialize};
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -236,10 +236,11 @@ impl GamepadDeviceInput {
         &mut self,
         now_ms: u32,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
         threaded_input: &mut ThreadedInput,
     ) -> GamepadFrame {
         self.state
-            .process_gamepad_input(now_ms, engine, threaded_input)
+            .process_gamepad_input(now_ms, engine, local_seat, threaded_input)
     }
 }
 
@@ -356,8 +357,9 @@ mod device_input_tests {
 /// No selection is ordinary; a selection pointing at a missing entity is not.
 fn selected_leader(
     engine: &engine_api::Engine,
+    local_seat: PlayerId,
 ) -> Option<(engine_element::EntityId, &engine_element::Entity)> {
-    let id = *engine.selected_hero_ids().first()?;
+    let id = *engine.hero_selection(local_seat).first()?;
     let Some(entity) = engine.get_entity(id) else {
         tracing::warn!(?id, "gamepad selection refers to a missing entity");
         return None;
@@ -487,6 +489,7 @@ impl GamePadState {
         &mut self,
         now_ms: u32,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
         threaded_input: &mut ThreadedInput,
     ) -> GamepadFrame {
         let snapshot = self.pending.clone();
@@ -494,11 +497,11 @@ impl GamePadState {
 
         let mut cmds = Vec::new();
         let viewport = self.manage_scroll_axis(&mut cmds);
-        cmds.extend(self.manage_move_axis(engine));
-        cmds.extend(self.manage_mouse_axis(engine, threaded_input));
-        let qa = self.manage_qa(now_ms, engine);
-        cmds.extend(self.manage_character_select(engine));
-        cmds.extend(self.manage_action_select(engine));
+        cmds.extend(self.manage_move_axis(engine, local_seat));
+        cmds.extend(self.manage_mouse_axis(engine, local_seat, threaded_input));
+        let qa = self.manage_qa(now_ms, engine, local_seat);
+        cmds.extend(self.manage_character_select(engine, local_seat));
+        cmds.extend(self.manage_action_select(engine, local_seat));
         GamepadFrame { cmds, viewport, qa }
     }
 
@@ -579,13 +582,14 @@ impl GamePadState {
     pub fn manage_move_axis(
         &self,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
-        let Some((_, leader_entity)) = selected_leader(engine) else {
+        let Some((_, leader_entity)) = selected_leader(engine, local_seat) else {
             return cmds;
         };
-        let selected = engine.selected_hero_ids();
+        let selected = engine.hero_selection(local_seat);
         let leader_pos = leader_entity.element_data().position_map();
         let leader_posture = leader_entity.element_data().posture();
         let leader_swordfighting = leader_entity
@@ -635,10 +639,7 @@ impl GamePadState {
         // narrower unselect-all-actions shortcut.
         if self.is_released(GamePadButton::CrouchChinese) {
             if leader_swordfighting {
-                cmds.extend(crate::game_input::resolve_right_click(
-                    engine,
-                    engine_player_command::PlayerId::HOST,
-                ));
+                cmds.extend(crate::game_input::resolve_right_click(engine, local_seat));
             } else if leader_posture == Posture::Crouched {
                 cmds.push(PlayerCommand::StandUp);
             } else {
@@ -654,11 +655,12 @@ impl GamePadState {
     pub fn manage_mouse_axis(
         &mut self,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
         threaded_input: &mut ThreadedInput,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
-        let swordfighter = selected_leader(engine).and_then(|(leader, entity)| {
+        let swordfighter = selected_leader(engine, local_seat).and_then(|(leader, entity)| {
             let opponent = *entity.human_data()?.opponents.first()?;
             Some((leader, entity, opponent))
         });
@@ -710,6 +712,7 @@ impl GamePadState {
     pub fn manage_character_select(
         &self,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
         let pc_ids = engine.pc_ids();
@@ -719,7 +722,7 @@ impl GamePadState {
         let num_pcs = pc_ids.len();
 
         let selected_idx = engine
-            .selected_hero_ids()
+            .hero_selection(local_seat)
             .first()
             .and_then(|sel| pc_ids.iter().position(|id| id == sel));
 
@@ -769,9 +772,10 @@ impl GamePadState {
     pub fn manage_action_select(
         &self,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
-        if let Some((leader, leader_entity)) = selected_leader(engine) {
+        if let Some((leader, leader_entity)) = selected_leader(engine, local_seat) {
             let swordfighting = leader_entity
                 .human_data()
                 .is_some_and(|h| !h.opponents.is_empty());
@@ -834,10 +838,7 @@ impl GamePadState {
         }
         if self.is_released(GamePadButton::CancelParade) {
             cmds.push(PlayerCommand::MouseRightUp);
-            cmds.extend(crate::game_input::resolve_right_click(
-                engine,
-                engine_player_command::PlayerId::HOST,
-            ));
+            cmds.extend(crate::game_input::resolve_right_click(engine, local_seat));
         }
 
         cmds
@@ -856,8 +857,9 @@ impl GamePadState {
         &mut self,
         now_ms: u32,
         engine: &robin_engine::engine::Engine,
+        local_seat: PlayerId,
     ) -> Option<QaEvent> {
-        if engine.selected_hero_ids().is_empty() {
+        if engine.hero_selection(local_seat).is_empty() {
             return None;
         }
 
@@ -1537,7 +1539,10 @@ mod tests {
         // return no commands.
         let pad = GamePadState::new();
         let engine = empty_engine();
-        assert!(pad.manage_character_select(&engine).is_empty());
+        assert!(
+            pad.manage_character_select(&engine, PlayerId::HOST)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1550,7 +1555,7 @@ mod tests {
         pad.update(JoystickState::default()); // release
 
         let engine = empty_engine();
-        let cmds = pad.manage_action_select(&engine);
+        let cmds = pad.manage_action_select(&engine, PlayerId::HOST);
         // Release edge always clears the held state via MouseRightUp.
         // `resolve_right_click` is empty when no PC is selected, so on
         // an empty engine MouseRightUp is the only command we expect.
@@ -1569,7 +1574,7 @@ mod tests {
         // No selected PC → no QA events.
         // (Real test would need to populate engine.selected_hero_ids, but
         // the dispatcher's early-return branch is important to verify.)
-        assert!(pad.manage_qa(1000, &engine).is_none());
+        assert!(pad.manage_qa(1000, &engine, PlayerId::HOST).is_none());
     }
 
     #[test]
@@ -1594,7 +1599,7 @@ mod tests {
         // the short-circuit behaviour until a richer engine fixture
         // lands.
         let engine = empty_engine();
-        assert!(pad.manage_qa(1000, &engine).is_none());
+        assert!(pad.manage_qa(1000, &engine, PlayerId::HOST).is_none());
     }
 
     #[test]
@@ -1669,7 +1674,7 @@ mod tests {
         let mut threaded = ThreadedInput::new();
         pad.apply_axis_event(0, 15000);
         let engine = empty_engine();
-        let _ = pad.process_gamepad_input(0, &engine, &mut threaded);
+        let _ = pad.process_gamepad_input(0, &engine, PlayerId::HOST, &mut threaded);
         assert_eq!(pad.current.x, 15000);
     }
 }

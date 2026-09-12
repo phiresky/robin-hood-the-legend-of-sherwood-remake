@@ -1,4 +1,6 @@
-//! Historical trace omissions and explicit compatibility policy; normalization is unchanged.
+//! Facts omitted by the Original recorder, not native trace version adapters.
+//! TODO(parity-recorder): retire reconstruction only once its input facts are
+//! emitted by the recorder and covered by exact replay evidence.
 use super::{
     BTreeMap, BTreeSet, EntityId, GameCode, Path, PlayerCommand, Sha256, TRACE_NATIVE_SUFFIX,
     TRACE_SCHEMA_VERSION, TraceAction, TraceActor, TraceCommand, TraceElement, TraceEntityId,

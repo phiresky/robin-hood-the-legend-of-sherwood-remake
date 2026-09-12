@@ -21,6 +21,7 @@ mod feature40_text;
 
 #[cfg(any(not(target_arch = "wasm32"), test))]
 const PREFERENCES_FILE: &str = "language.json";
+#[cfg(target_arch = "wasm32")]
 const BROWSER_PREFERENCES_KEY: &str = "robin_hood.language.v1";
 const MENU_TEXT_TABLES: [i32; 3] = [1_000_507, 1_000_040, 1_000_034];
 const MINIMUM_CORE_MENU_STRINGS: usize = 32;
@@ -130,6 +131,7 @@ pub enum LocalizationError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum PreferenceStore {
     Native(PathBuf),
+    #[cfg(target_arch = "wasm32")]
     Browser,
     Memory,
 }
@@ -834,8 +836,6 @@ fn persist_preferences(
                 .set_item(BROWSER_PREFERENCES_KEY, &encoded)
                 .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        PreferenceStore::Browser => Ok(()),
         PreferenceStore::Memory => Ok(()),
     }
 }
@@ -858,52 +858,23 @@ fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationErr
                 .get_item(BROWSER_PREFERENCES_KEY)
                 .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        PreferenceStore::Browser => Ok(None),
         PreferenceStore::Memory => Ok(None),
     }
 }
 
 fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
-    use std::io::Write as _;
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source: std::io::Error::other("language preference path has no parent directory"),
-        })?;
-    std::fs::create_dir_all(parent).map_err(|source| LocalizationError::PersistPreferences {
-        path: path.to_owned(),
-        source,
-    })?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".language-")
-        .suffix(".json.tmp")
-        .tempfile_in(parent)
-        .map_err(|source| LocalizationError::PersistPreferences {
+    crate::desktop_persistence::write_bytes(path, bytes).map_err(|source| {
+        LocalizationError::PersistPreferences {
             path: path.to_owned(),
             source,
-        })?;
-    temporary
-        .write_all(bytes)
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|source| LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source,
-        })?;
-    temporary
-        .persist(path)
-        .map(|_| ())
-        .map_err(|error| LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source: error.error,
-        })
+        }
+    })
 }
 
 fn store_display_path(store: &PreferenceStore) -> PathBuf {
     match store {
         PreferenceStore::Native(path) => path.clone(),
+        #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => PathBuf::from(BROWSER_PREFERENCES_KEY),
         PreferenceStore::Memory => PathBuf::from("<memory>"),
     }
