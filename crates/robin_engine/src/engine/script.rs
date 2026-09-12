@@ -6107,7 +6107,10 @@ impl EngineInner {
                     self.feedback
                         .pending_side_effects
                         .pending_minimap_display_maps
-                        .push((show, false));
+                        .push(MinimapDisplayRequest {
+                            show,
+                            restore_position: false,
+                        });
                 }
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
