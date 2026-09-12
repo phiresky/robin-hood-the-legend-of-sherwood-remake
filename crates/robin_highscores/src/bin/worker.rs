@@ -263,67 +263,10 @@ impl WorkerConfig {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn read_regular_file_no_symlinks(path: &Path, maximum: u64) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    use std::io::Read as _;
+use robin_highscores::secure_fs::read_bounded_no_symlinks as read_regular_file_no_symlinks;
 
-    let fd = openat2(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let file = std::fs::File::from(fd);
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.is_file() && metadata.len() <= maximum,
-        "pinned worker input must be a regular file no larger than {maximum} bytes"
-    );
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    file.take(maximum + 1).read_to_end(&mut bytes)?;
-    anyhow::ensure!(bytes.len() as u64 <= maximum, "pinned worker input grew");
-    Ok(bytes)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_regular_file_no_symlinks(_path: &Path, _maximum: u64) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("the production verifier worker requires Linux openat2 confinement")
-}
-
-#[cfg(target_os = "linux")]
 fn read_worker_config(path: &Path) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    use std::io::Read as _;
-
-    const MAX_WORKER_CONFIG_BYTES: u64 = 1024 * 1024;
-    let fd = openat2(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let file = std::fs::File::from(fd);
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.is_file() && metadata.len() <= MAX_WORKER_CONFIG_BYTES,
-        "worker config must be a regular file no larger than {MAX_WORKER_CONFIG_BYTES} bytes"
-    );
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    file.take(MAX_WORKER_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)?;
-    anyhow::ensure!(
-        bytes.len() as u64 <= MAX_WORKER_CONFIG_BYTES,
-        "worker config grew beyond its safety limit"
-    );
-    Ok(bytes)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_worker_config(_path: &Path) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("the production verifier worker requires Linux openat2 confinement")
+    read_regular_file_no_symlinks(path, 1024 * 1024)
 }
 
 use robin_highscores::runtime_authority::validate_catalog_covers_server;

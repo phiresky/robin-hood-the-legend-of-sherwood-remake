@@ -1567,19 +1567,7 @@ where
 }
 
 #[cfg(target_os = "linux")]
-fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    let fd = openat2(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let file = std::fs::File::from(fd);
-    anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");
-    Ok(file)
-}
+use crate::secure_fs::open_regular_no_symlinks;
 
 #[cfg(not(target_os = "linux"))]
 fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
@@ -1594,19 +1582,7 @@ fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
 }
 
 fn read_regular_file_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
-    let file = open_regular_no_symlinks(path)?;
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.len() <= limit,
-        "operator document exceeds the {limit}-byte safety limit"
-    );
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    anyhow::ensure!(
-        bytes.len() as u64 <= limit,
-        "operator document grew beyond its limit"
-    );
-    Ok(bytes)
+    crate::secure_fs::read_bounded_regular_file(open_regular_no_symlinks(path)?, limit)
 }
 
 fn hash_authenticated_candidate_campaign_state(
@@ -1684,7 +1660,7 @@ fn digest32(value: &str, field: &str) -> anyhow::Result<Digest32> {
 
 #[cfg(target_os = "linux")]
 fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::Read as _;
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -1698,12 +1674,12 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("moderation bearer token must name a file"))?;
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(|error| {
         anyhow::anyhow!(
@@ -1712,12 +1688,12 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
         )
     })?;
     let parent_file = std::fs::File::from(parent_fd);
-    let token_fd = openat2(
+    let token_fd = crate::secure_fs::open_no_symlinks_at(
         &parent_file,
         filename,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let file = std::fs::File::from(token_fd);
     let metadata = file.metadata()?;
@@ -1749,7 +1725,7 @@ fn load_private_bearer_token(_path: &Path) -> anyhow::Result<Vec<u8>> {
 
 #[cfg(target_os = "linux")]
 fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::{Read as _, Write as _};
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -1759,12 +1735,12 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(|error| {
         anyhow::anyhow!(
@@ -1780,23 +1756,23 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     );
 
     let open_existing = || -> anyhow::Result<std::fs::File> {
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             &parent_file,
             filename,
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )?;
         Ok(std::fs::File::from(fd))
     };
 
     let mut file = if create_if_missing {
-        match openat2(
+        match crate::secure_fs::open_no_symlinks_at(
             &parent_file,
             filename,
             OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o400),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         ) {
             Ok(fd) => {
                 let mut file = std::fs::File::from(fd);
@@ -1832,7 +1808,7 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
 
 #[cfg(target_os = "linux")]
 fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::{Read as _, Write as _};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -1842,12 +1818,12 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(|error| {
         anyhow::anyhow!(
@@ -1869,7 +1845,7 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     } else {
         OFlags::RDONLY | OFlags::CLOEXEC
     };
-    let fd = openat2(
+    let fd = crate::secure_fs::open_no_symlinks_at(
         &parent_file,
         filename,
         flags,
@@ -1878,7 +1854,7 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
         } else {
             Mode::empty()
         },
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH ,
     )
     .map_err(|error| {
         if create_new {
@@ -1960,16 +1936,16 @@ fn revalidate_backup_authority_path(
     expected_key: &[u8; 32],
     label: &str,
 ) -> anyhow::Result<()> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::Read as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )?;
     let parent_file = std::fs::File::from(parent_fd);
     let parent_metadata = parent_file.metadata()?;
@@ -1981,12 +1957,12 @@ fn revalidate_backup_authority_path(
             && parent_metadata.uid() == rustix::process::geteuid().as_raw(),
         "{label} parent path changed during access"
     );
-    let file_fd = openat2(
+    let file_fd = crate::secure_fs::open_no_symlinks_at(
         &parent_file,
         filename,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let mut file = std::fs::File::from(file_fd);
     let metadata = file.metadata()?;

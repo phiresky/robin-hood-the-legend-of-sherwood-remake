@@ -559,14 +559,14 @@ async fn verify_open_campaign_file(
 
 #[cfg(target_os = "linux")]
 async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::os::unix::fs::PermissionsExt as _;
-    let fd = openat2(
+    let fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(std::io::Error::from)?;
     let directory = std::fs::File::from(fd);

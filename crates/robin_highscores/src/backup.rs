@@ -834,12 +834,12 @@ async fn load_backup_release_identity_inner(
     }
     #[cfg(target_os = "linux")]
     let file = {
-        let descriptor = rustix::fs::openat2(
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
             rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::NO_SYMLINKS | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         tokio::fs::File::from_std(std::fs::File::from(descriptor))
     };

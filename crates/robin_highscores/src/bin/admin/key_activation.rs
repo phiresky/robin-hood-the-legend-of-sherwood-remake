@@ -76,7 +76,7 @@ struct PinnedActivationLock {
 #[cfg(target_os = "linux")]
 impl PinnedActivationLock {
     fn ensure_canonical(&self) -> anyhow::Result<()> {
-        use rustix::fs::{FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
+        use rustix::fs::{FlockOperation, Mode, OFlags, flock};
         use rustix::io::Errno;
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -91,19 +91,19 @@ impl PinnedActivationLock {
                 && root_metadata.ino() == self.opt_inode,
             "activation opt root changed while the fifth-key transaction was active"
         );
-        let root = openat2(
+        let root = robin_highscores::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             &self.opt_root,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
-        let canonical = openat2(
+        let canonical = robin_highscores::secure_fs::open_no_symlinks_at(
             &root,
             "activation.lock",
             OFlags::RDWR | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )?;
         let canonical_metadata = rustix::fs::fstat(&canonical)?;
         let inherited_metadata = nix_legacy::sys::stat::fstat(self.inherited.0)?;
@@ -147,7 +147,7 @@ fn pin_activation_lock_at(
     opt_root: &Path,
     activation_lock_fd: u32,
 ) -> anyhow::Result<PinnedActivationLock> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     anyhow::ensure!(
@@ -169,24 +169,24 @@ fn pin_activation_lock_at(
             && root_metadata.permissions().mode() & 0o777 == 0o750,
         "activation opt root must be canonical, EUID-owned, and mode 0750"
     );
-    let root = openat2(
+    let root = robin_highscores::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         opt_root,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )?;
     let pinned_root = rustix::fs::fstat(&root)?;
     anyhow::ensure!(
         pinned_root.st_dev == root_metadata.dev() && pinned_root.st_ino == root_metadata.ino(),
         "activation opt root changed while it was pinned"
     );
-    let canonical = openat2(
+    let canonical = robin_highscores::secure_fs::open_no_symlinks_at(
         &root,
         "activation.lock",
         OFlags::RDWR | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let canonical_metadata = rustix::fs::fstat(&canonical)?;
     let inherited_metadata = nix_legacy::sys::stat::fstat(inherited.0)?;
@@ -225,7 +225,7 @@ struct PinnedSecretParent {
 #[cfg(target_os = "linux")]
 impl PinnedSecretParent {
     fn ensure_canonical(&self) -> anyhow::Result<()> {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
         let metadata = std::fs::symlink_metadata(&self.path)?;
@@ -239,12 +239,12 @@ impl PinnedSecretParent {
                 && metadata.ino() == self.inode,
             "backup-authority secret parent changed during initialization"
         );
-        let reopened = openat2(
+        let reopened = robin_highscores::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             &self.path,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         let reopened = rustix::fs::fstat(&reopened)?;
         anyhow::ensure!(
@@ -257,7 +257,7 @@ impl PinnedSecretParent {
 
 #[cfg(target_os = "linux")]
 fn pin_secret_parent(key_path: &Path, expected_uid: u32) -> anyhow::Result<PinnedSecretParent> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     anyhow::ensure!(
@@ -280,12 +280,12 @@ fn pin_secret_parent(key_path: &Path, expected_uid: u32) -> anyhow::Result<Pinne
             && metadata.permissions().mode() & 0o777 == 0o700,
         "backup-authority secret parent must be canonical, expected-user-owned, and mode 0700"
     );
-    let fd = openat2(
+    let fd = robin_highscores::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent_path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )?;
     let pinned = rustix::fs::fstat(&fd)?;
     anyhow::ensure!(
@@ -323,7 +323,7 @@ struct PinnedKeyIdentity {
 fn load_published_backup_authority_key(
     parent: &PinnedSecretParent,
 ) -> anyhow::Result<PinnedKeyIdentity> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags, openat2, statat};
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, statat};
     use std::os::fd::AsFd as _;
 
     let name = "backup-authority-hmac.key";
@@ -337,15 +337,12 @@ fn load_published_backup_authority_key(
             && named.st_mode & 0o777 == 0o400,
         "backup-authority key has unsafe type, owner, device, links, size, or mode"
     );
-    let fd = openat2(
+    let fd = robin_highscores::secure_fs::open_no_symlinks_at(
         parent.fd.as_fd(),
         name,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH
-            | ResolveFlags::NO_SYMLINKS
-            | ResolveFlags::NO_MAGICLINKS
-            | ResolveFlags::NO_XDEV,
+        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let mut file = std::fs::File::from(fd);
     let opened = file.metadata()?;
@@ -397,7 +394,7 @@ fn load_backup_authority_intent(
     parent: &PinnedSecretParent,
     name: &str,
 ) -> anyhow::Result<PinnedIntent> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags, openat2, statat};
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags, statat};
     use std::os::fd::AsFd as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -411,15 +408,12 @@ fn load_backup_authority_intent(
             && named.st_mode & 0o777 == 0o400,
         "backup-authority intent has unsafe type, owner, device, links, size, or mode"
     );
-    let fd = openat2(
+    let fd = robin_highscores::secure_fs::open_no_symlinks_at(
         parent.fd.as_fd(),
         name,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH
-            | ResolveFlags::NO_SYMLINKS
-            | ResolveFlags::NO_MAGICLINKS
-            | ResolveFlags::NO_XDEV,
+        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let file = std::fs::File::from(fd);
     let opened = file.metadata()?;
@@ -510,18 +504,15 @@ fn remove_exact_named_entry(
     expected_device: u64,
     expected_inode: u64,
 ) -> anyhow::Result<()> {
-    use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, openat2, statat, unlinkat};
+    use rustix::fs::{AtFlags, Mode, OFlags, statat, unlinkat};
     use std::os::fd::AsFd as _;
 
-    let pinned = openat2(
+    let pinned = robin_highscores::secure_fs::open_no_symlinks_at(
         parent.fd.as_fd(),
         name,
         OFlags::PATH | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH
-            | ResolveFlags::NO_SYMLINKS
-            | ResolveFlags::NO_MAGICLINKS
-            | ResolveFlags::NO_XDEV,
+        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let pinned_metadata = rustix::fs::fstat(&pinned)?;
     let named = statat(parent.fd.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
@@ -605,7 +596,7 @@ fn publish_anonymous_backup_authority_key_with<F>(
 where
     F: FnOnce() -> rustix::io::Result<()>,
 {
-    use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, linkat, openat2};
+    use rustix::fs::{AtFlags, Mode, OFlags, linkat};
     use std::os::fd::{AsFd as _, AsRawFd as _};
 
     let retained = rustix::fs::fstat(anonymous)?;
@@ -630,12 +621,12 @@ where
         Err(error) => return Err(error).context("publish anonymous backup-authority key"),
     }
 
-    let published = openat2(
+    let published = robin_highscores::secure_fs::open_no_symlinks_at(
         parent.fd.as_fd(),
         target,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )
     .context("pin published backup-authority key")?;
     let observed = rustix::fs::fstat(&published)?;
@@ -666,10 +657,7 @@ fn initialize_backup_authority_key_v2_at<H>(
 where
     H: FnMut(BackupAuthorityKeyBoundary) -> anyhow::Result<()>,
 {
-    use rustix::fs::{
-        AtFlags, Mode, OFlags, RenameFlags, ResolveFlags, fchmod, linkat, openat, openat2,
-        renameat_with,
-    };
+    use rustix::fs::{AtFlags, Mode, OFlags, RenameFlags, fchmod, linkat, openat, renameat_with};
     use std::os::fd::AsFd as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -775,12 +763,12 @@ where
         u64::try_from(intent_bytes.len())? <= MAX_BACKUP_AUTHORITY_INTENT_BYTES,
         "backup-authority intent exceeds its byte limit"
     );
-    let temporary = openat2(
+    let temporary = robin_highscores::secure_fs::open_no_symlinks_at(
         parent.fd.as_fd(),
         BACKUP_AUTHORITY_INTENT_TEMP_NAME,
         OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
         Mode::from_raw_mode(0o400),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )
     .context("create backup-authority intent temporary")?;
     fchmod(&temporary, Mode::from_raw_mode(0o400))
