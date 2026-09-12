@@ -937,10 +937,23 @@ mod tests {
         assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
     }
 
-    fn repository_fixture(relative: &str) -> Option<PathBuf> {
+    #[allow(dead_code)]
+    mod original_data {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-support/original_data.rs"
+        ));
+    }
+
+    fn repository_fixture(relative: &str) -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let path = root.join(relative);
-        path.is_file().then_some(path)
+        assert!(
+            path.is_file(),
+            "required tracked legacy-save fixture missing: {}",
+            path.display()
+        );
+        path
     }
 
     fn read_fixture(path: &Path) -> (LegacySaveHeader, LegacySaveCampaigns) {
@@ -953,13 +966,13 @@ mod tests {
         (header, campaigns)
     }
 
-    fn read_fixture_profiles() -> Option<ProfileManager> {
-        let path = repository_fixture("datadirs/fullgame_linux/Data/Configuration/profile.cpf")?;
+    fn read_fixture_profiles() -> ProfileManager {
+        let path = original_data::data_file("Data/Configuration/profile.cpf");
         let path = path.to_string_lossy();
         let mut file = SbFile::open(&path).unwrap();
         let mut profiles = ProfileManager::new();
         profiles.load_all_legacy_cpf(&mut file).unwrap();
-        Some(profiles)
+        profiles
     }
 
     fn assert_original_import_history(campaign: &Campaign, original: &LegacyCampaign) {
@@ -1010,12 +1023,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Linux i386 v48 profile saves via ROBINHOOD_DATA_DIR; select fixtures-legacy-linux"]
     fn parses_current_linux_continue_campaign_boundaries() {
-        let Some(path) =
-            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_001/Continue")
-        else {
-            return;
-        };
+        let path = original_data::data_file("Data/Savegame/Profile_001/Continue");
         let (header, campaigns) = read_fixture(&path);
         assert_eq!(header.magic, PORT_LINUX_I386_MAGIC);
         assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
@@ -1029,32 +1039,28 @@ mod tests {
         assert_eq!(campaigns.live.campaign.missions.len(), 63);
         assert!(!campaigns.backup.campaign.characters.is_empty());
         assert!(!campaigns.live.campaign.characters.is_empty());
-        if let Some(profiles) = read_fixture_profiles() {
-            let bootstrap = campaigns
-                .live
-                .campaign
-                .bootstrap(&profiles, header.mission_id)
-                .unwrap();
-            assert_eq!(bootstrap.identity.mission_id, header.mission_id);
-            assert_eq!(
-                Some(bootstrap.identity.campaign_mission_index),
-                campaigns.live.campaign.current_mission.map(usize::from)
-            );
-            assert!(!bootstrap.identity.proto_level_filename.is_empty());
-            assert!(!bootstrap.identity.mission_filename.is_empty());
-            assert!(!bootstrap.campaign.characters.is_empty());
-            assert_original_import_history(&bootstrap.campaign, &campaigns.live.campaign);
-        }
+        let profiles = read_fixture_profiles();
+        let bootstrap = campaigns
+            .live
+            .campaign
+            .bootstrap(&profiles, header.mission_id)
+            .unwrap();
+        assert_eq!(bootstrap.identity.mission_id, header.mission_id);
+        assert_eq!(
+            Some(bootstrap.identity.campaign_mission_index),
+            campaigns.live.campaign.current_mission.map(usize::from)
+        );
+        assert!(!bootstrap.identity.proto_level_filename.is_empty());
+        assert!(!bootstrap.identity.mission_filename.is_empty());
+        assert!(!bootstrap.campaign.characters.is_empty());
+        assert_original_import_history(&bootstrap.campaign, &campaigns.live.campaign);
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }
 
     #[test]
+    #[ignore = "requires Linux i386 v48 profile saves via ROBINHOOD_DATA_DIR; select fixtures-legacy-linux"]
     fn golden_lincoln_restart_campaign_boundaries() {
-        let Some(path) =
-            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_000/Restart")
-        else {
-            return;
-        };
+        let path = original_data::data_file("Data/Savegame/Profile_000/Restart");
         let (header, campaigns) = read_fixture(&path);
         assert_eq!(header.magic, PORT_LINUX_I386_MAGIC);
         assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
@@ -1069,29 +1075,25 @@ mod tests {
         assert_eq!(campaigns.backup.campaign.characters.len(), 1);
         assert_eq!(campaigns.live.campaign.characters.len(), 1);
         assert_eq!(campaigns.live.campaign.current_mission, Some(21));
-        if let Some(profiles) = read_fixture_profiles() {
-            let bootstrap = campaigns
-                .live
-                .campaign
-                .bootstrap(&profiles, header.mission_id)
-                .unwrap();
-            assert_eq!(bootstrap.identity.mission_id, 16712);
-            assert_eq!(bootstrap.identity.campaign_mission_index, 21);
-            assert!(!bootstrap.identity.proto_level_filename.is_empty());
-            assert!(!bootstrap.identity.mission_filename.is_empty());
-            assert_eq!(bootstrap.campaign.characters.len(), 1);
-            assert_original_import_history(&bootstrap.campaign, &campaigns.live.campaign);
-        }
+        let profiles = read_fixture_profiles();
+        let bootstrap = campaigns
+            .live
+            .campaign
+            .bootstrap(&profiles, header.mission_id)
+            .unwrap();
+        assert_eq!(bootstrap.identity.mission_id, 16712);
+        assert_eq!(bootstrap.identity.campaign_mission_index, 21);
+        assert!(!bootstrap.identity.proto_level_filename.is_empty());
+        assert!(!bootstrap.identity.mission_filename.is_empty());
+        assert_eq!(bootstrap.campaign.characters.len(), 1);
+        assert_original_import_history(&bootstrap.campaign, &campaigns.live.campaign);
         assert!(campaigns.engine_offset < std::fs::metadata(path).unwrap().len());
     }
 
     #[test]
     fn golden_retail_windows_campaign_boundaries() {
-        let Some(path) =
-            repository_fixture("reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005")
-        else {
-            return;
-        };
+        let path =
+            repository_fixture("reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005");
         let (header, campaigns) = read_fixture(&path);
         assert_eq!(header.magic, RETAIL_WINDOWS_X86_MAGIC);
         assert_eq!(

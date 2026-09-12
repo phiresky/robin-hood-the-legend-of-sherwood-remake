@@ -631,10 +631,23 @@ mod tests {
     use crate::legacy_save::campaign::{LegacyCampaignLimits, LegacySaveCampaigns};
     use crate::sbfile::SbFile;
 
-    fn repository_fixture(relative: &str) -> Option<PathBuf> {
+    #[allow(dead_code)]
+    mod original_data {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-support/original_data.rs"
+        ));
+    }
+
+    fn repository_fixture(relative: &str) -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let path = root.join(relative);
-        path.is_file().then_some(path)
+        assert!(
+            path.is_file(),
+            "required tracked legacy-save fixture missing: {}",
+            path.display()
+        );
+        path
     }
 
     fn read_fixture(path: &Path) -> (LegacySaveHeader, LegacyEnginePreamble) {
@@ -653,12 +666,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Linux i386 v48 profile saves via ROBINHOOD_DATA_DIR; select fixtures-legacy-linux"]
     fn golden_lincoln_restart_engine_boundary() {
-        let Some(path) =
-            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_000/Restart")
-        else {
-            return;
-        };
+        let path = original_data::data_file("Data/Savegame/Profile_000/Restart");
         let (header, engine) = read_fixture(&path);
         assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
         assert_eq!(engine.start_offset, 5442);
@@ -682,12 +692,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Linux i386 v48 profile saves via ROBINHOOD_DATA_DIR; select fixtures-legacy-linux"]
     fn parses_current_linux_continue_engine_boundary() {
-        let Some(path) =
-            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_001/Continue")
-        else {
-            return;
-        };
+        let path = original_data::data_file("Data/Savegame/Profile_001/Continue");
         let (header, engine) = read_fixture(&path);
         assert_eq!(header.abi_profile, LegacySaveAbiProfile::PortLinuxI386V48);
         // `Continue` is mutable profile state. Immutable Restart/archive
@@ -700,11 +707,8 @@ mod tests {
 
     #[test]
     fn golden_retail_windows_engine_boundary() {
-        let Some(path) =
-            repository_fixture("reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005")
-        else {
-            return;
-        };
+        let path =
+            repository_fixture("reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005");
         let (header, engine) = read_fixture(&path);
         assert_eq!(
             header.abi_profile,
@@ -731,12 +735,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires Linux i386 v48 profile saves via ROBINHOOD_DATA_DIR; select fixtures-legacy-linux"]
     fn rejects_sound_source_count_before_allocation() {
-        let Some(path) =
-            repository_fixture("datadirs/fullgame_linux/Data/Savegame/Profile_000/Restart")
-        else {
-            return;
-        };
+        let path = original_data::data_file("Data/Savegame/Profile_000/Restart");
         let path = path.to_string_lossy();
         let mut file = SbFile::open(&path).unwrap();
         let mut reader = LegacyReader::new(&mut file);

@@ -163,7 +163,24 @@ class QualitySuitesTests(unittest.TestCase):
     def test_missing_fixture_configuration_fails_before_cargo(self):
         self.run_suite("fixtures-demo", expected=1)
         self.run_suite("fixtures-fullgame", expected=1)
+        self.run_suite("fixtures-legacy-linux", expected=1)
         self.assertFalse(self.log.exists())
+
+    def test_legacy_linux_gate_selects_only_its_five_required_fixture_cases(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        self.run_suite("fixtures-legacy-linux")
+        names = [
+            "legacy_save::engine::tests::golden_lincoln_restart_engine_boundary",
+            "legacy_save::engine::tests::parses_current_linux_continue_engine_boundary",
+            "legacy_save::engine::tests::rejects_sound_source_count_before_allocation",
+            "legacy_save::campaign::tests::golden_lincoln_restart_campaign_boundaries",
+            "legacy_save::campaign::tests::parses_current_linux_continue_campaign_boundaries",
+        ]
+        self.assertEqual(self.calls(), [
+            ["test", "--locked", "-p", "robin_engine", "--lib", name,
+             "--", "--ignored", "--exact"]
+            for name in names
+        ])
 
     def test_converter_fixtures_are_selected_exactly_for_their_distribution(self):
         self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)

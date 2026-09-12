@@ -148,6 +148,28 @@ No licensed data is fetched or assumed present on public CI.
 The regular font tests read the checked-in Arial fixture relative to
 `CARGO_MANIFEST_DIR`, so their behavior does not depend on the shell directory.
 
+### Legacy Linux save fixtures
+
+The five Linux i386 v48 save-parser cases are ignored in the ordinary engine
+suite and explicitly selected by their own gate:
+
+```sh
+ROBINHOOD_DATA_DIR=/absolute/path/to/fullgame_linux bash scripts/check-quality.sh fixtures-legacy-linux
+```
+
+This requires `Data/Savegame/Profile_000/Restart` (the Lincoln golden save),
+`Data/Savegame/Profile_001/Continue`, and `Data/Configuration/profile.cpf`.
+Both campaign cases require the profile and run their bootstrap/history
+assertions; missing inputs fail rather than silently reducing coverage.
+Restart retains exact golden offsets/values; Continue is mutable profile state
+and retains its structural checks. An arbitrary full-game distribution or save
+is not a substitute for these fixtures, so this gate is separate from
+`fixtures-fullgame`.
+
+The two retail Windows v48 cases remain ordinary tests using the required,
+tracked `reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005`. They do not
+use `ROBINHOOD_DATA_DIR` and fail if the checkout fixture is absent.
+
 ## GPU execution
 
 Shader translation tests remain in the normal client suite. GPU execution is

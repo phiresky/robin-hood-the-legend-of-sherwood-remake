@@ -7,7 +7,7 @@ cd -- "$repository"
 
 if (( $# != 1 )); then
     printf 'usage: bash scripts/check-quality.sh SUITE\n' >&2
-    printf 'suites: format core scripting-llvm engine assets protocols services parity client client-release tools wasm browser-audio native-lifecycle tooling web editor editor-browser gpu gpu-gl host fixtures-demo fixtures-fullgame\n' >&2
+    printf 'suites: format core scripting-llvm engine assets protocols services parity client client-release tools wasm browser-audio native-lifecycle tooling web editor editor-browser gpu gpu-gl host fixtures-demo fixtures-fullgame fixtures-legacy-linux\n' >&2
     exit 2
 fi
 
@@ -168,6 +168,14 @@ case "$1" in
         cargo test --locked -p robin_engine --lib profiles::tests::load_fullgame_profile_json -- --ignored --exact
         cargo test --locked -p robin_assets fullgame_scripts -- --ignored
         cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_fullgame_root_has_exact_typed_edition -- --ignored --exact
+        ;;
+    fixtures-legacy-linux)
+        : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the Linux i386 v48 root containing the required profile.cpf and profile saves}"
+        cargo test --locked -p robin_engine --lib legacy_save::engine::tests::golden_lincoln_restart_engine_boundary -- --ignored --exact
+        cargo test --locked -p robin_engine --lib legacy_save::engine::tests::parses_current_linux_continue_engine_boundary -- --ignored --exact
+        cargo test --locked -p robin_engine --lib legacy_save::engine::tests::rejects_sound_source_count_before_allocation -- --ignored --exact
+        cargo test --locked -p robin_engine --lib legacy_save::campaign::tests::golden_lincoln_restart_campaign_boundaries -- --ignored --exact
+        cargo test --locked -p robin_engine --lib legacy_save::campaign::tests::parses_current_linux_continue_campaign_boundaries -- --ignored --exact
         ;;
     *) printf 'unknown quality suite: %s\n' "$1" >&2; exit 2 ;;
 esac
