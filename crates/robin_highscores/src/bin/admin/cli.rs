@@ -509,15 +509,16 @@ pub(super) async fn run() -> anyhow::Result<()> {
             restore_source_maps: _,
         } => {
             let release_identity = load_backup_release_identity(&release_manifest_path).await?;
-            let directory = backup_and_publish_status(
-                &config,
-                &release_manifest_path,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                retain_complete,
-                &backup_sources,
-            )
+            let directory = backup_and_publish_status(super::execution::BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest_path,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: retain_complete,
+                restore_sources: &backup_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
+            })
             .await?;
             println!("verified backup published from {}", directory.display());
         }
