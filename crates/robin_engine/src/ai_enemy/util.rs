@@ -402,18 +402,13 @@ pub(crate) fn soldier_detects_target_360(
         viewer_ground_z,
     );
     let target_ground = crate::coordinates::GroundPoint::from_map_and_z(target_xy, target_ground_z);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_z - viewer_z;
-    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
-        return false;
-    }
-    crate::sight_obstacle::is_reachable_3d(
+    detection_360_geometry(
+        crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+        crate::coordinates::WorldPoint3D::new(target_ground.x, target_ground.y, target_z),
+        (viewer_radius as f32).powi(2),
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_z],
-        [target_ground.x, target_ground.y, target_z],
-        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
+    .1
 }
 
 pub fn soldier_is_able_to_help_state(
@@ -1557,3 +1552,26 @@ mod required_combat_input_tests;
 
 #[cfg(test)]
 mod swordfight_substate_tests;
+
+#[track_caller]
+pub(super) fn detection_360_geometry(
+    viewer: crate::coordinates::WorldPoint3D,
+    target: crate::coordinates::WorldPoint3D,
+    sq_radius: f32,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> (f32, bool) {
+    let dx = target.x - viewer.x;
+    let dy = (target.y - viewer.y) * INVERSE_ASPECT_RATIO;
+    let dz = target.z - viewer.z;
+    let sq_distance = dx * dx + dy * dy + dz * dz;
+    if sq_distance > sq_radius {
+        return (sq_distance, false);
+    }
+    let visible = crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer.x, viewer.y, viewer.z],
+        [target.x, target.y, target.z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    );
+    (sq_distance, visible)
+}

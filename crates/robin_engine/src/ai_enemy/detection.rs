@@ -43,44 +43,17 @@ impl EnemyAi {
         // very different elevations (e.g. tower guard above a
         // kneeling target on the ground).
         let viewer_eye = ctx.self_upright_eye_world;
-        let viewer_eye_z = viewer_eye.z;
         let target_detection = crate::stealth::detection_point_world(
             view.detection_position_world,
             view.posture,
             view.direction as i16,
             view.is_rider,
         );
-        let target_eye_z = target_detection.z;
-        let viewer_eye_ground = crate::coordinates::GroundPoint::new(viewer_eye.x, viewer_eye.y);
-        let target_detection_ground =
-            crate::coordinates::GroundPoint::new(target_detection.x, target_detection.y);
-        let dx = target_detection_ground.x - viewer_eye_ground.x;
-        let dy = (target_detection_ground.y - viewer_eye_ground.y)
-            * crate::position_interface::INVERSE_ASPECT_RATIO;
-        let dz = target_eye_z - viewer_eye_z;
-        let sq_distance = dx * dx + dy * dy + dz * dz;
-        if sq_distance > ctx.sq_self_view_radius {
-            tracing::trace!(
-                target,
-                sq_distance,
-                sq_view_radius = ctx.sq_self_view_radius,
-                detecting = false,
-                "is_detecting_360_degrees: out of range"
-            );
-            return false;
-        }
-        // The original game's 360-degree detection checks the
-        // upright eye point against the target detection point through the
-        // 3D opaque sight-obstacle graph, not the 2D spatial LOS helper.
-        let los_clear = crate::sight_obstacle::is_reachable_3d(
+        let (sq_distance, los_clear) = detection_360_geometry(
+            viewer_eye,
+            target_detection,
+            ctx.sq_self_view_radius,
             ctx.obstacle_list(),
-            [viewer_eye_ground.x, viewer_eye_ground.y, viewer_eye_z],
-            [
-                target_detection_ground.x,
-                target_detection_ground.y,
-                target_eye_z,
-            ],
-            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         );
         tracing::trace!(
             target,
