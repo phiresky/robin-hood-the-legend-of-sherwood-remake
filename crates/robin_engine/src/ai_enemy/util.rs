@@ -605,7 +605,7 @@ pub struct FighterSnapshot {
     /// `AttackingApproachingNewEnemy` or `AttackingMovingAroundOldEnemy`, the
     /// scorer treats the fighter as moving toward `position`; otherwise it
     /// scores at `seek_position`.
-    pub current_substate: u32,
+    pub current_substate: Substate,
     /// The handle of the archer hiding behind this shield bearer, or 0.
     /// Derived during snapshot building from the reverse
     /// `shield_bearer_before_me` link so archers can't double-claim a
@@ -944,59 +944,40 @@ pub fn propose_good_step_back_goal(
     None
 }
 
-/// Check if a fighter's substate (as u32) is one of the 13 stationary/observing
+/// Check if a fighter's substate is one of the 13 stationary/observing
 /// combat substates used by combat-observation step selection.
 /// Only friends in these substates contribute to the left/right dispersion
 /// calculation.
-pub(super) fn is_observing_combat_substate(substate: u32) -> bool {
+pub(super) fn is_observing_combat_substate(substate: Substate) -> bool {
     use crate::ai::Substate;
     matches!(
         substate,
-        s if s == Substate::AttackingObserve as u32
-            || s == Substate::AttackingObserveAndMove as u32
-            || s == Substate::AttackingProtectingWithShield as u32
-            || s == Substate::AttackingAdvancingWithShield as u32
-            || s == Substate::AttackingBowRunningBehindShieldBearer as u32
-            || s == Substate::AttackingBowCorrectingPosition as u32
-            || s == Substate::AttackingPhalanx as u32
-            || s == Substate::AttackingRunningToPhalanx as u32
-            || s == Substate::AttackingBowShooting as u32
-            || s == Substate::AttackingBowLoading as u32
-            || s == Substate::AttackingBowAiming as u32
-            || s == Substate::AttackingBowObserving as u32
-            || s == Substate::AttackingBowObservingLoading as u32
-    )
-}
-
-/// u32-keyed mirror of `Substate::is_any_swordfight`. Used by
-/// swordfight observation reconsideration to bump multiplicity for allies
-/// actively committed to a swordfight against their primary target.
-pub(crate) fn is_any_swordfight_substate(substate: u32) -> bool {
-    use crate::ai::Substate;
-    matches!(
-        substate,
-        s if s == Substate::AttackingRunningToEnemy as u32
-            || s == Substate::AttackingWalkingToEnemy as u32
-            || s == Substate::AttackingChargingEnemy as u32
-            || s == Substate::AttackingSwordfight as u32
-            || s == Substate::AttackingSwordfightSpecialStrike as u32
-            || s == Substate::AttackingSwordfightParade as u32
-            || s == Substate::AttackingApproachingNewEnemy as u32
-            || s == Substate::AttackingSwordfightStepBack as u32
-            || s == Substate::AttackingMovingAroundOldEnemy as u32
+        Substate::AttackingObserve
+            | Substate::AttackingObserveAndMove
+            | Substate::AttackingProtectingWithShield
+            | Substate::AttackingAdvancingWithShield
+            | Substate::AttackingBowRunningBehindShieldBearer
+            | Substate::AttackingBowCorrectingPosition
+            | Substate::AttackingPhalanx
+            | Substate::AttackingRunningToPhalanx
+            | Substate::AttackingBowShooting
+            | Substate::AttackingBowLoading
+            | Substate::AttackingBowAiming
+            | Substate::AttackingBowObserving
+            | Substate::AttackingBowObservingLoading
     )
 }
 
 /// The three substates the attack-opportunity gate in
 /// swordfight observation reconsideration checks: a friend already approaching
 /// the same target preempts our opportunistic charge.
-pub(super) fn is_walking_running_charging_substate(substate: u32) -> bool {
+pub(super) fn is_walking_running_charging_substate(substate: Substate) -> bool {
     use crate::ai::Substate;
     matches!(
         substate,
-        s if s == Substate::AttackingWalkingToEnemy as u32
-            || s == Substate::AttackingRunningToEnemy as u32
-            || s == Substate::AttackingChargingEnemy as u32
+        Substate::AttackingWalkingToEnemy
+            | Substate::AttackingRunningToEnemy
+            | Substate::AttackingChargingEnemy
     )
 }
 

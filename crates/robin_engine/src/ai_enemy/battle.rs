@@ -827,7 +827,7 @@ impl EnemyAi {
                 else {
                     continue;
                 };
-                if super::util::is_any_swordfight_substate(friend.ai_substate as u32) {
+                if friend.ai_substate.is_any_swordfight() {
                     friends_nearer_to_enemy = friends_nearer_to_enemy.saturating_add(1);
                     continue;
                 }
@@ -895,7 +895,7 @@ impl EnemyAi {
                     target,
                     &global.primary_target_multiplicity_scratch,
                 );
-                if super::util::is_any_swordfight_substate(cs.ai_substate as u32) {
+                if cs.ai_substate.is_any_swordfight() {
                     increment_battle_target_multiplicity(&mut decision_target_multiplicity, target);
                     increment_battle_target_multiplicity(
                         &mut global.primary_target_multiplicity_scratch,

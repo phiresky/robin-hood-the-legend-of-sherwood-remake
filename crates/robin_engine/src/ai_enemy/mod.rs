@@ -782,9 +782,7 @@ impl EnemyAi {
             // family here, not the actor's physical sword relationship.
             // Approaching allies (RunningToEnemy/WalkingToEnemy/Charging)
             // already count as committed to the same target.
-            if is_any_swordfight_substate(f.ai_substate as u32)
-                && f.primary_target == self.base.primary_target
-            {
+            if f.ai_substate.is_any_swordfight() && f.primary_target == self.base.primary_target {
                 return true;
             }
             // Is this soldier observing our target? The 180° test runs

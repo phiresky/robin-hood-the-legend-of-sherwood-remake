@@ -14,9 +14,9 @@ use super::util::{
     FighterView, ai_max_norm_distance, ai_square_distance, ai_square_distance_world,
     calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
     evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
-    is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
-    iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, sector_to_vector_iso,
-    square_norm, vec_to_sector, vec_to_sector_ar,
+    is_observing_combat_substate, is_walking_running_charging_substate, iso_norm, iso_normalize,
+    max_norm, pos_diff, sector_to_vector, sector_to_vector_iso, square_norm, vec_to_sector,
+    vec_to_sector_ar,
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
@@ -990,9 +990,9 @@ impl EnemyAi {
         let me_snap = self.find_fighter(self.base.me, tick)?;
         let i_am_shield_bearer = me_snap.is_shield_bearer;
 
-        let shield_running = crate::ai::Substate::AttackingRunningToPhalanx as u32;
-        let shield_phalanx = crate::ai::Substate::AttackingPhalanx as u32;
-        let shield_protecting = crate::ai::Substate::AttackingProtectingWithShield as u32;
+        let shield_running = crate::ai::Substate::AttackingRunningToPhalanx;
+        let shield_phalanx = crate::ai::Substate::AttackingPhalanx;
+        let shield_protecting = crate::ai::Substate::AttackingProtectingWithShield;
 
         let min_distance = archer::SHIELD_BEARER_MIN_DISTANCE as f32;
         let mut best = None;
@@ -1030,7 +1030,11 @@ impl EnemyAi {
             if crate::ai_enemy::battle_decision_debug_enabled() {
                 eprintln!(
                     "SHIELD_BEARER_CANDIDATE frame={} me={} candidate={} substate={} archer_behind={:?} dist={dist} min={min_distance}",
-                    ctx.frame, self.base.me, f.handle, f.current_substate, f.archer_behind_me,
+                    ctx.frame,
+                    self.base.me,
+                    f.handle,
+                    f.current_substate as u32,
+                    f.archer_behind_me,
                 );
             }
             if f32::from(dist) < best_distance {
@@ -1370,7 +1374,7 @@ impl EnemyAi {
         // Use shield-bearer positioning semantics: when the anchor is running
         // to a phalanx slot, use their future seek position + shield bearing
         // direction; when in position, use their current pose.
-        let shield_running = Substate::AttackingRunningToPhalanx as u32;
+        let shield_running = Substate::AttackingRunningToPhalanx;
         // Both straight-movement probes below are made on the left
         // anchor's own layer, taken from where it currently stands rather
         // than from the slot it is heading for.
@@ -1502,7 +1506,7 @@ impl EnemyAi {
         // Read the bearer's "shield bearer position" — when running to
         // a phalanx slot, that's the future seek pose; once in position,
         // the current pose.
-        let shield_running = Substate::AttackingRunningToPhalanx as u32;
+        let shield_running = Substate::AttackingRunningToPhalanx;
         let (bearer_pos, bearer_dir) = if snap.current_substate == shield_running {
             (
                 snap.shield_bearer_seek_position,
@@ -1550,7 +1554,7 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> Option<Position> {
         let snap = self.find_fighter(shield_bearer, tick)?;
-        let bearer_pos = if snap.current_substate == Substate::AttackingRunningToPhalanx as u32 {
+        let bearer_pos = if snap.current_substate == Substate::AttackingRunningToPhalanx {
             snap.shield_bearer_seek_position
         } else {
             snap.position
@@ -1568,7 +1572,7 @@ impl EnemyAi {
                     ctx.frame,
                     self.base.me,
                     shield_bearer,
-                    snap.current_substate,
+                    snap.current_substate as u32,
                     bearer_pos,
                     snap.shield_bearer_direction,
                     snap.position,
@@ -1598,10 +1602,10 @@ impl EnemyAi {
         let consider_sq = (archer::SHIELD_BEARER_MIN_DISTANCE as f32)
             * (archer::SHIELD_BEARER_MIN_DISTANCE as f32);
 
-        let shield_running = Substate::AttackingRunningToPhalanx as u32;
-        let shield_phalanx = Substate::AttackingPhalanx as u32;
-        let shield_protecting = Substate::AttackingProtectingWithShield as u32;
-        let shield_advancing = Substate::AttackingAdvancingWithShield as u32;
+        let shield_running = Substate::AttackingRunningToPhalanx;
+        let shield_phalanx = Substate::AttackingPhalanx;
+        let shield_protecting = Substate::AttackingProtectingWithShield;
+        let shield_advancing = Substate::AttackingAdvancingWithShield;
 
         let mut count: i32 = 0;
         let debug = arrow_protection_debug_matches(|| ctx.frame, || self.base.me);
@@ -1647,7 +1651,7 @@ impl EnemyAi {
                     f.handle,
                     sq,
                     f.ai_state,
-                    f.current_substate,
+                    f.current_substate as u32,
                     f.is_archer_unit,
                     f.is_tower_guard,
                     f.shield_bearer_before_me,
@@ -2138,7 +2142,7 @@ impl EnemyAi {
                     primary_target: self.base.primary_target,
                 });
             // If any member isn't yet in position, don't reconsider
-            if snap.current_substate != Substate::AttackingPhalanx as u32 {
+            if snap.current_substate != Substate::AttackingPhalanx {
                 return false;
             }
             phalanx_members.push(current_handle.get());
@@ -2436,7 +2440,10 @@ impl EnemyAi {
                 if debug {
                     eprintln!(
                         "ARROW_PROTECTION frame={} owner={} result=reject reason=substate substate={:?} from_hourglass={}",
-                        ctx.frame, self.base.me, self.base.current_substate, called_from_hourglass
+                        ctx.frame,
+                        self.base.me,
+                        self.base.current_substate as u32,
+                        called_from_hourglass
                     );
                 }
                 return false;
@@ -2945,7 +2952,7 @@ impl EnemyAi {
                 self.base.me,
                 ctx.original_creation_order,
                 rng_cursor,
-                self.base.current_substate,
+                self.base.current_substate as u32,
                 self.base.primary_target,
                 ctx.is_swordfighting,
                 ctx.enter_swordfight_pending,
@@ -3789,7 +3796,7 @@ impl EnemyAi {
                 ctx.frame,
                 self.base.me,
                 self.base.current_state,
-                self.base.current_substate,
+                self.base.current_substate as u32,
                 tick.reconsider_swordfight_observation_fighters.len(),
             );
         }
@@ -3893,7 +3900,7 @@ impl EnemyAi {
             self.base.list_us.push(f.handle);
             if f.is_soldier
                 && let Some(primary_target) = f.primary_target
-                && is_any_swordfight_substate(f.current_substate)
+                && f.current_substate.is_any_swordfight()
             {
                 let local = local_mult.entry(primary_target.get()).or_insert(0);
                 *local = u32::from((*local as u16).wrapping_add(1));
@@ -4348,9 +4355,8 @@ impl EnemyAi {
             //     no target.
             // Only the soldier arm uses the seek/approach dichotomy.
             let (attacker_position, target_handle) = if friend.is_soldier {
-                let approaching = friend.current_substate
-                    == Substate::AttackingApproachingNewEnemy as u32
-                    || friend.current_substate == Substate::AttackingMovingAroundOldEnemy as u32;
+                let approaching = friend.current_substate == Substate::AttackingApproachingNewEnemy
+                    || friend.current_substate == Substate::AttackingMovingAroundOldEnemy;
                 if approaching {
                     (friend.position, friend.principal_opponent)
                 } else {
