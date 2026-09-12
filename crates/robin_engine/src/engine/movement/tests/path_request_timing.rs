@@ -4,16 +4,9 @@ mod suite {
     use crate::entity_id::{PcId, SoldierId};
 
     fn test_pc() -> Entity {
-        Entity::Pc(crate::element::ActorPc {
-            element: {
-                let mut initial_element = crate::element::ElementData::default();
-                initial_element.kind = crate::element::ElementKind::ActorPc;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            pc: Default::default(),
-        })
+        Entity::Pc(crate::engine::test_support::actors::unbound_pc(
+            crate::element::Posture::Undefined,
+        ))
     }
 
     #[test]

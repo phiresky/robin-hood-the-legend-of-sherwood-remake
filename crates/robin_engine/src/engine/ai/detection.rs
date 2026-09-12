@@ -4581,21 +4581,10 @@ mod tests {
         // marker; resolving the new plane changes
         // every visibility origin and therefore accumulated detection.
         let raw_feet = crate::coordinates::WorldPoint3D::new(1898.5637, 836.4165, 0.594492);
-        let mut element = {
-            let mut initial_element =
-                crate::element::ElementData::from_initial_posture(crate::element::Posture::Flying);
-            initial_element.kind = crate::element::ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position(raw_feet);
-        let mut entity = Entity::Soldier(crate::element::ActorSoldier {
-            element,
-            actor: crate::element::ActorData::default(),
-            human: crate::element::HumanData::default(),
-            npc: crate::element::NpcData::default(),
-            soldier: crate::element::SoldierData::default(),
-        });
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Flying);
+        soldier.element.set_position(raw_feet);
+        let mut entity = Entity::Soldier(soldier);
         let resolved_map = crate::coordinates::MapPoint::new(1898.5637, 790.822);
         entity.position_iface_mut().set_map_position(resolved_map);
         let position = entity.position_iface_mut();

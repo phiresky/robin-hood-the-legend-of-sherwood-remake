@@ -11,16 +11,7 @@ mod suite {
     };
 
     fn extraction_test_pc(posture: Posture) -> Entity {
-        Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(posture);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        })
+        Entity::Pc(crate::engine::test_support::actors::unbound_pc(posture))
     }
 
     fn extraction_test_assets() -> LevelAssets {
