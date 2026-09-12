@@ -19,6 +19,15 @@ pub(crate) struct Recording {
 #[derive(Clone)]
 pub(crate) struct SharedReplayRecorder(Arc<Mutex<Recording>>);
 
+/// Adopted archive boundary and the optional saved state it will restore.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ReplayRestoreBoundary {
+    pub(crate) ordinal: u32,
+    pub(crate) timeline_frame: u32,
+    /// None for an external save whose payload must be embedded instead.
+    pub(crate) marker_ordinal: Option<u32>,
+}
+
 impl Serialize for SharedReplayRecorder {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str("live mission recording")
@@ -149,12 +158,13 @@ impl SharedReplayRecorder {
     }
 
     /// Preserve the entire prior history, then start a new physical file at
-    /// this restore boundary. Returns the adopted mission ordinal and timeline.
+    /// this restore boundary. Returns the adopted recording ordinal, timeline
+    /// frame, and optional save-marker target for the load event.
     pub(crate) fn restore(
         &self,
         save: &GameSaveFile,
         control: &crate::replay_service::ReplayRecordingControl,
-    ) -> Result<(u32, u32, Option<u32>)> {
+    ) -> Result<ReplayRestoreBoundary> {
         // Include signed participant events from abandoned gameplay before
         // adopting the original archive's authority.
         control.checkpoint_ranked_input();
@@ -209,7 +219,11 @@ impl SharedReplayRecorder {
         recording.timeline = timeline;
         recording.captured.clear();
         control.restore_ranked_input(ranked_input);
-        Ok((ordinal, timeline, target))
+        Ok(ReplayRestoreBoundary {
+            ordinal,
+            timeline_frame: timeline,
+            marker_ordinal: target,
+        })
     }
 
     pub(crate) fn write_save_marker(&self, ordinal: u32, marker: ReplaySaveMarker) {

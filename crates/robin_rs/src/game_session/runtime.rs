@@ -1412,7 +1412,11 @@ impl TimelineRuntime {
             } => {
                 self.state_restored = true;
                 match self.replay.restore_archive(&snapshot) {
-                    Ok(Some((ordinal, timeline, target))) => {
+                    Ok(Some(crate::replay_recording::ReplayRestoreBoundary {
+                        ordinal,
+                        timeline_frame: timeline,
+                        marker_ordinal: target,
+                    })) => {
                         self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
                         let timeline = TimelineFrame::from_wire(timeline);
                         self.reset_reconstruction_history(timeline, engine);

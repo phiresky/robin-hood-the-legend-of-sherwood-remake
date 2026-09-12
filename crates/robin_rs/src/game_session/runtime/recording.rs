@@ -128,7 +128,7 @@ impl ReplayLifecycle {
     pub(super) fn restore_archive(
         &mut self,
         snapshot: &[u8],
-    ) -> Result<Option<(u32, u32, Option<u32>)>, String> {
+    ) -> Result<Option<crate::replay_recording::ReplayRestoreBoundary>, String> {
         let recorder = self
             .recording
             .recorder()
