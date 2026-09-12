@@ -607,14 +607,13 @@ impl EnemyAi {
         tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) {
-        if ctx.entity_view(self.base.me).is_none() {
-            // Actors with no layer are omitted from spatial views even when
-            // still present; current timer tails dispatch synchronously.
-            // TODO: distinguish missing-layer observations from actual removal
-            // and establish Original behavior before changing admitted tails.
+        if let Err(reason) = ctx.entity_observation(self.base.me) {
+            // TODO: establish Original invalid-layer timer-tail behavior before
+            // changing this existing skip policy.
             tracing::warn!(
                 me = self.base.me,
-                "battle planning skipped after owner left the live entity view"
+                ?reason,
+                "battle planning skipped: owner spatial observation unavailable"
             );
             return;
         }
@@ -937,8 +936,8 @@ impl EnemyAi {
             let mut idx = 0;
             while idx < self.list_them.len() {
                 let h = self.list_them[idx];
-                let (drop_entry, decrement_visible_count) = match ctx.entity_view(h) {
-                    Some(view) => {
+                let (drop_entry, decrement_visible_count) = match ctx.entity_observation(h) {
+                    Ok(view) => {
                         let is_friend = ctx.is_allied_with(view.camp);
                         if !is_friend && !view.is_dead && view.is_unconscious && !view.is_carried {
                             // Original builds listUnconsciousEnemies from
@@ -986,11 +985,12 @@ impl EnemyAi {
                             !is_friend && !view.is_able_to_fight,
                         )
                     }
-                    None => {
+                    Err(reason) => {
                         tracing::warn!(
                             me = self.base.me,
                             target = h,
-                            "battle_decisions: dropping them-list entry missing from entity view"
+                            ?reason,
+                            "battle_decisions: dropping them-list entry with unavailable spatial observation"
                         );
                         (true, true)
                     }
@@ -6523,6 +6523,48 @@ mod tests {
             },
             AiPerTickData::stub(),
         )
+    }
+
+    fn battle_with_unavailable_initial_target(
+        reason: Option<crate::ai_entity_view::AiObservationUnavailable>,
+    ) {
+        let sim = crate::sim_rng::test_context();
+        let mut ai = EnemyAi::new(91);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingOverviewLookRight;
+        ai.list_them = vec![198];
+        let (mut ctx, tick) = battle_cleanup_context(pc_view());
+        let views = std::sync::Arc::get_mut(&mut ctx.entity_views).unwrap();
+        views.entities.remove(&198);
+        if let Some(reason) = reason {
+            views.unavailable_entities.insert(198, reason);
+        }
+        // Initial target selection requires spatial state, before the later
+        // cleanup of friend-contributed entries. Do not broaden that admission
+        // policy merely because unavailable observations now have typed reasons.
+        ai.battle_decisions(&sim, &mut AiGlobalState::default(), &ctx, &tick, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "required enemy-list entry 198 missing")]
+    fn absent_initial_battle_target_remains_an_invariant_failure() {
+        battle_with_unavailable_initial_target(None);
+    }
+
+    #[test]
+    #[should_panic(expected = "required enemy-list entry 198 missing")]
+    fn missing_layer_initial_battle_target_remains_an_invariant_failure() {
+        battle_with_unavailable_initial_target(Some(
+            crate::ai_entity_view::AiObservationUnavailable::MissingLayer,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "required enemy-list entry 198 missing")]
+    fn excluded_initial_battle_target_remains_an_invariant_failure() {
+        battle_with_unavailable_initial_target(Some(
+            crate::ai_entity_view::AiObservationUnavailable::ExcludedEntity,
+        ));
     }
 
     #[test]

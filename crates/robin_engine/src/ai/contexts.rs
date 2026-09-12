@@ -804,14 +804,30 @@ impl AiContext {
         }
     }
 
-    /// Look up a handle in the per-tick entity view map.
-    ///
-    /// Returns `None` for handle `0`, for handles that were never
-    /// populated (non-human entities not included in the snapshot),
-    /// and for entities that have since been removed. Callers that
-    /// need a specific field (position, ai_state, …) should pattern-
-    /// match on the result and fall back to a safe default only
-    /// when it makes sense for the call site.
+    /// Resolve spatial state without confusing entity existence with admission
+    /// to the AI snapshot. No observation does not imply entity removal.
+    pub fn entity_observation(
+        &self,
+        handle: impl IntoOptionalAiHandle,
+    ) -> Result<&crate::ai_entity_view::AiEntityView, crate::ai_entity_view::AiObservationUnavailable>
+    {
+        use crate::ai_entity_view::AiObservationUnavailable;
+        let handle = handle
+            .into_optional_ai_handle()
+            .ok_or(AiObservationUnavailable::NoHandle)?
+            .get();
+        self.entity_views.get(&handle).ok_or_else(|| {
+            self.entity_views
+                .unavailable_entities
+                .get(&handle)
+                .copied()
+                .unwrap_or(AiObservationUnavailable::EntityAbsent)
+        })
+    }
+
+    /// Convenience lookup for callers whose policy intentionally treats all
+    /// unavailable observations alike. Use `entity_observation` when the reason
+    /// matters, including diagnostics about removed entities.
     pub fn entity_view(
         &self,
         handle: impl IntoOptionalAiHandle,
@@ -825,8 +841,8 @@ impl AiContext {
     /// engagement, a loot-list entry, …).  Such a handle failing to resolve
     /// means the snapshot lost a required entity — corrupted sim state or a
     /// port bug — so this panics instead of letting the caller silently take
-    /// a default gameplay branch.  Callers must still guard the handle-`0`
-    /// "no entity" sentinel themselves where "none" is a legal state.
+    /// a default gameplay branch. Callers must still guard `None` themselves
+    /// where an absent handle is legal; raw slot zero is a valid entity handle.
     #[track_caller]
     pub fn expect_entity_view(
         &self,
@@ -834,10 +850,15 @@ impl AiContext {
         ctx: &str,
     ) -> &crate::ai_entity_view::AiEntityView {
         let raw = handle.into_optional_ai_handle().map(AiEntityHandle::get);
-        self.entity_view(handle).unwrap_or_else(|| match raw {
-            Some(raw) => panic!("required entity view for handle {raw} missing ({ctx})"),
-            None => panic!("required entity view for absent handle missing ({ctx})"),
-        })
+        self.entity_observation(handle)
+            .unwrap_or_else(|reason| match raw {
+                Some(raw) => {
+                    panic!("required entity view for handle {raw} missing ({ctx}): {reason:?}")
+                }
+                None => {
+                    panic!("required entity view for absent handle missing ({ctx}): {reason:?}")
+                }
+            })
     }
 
     /// Resolve a raw legacy human/object handle through the live entity-view

@@ -1409,18 +1409,19 @@ impl EnemyAi {
         }
         self.list_them.clear();
         for &handle in &ctx.self_seen_enemy_handles {
-            let Some(target) = ctx.entity_view(handle) else {
-                // A retained seen handle can lack a spatial view even while
-                // its actor exists: entity_has_ai_view excludes actors with
-                // no layer. Missing observation does not prove removal.
-                // TODO: establish Original removal/invalid-layer handling
-                // before changing owner-ordered detectable retention.
-                tracing::warn!(
-                    me = self.base.me,
-                    target = handle,
-                    "dropping stale seen-enemy handle missing from the live entity view"
-                );
-                continue;
+            let target = match ctx.entity_observation(handle) {
+                Ok(target) => target,
+                Err(reason) => {
+                    // Preserve current retention for every unavailable observation.
+                    // TODO: establish Original invalid-layer handling before changing it.
+                    tracing::warn!(
+                        me = self.base.me,
+                        target = handle,
+                        ?reason,
+                        "omitting seen-enemy handle with unavailable spatial observation"
+                    );
+                    continue;
+                }
             };
             if !target.is_dead {
                 self.list_them.push(handle);
@@ -4877,16 +4878,18 @@ impl EnemyAi {
 
         let mut nearest = None;
         let mut min_distance: u16 = 65432; // Original `oo` sentinel
-        let Some(owner_view) = ctx.entity_view(self.base.me) else {
-            // Actors with no layer are omitted from spatial views even when
-            // still present; current timer tails dispatch synchronously.
-            // TODO: distinguish missing-layer observations from actual removal
-            // and establish Original behavior before changing admitted tails.
-            tracing::warn!(
-                me = self.base.me,
-                "primary-target replacement owner left the live entity view earlier in this frame"
-            );
-            return None;
+        let owner_view = match ctx.entity_observation(self.base.me) {
+            Ok(view) => view,
+            Err(reason) => {
+                // TODO: establish Original invalid-layer timer-tail behavior before
+                // changing this existing skip policy.
+                tracing::warn!(
+                    me = self.base.me,
+                    ?reason,
+                    "primary-target replacement skipped: owner spatial observation unavailable"
+                );
+                return None;
+            }
         };
         let owner_world = owner_view.detection_position_world;
 
@@ -6464,6 +6467,81 @@ mod tests {
         assert_eq!(request.center, Some(center));
         assert_eq!(request.runs, incoming_runs);
         assert!(!request.is_new_panic);
+    }
+
+    #[test]
+    fn reinitialize_them_list_preserves_order_and_omits_all_unavailable_observations() {
+        use crate::ai_entity_view::AiObservationUnavailable;
+        let mut ai = EnemyAi::new(1);
+        ai.list_them = vec![99];
+        ai.base.primary_target = Some(AiEntityHandle::new(3));
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, soldier_view(test_position(0.0, 0.0)));
+        views.insert(6, soldier_view(test_position(0.0, 0.0)));
+        let mut dead = soldier_view(test_position(0.0, 0.0));
+        dead.is_dead = true;
+        views.insert(7, dead);
+        let mut ctx = AiContext {
+            entity_views: crate::ai_entity_view::shared_entity_views(views),
+            self_seen_enemy_handles: vec![6, 3, 4, 5, 7, 2, 6],
+            ..AiContext::test_fixture()
+        };
+        let snapshot = std::sync::Arc::get_mut(&mut ctx.entity_views).unwrap();
+        snapshot
+            .unavailable_entities
+            .insert(4, AiObservationUnavailable::MissingLayer);
+        snapshot
+            .unavailable_entities
+            .insert(5, AiObservationUnavailable::ExcludedEntity);
+        let original_seen = ctx.self_seen_enemy_handles.clone();
+
+        ai.reinitialize_them_list(&ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.list_them, vec![6, 2, 6]);
+        assert_eq!(
+            ctx.self_seen_enemy_handles, original_seen,
+            "do not mutate detectable retention"
+        );
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(3)));
+    }
+
+    #[test]
+    fn unavailable_owner_preserves_battle_and_target_selection_skip_policy() {
+        use crate::ai_entity_view::AiObservationUnavailable;
+        for reason in [
+            None,
+            Some(AiObservationUnavailable::MissingLayer),
+            Some(AiObservationUnavailable::ExcludedEntity),
+        ] {
+            let mut ctx = AiContext::test_fixture();
+            if let Some(reason) = reason {
+                std::sync::Arc::make_mut(&mut ctx.entity_views)
+                    .unavailable_entities
+                    .insert(1, reason);
+            }
+            let mut ai = EnemyAi::new(1);
+            ai.list_them = vec![2, 3];
+            ai.base.current_state = AiState::Attacking;
+            ai.base.primary_target = Some(AiEntityHandle::new(2));
+            let before = bitcode::encode(&ai);
+            let tick = AiPerTickData::stub();
+            assert_eq!(
+                ai.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, &ctx, &tick),
+                None
+            );
+            ai.battle_decisions(
+                &crate::sim_rng::test_context(),
+                &mut AiGlobalState::default(),
+                &ctx,
+                &tick,
+                None,
+            );
+            assert_eq!(
+                bitcode::encode(&ai),
+                before,
+                "unavailable owner must not mutate AI: {reason:?}"
+            );
+        }
     }
 
     #[test]
