@@ -6,6 +6,20 @@ use crate::host::{ApplicationContext, HostAudio, HostEffectBatches, HostFrontend
 use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::PlayerInput;
+use serde::{Deserialize, Serialize};
+
+/// Frame metadata retained after the host has consumed its ordered effects.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HostFrameOutcome {
+    pub frame_before: u32,
+    pub frame_after: u32,
+    pub hourglass_ran: bool,
+    pub post_initialized: bool,
+    pub game_code: GameCode,
+    pub external_action_results: Vec<robin_engine::engine::ExternalActionResult>,
+    pub state_hash: u64,
+    pub spellforge_abort: Option<robin_engine::spellforge::SpellforgeGuestError>,
+}
 
 /// Run one deterministic engine tick and drain engine-local side effects.
 ///
@@ -25,20 +39,67 @@ pub fn run_engine_frame_core(
     engine: &mut Engine,
     dev: &mut DevState,
     frame: robin_engine::engine::SimulationFrameInput,
-) -> robin_engine::engine::SimulationFrameOutput {
+) -> HostFrameOutcome {
     audio.sound.set_listen_point(
         frontend.viewport.sound_listen_point(),
         frontend.viewport.zoom_factor,
     );
     let camera_before = engine.director_camera_frame();
     let output = execute_frame(engine, assets, frame);
+    let outcome = apply_frame_effects(
+        frontend,
+        audio,
+        effects,
+        application_context,
+        local_seat,
+        dev,
+        output,
+    );
+    frontend.viewport.advance_director_camera(
+        camera_before,
+        engine.director_camera_frame(),
+        engine.director_camera_view_size(),
+    );
+    outcome
+}
+
+fn apply_frame_effects(
+    frontend: &mut HostFrontend,
+    audio: &mut HostAudio,
+    effects: &mut HostEffectBatches,
+    application_context: &ApplicationContext,
+    local_seat: robin_engine::player_command::PlayerId,
+    dev: &mut DevState,
+    output: robin_engine::engine::SimulationFrameOutput,
+) -> HostFrameOutcome {
+    let robin_engine::engine::SimulationFrameOutput {
+        frame_before,
+        frame_after,
+        hourglass_ran,
+        events,
+        post_boundary_events,
+        post_initialize_events,
+        external_action_results,
+        state_hash,
+        spellforge_abort,
+    } = output;
+    let outcome = HostFrameOutcome {
+        frame_before,
+        frame_after,
+        hourglass_ran,
+        post_initialized: post_initialize_events.is_some(),
+        game_code: events.game_code(),
+        external_action_results,
+        state_hash,
+        spellforge_abort,
+    };
     // Even empty batches advance display lifetimes. Preserve pre-hourglass,
     // post-boundary, then optional PostInitialize delivery exactly once, before
     // advancing the host camera.
     for events in [
-        Some(output.events.clone()),
-        Some(output.post_boundary_events.clone()),
-        output.post_initialize_events.clone(),
+        Some(events),
+        Some(post_boundary_events),
+        post_initialize_events,
     ]
     .into_iter()
     .flatten()
@@ -57,12 +118,7 @@ pub fn run_engine_frame_core(
             local_seat,
         );
     }
-    frontend.viewport.advance_director_camera(
-        camera_before,
-        engine.director_camera_frame(),
-        engine.director_camera_view_size(),
-    );
-    output
+    outcome
 }
 
 /// The deterministic boundary has no host, display, audio or transport access.
@@ -110,7 +166,7 @@ pub fn run_engine_tick_core(
         dev,
         robin_engine::engine::SimulationFrameInput::default(),
     )
-    .game_code()
+    .game_code
 }
 
 /// Dispatch the one-shot mission `PostInitialize` hook at the host's
@@ -205,8 +261,7 @@ pub fn run_post_initialize_stage_with_actions(
             )
             .with_post_initialize(run_post_initialize),
     )
-    .post_initialize_events
-    .is_some()
+    .post_initialized
 }
 
 fn prepare_display_effects(
@@ -250,7 +305,7 @@ mod tests {
             &mut Engine,
             &mut DevState,
             robin_engine::engine::SimulationFrameInput,
-        ) -> robin_engine::engine::SimulationFrameOutput = run_engine_frame_core;
+        ) -> HostFrameOutcome = run_engine_frame_core;
     }
 
     #[test]
@@ -283,7 +338,7 @@ mod tests {
             robin_engine::engine::SimulationFrameInput::no_hourglass(),
         );
         assert!(!output.hourglass_ran);
-        assert!(output.post_initialize_events.is_none());
+        assert!(!output.post_initialized);
         assert_eq!(
             dev.noise_display_start_radius, 14,
             "two empty batches still advance display lifetime"
@@ -304,6 +359,111 @@ mod tests {
             "post-action handling uses the same two-batch boundary, modulo twenty"
         );
         assert_eq!(engine.frame_counter(), 0);
+    }
+
+    #[test]
+    fn frame_effects_consume_all_three_stages_in_order_and_retain_metadata() {
+        use robin_engine::ai::{Noise, NoiseOrigin, NoiseType};
+        use robin_engine::engine::{ExternalActionResult, SideEffects, SimulationFrameOutput};
+
+        let noise_batch = |element_id, code| {
+            SideEffects {
+                code,
+                displayed_noises: vec![Noise {
+                    origin: NoiseOrigin {
+                        x: 0.0,
+                        y: 0.0,
+                        sector: None,
+                        layer: None,
+                    },
+                    noise_type: NoiseType::Bonk,
+                    volume: 1000,
+                    elevation: 0,
+                    element_id,
+                }],
+                ..Default::default()
+            }
+            .into()
+        };
+        let mut host = crate::host::Host::scratch(800.0, 600.0);
+        let application_context = host.application_context().clone();
+        let mut dev = DevState::default();
+        dev.debug.noise_display = true;
+        let results = vec![ExternalActionResult::Native(Ok(42))];
+        let results_allocation = results.as_ptr();
+        let outcome = apply_frame_effects(
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
+            &mut dev,
+            SimulationFrameOutput {
+                frame_before: 12,
+                frame_after: 13,
+                hourglass_ran: true,
+                events: noise_batch(1, GameCode::LevelFailed),
+                post_boundary_events: noise_batch(2, GameCode::LevelInProgress),
+                post_initialize_events: Some(noise_batch(3, GameCode::LevelInProgress)),
+                external_action_results: results,
+                state_hash: 1234,
+                spellforge_abort: None,
+            },
+        );
+        assert_eq!(
+            dev.displayed_noises
+                .iter()
+                .map(|noise| (noise.noise.element_id, noise.start_radius))
+                .collect::<Vec<_>>(),
+            [(1, 201), (2, 134), (3, 67)],
+            "each stage is delivered once, in order, with its own lifetime tick"
+        );
+        assert_eq!(dev.noise_display_start_radius, 1);
+        assert_eq!(outcome.frame_before, 12);
+        assert_eq!(outcome.frame_after, 13);
+        assert!(outcome.hourglass_ran);
+        assert!(outcome.post_initialized);
+        assert_eq!(outcome.game_code, GameCode::LevelFailed);
+        assert_eq!(outcome.state_hash, 1234);
+        assert!(outcome.spellforge_abort.is_none());
+        assert_eq!(outcome.external_action_results.as_ptr(), results_allocation);
+        assert!(matches!(
+            outcome.external_action_results.as_slice(),
+            [ExternalActionResult::Native(Ok(42))]
+        ));
+    }
+
+    #[test]
+    fn empty_post_initialize_batch_advances_lifetime_only_when_present() {
+        for post_initialized in [false, true] {
+            let mut host = crate::host::Host::scratch(800.0, 600.0);
+            let application_context = host.application_context().clone();
+            let mut dev = DevState::default();
+            let outcome = apply_frame_effects(
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                host.transport.local_seat(),
+                &mut dev,
+                robin_engine::engine::SimulationFrameOutput {
+                    frame_before: 0,
+                    frame_after: 0,
+                    hourglass_ran: false,
+                    events: Default::default(),
+                    post_boundary_events: Default::default(),
+                    post_initialize_events: post_initialized.then(Default::default),
+                    external_action_results: Vec::new(),
+                    state_hash: 0,
+                    spellforge_abort: None,
+                },
+            );
+            assert_eq!(outcome.post_initialized, post_initialized);
+            assert_eq!(
+                dev.noise_display_start_radius,
+                if post_initialized { 1 } else { 14 },
+            );
+        }
     }
 
     #[test]

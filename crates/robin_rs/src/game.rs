@@ -568,7 +568,7 @@ impl Game {
         if !output.hourglass_ran {
             return None;
         }
-        let result = output.game_code();
+        let result = output.game_code;
 
         // The messenger reset path consumes the FPS-cheat flag and
         // promotes it into the debug-info overlay, so toggling the FPS

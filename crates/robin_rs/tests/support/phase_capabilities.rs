@@ -76,7 +76,7 @@ fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
 
 #[test]
 fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
-    let syntax = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let syntax = syn::parse_file(include_str!("../../src/game_session/runtime/frame.rs")).unwrap();
     let frame = syntax
         .items
         .iter()
@@ -197,7 +197,7 @@ fn application_composition_is_separate_from_mission_host() {
 fn mission_journals_and_sprite_publication_are_private() {
     for (source, owner_name, fields) in [
         (
-            include_str!("../../src/game_session/runtime.rs"),
+            include_str!("../../src/game_session/runtime/frame.rs"),
             "MissionFrame",
             &[
                 "commands",
@@ -228,9 +228,14 @@ fn mission_journals_and_sprite_publication_are_private() {
                 .iter()
                 .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
                 .unwrap_or_else(|| panic!("missing {owner_name}.{name}"));
+            // Frame journals moved into a child module, but their visibility
+            // must still stop at runtime, excluding sibling mission drivers.
+            let runtime_only = owner_name == "MissionFrame"
+                && matches!(&field.vis, syn::Visibility::Restricted(visibility)
+                    if visibility.path.is_ident("super"));
             assert!(
-                matches!(field.vis, syn::Visibility::Inherited),
-                "{owner_name}.{name} must remain private"
+                matches!(field.vis, syn::Visibility::Inherited) || runtime_only,
+                "{owner_name}.{name} must remain private to its runtime owner"
             );
         }
     }
