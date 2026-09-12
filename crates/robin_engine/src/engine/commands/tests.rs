@@ -4032,6 +4032,18 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     crate::engine::test_support::ensure_ordinary_sector(&mut engine, 7, 0);
     crate::engine::test_support::ensure_ordinary_sector(&mut engine, 8, 0);
+    // The AI route view resolves these canonical sectors to exact arena
+    // identities. The door must name the same identities, not number-only
+    // endpoints from the former topology-free fixture.
+    let exact_sector = |number| {
+        crate::fast_find_grid::SectorIndex::new(
+            engine.world.fast_grid.level.sector_number_map
+                [&crate::sector::SectorNumber::new(number)] as u32,
+        )
+        .expect("fixture sector index")
+    };
+    let source_index = exact_sector(7);
+    let destination_index = exact_sector(8);
     engine.scripts.mission = Some(minimal_script());
 
     let pc_sector = crate::position_interface::SectorHandle::new(7);
@@ -4086,6 +4098,8 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
             point_in: crate::coordinates::MapPoint::new(50.0, 30.0),
             sector_out: crate::sector::SectorNumber::new(7),
             sector_in: crate::sector::SectorNumber::new(8),
+            sector_out_index: Some(source_index),
+            sector_in_index: Some(destination_index),
             ..crate::gate::Door::default()
         });
 
