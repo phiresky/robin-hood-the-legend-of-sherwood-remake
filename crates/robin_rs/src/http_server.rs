@@ -69,9 +69,11 @@
 //! to disable the server entirely.
 
 use crate::http_server::diagnostics::{
-    decompile_script, engine_dump_json, frame_console_response_to_json, info_json,
-    level_assets_json, list_natives_json, snapshot_host_debug, snapshot_script, snapshot_state,
+    decompile_script, engine_dump_json, frame_console_response_to_json, level_assets_json,
+    snapshot_host_debug, snapshot_script, snapshot_state,
 };
+#[cfg(any(feature = "script-rpc", target_arch = "wasm32"))]
+use crate::http_server::diagnostics::{info_json, list_natives_json};
 pub use crate::http_server::screenshot::apply_screenshot_flags;
 use crate::http_server::screenshot::{can_capture_presented_ui, encode_png};
 use robin_engine::element as engine_element;
