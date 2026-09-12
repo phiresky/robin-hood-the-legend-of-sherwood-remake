@@ -193,7 +193,9 @@ impl Database {
             .iter()
             .map(|row| row.get::<String, _>("id"))
             .collect::<Vec<_>>();
-        let participant_map = self.public_participants_for_runs(&run_ids).await?;
+        // Each run appears once: submissions.id is unique and the selected metric
+        // has PRIMARY KEY(run_id, metric). Consume each owned projection once.
+        let mut participant_map = self.public_participants_for_runs(&run_ids).await?;
         let metric_values = rows
             .iter()
             .map(|row| row.get::<i64, _>("value"))
@@ -214,7 +216,8 @@ impl Database {
                 rank: *ranks.get(&metric_value).ok_or_else(|| {
                     DbError::Corrupt("batch mission rank omitted a requested value".to_owned())
                 })?,
-                named_participants: participant_map.get(&run_id).cloned().unwrap_or_default(),
+                // Fully anonymous runs legitimately have no public participants.
+                named_participants: participant_map.remove(&run_id).unwrap_or_default(),
                 aggregate_named_participants: Vec::new(),
                 run_id: run_id.clone(),
                 composition: BoardComposition::Mission {
@@ -380,8 +383,10 @@ impl Database {
             .iter()
             .map(|row| row.get::<String, _>("id"))
             .collect::<Vec<_>>();
-        let session_map = self.full_campaign_sessions_for_runs(&run_ids).await?;
-        let participant_map = self
+        // The selected metric has PRIMARY KEY(full_campaign_run_id, metric),
+        // so each campaign id consumes its own projections exactly once.
+        let mut session_map = self.full_campaign_sessions_for_runs(&run_ids).await?;
+        let mut participant_map = self
             .public_participants_for_full_campaigns(&run_ids)
             .await?;
         let metric_values = rows
@@ -405,13 +410,10 @@ impl Database {
                     DbError::Corrupt("batch campaign rank omitted a requested value".to_owned())
                 })?,
                 named_participants: Vec::new(),
-                aggregate_named_participants: participant_map
-                    .get(&run_id)
-                    .cloned()
-                    .unwrap_or_default(),
+                aggregate_named_participants: participant_map.remove(&run_id).unwrap_or_default(),
                 run_id: run_id.clone(),
                 composition: BoardComposition::FullCampaign {
-                    ordered_session_run_ids: session_map.get(&run_id).cloned().unwrap_or_default(),
+                    ordered_session_run_ids: session_map.remove(&run_id).unwrap_or_default(),
                 },
                 metric_value,
                 max_concurrent_players: u16::try_from(
@@ -743,11 +745,13 @@ impl Database {
             .filter(|row| row.get::<String, _>("composition_kind") == "full_campaign")
             .map(|row| row.get::<String, _>("id"))
             .collect::<Vec<_>>();
-        let mission_participants = self.public_participants_for_runs(&mission_ids).await?;
-        let aggregate_participants = self
+        // Each UNION ALL arm selects primary-key ids with EXISTS filters, without
+        // multiplying rows. Separate maps keep the two id namespaces independent.
+        let mut mission_participants = self.public_participants_for_runs(&mission_ids).await?;
+        let mut aggregate_participants = self
             .public_participants_for_full_campaigns(&aggregate_ids)
             .await?;
-        let aggregate_sessions = self.full_campaign_sessions_for_runs(&aggregate_ids).await?;
+        let mut aggregate_sessions = self.full_campaign_sessions_for_runs(&aggregate_ids).await?;
         rows.into_iter()
             .map(|row| {
                 let run_id: String = row.try_get("id")?;
@@ -758,24 +762,17 @@ impl Database {
                             BoardComposition::Mission {
                                 replay_sha256: fixed_32(row.try_get("replay_sha256")?)?,
                             },
-                            mission_participants
-                                .get(&run_id)
-                                .cloned()
-                                .unwrap_or_default(),
+                            mission_participants.remove(&run_id).unwrap_or_default(),
                             Vec::new(),
                         ),
                         "full_campaign" => (
                             BoardComposition::FullCampaign {
                                 ordered_session_run_ids: aggregate_sessions
-                                    .get(&run_id)
-                                    .cloned()
+                                    .remove(&run_id)
                                     .unwrap_or_default(),
                             },
                             Vec::new(),
-                            aggregate_participants
-                                .get(&run_id)
-                                .cloned()
-                                .unwrap_or_default(),
+                            aggregate_participants.remove(&run_id).unwrap_or_default(),
                         ),
                         _ => {
                             return Err(DbError::Corrupt(
