@@ -2221,17 +2221,15 @@ mod tests {
         let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
         vfs.install_preloaded_asset("old-demo.res", bytes).unwrap();
         let files = std::sync::Arc::new(robin_engine::sbfile::SbFileSystem::new(vfs));
-        assert_eq!(
-            files.set_presentation_locale(None, None, Some("de-DE")),
-            robin_engine::sbfile::SBFILE_NO_ERROR
-        );
+        files
+            .set_presentation_locale(None, None, Some("de-DE"))
+            .expect("configure fixture locale");
         let mut resources = ResourceManager::with_files(files.clone());
         resources.attach_resource_file("old-demo.res").unwrap();
         let menu = MenuText::load(&mut resources, files.presentation_locale());
-        assert_eq!(
-            files.set_presentation_locale(None, None, Some("fr-FR")),
-            robin_engine::sbfile::SBFILE_NO_ERROR
-        );
+        files
+            .set_presentation_locale(None, None, Some("fr-FR"))
+            .expect("configure fixture locale");
         assert_eq!(
             menu.presentation_locale(),
             Some("de-DE"),
