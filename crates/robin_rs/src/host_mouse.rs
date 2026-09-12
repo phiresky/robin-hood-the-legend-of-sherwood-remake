@@ -717,17 +717,6 @@ pub fn update_mouse(
     host.frontend
         .observe_hover_feedback(shift_held, cursor_action, mouse_map);
 
-    // Per-frame clear of the UI-focus latch — the messenger resets
-    // the flag every frame so it only stays true for the frame a
-    // widget raised `MSG_UI_HAS_FOCUS`.  The flag is observable in
-    // the window between `apply_side_effects` (which OR's it into
-    // `host.frontend.ui_focus`) and this reset — i.e. during the tick itself,
-    // script command handlers, and anything reading host state before
-    // `update_mouse`.  The sole reader (the init-zoom display path)
-    // is currently unported, so this is dead state today but
-    // preserves the cadence.
-    host.frontend.ui_focus = false;
-
     // When the cursor hasn't been stable long enough to show a
     // preview, wipe any stale `valid_trajectory` flag from the prior
     // frame before any per-action branch recomputes.

@@ -672,10 +672,6 @@ pub struct HostFrontend {
     /// 40 ms frame target by ten unless console or engine fast-forward is active.
     /// Neither snapshot state nor deterministic input; survives save restoration.
     pub slow_motion: bool,
-    /// One-frame MSG_UI_HAS_FOCUS latch; cleared during input-state reset.
-    /// Its original RHDISPLAY_INITZOOM consumer remains unported, so this tracks
-    /// transient input gating for future consumers, never simulation state.
-    pub ui_focus: bool,
 }
 
 /// Mission-owned decoded and uploaded resources. Snapshot restoration deliberately
@@ -1046,7 +1042,6 @@ impl HostFrontend {
     pub fn reset_modal_input(&mut self) {
         self.pointer_sequence.reset_modal(&mut self.input);
         self.viewport.cancel_touch_motion();
-        self.ui_focus = false;
     }
     pub fn lose_pointer_focus(&mut self) {
         self.reset_pointer_sequence();
@@ -1087,7 +1082,6 @@ impl HostFrontend {
         self.input.gestures.portrait_action_countdown = 0;
         self.input.gestures.portrait_action_pc = None;
         self.viewport.cancel_touch_motion();
-        self.ui_focus = false;
     }
 }
 
@@ -2304,7 +2298,6 @@ impl HostFrontend {
         if fx.pending_reset_input {
             effects.request_signal(HostSignal::ResetInput);
         }
-        self.ui_focus |= fx.ui_has_focus;
         // Per-frame mark requests from sim-side Mark() calls (currently
         // scripted mission-team insertion → `EngineCommand::MarkPc`).
         // Accumulates with host-side mark sources (requirements-bar
