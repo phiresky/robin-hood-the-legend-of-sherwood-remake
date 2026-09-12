@@ -3,6 +3,28 @@ pub trait Validate {
     fn validate(&self) -> Result<(), ValidationError>;
 }
 
+pub(crate) trait IsZero {
+    fn is_zero(&self) -> bool;
+}
+
+/// Keep the field-specific error identical for numeric and fixed digest values.
+pub(crate) fn nonzero(field: &'static str, value: &impl IsZero) -> Result<(), ValidationError> {
+    if value.is_zero() {
+        Err(ValidationError::Zero { field })
+    } else {
+        Ok(())
+    }
+}
+
+macro_rules! integer_zero {
+    ($($ty:ty),* $(,)?) => {$(
+        impl IsZero for $ty {
+            fn is_zero(&self) -> bool { *self == 0 }
+        }
+    )*};
+}
+integer_zero!(u8, u16, u32, u64, usize);
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidationError {
     #[error("{document} has schema version {actual}; expected {expected}")]

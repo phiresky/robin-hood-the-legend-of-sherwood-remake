@@ -359,11 +359,10 @@ pub struct CanonicalCampaignStateRequirementV1 {
 
 impl Validate for CanonicalCampaignStateRequirementV1 {
     fn validate(&self) -> Result<(), ValidationError> {
-        if self.rules_config_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "canonical_campaign_state_requirement.rules_config_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "canonical_campaign_state_requirement.rules_config_sha256",
+            &self.rules_config_sha256,
+        )?;
         let expected = match self.edition {
             OfficialContentEditionV1::Demo => CanonicalCampaignStateKindV1::IndividualTemplate,
             OfficialContentEditionV1::Full => CanonicalCampaignStateKindV1::FullCampaignGenesis,

@@ -28,11 +28,7 @@ pub struct PublicBuildV1 {
 
 impl Validate for PublicBuildV1 {
     fn validate(&self) -> Result<(), ValidationError> {
-        if self.manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "run.build.manifest_sha256",
-            });
-        }
+        crate::validation::nonzero("run.build.manifest_sha256", &self.manifest_sha256)?;
         if !matches!(self.source_commit.len(), 40 | 64)
             || !self
                 .source_commit
@@ -132,11 +128,10 @@ pub struct ViewerLaunchV1 {
 
 impl Validate for ViewerLaunchV1 {
     fn validate(&self) -> Result<(), ValidationError> {
-        if self.build_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "run.viewer.build_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "run.viewer.build_manifest_sha256",
+            &self.build_manifest_sha256,
+        )?;
         match &self.availability {
             ViewerAvailabilityV1::Available {
                 content_requirement,
@@ -189,11 +184,7 @@ pub struct PublicNamedParticipantClaimV1 {
 
 impl Validate for PublicNamedParticipantClaimV1 {
     fn validate(&self) -> Result<(), ValidationError> {
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "public_named_participant.identity",
-            });
-        }
+        crate::validation::nonzero("public_named_participant.identity", &self.public_key)?;
         if self.seat >= crate::MAX_REPLAY_SEATS_V1 {
             return Err(ValidationError::CountOutOfRange {
                 field: "public_named_participant.seat",

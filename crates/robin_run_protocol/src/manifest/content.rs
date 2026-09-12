@@ -238,11 +238,7 @@ pub struct OfficialSourceFileV1 {
 impl Validate for OfficialSourceFileV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::canonical_relative_path("official_source_file.path", &self.path)?;
-        if self.sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "official_source_file.sha256",
-            });
-        }
+        crate::validation::nonzero("official_source_file.sha256", &self.sha256)?;
         Ok(())
     }
 }
@@ -396,11 +392,10 @@ impl Validate for OfficialProjectionExporterIdentityV2 {
                 field: "official_projection_v2.exporter_schema_policy",
             });
         }
-        if self.projection_authority_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "official_projection_v2.projection_authority_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "official_projection_v2.projection_authority_manifest_sha256",
+            &self.projection_authority_manifest_sha256,
+        )?;
         self.exporter_artifact.validate()?;
         if self.exporter_artifact.media_type != OFFICIAL_PROJECTION_EXPORTER_MEDIA_TYPE_V2 {
             return Err(ValidationError::ClaimMismatch {
@@ -1073,11 +1068,7 @@ pub fn simulation_content_component_relative_path_v1(
     subject.validate()?;
     let directory = match subject {
         OfficialContentSubjectV1::FieldMission { mission_id } => {
-            let mut encoded = String::with_capacity(mission_id.len() * 2);
-            for byte in mission_id.as_bytes() {
-                use std::fmt::Write as _;
-                write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
-            }
+            let encoded = hex::encode(mission_id);
             format!("field-missions/{encoded}")
         }
         OfficialContentSubjectV1::Headquarters { .. } => "headquarters".into(),
@@ -1394,11 +1385,10 @@ pub struct CampaignContentEntryV1 {
 impl Validate for CampaignContentEntryV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.subject.validate()?;
-        if self.content_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "campaign_content.content_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "campaign_content.content_manifest_sha256",
+            &self.content_manifest_sha256,
+        )?;
         Ok(())
     }
 }

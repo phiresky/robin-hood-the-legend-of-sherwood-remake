@@ -4,6 +4,8 @@ use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 const RILUA_CRATE_VERSION: &str = "0.1.24";
+// Provenance of the upstream release, not verification of the patched vendored
+// tree. RILUA_SOURCE_SHA256 below authenticates the actual compiled source.
 const RILUA_CRATES_IO_SHA256: &str =
     "ff1250d13cf4516fbc7ca77c2cca6ff8090e03245f7e7fb6d85875d87efddc3f";
 const RILUA_SOURCE_SHA256: &str = env!("SPELLFORGE_RILUA_SOURCE_SHA256");

@@ -14,13 +14,7 @@ pub enum HexError {
 }
 
 fn encode_lower_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
+    hex::encode(bytes)
 }
 
 fn decode_lower_hex<const N: usize>(value: &str) -> Result<[u8; N], HexError> {
@@ -30,18 +24,14 @@ fn decode_lower_hex<const N: usize>(value: &str) -> Result<[u8; N], HexError> {
             actual: value.len(),
         });
     }
-    let mut decoded = [0u8; N];
-    let bytes = value.as_bytes();
-    for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
-        let nibble = |byte: u8, offset: usize| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(HexError::Character {
-                index: index * 2 + offset,
-            }),
-        };
-        decoded[index] = (nibble(pair[0], 0)? << 4) | nibble(pair[1], 1)?;
+    if let Some(index) = value
+        .bytes()
+        .position(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+    {
+        return Err(HexError::Character { index });
     }
+    let mut decoded = [0u8; N];
+    hex::decode_to_slice(value, &mut decoded).expect("length and lowercase alphabet checked above");
     Ok(decoded)
 }
 
@@ -56,6 +46,12 @@ macro_rules! fixed_hex_type {
         impl Default for $name {
             fn default() -> Self {
                 Self([0; $length])
+            }
+        }
+
+        impl crate::validation::IsZero for $name {
+            fn is_zero(&self) -> bool {
+                self.is_zero()
             }
         }
 

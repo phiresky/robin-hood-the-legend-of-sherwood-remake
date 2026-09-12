@@ -66,11 +66,10 @@ pub struct UploadChallengeV1 {
 impl Validate for UploadChallengeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("UploadChallengeV1", self.schema_version)?;
-        if self.upload_challenge_nonce.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "upload_challenge.upload_challenge_nonce",
-            });
-        }
+        crate::validation::nonzero(
+            "upload_challenge.upload_challenge_nonce",
+            &self.upload_challenge_nonce,
+        )?;
         if self.expires_at_unix_ms == 0 {
             return Err(ValidationError::Zero {
                 field: "upload_challenge.expires_at_unix_ms",
@@ -104,11 +103,7 @@ pub struct UsernameChallengeRequestV1 {
 impl Validate for UsernameChallengeRequestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("UsernameChallengeRequestV1", self.schema_version)?;
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "username_challenge_request.public_key",
-            });
-        }
+        crate::validation::nonzero("username_challenge_request.public_key", &self.public_key)?;
         Ok(())
     }
 }
@@ -116,11 +111,10 @@ impl Validate for UsernameChallengeRequestV1 {
 impl Validate for UsernameChallengeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("UsernameChallengeV1", self.schema_version)?;
-        if self.username_challenge_nonce.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "username_challenge.username_challenge_nonce",
-            });
-        }
+        crate::validation::nonzero(
+            "username_challenge.username_challenge_nonce",
+            &self.username_challenge_nonce,
+        )?;
         if self.expires_at_unix_ms == 0 {
             return Err(ValidationError::Zero {
                 field: "username_challenge.expires_at_unix_ms",
@@ -227,11 +221,10 @@ impl CompetitionRunGrantRequestV1 {
 impl Validate for CompetitionRunGrantRequestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.host_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "competition_run_grant_request.host_signature",
-            });
-        }
+        crate::validation::nonzero(
+            "competition_run_grant_request.host_signature",
+            &self.host_signature,
+        )?;
         Ok(())
     }
 }
@@ -344,11 +337,10 @@ impl CompetitionRunGrantV1 {
 impl Validate for CompetitionRunGrantV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.authority_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "competition_run_grant.authority_signature",
-            });
-        }
+        crate::validation::nonzero(
+            "competition_run_grant.authority_signature",
+            &self.authority_signature,
+        )?;
         Ok(())
     }
 }
@@ -434,11 +426,10 @@ impl FreshRunPreflightRequestV1 {
 impl Validate for FreshRunPreflightRequestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.host_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "fresh_run_preflight_request.host_signature",
-            });
-        }
+        crate::validation::nonzero(
+            "fresh_run_preflight_request.host_signature",
+            &self.host_signature,
+        )?;
         Ok(())
     }
 }
@@ -551,11 +542,10 @@ impl FreshRunPreflightGrantV1 {
 impl Validate for FreshRunPreflightGrantV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.authority_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "fresh_run_preflight_grant.authority_signature",
-            });
-        }
+        crate::validation::nonzero(
+            "fresh_run_preflight_grant.authority_signature",
+            &self.authority_signature,
+        )?;
         Ok(())
     }
 }
@@ -821,11 +811,10 @@ impl CampaignContinuationPreflightGrantV1 {
 impl Validate for CampaignContinuationPreflightGrantV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.authority_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "campaign_continuation_preflight_grant.authority_signature",
-            });
-        }
+        crate::validation::nonzero(
+            "campaign_continuation_preflight_grant.authority_signature",
+            &self.authority_signature,
+        )?;
         Ok(())
     }
 }
@@ -1020,11 +1009,7 @@ impl LeaderboardCoSignRequestV1 {
 impl Validate for LeaderboardCoSignRequestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.instance.validate()?;
-        if self.run_digest.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "leaderboard_co_sign.run_digest",
-            });
-        }
+        crate::validation::nonzero("leaderboard_co_sign.run_digest", &self.run_digest)?;
         Ok(())
     }
 }
@@ -1235,11 +1220,10 @@ impl Validate for SubmissionOfferRequestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("SubmissionOfferRequestV1", self.schema_version)?;
         crate::validation::text("submission_offer_request.mission_id", &self.mission_id, 256)?;
-        if self.ruleset_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "submission_offer_request.ruleset_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "submission_offer_request.ruleset_manifest_sha256",
+            &self.ruleset_manifest_sha256,
+        )?;
         validate_participants(
             self.max_concurrent_players,
             self.participant_instance_count,
@@ -2015,11 +1999,10 @@ impl CampaignContinuationAuthorizationV1 {
 impl Validate for CampaignContinuationAuthorizationV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "campaign_continuation_authorization.signature",
-            });
-        }
+        crate::validation::nonzero(
+            "campaign_continuation_authorization.signature",
+            &self.signature,
+        )?;
         Ok(())
     }
 }
@@ -2608,11 +2591,7 @@ impl Validate for VerifiedRunV1 {
                 });
             }
         }
-        if self.final_state_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "verified_run.state_digest",
-            });
-        }
+        crate::validation::nonzero("verified_run.state_digest", &self.final_state_sha256)?;
         let wrapped_score_delta = i64::from(
             self.final_campaign_score
                 .wrapping_sub(self.starting_campaign_score) as u32,
@@ -3286,16 +3265,11 @@ impl UsernameUpdateEnvelopeV1 {
     /// identity bridges.
     pub fn validate_signing_claim(&self) -> Result<(), ValidationError> {
         crate::validation::schema("UsernameUpdateEnvelopeV1", self.schema_version)?;
-        if self.username_challenge_nonce.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "username_update.username_challenge_nonce",
-            });
-        }
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "username_update.public_key",
-            });
-        }
+        crate::validation::nonzero(
+            "username_update.username_challenge_nonce",
+            &self.username_challenge_nonce,
+        )?;
+        crate::validation::nonzero("username_update.public_key", &self.public_key)?;
         crate::validation::text("username_update.username", &self.username, 48)
     }
 
@@ -3316,11 +3290,7 @@ impl UsernameUpdateEnvelopeV1 {
 impl Validate for UsernameUpdateEnvelopeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.validate_signing_claim()?;
-        if self.signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "username_update.signature",
-            });
-        }
+        crate::validation::nonzero("username_update.signature", &self.signature)?;
         Ok(())
     }
 }
