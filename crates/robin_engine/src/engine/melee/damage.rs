@@ -223,10 +223,11 @@ impl EngineInner {
     pub(crate) fn find_place_to_die(&mut self, victim_id: EntityId) {
         const BOX_LYING_X: f32 = 10.0;
         const BOX_LYING_Y: f32 = 5.0;
-        let (start, layer) = match self.get_entity(victim_id) {
-            Some(e) => (e.element_data().position_map(), e.element_data().layer()),
-            None => return,
-        };
+        let victim = self.expect_entity(victim_id, "find_place_to_die victim");
+        let (start, layer) = (
+            victim.element_data().position_map(),
+            victim.element_data().layer(),
+        );
         let mut bbox = crate::coordinates::MapBBox::from_corners(
             crate::coordinates::MapPoint::new(start.x - BOX_LYING_X, start.y - BOX_LYING_Y),
             crate::coordinates::MapPoint::new(start.x + BOX_LYING_X, start.y + BOX_LYING_Y),
@@ -585,14 +586,10 @@ impl EngineInner {
         };
 
         // Apply damage (requires mutable access to human_data + life_points)
-        let victim = match self.world.entities.get_mut(victim_id) {
-            Some(e) => e,
-            None => return,
-        };
-        let (human, lp) = match victim.human_and_life_points_mut() {
-            Some(pair) => pair,
-            None => return,
-        };
+        let victim = self.expect_entity_mut(victim_id, "apply_sword_damage victim");
+        let (human, lp) = victim
+            .human_and_life_points_mut()
+            .expect("apply_sword_damage victim must be human");
 
         let (result, cutting_inflicted) = combat::receive_sword_damage(sim, human, lp, &params);
 
@@ -1366,20 +1363,13 @@ impl EngineInner {
             carried_id,
             carried_posture,
         ) = {
-            let carrier = match self.get_entity(carrier_id) {
-                Some(e) => e,
-                None => return,
-            };
-            if !carrier.is_pc() {
+            let carrier = self.expect_entity(carrier_id, "drop carried body carrier");
+            // This hook also runs for non-PC victims and PCs carrying no body.
+            let Some(pc) = carrier.pc_data() else {
                 return;
-            }
-            let pc = match carrier.pc_data() {
-                Some(p) => p,
-                None => return,
             };
-            let carried_id = match pc.carried {
-                Some(id) => id,
-                None => return,
+            let Some(carried_id) = pc.carried else {
+                return;
             };
             let elem = carrier.element_data();
             // `sync_carried_positions` runs every tick while the body is
@@ -1984,10 +1974,9 @@ impl EngineInner {
         );
         let life_points = get_life_points(victim);
         let victim = self.expect_entity_mut(victim_id, "apply_hit_damage victim");
-        let human = match victim.human_data_mut() {
-            Some(h) => h,
-            None => return,
-        };
+        let human = victim
+            .human_data_mut()
+            .expect("apply_hit_damage victim must be human");
 
         let outcome = combat::receive_hit_damage(human, life_points, concussion, &ctx);
         let went_unconscious = outcome == combat::ConcussionOutcome::WentUnconscious;
@@ -2174,10 +2163,7 @@ impl EngineInner {
     ) {
         // Read victim posture + action state to pick the right animation.
         let (victim_posture, victim_action) = {
-            let v = match self.get_entity(victim_id) {
-                Some(e) => e,
-                None => return,
-            };
+            let v = self.expect_entity(victim_id, "falling-hit animation victim");
             let posture = v.element_data().posture();
             let action = v
                 .actor_data()
@@ -2458,25 +2444,24 @@ impl EngineInner {
     ///    dead).  Counter still tracks though, so the same victim
     ///    netted while tied gets released correctly on un-apply.
     pub(super) fn apply_net(&mut self, victim_id: EntityId) {
-        let (already_stuck, can_transition) = match self.get_entity(victim_id) {
-            Some(e) => {
-                let posture = e.element_data().posture();
-                let already_stuck = posture == Posture::StuckUnderNet;
-                let unconscious = e.human_data().is_some_and(|h| h.unconscious);
-                let dead = e.is_dead();
-                let can_transition = posture != Posture::Tied && !unconscious && !dead;
-                (already_stuck, can_transition)
-            }
-            None => return,
+        let (already_stuck, can_transition) = {
+            let victim = self.expect_entity(victim_id, "apply_net victim");
+            let posture = victim.element_data().posture();
+            let already_stuck = posture == Posture::StuckUnderNet;
+            let unconscious = victim
+                .human_data()
+                .expect("apply_net victim must be human")
+                .unconscious;
+            let can_transition = posture != Posture::Tied && !unconscious && !victim.is_dead();
+            (already_stuck, can_transition)
         };
         if already_stuck || !can_transition {
             return;
         }
 
         // the stuck-under-net posture and waiting action state.
-        if let Some(entity) = self.world.entities.get_mut(victim_id) {
-            entity.set_posture_stuck_under_net_for_human();
-        }
+        self.expect_entity_mut(victim_id, "apply_net posture victim")
+            .set_posture_stuck_under_net_for_human();
 
         // Netted NPCs broadcast as DetectableType::Body to every NPC
         // *immediately* (not deferred via inform_my_friends) and
@@ -2524,10 +2509,7 @@ impl EngineInner {
 
         // Read state without holding a borrow on self
         let (life_points, is_unconscious, is_pc, in_coma) = {
-            let victim = match self.world.entities.get(victim_id) {
-                Some(e) => e,
-                None => return,
-            };
+            let victim = self.expect_entity(victim_id, "damage unconscious transition victim");
             (
                 get_life_points(victim),
                 victim
@@ -3233,10 +3215,7 @@ impl EngineInner {
         // invariants before the broad outbox reset below discards stale work.
         self.detach_npc_death_relationships(victim_id);
 
-        let victim = match self.world.entities.get_mut(victim_id) {
-            Some(e) => e,
-            None => return,
-        };
+        let victim = self.expect_entity_mut(victim_id, "fresh death cleanup victim");
 
         // Clear movement-side state on the actor so no stale path or
         // active-movement handle is left pointing at the torn-down
