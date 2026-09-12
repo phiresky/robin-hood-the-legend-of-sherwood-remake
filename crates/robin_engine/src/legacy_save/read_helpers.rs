@@ -86,3 +86,31 @@ pub(super) fn reserved<T>(
     reserve(reader, &mut values, count, field)?;
     Ok(values)
 }
+
+pub(super) fn read_array<const N: usize>(
+    reader: &mut LegacyReader<'_>,
+    field: &'static str,
+) -> LegacyResult<[u8; N]> {
+    let mut bytes = [0; N];
+    reader.read_bytes(field, &mut bytes)?;
+    Ok(bytes)
+}
+
+pub(super) fn read_count_u16(
+    reader: &mut LegacyReader<'_>,
+    field: impl std::fmt::Display + Copy,
+    maximum: usize,
+) -> LegacyResult<usize> {
+    let offset = reader.offset();
+    let raw = reader.read_u16(field)?;
+    let count = usize::from(raw);
+    if count > maximum {
+        return Err(reader.invalid_value(
+            offset,
+            field,
+            count,
+            "item count within the caller-supplied limit",
+        ));
+    }
+    Ok(count)
+}

@@ -7,6 +7,7 @@
 //! `Location`. Consequently an RHSG payload cannot be decoded without the
 //! exact mission SCB used to create it.
 
+use super::payload_base::read_element_ref;
 use super::read_helpers::DEFAULT_BULK_LIMIT;
 use serde::{Deserialize, Serialize};
 
@@ -284,16 +285,6 @@ fn read_member_value(
         )?)),
         LegacyVmMemberKind::Location => read_location(reader).map(LegacyVmMemberValue::Location),
     }
-}
-
-fn read_element_ref(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<LegacyElementRef> {
-    let creation_order = reader.read_u32(field)?;
-    Ok(LegacyElementRef(
-        (creation_order != NULL_U32).then_some(creation_order),
-    ))
 }
 
 fn read_location(reader: &mut LegacyReader<'_>) -> LegacyResult<Option<LegacyVmLocation>> {

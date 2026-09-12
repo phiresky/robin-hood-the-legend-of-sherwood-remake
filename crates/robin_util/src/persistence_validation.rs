@@ -25,7 +25,7 @@ pub fn validate<T: Serialize + ?Sized>(value: &T) -> Result<(), PersistenceValid
     })
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
 struct Validator {
     key: bool,
     depth: u8,
@@ -188,7 +188,6 @@ impl ser::Serializer for Validator {
     }
 }
 
-#[derive(Serialize, Deserialize)]
 struct DisplaySink;
 impl std::fmt::Write for DisplaySink {
     fn write_str(&mut self, _: &str) -> std::fmt::Result {

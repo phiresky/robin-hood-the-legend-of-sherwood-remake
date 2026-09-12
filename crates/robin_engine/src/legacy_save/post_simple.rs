@@ -10,6 +10,7 @@
 //! titbit serialization.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
+use super::read_helpers::read_count_u16;
 use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -393,24 +394,6 @@ impl LegacyTitbitsState {
             })
         })
     }
-}
-
-fn read_count_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    let offset = reader.offset();
-    let count = usize::from(reader.read_u16(field)?);
-    if count > maximum {
-        return Err(reader.invalid_value(
-            offset,
-            field,
-            count,
-            "item count within the caller-supplied limit",
-        ));
-    }
-    Ok(count)
 }
 
 #[cfg(test)]

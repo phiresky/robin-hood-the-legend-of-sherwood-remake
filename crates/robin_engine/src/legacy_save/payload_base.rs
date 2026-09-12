@@ -7,6 +7,7 @@
 
 use super::read_helpers::{DEFAULT_BULK_LIMIT, DEFAULT_LIST_LIMIT};
 use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
+use super::read_helpers::{read_array, read_count_u16 as read_bounded_u16};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -313,8 +314,7 @@ impl LegacySpritePayload {
         let last_sound_id = reader.read_u16("last_sound_id")?;
         let last_processed_order_id = reader.read_u32("last_processed_order_id")?;
         let bounding_box = read_box2(reader, "bounding_box")?;
-        let count = read_bounded_u32(
-            reader,
+        let count = reader.read_count_u32(
             "animation_replacements.count",
             limits.sprite_animation_replacements,
         )?;
@@ -630,7 +630,7 @@ impl LegacyMobilePayload {
         }
         let stopped = reader.read_bool("stopped")?;
         let vibration_count =
-            read_bounded_u32(reader, "vibrations.count", limits.mobile_vibrations)?;
+            reader.read_count_u32("vibrations.count", limits.mobile_vibrations)?;
         let mut vibrations = Vec::new();
         reserve(reader, &mut vibrations, vibration_count, "vibrations")?;
         for index in 0..vibration_count {
@@ -660,11 +660,8 @@ impl LegacyMobilePayload {
         let adaptive_speed = reader.read_bool("adaptive_speed")?;
         let front = read_point2(reader, "front")?;
         let back = read_point2(reader, "back")?;
-        let animal_count = read_bounded_u32(
-            reader,
-            "alerted_animals.count",
-            limits.mobile_alerted_animals,
-        )?;
+        let animal_count =
+            reader.read_count_u32("alerted_animals.count", limits.mobile_alerted_animals)?;
         let mut alerted_animals = Vec::new();
         reserve(
             reader,
@@ -1140,7 +1137,7 @@ impl LegacyHumanPayload {
         for (index, value) in sword_strike_boredom.iter_mut().enumerate() {
             *value = reader.read_u16(format_args!("sword_strike_boredom[{index}]"))?;
         }
-        let shoot_count = read_bounded_u32(reader, "shoots.count", limits.human_shoots)?;
+        let shoot_count = reader.read_count_u32("shoots.count", limits.human_shoots)?;
         let mut shoots = Vec::new();
         reserve(reader, &mut shoots, shoot_count, "shoots")?;
         for index in 0..shoot_count {
@@ -1401,7 +1398,7 @@ impl LegacyNpcPayload {
                 format!("detectable_buckets[{bucket_index}]"),
                 |reader| {
                     let count =
-                        read_bounded_u32(reader, "entries.count", limits.npc_detectables_per_type)?;
+                        reader.read_count_u32("entries.count", limits.npc_detectables_per_type)?;
                     let mut entries = Vec::new();
                     reserve(reader, &mut entries, count, "entries")?;
                     for index in 0..count {
@@ -1482,16 +1479,7 @@ fn read_fingerprint(
     reader.read_signature(field, expected, description)
 }
 
-fn read_array<const N: usize>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<[u8; N]> {
-    let mut bytes = [0; N];
-    reader.read_bytes(field, &mut bytes)?;
-    Ok(bytes)
-}
-
-pub fn read_element_ref(
+pub(super) fn read_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyElementRef> {
@@ -1499,7 +1487,7 @@ pub fn read_element_ref(
     Ok(LegacyElementRef((raw != NULL_U32).then_some(raw)))
 }
 
-pub fn read_ai_element_ref(
+pub(super) fn read_ai_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyAiElementRef> {
@@ -1508,21 +1496,21 @@ pub fn read_ai_element_ref(
     Ok(LegacyAiElementRef((raw != NULL_AI_ELEMENT).then_some(raw)))
 }
 
-pub fn read_sequence_element_ref(
+pub(super) fn read_sequence_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySequenceElementRef> {
     read_nonzero_u32_ref(reader, field).map(LegacySequenceElementRef)
 }
 
-pub fn read_sequence_ref(
+pub(super) fn read_sequence_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySequenceRef> {
     read_nullable_u32_ref(reader, field).map(LegacySequenceRef)
 }
 
-pub fn read_order_ref(
+pub(super) fn read_order_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyOrderRef> {
@@ -1556,7 +1544,7 @@ fn read_nonzero_u32_ref(
     }
 }
 
-pub fn read_sector_ref(
+pub(super) fn read_sector_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySectorRef> {
@@ -1564,7 +1552,7 @@ pub fn read_sector_ref(
     Ok(LegacySectorRef((raw != u16::MAX).then_some(raw)))
 }
 
-pub fn read_signed_ref(
+pub(super) fn read_signed_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySignedIndexRef> {
@@ -1572,7 +1560,7 @@ pub fn read_signed_ref(
     Ok(LegacySignedIndexRef((raw != -1).then_some(raw)))
 }
 
-pub fn read_line_ref(
+pub(super) fn read_line_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyLineRef> {
@@ -1619,33 +1607,6 @@ fn read_plane3(
             d: reader.read_f32("d")?,
         })
     })
-}
-
-fn read_bounded_u32(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    reader.read_count_u32(field, maximum)
-}
-
-fn read_bounded_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    let offset = reader.offset();
-    let raw = reader.read_u16(field)?;
-    let count = usize::from(raw);
-    if count > maximum {
-        return Err(reader.invalid_value(
-            offset,
-            field,
-            count,
-            "item count within the caller-supplied limit",
-        ));
-    }
-    Ok(count)
 }
 
 #[cfg(test)]

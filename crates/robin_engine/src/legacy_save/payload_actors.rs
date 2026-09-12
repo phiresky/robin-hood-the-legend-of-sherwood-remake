@@ -588,22 +588,11 @@ fn read_bool3(
 
 #[cfg(test)]
 mod tests {
+    use crate::legacy_save::test_support::{push_f32, push_u16, push_u32};
 
     use super::*;
 
-    fn push_u16(bytes: &mut Vec<u8>, value: u16) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
     fn push_i16(bytes: &mut Vec<u8>, value: i16) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_f32(bytes: &mut Vec<u8>, value: f32) {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
 

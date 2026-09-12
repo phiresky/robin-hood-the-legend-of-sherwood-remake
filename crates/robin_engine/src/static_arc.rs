@@ -12,7 +12,7 @@
 //! is absent from both snapshots and hashes, such changes cannot make those two
 //! representations disagree.
 
-use crate::state_hash::{StateHash, hash_skipped_field};
+use robin_util::state_hash::{StateHash, hash_skipped_field};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -149,7 +149,7 @@ impl<T> StateHash for StaticArc<T> {
 #[cfg(test)]
 mod tests {
     use super::StaticArc;
-    use crate::state_hash;
+    use robin_util::state_hash;
 
     #[test]
     fn payload_is_omitted_from_both_snapshot_and_hash() {
