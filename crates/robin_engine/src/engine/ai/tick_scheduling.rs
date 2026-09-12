@@ -1029,20 +1029,12 @@ impl EngineInner {
                         };
                         let building_sector =
                             self.entity_building_sector(entity.element_data().sector());
-                        build_ai_context_from_entity(
+                        self.ai_context_from_entity(
                             entity,
                             self.control.frame_counter,
                             building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
+                            &scratch,
+                            assets,
                         )
                     };
                     other_ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
@@ -1613,20 +1605,12 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             self.process_pending_begin_panic_for(sim, assets, npc_id, &ctx);
@@ -1640,20 +1624,12 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} disappeared"));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
@@ -1686,20 +1662,12 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             self.process_pending_panic_seek_fallback_for(sim, assets, npc_id, &ctx);
@@ -1731,20 +1699,12 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick_for_seek = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);
@@ -1763,20 +1723,12 @@ impl EngineInner {
                 .get(npc_id)
                 .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} disappeared"));
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
             let tick = self.build_npc_tick_data_without_forecasts(sim, npc_id, assets);

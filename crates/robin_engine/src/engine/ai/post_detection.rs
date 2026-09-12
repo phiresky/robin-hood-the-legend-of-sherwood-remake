@@ -597,20 +597,12 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get(npc_id) else {
                     break;
                 };
-                let mut ctx = build_ai_context_from_entity(
+                let mut ctx = self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
@@ -897,20 +889,12 @@ impl EngineInner {
                     )
                 });
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
-                let mut ctx = build_ai_context_from_entity(
+                let mut ctx = self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {

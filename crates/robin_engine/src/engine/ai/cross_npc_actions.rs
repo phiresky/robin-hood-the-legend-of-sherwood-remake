@@ -79,20 +79,12 @@ impl EngineInner {
                     )
                 });
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(member, &mut ctx);
@@ -353,20 +345,12 @@ impl EngineInner {
                     )
                 });
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
@@ -1836,20 +1820,12 @@ impl EngineInner {
                 .entities
                 .get(source_id)
                 .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(source_id, &mut ctx);
@@ -1929,20 +1905,12 @@ impl EngineInner {
                 .entities
                 .get(source_id)
                 .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(source_id, &mut ctx);
@@ -2084,20 +2052,12 @@ impl EngineInner {
                 .entities
                 .get(source_id)
                 .unwrap_or_else(|| panic!("look-there caller {caller} disappeared"));
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(source_id, &mut ctx);
@@ -2269,20 +2229,12 @@ impl EngineInner {
                 let entity = self.world.entities.get(target_id).unwrap_or_else(|| {
                     panic!("synchronous {stimulus_type:?} target {target} disappeared")
                 });
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let tick_data = self.build_npc_tick_data(sim, target_id, assets);
@@ -2323,20 +2275,12 @@ impl EngineInner {
                     let entity = self.world.entities.get(sender_id).unwrap_or_else(|| {
                         panic!("synchronous fallback sender {sender} disappeared")
                     });
-                    build_ai_context_from_entity(
+                    self.ai_context_from_entity(
                         entity,
                         self.control.frame_counter,
                         building_sector,
-                        self.world.weather.is_forest_level,
-                        self.world.weather.ambiance,
-                        self.ai.standard_view_polygon_radius,
-                        &scratch.ai_entity_views,
-                        &scratch.ai_sight_obstacles,
-                        &self.world.fast_grid,
-                        &assets.navigation.hiking_paths,
-                        &assets.navigation.hiking_waypoint_sectors,
-                        &self.ai.global.all_soldier_handles,
-                        self.control.sim_config.difficulty,
+                        &scratch,
+                        assets,
                     )
                 };
                 let sender_tick = self.build_npc_tick_data(sim, sender_id, assets);

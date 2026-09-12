@@ -45,6 +45,7 @@
 
 use super::*;
 use crate::combat::{self, ConcussionContext, ConcussionOutcome};
+use crate::combat::{angle_to_sector, is_sector_between, sector_to_angle};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::entities::Entities;
 use crate::weapons::SwordStrike;
@@ -2532,29 +2533,6 @@ fn collect_push_victims(
     victims
 }
 
-/// Check if `sector` is between `begin` and `end` (inclusive, wrapping 0-15).
-fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
-    if begin <= end {
-        sector >= begin && sector <= end
-    } else {
-        // Wraps around (e.g., begin=14, end=2 means 14,15,0,1,2)
-        sector >= begin || sector <= end
-    }
-}
-
-/// Convert a 0-15 direction sector to an angle in radians.
-/// Sector 0 = north (negative Y), increasing clockwise.
-/// The trailing `+ 0.1` rad nudges the result a fraction past the
-/// sector's begin edge so `angle_to_sector` round-trips to the same sector.
-fn sector_to_angle(sector: i16) -> f32 {
-    // The original game converts the sector to radians, adds 0.1, and uses double
-    // intermediates because its decimal literals are unsuffixed, then
-    // narrows the result to single precision. That last bit matters to circle strikes:
-    // repeated single-precision rotation additions can otherwise stop an epsilon short
-    // of the final angle and hold the animation for one extra update.
-    ((sector as f64 / 16.0) * 2.0 * f64::from(std::f32::consts::PI) + 0.1) as f32
-}
-
 /// Map a SwordStrike to its animation OrderType.
 fn strike_to_animation(strike: SwordStrike) -> crate::order::OrderType {
     use crate::order::OrderType;
@@ -2594,20 +2572,6 @@ pub(crate) fn sword_strike_from_animation(
         OrderType::StrikingRoundLeftSword => Some(SwordStrike::H),
         OrderType::StrikingRoundRightSword => Some(SwordStrike::I),
         _ => None,
-    }
-}
-
-/// Convert an angle in radians to a 0-15 sector.
-///
-/// Positive angles use the original game's truncating unsigned 32-bit conversion and modulo;
-/// negative angles use its recursive mirror rule.
-fn angle_to_sector(angle: f32) -> u8 {
-    if angle >= 0.0 {
-        ((f64::from(angle) / (2.0 * f64::from(std::f32::consts::PI)) * 16.0) as u32 % 16) as u8
-    } else {
-        // Vector angle-to-sector conversion mirrors negative angles recursively;
-        // this differs from normalization at exact negative boundaries.
-        16 - angle_to_sector(-angle) - 1
     }
 }
 

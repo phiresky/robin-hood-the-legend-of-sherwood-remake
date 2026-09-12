@@ -18,56 +18,54 @@ fn strike_effect_debug_matches(
     attacker_creation_order: u32,
     victim_creation_order: u32,
 ) -> bool {
-    if std::env::var_os("PARITY_DEBUG_STRIKE_EFFECT").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for strike-effect diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_STRIKE_EFFECT_FRAME").is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_ATTACKER_CREATION_ORDER")
-            .is_none_or(|expected| expected == attacker_creation_order)
-        && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER")
-            .is_none_or(|expected| expected == victim_creation_order)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_STRIKE_EFFECT",
+            [
+                "PARITY_DEBUG_STRIKE_EFFECT_FRAME",
+                "PARITY_DEBUG_STRIKE_EFFECT_ATTACKER_CREATION_ORDER",
+                "PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER",
+            ],
+        )
+    })
+    .matches([
+        Some(frame),
+        Some(attacker_creation_order),
+        Some(victim_creation_order),
+    ])
 }
 
 fn special_strike_lifecycle_debug_matches(frame: u32, owner: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_SPECIAL_STRIKE_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for special-strike diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_FRAME").is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_OWNER_HANDLE")
-            .is_none_or(|expected| expected == owner)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SPECIAL_STRIKE_LIFECYCLE",
+            [
+                "PARITY_DEBUG_SPECIAL_STRIKE_FRAME",
+                "PARITY_DEBUG_SPECIAL_STRIKE_OWNER_HANDLE",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(owner)])
 }
 
 fn opponent_sprite_timing_debug_matches(frame: u32, owner: u32, target: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_OPPONENT_SPRITE_TIMING").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for opponent-sprite-timing diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_FRAME")
-        .is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_OWNER")
-            .is_none_or(|expected| expected == owner)
-        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_TARGET")
-            .is_none_or(|expected| expected == target)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_OPPONENT_SPRITE_TIMING",
+            [
+                "PARITY_DEBUG_OPPONENT_SPRITE_TIMING_FRAME",
+                "PARITY_DEBUG_OPPONENT_SPRITE_TIMING_OWNER",
+                "PARITY_DEBUG_OPPONENT_SPRITE_TIMING_TARGET",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(owner), Some(target)])
 }
 
 fn special_strike_selected_snapshot(

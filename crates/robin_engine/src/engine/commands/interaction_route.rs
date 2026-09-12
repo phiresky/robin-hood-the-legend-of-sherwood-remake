@@ -33,6 +33,42 @@ pub(super) fn target_interaction_assert_source_sector(
 }
 
 impl EngineInner {
+    /// Launch the authored interaction directly in range; otherwise retain it
+    /// as the seek continuation without changing its registration order.
+    fn launch_or_seek_then(
+        &mut self,
+        actor: EntityId,
+        target: EntityId,
+        action_style: crate::order::OrderType,
+        action_distance: f32,
+        dist: f32,
+        command_seq: Sequence,
+    ) {
+        if dist <= action_distance {
+            self.launch_sequence(command_seq);
+            return;
+        }
+
+        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
+        if let SequenceElementData::Movement {
+            element,
+            tolerance,
+            flags,
+            post_seek_sequence,
+            ..
+        } = &mut seek.data
+        {
+            *element = Some(target);
+            *tolerance = action_distance;
+            *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
+            *post_seek_sequence = Some(command_seq.into_post_seek());
+        }
+
+        let mut seq = Sequence::new();
+        seq.append_element(seek);
+        self.launch_sequence(seq);
+    }
+
     pub(super) fn actor_action_distance(
         &self,
         actor: EntityId,
@@ -856,30 +892,14 @@ impl EngineInner {
             "apply_scroll_read_with_seek"
         );
 
-        if dist <= action_distance {
-            self.launch_sequence(command_seq);
-            return;
-        }
-
-        // Face-opponent on arrival → USE_POINT on the seek.
-        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
-        if let SequenceElementData::Movement {
-            element,
-            tolerance,
-            flags,
-            post_seek_sequence,
-            ..
-        } = &mut seek.data
-        {
-            *element = Some(target);
-            *tolerance = action_distance;
-            *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
-            *post_seek_sequence = Some(command_seq.into_post_seek());
-        }
-
-        let mut seq = Sequence::new();
-        seq.append_element(seek);
-        self.launch_sequence(seq);
+        self.launch_or_seek_then(
+            actor,
+            target,
+            action_style,
+            action_distance,
+            dist,
+            command_seq,
+        );
     }
 
     /// Build `[Seek(USE_POINT, tolerance=8) → (turn(L1) →
@@ -938,29 +958,14 @@ impl EngineInner {
             "apply_climb_on_shoulders_with_seek"
         );
 
-        if dist <= action_distance {
-            self.launch_sequence(command_seq);
-            return;
-        }
-
-        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
-        if let SequenceElementData::Movement {
-            element,
-            tolerance,
-            flags,
-            post_seek_sequence,
-            ..
-        } = &mut seek.data
-        {
-            *element = Some(target);
-            *tolerance = action_distance;
-            *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
-            *post_seek_sequence = Some(command_seq.into_post_seek());
-        }
-
-        let mut seq = Sequence::new();
-        seq.append_element(seek);
-        self.launch_sequence(seq);
+        self.launch_or_seek_then(
+            actor,
+            target,
+            action_style,
+            action_distance,
+            dist,
+            command_seq,
+        );
     }
 }
 
