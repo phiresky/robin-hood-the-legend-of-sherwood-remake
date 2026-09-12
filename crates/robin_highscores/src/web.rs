@@ -3793,7 +3793,7 @@ fn select_fresh_run_profile<'a>(
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            Ok(competition.admission_profile_id.as_str())
+            Ok::<_, ApiError>(competition.admission_profile_id.as_str())
         })
         .transpose()?;
     let profile = matching_admission_profiles(
@@ -3899,7 +3899,7 @@ fn select_continuation_preflight_profile<'a>(
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            Ok(competition.admission_profile_id.as_str())
+            Ok::<_, ApiError>(competition.admission_profile_id.as_str())
         })
         .transpose()?;
     let profile = matching_admission_profiles(
