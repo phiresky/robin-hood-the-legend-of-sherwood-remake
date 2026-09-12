@@ -78,14 +78,14 @@ use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
 use robin_engine::replay_rankability::InputTaintKind;
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::thread;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::time::Duration;
 
 use robin_engine::engine::{Engine, LevelAssets};
@@ -437,14 +437,14 @@ mod request_lifetime;
 pub use request_lifetime::Responder;
 
 mod ingress;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 mod native_routes;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 mod native_transport;
 mod request_decode;
 use ingress::RequestRouter;
 pub use ingress::SessionIngress;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use native_transport::NativeRequest;
 
 type Queue = Arc<Mutex<RequestRouter>>;
@@ -453,11 +453,11 @@ struct HttpServer {
     replay_exports: crate::replay_service::ReplayExports,
     replay_launches: crate::replay_service::ReplayLaunches,
     queue: Queue,
-    #[cfg(all(test, not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
     bind_addr: std::net::SocketAddr,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
     listener: Option<thread::JoinHandle<()>>,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
     stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -516,7 +516,7 @@ impl HttpTransport {
     pub fn stop(&mut self) {
         self.port = None;
         if let Some(server) = self.server.take() {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             let mut server = server;
             #[cfg(target_arch = "wasm32")]
             BROWSER_QUEUE.with(|binding| {
@@ -525,12 +525,12 @@ impl HttpTransport {
                     *binding = std::sync::Weak::new();
                 }
             });
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             if let Some(stop) = server.stop.take() {
                 let _ = stop.send(());
             }
             server.queue.lock().expect("RPC router poisoned").retire();
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             if let Some(listener) = server.listener.take() {
                 if listener.join().is_err() {
                     tracing::error!("script HTTP listener panicked during shutdown");
@@ -543,6 +543,29 @@ impl HttpTransport {
 impl Drop for HttpTransport {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(all(test, not(feature = "script-rpc"), not(target_arch = "wasm32")))]
+mod disabled_transport_tests {
+    use super::*;
+
+    #[test]
+    fn native_listener_requires_feature_but_disabled_ingress_remains_usable() {
+        let replay = crate::replay_service::ReplayService::default();
+        let mut transport = HttpTransport::default();
+        assert!(
+            transport
+                .start(DEFAULT_PORT, replay.exports(), replay.launches())
+                .is_err()
+        );
+        assert!(!transport.is_started());
+        transport
+            .start(0, replay.exports(), replay.launches())
+            .unwrap();
+        let _ingress = transport.attach();
+        transport.stop();
+        assert!(!transport.is_started());
     }
 }
 
@@ -626,7 +649,7 @@ mod browser_transport_tests {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 mod transport_lifecycle_tests {
     use super::*;
     use std::io::Write;
@@ -1037,7 +1060,7 @@ impl HttpTransport {
             0
         };
         if let Some(bound_port) = self.port {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             if self
                 .server
                 .as_ref()
@@ -1076,7 +1099,16 @@ impl HttpTransport {
             tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
             Ok(())
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(feature = "script-rpc"), not(target_arch = "wasm32")))]
+        {
+            let _ = (replay_exports, replay_launches);
+            if port != 0 {
+                return Err("native HTTP transport requires the script-rpc feature".into());
+            }
+            self.port = Some(0);
+            Ok(())
+        }
+        #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
         {
             if port == 0 {
                 self.port = Some(port);
@@ -1091,7 +1123,7 @@ impl HttpTransport {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 fn start(
     port: u16,
     replay_exports: crate::replay_service::ReplayExports,
@@ -1155,7 +1187,7 @@ fn start(
 /// never send `Origin` / `Sec-Fetch-Site` and send an exact local
 /// `Host`, so they pass untouched. Returns a rejection reason, or
 /// `None` when the request is acceptable.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 fn browser_rejection_reason(
     origin: Option<&str>,
     sec_fetch_site: Option<&str>,
@@ -1185,7 +1217,7 @@ fn browser_rejection_reason(
 
 /// Send a payload to the game loop and wait for the reply.  Caps the
 /// wait at 60 s so a wedged game doesn't hang the client forever.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
     let (response_tx, rx) = Responder::channel();
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -1727,7 +1759,7 @@ impl PendingStep {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
@@ -2093,7 +2125,7 @@ mod tests {
         assert!(browser_rejection_reason(None, None, Some("LOCALHOST:17640"), 17640).is_none());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
     #[test]
     fn screenshot_query_parses_frame_and_full_map() {
         let req =
