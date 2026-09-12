@@ -2272,7 +2272,7 @@ mod tests {
     #[test]
     fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
+        let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Waiting));
         let (seq_id, elem_idx) = launch(&mut engine, owner, Command::CrouchDown);
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
@@ -2311,7 +2311,7 @@ mod tests {
     fn transition_stages_revalidate_callback_mutations_even_on_refusal() {
         for allowed in [true, false] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(make_pc(P::Upright, AS::Waiting));
+            let owner = engine.add_test_entity(make_pc(P::Upright, AS::Waiting));
             let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
             let target = TransitionTarget {
                 owner,
@@ -2345,7 +2345,7 @@ mod tests {
     #[test]
     fn transition_stages_observe_live_state_without_reordering_effects() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Upright, AS::Waiting));
+        let owner = engine.add_test_entity(make_pc(P::Upright, AS::Waiting));
         let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
         let target = TransitionTarget {
             owner,
@@ -2420,7 +2420,7 @@ mod tests {
     #[test]
     fn lying_soldier_stand_up_transition_is_in_place_no_direction() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Lying, AS::WaitingSword, false));
+        let owner = engine.add_test_entity(make_soldier(P::Lying, AS::WaitingSword, false));
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2450,8 +2450,8 @@ mod tests {
         let mut engine = EngineInner::new();
         // Exercise the soldier path because its synchronous quit also drives
         // the ordinary NPC AI callbacks covered by this regression.
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::WaitingSword, false));
-        let opponent = engine.add_entity(make_pc(P::Upright, AS::WaitingSword));
+        let owner = engine.add_test_entity(make_soldier(P::Upright, AS::WaitingSword, false));
+        let opponent = engine.add_test_entity(make_pc(P::Upright, AS::WaitingSword));
         // The synchronous quit notifies the AI, which reads every live PC's
         // campaign-description identity.
         engine
@@ -2528,7 +2528,7 @@ mod tests {
     #[test]
     fn tied_soldier_rejects_upright_command_like_original_release() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Tied, AS::Waiting, false));
+        let owner = engine.add_test_entity(make_soldier(P::Tied, AS::Waiting, false));
         let (seq, idx) = launch(&mut engine, owner, Command::RaiseBow);
 
         assert!(!generate_transition(&mut engine, owner, seq, idx));
@@ -2547,7 +2547,7 @@ mod tests {
     #[test]
     fn anonymous_archer_aiming_bow_up_transition_uses_anonymous_raise() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::AnonymousArcher, AS::Waiting));
+        let owner = engine.add_test_entity(make_pc(P::AnonymousArcher, AS::Waiting));
         let (seq, idx) = launch(&mut engine, owner, Command::LowerBow);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2569,7 +2569,7 @@ mod tests {
     #[test]
     fn soldier_move_from_leaning_out_queues_unstick() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
+        let owner = engine.add_test_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
         let (seq, idx) =
             launch_movement(&mut engine, owner, Command::Move, OrderType::WalkingUpright);
 
@@ -2590,7 +2590,7 @@ mod tests {
     #[test]
     fn soldier_lean_out_from_leaning_out_stays_leaning_out() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
+        let owner = engine.add_test_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
         let (seq, idx) = launch(&mut engine, owner, Command::LeanOut);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2610,7 +2610,7 @@ mod tests {
     #[test]
     fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, true));
+        let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Waiting, true));
         let (seq, idx) = launch(&mut engine, owner, Command::EquipBowDown);
 
         let ok = dispatch_make_final_action_transition(
@@ -2637,7 +2637,8 @@ mod tests {
     #[test]
     fn soldier_bow_down_exit_queues_unload_before_unequip() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::AimingWithBowDown, false));
+        let owner =
+            engine.add_test_entity(make_soldier(P::LeaningOut, AS::AimingWithBowDown, false));
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2663,7 +2664,7 @@ mod tests {
     #[test]
     fn soldier_move_from_crouched_stays_crouched() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Crouched, AS::Waiting, false));
+        let owner = engine.add_test_entity(make_soldier(P::Crouched, AS::Waiting, false));
         let (seq, idx) =
             launch_movement(&mut engine, owner, Command::Move, OrderType::WalkingUpright);
 
@@ -2690,8 +2691,8 @@ mod tests {
     #[test]
     fn crouched_pc_takes_bonus_net_without_landed_net_standup() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
-        let bonus_net = engine.add_entity(Entity::Bonus(crate::element::ElementBonus {
+        let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Waiting));
+        let bonus_net = engine.add_test_entity(Entity::Bonus(crate::element::ElementBonus {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::ObjectBonus;
@@ -2730,7 +2731,7 @@ mod tests {
     #[test]
     fn soldier_run_from_crouched_queues_crouch_up() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Crouched, AS::Waiting, false));
+        let owner = engine.add_test_entity(make_soldier(P::Crouched, AS::Waiting, false));
         let (seq, idx) =
             launch_movement(&mut engine, owner, Command::Move, OrderType::RunningUpright);
 
@@ -2755,7 +2756,7 @@ mod tests {
     #[test]
     fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Crouched, AS::Moving));
+        let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Moving));
         let (seq, idx) = launch_movement(
             &mut engine,
             owner,
@@ -2799,7 +2800,7 @@ mod tests {
     #[test]
     fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Crouched, AS::Moving));
+        let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Moving));
         let (seq, idx) = launch_movement(
             &mut engine,
             owner,
@@ -2844,11 +2845,11 @@ mod tests {
     fn pc_carrying_on_shoulders_exit_queues_lower_then_stand_chain() {
         let mut engine = EngineInner::new();
         let mut carrier = make_pc(P::CarryingOnShoulders, AS::Waiting);
-        let carried = engine.add_entity(make_pc(P::OnShoulders, AS::Waiting));
+        let carried = engine.add_test_entity(make_pc(P::OnShoulders, AS::Waiting));
         if let Entity::Pc(pc) = &mut carrier {
             pc.pc.carried = Some(carried);
         }
-        let owner = engine.add_entity(carrier);
+        let owner = engine.add_test_entity(carrier);
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2873,7 +2874,7 @@ mod tests {
     #[test]
     fn pc_carrying_corpse_without_carried_entity_is_impossible() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::CarryingCorpse, AS::Waiting));
+        let owner = engine.add_test_entity(make_pc(P::CarryingCorpse, AS::Waiting));
         let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2890,12 +2891,12 @@ mod tests {
     #[test]
     fn pc_enter_swordfight_from_carrying_corpse_registers_exit_before_execute() {
         let mut engine = EngineInner::new();
-        let carried = engine.add_entity(make_soldier(P::Carried, AS::Waiting, false));
+        let carried = engine.add_test_entity(make_soldier(P::Carried, AS::Waiting, false));
         let mut carrier = make_pc(P::CarryingCorpse, AS::Waiting);
         if let Entity::Pc(pc) = &mut carrier {
             pc.pc.carried = Some(carried);
         }
-        let owner = engine.add_entity(carrier);
+        let owner = engine.add_test_entity(carrier);
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2933,7 +2934,7 @@ mod tests {
     #[test]
     fn pc_crouch_up_from_crouched_snaps_to_upright() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
+        let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Waiting));
         let (seq, idx) = launch(&mut engine, owner, Command::CrouchUp);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -2960,7 +2961,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut soldier = make_soldier(P::Upright, AS::Waiting, false);
         soldier.element_data_mut().set_direction_goal(15);
-        let owner = engine.add_entity(soldier);
+        let owner = engine.add_test_entity(soldier);
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -3003,7 +3004,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut soldier = make_soldier(P::Upright, AS::Waiting, true);
         soldier.element_data_mut().set_direction_goal(1);
-        let owner = engine.add_entity(soldier);
+        let owner = engine.add_test_entity(soldier);
         let (seq, idx) = launch(&mut engine, owner, Command::SitDown);
 
         assert!(generate_transition(&mut engine, owner, seq, idx));
@@ -3044,7 +3045,7 @@ mod tests {
             enemy.will_be_attentive = true;
             enemy.attentive = false;
         }
-        let owner = engine.add_entity(e);
+        let owner = engine.add_test_entity(e);
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -3065,7 +3066,7 @@ mod tests {
     #[test]
     fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, false));
+        let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Waiting, false));
         let sim = crate::sim_rng::test_context();
         let assets = crate::engine::LevelAssets::default();
 
@@ -3132,7 +3133,7 @@ mod tests {
     #[test]
     fn attentive_soldier_enter_swordfight_no_double_alert() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, true));
+        let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Waiting, true));
         let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -3152,7 +3153,7 @@ mod tests {
     #[test]
     fn bored_soldier_wait_no_transition() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::Bored, false));
+        let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Bored, false));
         let (seq, idx) = launch(&mut engine, owner, Command::Wait);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -3174,7 +3175,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = crate::engine::LevelAssets::new();
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(P::Upright, AS::Bored));
+        let owner = engine.add_test_entity(make_pc(P::Upright, AS::Bored));
         let (seq, idx) = launch(&mut engine, owner, Command::ThrowPurse);
 
         assert!(generate_transition(&mut engine, owner, seq, idx));
@@ -3269,7 +3270,7 @@ mod tests {
     #[test]
     fn soldier_crouch_down_from_upright_moving_queues_exit() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(P::Upright, AS::Moving, false));
+        let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Moving, false));
         let (seq, idx) = launch(&mut engine, owner, Command::CrouchDown);
 
         let ok = generate_transition(&mut engine, owner, seq, idx);

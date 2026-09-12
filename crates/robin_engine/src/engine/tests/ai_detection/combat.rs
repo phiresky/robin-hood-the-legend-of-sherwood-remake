@@ -6,9 +6,9 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
-    let source_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let member_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let source_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let member_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for id in [source_id, chief_id, member_id] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
             panic!("LOOKTHERE broadcast test NPC changed kind")
@@ -74,7 +74,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
     use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
 
     let mut engine = EngineInner::new();
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::Target;
@@ -83,9 +83,9 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let old_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let viewed_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let soldier_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let old_target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let viewed_target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(soldier_id)

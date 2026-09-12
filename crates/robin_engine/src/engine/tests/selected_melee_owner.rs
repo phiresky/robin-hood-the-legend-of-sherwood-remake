@@ -142,8 +142,8 @@ fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
 #[test]
 fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::WaitingUpright);
     let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
     engine.orders.sequence_manager.element_interrupted(
@@ -181,8 +181,8 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
 #[test]
 fn production_owner_obeys_execution_frozen() {
     let mut frozen_actor_engine = EngineInner::new();
-    let attacker = frozen_actor_engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = frozen_actor_engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = frozen_actor_engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = frozen_actor_engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(
         &mut frozen_actor_engine,
         attacker,
@@ -210,8 +210,8 @@ fn production_owner_obeys_execution_frozen() {
 #[test]
 fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, victim, 40.0, 0.0);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
@@ -287,8 +287,8 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
 #[test]
 fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     install_selected_melee(&mut engine, attacker, victim);
     run_owner_walk(&mut engine, &straight_warning_assets(0, 100));
@@ -305,10 +305,10 @@ fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
 fn straight_start_does_not_warn_or_draw_for_out_of_range_or_nonprincipal_target() {
     for case in ["out_of_range", "nonprincipal"] {
         let mut engine = EngineInner::new();
-        let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-        let principal = engine.add_entity(make_test_pc(Posture::Upright));
+        let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
         let nominal_target = if case == "nonprincipal" {
-            engine.add_entity(make_test_pc(Posture::Upright))
+            engine.add_test_entity(make_test_pc(Posture::Upright))
         } else {
             principal
         };
@@ -338,8 +338,8 @@ fn straight_start_does_not_warn_or_draw_for_out_of_range_or_nonprincipal_target(
 #[test]
 fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let principal = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, principal, 20.0, 0.0);
     engine
@@ -368,11 +368,11 @@ fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
 #[test]
 fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let lower_slot_later = engine.add_entity(make_test_pc(Posture::Upright));
-    let higher_slot_earlier = engine.add_entity(make_test_pc(Posture::Upright));
-    let earlier_principal = engine.add_entity(make_test_pc(Posture::Upright));
-    let later_principal = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let lower_slot_later = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let higher_slot_earlier = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let earlier_principal = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let later_principal = engine.add_test_entity(make_test_pc(Posture::Upright));
 
     bind_animation(&mut engine, attacker, OrderType::StrikingLeftSword);
     for victim in [lower_slot_later, higher_slot_earlier] {
@@ -501,8 +501,8 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
 #[test]
 fn straight_start_warns_principal_without_common_victim_filter() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let principal = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, principal, 20.0, 0.0);
     engine
@@ -535,8 +535,8 @@ fn straight_start_warns_principal_without_common_victim_filter() {
 #[test]
 fn straight_done_hits_principal_without_common_victim_filter() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let principal = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, principal, 20.0, 0.0);
     engine
@@ -575,8 +575,8 @@ fn straight_done_hits_principal_without_common_victim_filter() {
 #[test]
 fn smalltalk_done_uses_isometric_facing_for_back_hit_gate() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     // For sector 2 and this relative position, a raw unit-circle dot
     // product is negative while Original's aspect-scaled map-plane vector
@@ -611,8 +611,8 @@ fn smalltalk_done_uses_isometric_facing_for_back_hit_gate() {
 #[test]
 fn push_start_uses_original_aspect_scaled_rectangle() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     // This is the same side-boundary geometry as the completed-hit
     // regression below: an unscaled unit-circle vector rejects the victim,
@@ -657,8 +657,8 @@ fn push_start_uses_original_aspect_scaled_rectangle() {
 #[test]
 fn push_done_uses_original_aspect_scaled_rectangle() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     // At sector 3 the unscaled unit-circle vector puts this actor about
     // 11.55 units from the strike axis and rejects it. Original's
@@ -703,8 +703,8 @@ fn push_done_uses_original_aspect_scaled_rectangle() {
 #[test]
 fn push_done_uses_ground_positions_but_warning_keeps_map_positions() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     engine
         .get_entity_mut(attacker)
@@ -759,8 +759,8 @@ fn push_done_uses_ground_positions_but_warning_keeps_map_positions() {
 #[test]
 fn push_done_flat_positions_match_warning_geometry() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     engine
         .get_entity_mut(attacker)
@@ -812,8 +812,8 @@ fn push_done_flat_positions_match_warning_geometry() {
 #[test]
 fn smalltalk_done_uses_ground_positions_for_back_hit_gate() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -871,8 +871,8 @@ fn smalltalk_done_uses_ground_positions_for_back_hit_gate() {
 #[test]
 fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
     let assets = LevelAssets::new();
@@ -934,7 +934,7 @@ fn learning_test_soldier(engine: &mut EngineInner) -> EntityId {
     s.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     s.soldier.cached_camp = crate::element::Camp::Lacklandists;
     s.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
-    let id = engine.add_entity(soldier);
+    let id = engine.add_test_entity(soldier);
     let entity = engine.get_entity_mut(id).expect("test soldier exists");
     let Entity::Soldier(s) = entity else {
         unreachable!()

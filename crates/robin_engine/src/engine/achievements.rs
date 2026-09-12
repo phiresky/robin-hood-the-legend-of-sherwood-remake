@@ -690,7 +690,7 @@ mod tests {
         let assets = super::super::LevelAssets::new();
         let mut pursuers = BTreeSet::new();
         for _ in 0..3 {
-            let id = engine.add_entity(test_soldier(Camp::Lacklandists));
+            let id = engine.add_test_entity(test_soldier(Camp::Lacklandists));
             pursuers.insert(id);
         }
         engine
@@ -701,7 +701,7 @@ mod tests {
             let mut element = ElementData::default();
             element.active = true;
             element.in_honolulu = off_map;
-            engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
                 element,
                 actor: Default::default(),
                 human: Default::default(),
@@ -896,7 +896,7 @@ mod tests {
     fn arrangement_uses_live_player_coalition_instead_of_royalist_fallback() {
         for (camp, expected_hostiles) in [(Camp::Royalists, 1), (Camp::Custom(4), 0)] {
             let mut engine = engine_with_custom_player_coalition();
-            engine.add_entity(test_soldier(camp));
+            engine.add_test_entity(test_soldier(camp));
 
             engine.initialize_achievement_tracking(&super::super::LevelAssets::default());
 
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn selected_non_royalist_player_soldier_is_direct_player_causality() {
         let mut engine = engine_with_custom_player_coalition();
-        let soldier = engine.add_entity(test_soldier(Camp::Custom(4)));
+        let soldier = engine.add_test_entity(test_soldier(Camp::Custom(4)));
         engine.players.tactical.seats[0].selection.push(soldier);
 
         assert_eq!(

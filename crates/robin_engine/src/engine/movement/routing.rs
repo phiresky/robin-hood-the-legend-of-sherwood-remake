@@ -1437,7 +1437,7 @@ mod exact_ai_goto_source_tests {
             .set_position_map(MapPoint::new(110.0, 200.0));
         soldier.element.set_sector(Some(raw_sector));
         soldier.element.set_layer(2);
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
         position.set_sector_topology(Some(raw_sector), Some(raw_index));
         position.set_door(
@@ -1562,7 +1562,7 @@ mod exact_ai_goto_source_tests {
         soldier.element.set_layer(4);
         // Legacy adoption retained the public sector but not its exact sector reference.
         soldier.element.set_sector(SectorHandle::new(104));
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         let mut intent = crate::order::AiOrderIntent::new(
             crate::order::OrderType::RunningUpright,

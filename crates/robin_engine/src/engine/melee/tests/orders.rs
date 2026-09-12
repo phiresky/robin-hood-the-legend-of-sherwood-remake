@@ -218,7 +218,7 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -229,7 +229,7 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
     // Facing south (sector 8), thrust D covers sectors 4..=9. Keep the
     // valid victims on either side of the out-of-arc antagonist in actor
     // creation order so the assertion also guards the collector FIFO.
-    let first_in_arc = engine.add_entity(make_soldier(
+    let first_in_arc = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 20.0,
             y: 100.0,
@@ -237,7 +237,7 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
         },
         None,
     ));
-    let antagonist = engine.add_entity(make_soldier(
+    let antagonist = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: -20.0,
             y: 120.0,
@@ -245,7 +245,7 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
         },
         None,
     ));
-    let second_in_arc = engine.add_entity(make_soldier(
+    let second_in_arc = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 0.0,
             y: 120.0,
@@ -297,7 +297,7 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -305,7 +305,7 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
         },
         None,
     ));
-    let victim = engine.add_entity(make_soldier(
+    let victim = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -461,7 +461,7 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -469,7 +469,7 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
         },
         None,
     ));
-    let victim = engine.add_entity(make_soldier(
+    let victim = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -520,7 +520,7 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
 #[test]
 fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -528,7 +528,7 @@ fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
         },
         None,
     ));
-    let victim = engine.add_entity(make_soldier(
+    let victim = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -608,7 +608,7 @@ fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
 #[test]
 fn slope_translate_roll_order_keeps_its_source_authored_direction_recompute() {
     let mut engine = make_engine();
-    let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+    let victim = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
     let mut assets = LevelAssets::new();
@@ -653,18 +653,18 @@ fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_soldier(WorldPoint3D::default(), None));
+    let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::default(), None));
     // Allocate the survivor first so typed entity iteration disagrees with
     // Original's actor registry below. This is the Save016 shape: the
     // later-ID victim must knock out and unlink the attacker first.
-    let survivor = engine.add_entity(make_pc(
+    let survivor = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 20.0,
             ..WorldPoint3D::default()
         },
         None,
     ));
-    let knockout = engine.add_entity(make_pc(
+    let knockout = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 10.0,
             ..WorldPoint3D::default()
@@ -794,8 +794,8 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
-    let victim = engine.add_entity(make_soldier(
+    let attacker = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
+    let victim = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             ..WorldPoint3D::ZERO
@@ -862,7 +862,7 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let owner = engine.add_entity(make_soldier(
+    let owner = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -870,7 +870,7 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
         },
         None,
     ));
-    let old_primary = engine.add_entity(make_pc(
+    let old_primary = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -878,7 +878,7 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
         },
         None,
     ));
-    let replacement = engine.add_entity(make_pc(
+    let replacement = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 20.0,
             y: 100.0,
@@ -947,8 +947,8 @@ fn enabling_temp_actions_restores_matching_slot_after_targeted_selection_collaps
 
     let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
     let mut engine = make_engine();
-    let pc = engine.add_entity(make_pc(WorldPoint3D::default(), None));
-    let companion = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+    let pc = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
+    let companion = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
     engine.players.seats[0].selection = vec![pc, companion];
     {
         let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
@@ -995,7 +995,7 @@ fn enabling_temp_actions_does_not_restore_action_absent_from_profile_slots() {
 
     let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
     let mut engine = make_engine();
-    let pc = engine.add_entity(make_pc(WorldPoint3D::default(), None));
+    let pc = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
     engine.players.seats[0].selection.push(pc);
     {
         let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();

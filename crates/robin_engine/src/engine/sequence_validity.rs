@@ -1943,7 +1943,7 @@ mod tests {
     }
 
     fn add_pc(engine: &mut EngineInner) -> EntityId {
-        engine.add_entity(Entity::Pc(ActorPc {
+        engine.add_test_entity(Entity::Pc(ActorPc {
             element: actor_element(ElementKind::ActorPc),
             actor: Default::default(),
             human: Default::default(),
@@ -1952,7 +1952,7 @@ mod tests {
     }
 
     fn add_soldier(engine: &mut EngineInner) -> EntityId {
-        engine.add_entity(Entity::Soldier(ActorSoldier {
+        engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: actor_element(ElementKind::ActorSoldier),
             actor: Default::default(),
             human: Default::default(),
@@ -1971,7 +1971,7 @@ mod tests {
             initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(position_x, 0.0));
-        let child = engine.add_entity(Entity::Fx(ElementFx {
+        let child = engine.add_test_entity(Entity::Fx(ElementFx {
             element,
             fx: FxData {
                 mobile_index: Some(mobile_index),
@@ -2126,7 +2126,7 @@ mod tests {
         } else {
             add_soldier(&mut engine)
         };
-        let object = engine.add_entity(object_element(object_type));
+        let object = engine.add_test_entity(object_element(object_type));
         let element = SequenceElement::new_interaction(1, Command::Take, Some(actor), Some(object));
 
         engine.check_sequence_element_validity(&assets, actor, &element, true)
@@ -2355,7 +2355,7 @@ mod tests {
                 TargetKind::Fx(distance) => {
                     let mut element = actor_element(ElementKind::Fx);
                     element.set_position_map(crate::coordinates::MapPoint::new(distance, 0.0));
-                    engine.add_entity(Entity::Fx(crate::element::ElementFx {
+                    engine.add_test_entity(Entity::Fx(crate::element::ElementFx {
                         element,
                         fx: Default::default(),
                     }))

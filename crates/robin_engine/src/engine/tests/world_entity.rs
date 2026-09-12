@@ -23,7 +23,7 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
         .hth_weapon_id = 1;
     let ai = soldier.npc.ai_brain.base_mut().unwrap();
     ai.say_with_flags(Remark::Arrow, SpeechFlags::MYTALK_1 | SpeechFlags::ALWAYS);
-    let soldier_id = engine.add_entity(soldier_entity);
+    let soldier_id = engine.add_test_entity(soldier_entity);
 
     let mut assets = LevelAssets::new();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -88,7 +88,7 @@ fn add_speech_test_npc(
                 .enemy_mut()
                 .expect("speech soldier has EnemyAi")
                 .hth_weapon_id = 1;
-            engine.add_entity(entity)
+            engine.add_test_entity(entity)
         }
         SpeechNpcKind::Civilian { vip } => {
             let profile_index = {
@@ -112,7 +112,7 @@ fn add_speech_test_npc(
             };
             civilian.civilian.civilian_profile_index = profile_index;
             civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::default());
-            engine.add_entity(entity)
+            engine.add_test_entity(entity)
         }
     }
 }
@@ -176,7 +176,7 @@ fn exclamation_for(
 fn make_alert_soldier_owner(engine: &mut EngineInner) -> EntityId {
     use crate::element::AiBrain;
 
-    let owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(owner)
         .expect("soldier-alert test civilian exists")
@@ -196,9 +196,9 @@ fn check_detectable_snapshot_and_drain_matrix() {
     use crate::element::DetectableType::Friend;
     let sim = crate::sim_rng::test_context();
     let mut base = EngineInner::new();
-    let owner = base.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = base.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let sibling = base.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = base.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = base.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let sibling = base.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let cases = [
         (vec![Add(target, Friend), DeleteType(Friend)], vec![]),
         (vec![DeleteType(Friend), Add(target, Friend)], vec![target]),
@@ -346,7 +346,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     // Occupy slot 0 with a non-human entity: handle 0 is the null element
     // in AI handle space, so Charly must not land there or his viewer
     // identity cannot be resolved from the entity-view snapshot.
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -355,8 +355,10 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         fx: Default::default(),
         target: Default::default(),
     }));
-    let charly_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let charly_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -452,7 +454,7 @@ fn run_synchronous_civilian_alert(
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -461,8 +463,9 @@ fn run_synchronous_civilian_alert(
         fx: Default::default(),
         target: Default::default(),
     }));
-    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
-    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
+    let soldier_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .civilians
@@ -583,7 +586,7 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
     // AI human handles use zero as missing, so keep production NPCs off slot 0.
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -592,8 +595,10 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
         fx: Default::default(),
         target: Default::default(),
     }));
-    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let soldier_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     for (id, rank, x) in [

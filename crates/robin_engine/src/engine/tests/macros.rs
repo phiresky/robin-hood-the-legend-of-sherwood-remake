@@ -11,7 +11,7 @@ fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
     actor.position_iface_mut().clear_pathfinder_index();
     actor.element_data_mut().active = true;
     actor.pc_data_mut().expect("PC fixture").life_points = 100;
-    let pc = engine.add_entity(actor);
+    let pc = engine.add_test_entity(actor);
     // Macro playback dispatches real group-move commands, whose formation
     // geometry reads the mover's map position and move box. A default
     // entity has an empty (hyperspace) box, so give it real geometry.

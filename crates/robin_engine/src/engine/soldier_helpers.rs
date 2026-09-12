@@ -2092,7 +2092,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let owner = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -2236,7 +2236,7 @@ mod tests {
         element.set_position_map(point_in);
         element.set_sector(crate::position_interface::SectorHandle::new(118));
         element.set_layer(6);
-        let pc = engine.add_entity(Entity::Pc(ActorPc {
+        let pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {

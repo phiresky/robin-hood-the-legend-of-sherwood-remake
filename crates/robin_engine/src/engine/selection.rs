@@ -1434,7 +1434,7 @@ mod tests {
     use crate::sequence::SequenceState;
 
     fn add_selectable_test_pc(engine: &mut EngineInner) -> EntityId {
-        engine.add_entity(Entity::Pc(ActorPc {
+        engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;
@@ -1452,7 +1452,7 @@ mod tests {
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
         let previously_selected = add_selectable_test_pc(&mut engine);
-        let rescued_pc = engine.add_entity(Entity::Pc(ActorPc {
+        let rescued_pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;
@@ -1487,7 +1487,7 @@ mod tests {
             ..LevelAssets::new()
         };
         let mut engine = EngineInner::new();
-        let rescued_pc = engine.add_entity(Entity::Pc(ActorPc {
+        let rescued_pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;
@@ -1523,7 +1523,7 @@ mod tests {
     fn single_selection_restitution_replays_current_action_side_effects() {
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+        let pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;

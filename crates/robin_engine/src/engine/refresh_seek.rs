@@ -1366,7 +1366,7 @@ mod tests {
         let mut engine = crate::engine::EngineInner::new();
         engine.scripts.mission = Some(minimal_mission());
         engine.script_domains.interactables.doors = drop_ale_exit_doors();
-        let owner = engine.add_entity(test_pc_at(100.0, 100.0, 133));
+        let owner = engine.add_test_entity(test_pc_at(100.0, 100.0, 133));
         let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
         let sequence_id =
             engine
@@ -1597,7 +1597,7 @@ mod tests {
             actor.continuation.seek_to_point = false;
         }
         owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingStairs;
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -1932,7 +1932,7 @@ mod tests {
         build_gate_links(&mut doors);
         engine.script_domains.interactables.doors = doors;
 
-        let owner = engine.add_entity(test_pc_at(50.0, 50.0, 0));
+        let owner = engine.add_test_entity(test_pc_at(50.0, 50.0, 0));
         {
             let owner_position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
             // The adopted PC carries only the public sector. Original's
@@ -1943,7 +1943,7 @@ mod tests {
                 -4.0, -4.0, 4.0, 4.0,
             ));
         }
-        let target = engine.add_entity(test_pc_at(350.0, 50.0, 88));
+        let target = engine.add_test_entity(test_pc_at(350.0, 50.0, 88));
         {
             let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
             target_element.set_layer(2);
@@ -2027,14 +2027,14 @@ mod tests {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -4.0, -4.0, 4.0, 4.0,
             ));
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
         let mut target_entity = test_pc_at(50.0, 0.0, 2);
         target_entity
             .position_iface_mut()
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 46.0, -4.0, 54.0, 4.0,
             ));
-        let target = engine.add_entity(target_entity);
+        let target = engine.add_test_entity(target_entity);
 
         let mut seek =
             SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
@@ -2105,7 +2105,7 @@ mod tests {
         owner_entity
             .element_data_mut()
             .publish_order_posture(Posture::HelpingToClimb);
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
 
         let sequence_id = engine
             .build_gate_movement_sequence(
@@ -2162,8 +2162,8 @@ mod tests {
                 -6.0, -4.0, 6.0, 4.0,
             ));
         owner_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
-        let owner = engine.add_entity(owner_entity);
-        let target = engine.add_entity(test_moving_soldier_at(target_position));
+        let owner = engine.add_test_entity(owner_entity);
+        let target = engine.add_test_entity(test_moving_soldier_at(target_position));
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
         let _ = engine.resolve_entity_seek(
@@ -2222,8 +2222,8 @@ mod tests {
         let sim = &sim_context;
         let mut engine = crate::engine::EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-        let target = engine.add_entity(test_pc_at(80.0, 10.0, 1));
+        let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+        let target = engine.add_test_entity(test_pc_at(80.0, 10.0, 1));
 
         let mut seek =
             SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
@@ -2310,8 +2310,8 @@ mod tests {
         std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
             .push(crate::profiles::CharacterProfile::default());
-        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-        let target = engine.add_entity(test_pc_at(80.0, 10.0, target_sector));
+        let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+        let target = engine.add_test_entity(test_pc_at(80.0, 10.0, target_sector));
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -2471,8 +2471,8 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut engine = crate::engine::EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-        let target = engine.add_entity(test_pc_at(80.0, 10.0, 2));
+        let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+        let target = engine.add_test_entity(test_pc_at(80.0, 10.0, 2));
 
         let mut seek = SequenceElement::new_movement(
             1,
@@ -2529,9 +2529,9 @@ mod tests {
     #[test]
     fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
         let mut engine = crate::engine::EngineInner::new();
-        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-        let actor_target = engine.add_entity(test_pc_at(40.0, 10.0, 1));
-        let competing_element_target = engine.add_entity(test_pc_at(100.0, 10.0, 1));
+        let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+        let actor_target = engine.add_test_entity(test_pc_at(40.0, 10.0, 1));
+        let competing_element_target = engine.add_test_entity(test_pc_at(100.0, 10.0, 1));
 
         let mut seek = SequenceElement::new_movement(
             1,
@@ -2600,8 +2600,8 @@ mod tests {
             .expect("test PC is an actor")
             .action_state = ActionState::MovingSword;
         owner_entity.element_data_mut().set_direction_instantly(0);
-        let owner = engine.add_entity(owner_entity);
-        let target = engine.add_entity(test_pc_at(100.0, 0.0, 1));
+        let owner = engine.add_test_entity(owner_entity);
+        let target = engine.add_test_entity(test_pc_at(100.0, 0.0, 1));
         engine
             .get_entity_mut(owner)
             .expect("owner")
@@ -2666,7 +2666,7 @@ mod tests {
     #[test]
     fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacement() {
         let mut engine = crate::engine::EngineInner::new();
-        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
+        let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
         let stale_goal = MapPoint::new(70.0, 80.0);
 
         let seek =

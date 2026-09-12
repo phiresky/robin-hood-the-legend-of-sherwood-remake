@@ -6944,8 +6944,8 @@ mod owner_boundary_position_tests {
     #[test]
     fn raw_owner_boundary_snapshot_preserves_no_layer_entities_without_ai_projection() {
         let mut engine = EngineInner::new();
-        let detached = engine.add_entity(projectile_with_layer(None));
-        let placed = engine.add_entity(projectile_with_layer(Some(3)));
+        let detached = engine.add_test_entity(projectile_with_layer(None));
+        let placed = engine.add_test_entity(projectile_with_layer(Some(3)));
 
         let positions =
             collect_raw_owner_boundary_positions(&engine, [detached.index(), placed.index()]);
@@ -7202,7 +7202,7 @@ mod script_context_tests {
         carried_element.set_layer(2);
         carried_element.set_sector(crate::position_interface::SectorHandle::new(12));
         carried_element.set_position_map(crate::coordinates::MapPoint::new(80.0, 90.0));
-        let carried_id = engine.add_entity(crate::element::Entity::Civilian(
+        let carried_id = engine.add_test_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
                 element: carried_element,
                 actor: Default::default(),
@@ -7211,20 +7211,21 @@ mod script_context_tests {
                 civilian: Default::default(),
             },
         ));
-        let actor_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-            element: {
-                let mut initial_element = crate::element::ElementData::default();
-                initial_element.kind = crate::element::ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            pc: crate::element::PcData {
-                carried: Some(carried_id),
-                ..Default::default()
-            },
-        }));
+        let actor_id =
+            engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element.active = true;
+                    initial_element
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                pc: crate::element::PcData {
+                    carried: Some(carried_id),
+                    ..Default::default()
+                },
+            }));
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(actor_id);
         engine.script_domains.buildings.occupants[0].push(actor_handle);
         engine.script_domains.buildings.actor_building.insert(
@@ -7313,7 +7314,7 @@ mod script_context_tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(crate::element::Entity::Civilian(
+        let owner = engine.add_test_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
@@ -7327,7 +7328,7 @@ mod script_context_tests {
                 civilian: Default::default(),
             },
         ));
-        let target = engine.add_entity(crate::element::Entity::Civilian(
+        let target = engine.add_test_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
@@ -7745,7 +7746,7 @@ mod script_context_tests {
             initial_element
         };
         element.set_position(WorldPoint3D::ZERO);
-        let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
+        let arrow = engine.add_test_entity(Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
                 object_type: ObjectType::Arrow,

@@ -118,7 +118,7 @@ fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
 
-    let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let soldier_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorSoldier;
@@ -135,7 +135,7 @@ fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
         },
         soldier: SoldierData::default(),
     }));
-    let vip_soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let vip_soldier_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorSoldier;
@@ -155,7 +155,7 @@ fn ale_reliability_command_updates_spawned_soldiers_but_not_autonomous_pcs() {
             ..Default::default()
         },
     }));
-    let autonomous_pc_id = engine.add_entity(Entity::Pc(ActorPc {
+    let autonomous_pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorPc;
@@ -330,7 +330,7 @@ fn setup_pc_engine(actions: &[(Action, u16)]) -> (EngineInner, LevelAssets, Enti
     });
     engine.mission_domain.campaign = campaign;
 
-    let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+    let pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
@@ -1842,7 +1842,7 @@ fn setup_pc_engine_with_split_profile_and_status(
     });
     engine.mission_domain.campaign = campaign;
 
-    let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+    let pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
@@ -1871,7 +1871,7 @@ fn spawn_bonus(
     active: bool,
     assoc: Action,
 ) -> EntityId {
-    engine.add_entity(Entity::Bonus(ElementBonus {
+    engine.add_test_entity(Entity::Bonus(ElementBonus {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectBonus;
@@ -1887,7 +1887,7 @@ fn spawn_bonus(
 }
 
 fn spawn_scroll(engine: &mut EngineInner, active: bool) -> EntityId {
-    engine.add_entity(Entity::Scroll(ElementScroll {
+    engine.add_test_entity(Entity::Scroll(ElementScroll {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectScroll;
@@ -1908,7 +1908,7 @@ fn spawn_projectile(
     flying: bool,
     assoc: Action,
 ) -> EntityId {
-    engine.add_entity(Entity::Projectile(ElementProjectile {
+    engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -1935,7 +1935,7 @@ fn spawn_net(engine: &mut EngineInner, flying: bool) -> EntityId {
         initial_element
     };
     element.set_position(WorldPoint3D::default());
-    engine.add_entity(Entity::Net(ElementNet {
+    engine.add_test_entity(Entity::Net(ElementNet {
         element,
         object: ObjectData {
             associated_action: Action::Net,
@@ -2030,7 +2030,7 @@ fn setup_take_corpse_macro_scene(target_x: f32) -> (EngineInner, LevelAssets, En
         .element
         .set_position_map(crate::coordinates::MapPoint::new(target_x, 100.0));
     corpse.element.set_sector(sector);
-    let corpse_id = engine.add_entity(Entity::Pc(corpse));
+    let corpse_id = engine.add_test_entity(Entity::Pc(corpse));
 
     let state = engine.players.macro_store.get_or_insert(pc_id);
     state.begin_recording(0);
@@ -3149,7 +3149,7 @@ fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, Entity
         .element
         .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
     target.element.set_sector(sector);
-    let target_id = engine.add_entity(Entity::Soldier(target));
+    let target_id = engine.add_test_entity(Entity::Soldier(target));
 
     (engine, assets, pc_id, target_id)
 }
@@ -3815,7 +3815,7 @@ fn spawn_pc_at(engine: &mut EngineInner, x: f32, y: f32) -> EntityId {
     };
     pc.element
         .set_position_map(crate::coordinates::MapPoint { x, y });
-    engine.add_entity(Entity::Pc(pc))
+    engine.add_test_entity(Entity::Pc(pc))
 }
 
 fn spawn_friendly_civilian(engine: &mut EngineInner) -> EntityId {
@@ -3835,7 +3835,7 @@ fn spawn_friendly_civilian(engine: &mut EngineInner) -> EntityId {
         },
     };
     civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::default());
-    engine.add_entity(Entity::Civilian(civilian))
+    engine.add_test_entity(Entity::Civilian(civilian))
 }
 
 fn friendly_beggar_dont_talk_counter(engine: &EngineInner, target: EntityId) -> u16 {
@@ -3892,7 +3892,7 @@ fn sword_strike_seek_uses_resolved_tolerance_and_authored_sword_movement() {
         civilian: Default::default(),
     };
     target.element.set_sector(sector);
-    let target_id = engine.add_entity(Entity::Civilian(target));
+    let target_id = engine.add_test_entity(Entity::Civilian(target));
 
     engine.apply_sword_strike_with_seek(
         &assets,
@@ -3997,7 +3997,7 @@ fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
         engine.get_entity(pc_id).unwrap().element_data().sector(),
         None
     );
-    let target_id = engine.add_entity(Entity::Civilian(ActorCivilian {
+    let target_id = engine.add_test_entity(Entity::Civilian(ActorCivilian {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorCivilian;
@@ -4068,7 +4068,7 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
         .element
         .set_position_map(crate::coordinates::MapPoint::new(90.0, 30.0));
     target.element.set_sector(target_sector);
-    let target_id = engine.add_entity(Entity::Soldier(target));
+    let target_id = engine.add_test_entity(Entity::Soldier(target));
 
     engine
         .script_domains
@@ -4168,7 +4168,7 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
         civilian: Default::default(),
     };
     target.element.set_sector(sector);
-    let target_id = engine.add_entity(Entity::Civilian(target));
+    let target_id = engine.add_test_entity(Entity::Civilian(target));
 
     let mut injury = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(pc_id));
     injury.priority = SequencePriority::Injury;
@@ -4311,7 +4311,7 @@ fn setup_scroll_read_scene() -> (EngineInner, LevelAssets, EntityId, EntityId, E
     };
     npc.element
         .set_position_map(crate::coordinates::MapPoint { x: 110.0, y: 100.0 });
-    let npc_id = engine.add_entity(Entity::Civilian(npc));
+    let npc_id = engine.add_test_entity(Entity::Civilian(npc));
 
     let scroll_id = spawn_scroll(&mut engine, true);
     match engine.get_entity_mut(npc_id) {
@@ -4592,7 +4592,7 @@ fn waking_up_validity_uses_sprite_action_distance() {
     victim
         .element
         .set_position_map(crate::coordinates::MapPoint { x: 143.0, y: 100.0 });
-    let victim_id = engine.add_entity(Entity::Pc(victim));
+    let victim_id = engine.add_test_entity(Entity::Pc(victim));
     let element =
         SequenceElement::new_interaction(1, Command::WakeUp, Some(pc_id), Some(victim_id));
 
@@ -4619,7 +4619,7 @@ fn custom_pc_can_wake_only_same_allegiance_pc() {
         .cached_camp = Camp::Custom(2);
 
     let add_unconscious_pc = |engine: &mut EngineInner, camp| {
-        engine.add_entity(Entity::Pc(ActorPc {
+        engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
                 initial_element.kind = ElementKind::ActorPc;
@@ -4661,7 +4661,7 @@ fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavi
     let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
     std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[..2]
         .copy_from_slice(&[Action::Tie, Action::Search]);
-    let target_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let target_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
             initial_element.kind = ElementKind::ActorSoldier;
@@ -4985,7 +4985,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
             .element
             .set_position_map(crate::coordinates::MapPoint::new(300.0, 100.0));
         target.element.set_sector(sector);
-        let target_id = engine.add_entity(Entity::Target(target));
+        let target_id = engine.add_test_entity(Entity::Target(target));
         bind_single_action_point(
             &mut engine,
             target_id,
@@ -5076,7 +5076,7 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
     target.element.set_position_map(recorded_destination);
     target.element.set_sector(sector);
     target.element.set_layer(4);
-    let target_id = engine.add_entity(Entity::Target(target));
+    let target_id = engine.add_test_entity(Entity::Target(target));
     bind_single_action_point(
         &mut engine,
         target_id,
@@ -5720,7 +5720,7 @@ fn coin_click_forwards_to_live_source_purse() {
     // the click is forwarded to the purse so the take handler
     // collects every sibling coin in one sweep.
     let (mut engine, _assets, _pc_id) = setup_pc_engine(&[]);
-    let purse_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let purse_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -5733,7 +5733,7 @@ fn coin_click_forwards_to_live_source_purse() {
         },
         projectile: ProjectileData::default(),
     }));
-    let coin_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let coin_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -5760,7 +5760,7 @@ fn coin_click_passes_through_when_purse_taken() {
     // If the source purse is `taken`, the forwarding branch is
     // skipped and the coin is taken individually.
     let (mut engine, _assets, _pc_id) = setup_pc_engine(&[]);
-    let purse_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let purse_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -5774,7 +5774,7 @@ fn coin_click_passes_through_when_purse_taken() {
         },
         projectile: ProjectileData::default(),
     }));
-    let coin_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let coin_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -6539,7 +6539,7 @@ fn quick_action_search_rechecks_nested_post_seek_target_state() {
     target
         .element
         .set_position_map(crate::coordinates::MapPoint::new(500.0, 0.0));
-    let target = engine.add_entity(Entity::Soldier(target));
+    let target = engine.add_test_entity(Entity::Soldier(target));
     let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::SearchCmd);
     assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 

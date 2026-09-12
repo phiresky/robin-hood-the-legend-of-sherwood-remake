@@ -693,7 +693,7 @@ mod tests {
         use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
         let mut engine = EngineInner::new();
-        let actor = engine.add_entity(weak_soldier_at_action_done(0));
+        let actor = engine.add_test_entity(weak_soldier_at_action_done(0));
         {
             let entity = engine.get_entity_mut(actor).expect("dead actor exists");
             entity.element_data_mut().kind = ElementKind::ActorSoldier;
@@ -982,7 +982,7 @@ mod tests {
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
-        let actor = engine.add_entity(entity);
+        let actor = engine.add_test_entity(entity);
         let mut selected = SequenceElement::new(1, Command::Wait, Some(actor));
         selected.orders.push_back(Order::test_new(action, 0.0, 0.0));
         let sequence = engine.orders.sequence_manager.launch_element(selected);
@@ -1100,7 +1100,7 @@ mod tests {
     #[test]
     fn global_actor_freeze_also_stops_nonactor_animation() {
         let mut engine = EngineInner::new();
-        let fx = engine.add_entity(animated_fx(None));
+        let fx = engine.add_test_entity(animated_fx(None));
         let assets = crate::engine::types::LevelAssets::new();
 
         engine.set_actors_frozen(true);
@@ -1136,7 +1136,7 @@ mod tests {
     fn patch_fx_without_mission_vm_uses_default_progression_without_finalization() {
         let mut engine = EngineInner::new();
         assert!(engine.scripts.mission.is_none());
-        let fx = engine.add_entity(animated_fx(Some(
+        let fx = engine.add_test_entity(animated_fx(Some(
             crate::patch::PatchIndex::new(0).expect("zero is a valid patch index"),
         )));
 
@@ -1810,7 +1810,7 @@ mod tests {
             std::sync::Arc::new(conversion),
         );
 
-        let owner = engine.add_entity(pc);
+        let owner = engine.add_test_entity(pc);
         let mut soldier = weak_soldier_at_action_done(0);
         soldier.element_data_mut().kind = ElementKind::ActorSoldier;
         soldier
@@ -1818,7 +1818,7 @@ mod tests {
             .publish_order_posture(Posture::Lying);
         soldier.human_data_mut().expect("human data").unconscious = true;
         soldier.npc_data_mut().expect("NPC data").life_points = 100;
-        let victim = engine.add_entity(soldier);
+        let victim = engine.add_test_entity(soldier);
 
         let mut selected = SequenceElement::new_interaction(
             1,
@@ -7243,8 +7243,8 @@ mod shoulder_idle_initialization_tests {
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
-        let helper_id = engine.add_entity(helper);
-        let climber_id = engine.add_entity(Entity::Pc(ActorPc {
+        let helper_id = engine.add_test_entity(helper);
+        let climber_id = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::OnShoulders);
                 initial_element.kind = ElementKind::ActorPc;
@@ -7324,7 +7324,7 @@ mod shoulder_idle_initialization_tests {
             pc: PcData::default(),
         };
         helper.element.set_direction_instantly(4);
-        let helper_id = engine.add_entity(Entity::Pc(helper));
+        let helper_id = engine.add_test_entity(Entity::Pc(helper));
 
         let mut climber = ActorPc {
             element: {
@@ -7356,7 +7356,7 @@ mod shoulder_idle_initialization_tests {
             std::sync::Arc::new(scripts),
             std::sync::Arc::new(conversion),
         );
-        let climber_id = engine.add_entity(Entity::Pc(climber));
+        let climber_id = engine.add_test_entity(Entity::Pc(climber));
 
         let mut wait = SequenceElement::new(1, Command::Wait, Some(climber_id));
         wait.orders

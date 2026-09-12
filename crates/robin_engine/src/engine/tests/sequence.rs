@@ -8,7 +8,7 @@ fn instruct_publication_reads_the_translated_element_not_owner_wide_selection() 
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
 
     let outgoing_order_id = engine.orders.allocate_order_id();
     let mut outgoing = SequenceElement::new(1, Command::Move, Some(owner));
@@ -57,7 +57,7 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let enemy = engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -129,7 +129,7 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let enemy = engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -202,7 +202,7 @@ fn waiting_upright_execute_needs_represented_attentive_state_for_correction() {
         unreachable!("AI soldier fixture changed entity kind");
     };
     soldier.npc.ai_brain = crate::element::AiBrain::None;
-    let owner = engine.add_entity(entity);
+    let owner = engine.add_test_entity(entity);
     bind_test_action_point(
         &mut engine,
         owner,
@@ -237,7 +237,7 @@ fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch(
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -272,7 +272,7 @@ fn waiting_alerted_execute_preserves_attentive_requested_state() {
     use crate::element::{Camp, Command};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let enemy = engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -370,7 +370,7 @@ fn postponed_generic_order_carrier_resumes_in_progress() {
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let mut element = SequenceElement::new_generic(1, Command::Generic, Some(soldier));
     element.posture_after_transition = Posture::Upright;
     element.orders.push_back(Order::new(
@@ -410,7 +410,7 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
         ..Default::default()
     };
     owner_soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
-    let owner = engine.add_entity(owner_entity);
+    let owner = engine.add_test_entity(owner_entity);
     {
         let soldier = engine.get_entity_mut(owner).unwrap();
         soldier.actor_data_mut().unwrap().action_state = ActionState::Waiting;
@@ -493,7 +493,7 @@ fn retained_waiting_sword_handoff_preserves_running_sprite_identity() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let old_order_id = engine.orders.allocate_order_id();
     let new_order_id = engine.orders.allocate_order_id();
     {
@@ -536,8 +536,8 @@ fn sequence_phase_clears_unconsumed_waiting_sword_retention() {
 
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 1;
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
-    let opponent = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let opponent = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(soldier)
         .unwrap()
@@ -605,7 +605,7 @@ fn exhausted_generic_order_carrier_terminates_on_resume() {
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let mut element = SequenceElement::new_generic(1, Command::Generic, Some(soldier));
     element.posture_after_transition = Posture::Upright;
     let sequence = engine.orders.sequence_manager.launch_element(element);
@@ -635,7 +635,7 @@ fn accepted_zero_order_damage_preserves_in_progress_motion_edge() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(soldier)
         .unwrap()
@@ -687,7 +687,7 @@ fn manager_redundant_stop_parry_skips_instruct_motion_epilogue() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -737,7 +737,7 @@ fn manager_redundant_enter_attentive_skips_instruct_motion_epilogue() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let entity = engine.get_entity_mut(soldier).unwrap();
         let crate::element::Entity::Soldier(soldier_entity) = entity else {
@@ -792,7 +792,7 @@ fn assert_position_translation_preserves_terminal_motion_edge() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let civilian = engine.add_entity(make_test_civilian(Posture::Upright));
+    let civilian = engine.add_test_entity(make_test_civilian(Posture::Upright));
     engine
         .get_entity_mut(civilian)
         .unwrap()
@@ -856,7 +856,7 @@ fn synchronous_accepted_wait_stamps_in_progress_motion_and_publishes_order() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(soldier)
         .unwrap()
@@ -900,8 +900,8 @@ fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let retained_goal = MapPoint::new(70.0, 80.0);
     {
         let entity = engine.get_entity_mut(victim).unwrap();
@@ -965,8 +965,8 @@ fn synchronous_accepted_zero_order_shoot_bow_stamps_in_progress_motion() {
     let assets = LevelAssets::default();
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    let shooter = engine.add_entity(make_test_soldier(Posture::Upright));
-    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let shooter = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(shooter)
@@ -1017,7 +1017,7 @@ fn synchronous_assert_position_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let civilian = engine.add_entity(make_test_civilian(Posture::Upright));
+    let civilian = engine.add_test_entity(make_test_civilian(Posture::Upright));
     engine
         .get_entity_mut(civilian)
         .unwrap()
@@ -1077,8 +1077,8 @@ fn synchronous_terminal_enter_swordfight_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let opponent = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let opponent = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(owner)
@@ -1135,7 +1135,7 @@ fn synchronous_redundant_parry_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -1182,7 +1182,7 @@ fn manager_redundant_parry_skips_instruct_epilogue_after_generated_transition() 
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -1238,7 +1238,7 @@ fn redundant_raise_shield_preserves_prior_look_left_start_edge() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let look_order_id = engine.orders.allocate_order_id();
     {
         let actor = engine
@@ -1296,7 +1296,7 @@ fn soldier_moving_shield_still_raises_and_publishes_accepted_motion_edge() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -1345,7 +1345,7 @@ fn pc_moving_shield_terminates_raise_and_skips_instruct_motion_edge() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let actor = engine.get_entity_mut(pc).unwrap().actor_data_mut().unwrap();
         actor.action_state = ActionState::MovingShield;
@@ -1390,7 +1390,7 @@ fn synchronous_redundant_stop_parry_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -1438,7 +1438,7 @@ fn synchronous_redundant_quit_swordfight_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_pc(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -1485,7 +1485,7 @@ fn manager_redundant_quit_swordfight_skips_instruct_epilogue() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let actor = engine
             .get_entity_mut(owner)
@@ -1535,7 +1535,7 @@ fn synchronous_self_seek_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(soldier)
         .unwrap()
@@ -1586,8 +1586,8 @@ fn synchronous_inactive_sword_damage_skips_instruct_epilogue() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         victim_entity.element_data_mut().active = false;
@@ -1635,7 +1635,7 @@ fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
 
     let mut blocker = SequenceElement::new_generic(1, Command::Generic, Some(owner));
     blocker.priority = SequencePriority::PostponeEverythingButInjuries;
@@ -1712,7 +1712,7 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut movement = SequenceElement::new_movement(
         1,
@@ -1773,7 +1773,7 @@ fn repeated_equal_priority_postpones_append_to_long_chain_amortized() {
     use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let mut root = SequenceElement::new(1, Command::QuitSwordfight, Some(owner));
     root.priority = SequencePriority::PostponeEverythingButInjuries;
     let root = engine.orders.sequence_manager.launch_element(root);
@@ -1898,7 +1898,7 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
     use crate::sequence::{SequenceElement, SequencePriority};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let launch = |engine: &mut EngineInner, priority| {
         let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
         element.priority = priority;
@@ -1952,7 +1952,7 @@ fn postpone_tail_cache_does_not_cache_waiter_with_existing_successor() {
     use crate::sequence::{SequenceElement, SequencePriority};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let launch = |engine: &mut EngineInner| {
         let mut element = SequenceElement::new(1, Command::EnterSwordfight, Some(owner));
         element.priority = SequencePriority::PostponeEverythingButInjuries;
@@ -1989,7 +1989,7 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut blocker = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
     blocker.priority = SequencePriority::Injury;
@@ -2058,7 +2058,7 @@ fn fresh_group_route_translates_before_unexecuted_posture_recovery() {
     use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
 
     let speak = SequenceElement::new(1, Command::SpeakHeroReachDestination, Some(owner));
     let mut equip = SequenceElement::new(2, Command::EquipBow, Some(owner));
@@ -2143,7 +2143,7 @@ fn postponing_resolved_movement_restores_untranslated_move() {
     use crate::sequence::{SequenceElement, SequencePriority};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut movement =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
@@ -2186,7 +2186,7 @@ fn post_seek_handoff_clears_selected_movement_goal() {
     use crate::sequence::{Sequence, SequenceElement};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -2234,8 +2234,8 @@ fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
     use crate::sequence::{Sequence, SequenceElement};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let corpse = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let corpse = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
     let mut parent = Sequence::new();
     parent.append_element(SequenceElement::new_movement(
@@ -2306,7 +2306,7 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let stale_goal = MapPoint::new(70.0, 80.0);
 
     let mut outgoing =
@@ -2399,8 +2399,8 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
 
     let mut engine = EngineInner::new();
     install_test_building_sector(&mut engine, 42);
-    let owner = engine.add_entity(make_test_civilian(Posture::Upright));
-    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_civilian(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     let retained_goal = MapPoint::new(1137.9464, 490.93048);
     for entity in [owner, target] {
         engine
@@ -2481,8 +2481,8 @@ fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
     use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_soldier(Posture::Upright));
     for entity in [owner, target] {
         engine
             .get_entity_mut(entity)
@@ -2610,8 +2610,8 @@ fn different_building_rewritten_seek_keeps_its_refresh_order() {
         level.sectors.push(other_building);
         engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
     }
-    let owner = engine.add_entity(make_test_civilian(Posture::Upright));
-    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_civilian(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -2665,10 +2665,10 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
 
     let mut engine = EngineInner::new();
     install_test_building_sector(&mut engine, 42);
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let start = MapPoint::new(10.0, 20.0);
     let target_position = MapPoint::new(30.0, 40.0);
-    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let element = engine.get_entity_mut(owner).unwrap().element_data_mut();
         element.set_position_map(start);
@@ -2845,7 +2845,7 @@ fn point_refreshing_seek_returns_terminated_without_refreshing() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RefreshingSeek);
     movement
@@ -2885,8 +2885,8 @@ fn entity_refreshing_seek_with_cleared_actor_target_terminates_without_refreshin
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let stale_target = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let stale_target = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RefreshingSeek);
     movement
@@ -2938,7 +2938,7 @@ fn point_refreshing_seek_with_successor_projects_back_to_in_progress() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let refreshing_order_id = engine.orders.allocate_order_id();
     let successor_order_id = engine.orders.allocate_order_id();
     let mut refreshing =
@@ -3009,7 +3009,7 @@ fn parry_sword_queues_transition_and_hold_orders() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(soldier)
         .unwrap()
@@ -3053,7 +3053,7 @@ fn waiting_parry_survives_normal_movement_successor_replacement() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -3184,7 +3184,7 @@ fn parry_sword_terminates_when_either_parry_is_already_active() {
         (ActionState::ParryingSwordLow, Command::ParrySwordLow, true),
     ] {
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+        let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
         engine
             .get_entity_mut(soldier)
             .unwrap()
@@ -3226,7 +3226,7 @@ fn stop_parry_sword_queues_exit_transition() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(soldier)
         .unwrap()
@@ -3270,7 +3270,7 @@ fn soldier_leaning_out_to_upright_on_move() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::LeaningOut));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::LeaningOut));
 
     let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::Move);
     assert!(changed, "auto-leave should fire for LeaningOut + Move");
@@ -3301,7 +3301,7 @@ fn soldier_upright_move_skips_auto_leave() {
     use crate::element::{Command, Posture};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::Move);
     assert!(!changed, "no transition needed for an Upright soldier");
@@ -3324,7 +3324,7 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let mut display = HostDisplayState::default();
     let assets = LevelAssets::default();
 
@@ -3367,7 +3367,7 @@ fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
     };
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     // The officer-conversation regression leaves the actor idle after its
     // Turn while a later owned PlayAnim waits behind an ownerless Timer.
@@ -3432,7 +3432,8 @@ fn transition_resumed_pass_door_reach_event_obeys_real_action_followers() {
 
     let capture = |with_move_follower: bool| {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let owner =
+            engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -3512,7 +3513,7 @@ fn play_anim_uses_custom_wrapper_instead_of_requested_animation_semantics() {
         (Command::PlayAnimFrozen, OrderType::PlayCustomFrozen),
     ] {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+        let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
         engine
             .get_entity_mut(owner)
             .expect("test soldier exists")
@@ -3573,7 +3574,7 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     // Launch the EnterAttentiveMode element first; `ensure_wait_element`
     // is a no-op once another live element exists for the actor.  This
@@ -3617,7 +3618,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     // Drive the engine-side helper the way the AI does it — no explicit
     // posture stamping; arbitrate_instruct must supply it.  Launch the
@@ -3665,7 +3666,7 @@ fn deferred_attentive_then_forget_preserves_launch_but_clears_local_flags() {
         let mut request = AttentiveModeEffect::new(true, false);
         request.forget_after = forget_after;
         enemy.base.outbox.actor.set_attentive_mode = Some(request);
-        let soldier_id = engine.add_entity(entity);
+        let soldier_id = engine.add_test_entity(entity);
 
         engine.drain_pending_for_npc(&sim, soldier_id, &LevelAssets::default());
 
@@ -3709,7 +3710,7 @@ fn quitting_swordfight_timer_does_not_accumulate_a_second_quit() {
             .outbox
             .actor
             .retry_quit_swordfight = true;
-        let owner = engine.add_entity(entity);
+        let owner = engine.add_test_entity(entity);
         let selected = engine
             .orders
             .sequence_manager
@@ -3739,7 +3740,7 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut movement = SequenceElement::new_movement(
         1,
@@ -3826,7 +3827,7 @@ fn leave_attentive_translation_keeps_transition_after_attentive_was_already_clea
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let soldier_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     engine
         .get_entity_mut(soldier_id)
         .unwrap()
@@ -3908,7 +3909,7 @@ fn enter_attentive_translation_still_suppresses_an_already_satisfied_enter() {
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let soldier_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     engine
         .get_entity_mut(soldier_id)
         .unwrap()
@@ -3961,7 +3962,7 @@ fn arbitration_ignores_serialized_order_ai_lock_like_original() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut current = SequenceElement::new(1, Command::Move, Some(owner));
     current.priority = SequencePriority::Normal;
@@ -4016,7 +4017,7 @@ fn injury_postpones_nonterminating_lift_wait_despite_done_sprite_cycle() {
 
     fn arbitrate_done_current(command: Command, order_type: OrderType) -> SequenceState {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+        let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
         let mut current = SequenceElement::new(1, command, Some(owner));
         current.priority = SequencePriority::Normal;
@@ -4091,7 +4092,7 @@ fn duplicate_instruct_does_not_arbitrate_an_element_against_itself() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let mut element = SequenceElement::new(1, Command::Move, Some(owner));
     element.priority = SequencePriority::Normal;
     let sequence = engine.orders.sequence_manager.launch_element(element);
@@ -4118,7 +4119,7 @@ fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut outgoing = SequenceElement::new(1, Command::ReceiveHitDamage, Some(owner));
     outgoing.priority = SequencePriority::Injury;
@@ -4209,7 +4210,7 @@ fn nested_instruct_callback_permanently_supersedes_its_parent_selection() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let outer = engine
         .orders
         .sequence_manager
@@ -4270,7 +4271,7 @@ fn done_propagation_requires_the_current_order_identity() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let stale_order_id = engine.orders.allocate_order_id();
     let mut interrupted = SequenceElement::new_generic(1, Command::Generic, Some(owner));
@@ -4371,7 +4372,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
-    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(pc)
         .unwrap()
@@ -4488,7 +4489,7 @@ fn postponed_held_pc_shot_leaves_human_fifo_owned_by_sequence_manager() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
     let mut engine = EngineInner::new();
-    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
 
     let mut blocker = SequenceElement::new_generic(1, Command::UnequipBow, Some(pc));
     blocker.priority = SequencePriority::PostponeEverythingButInjuries;
@@ -4555,7 +4556,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
     let mut engine = EngineInner::new();
-    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(pc)
         .unwrap()
@@ -4681,7 +4682,7 @@ fn started_pass_door_rejects_new_move() {
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut current_pass =
         SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
@@ -4725,7 +4726,7 @@ fn parity_pass_door_snapshot_reads_selected_movement_without_runtime_latch() {
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let mut pass =
         SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
     let SequenceElementData::Movement {
@@ -4767,7 +4768,7 @@ fn executing_pass_door_postpones_new_move() {
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let mut current_pass =
         SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
@@ -4824,7 +4825,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::Crouched));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Crouched));
 
     // Leave `posture_after_transition` undefined: the deferred instruction
     // stamps it from the actor's live (Crouched) posture, and transition
@@ -5230,7 +5231,7 @@ fn soldier_leaning_out_keeps_pose_for_shoot_bow() {
     use crate::element::{Command, Posture};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::LeaningOut));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::LeaningOut));
 
     let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::ShootBow);
     assert!(
@@ -5259,7 +5260,7 @@ fn soldier_leaning_out_updates_sequence_element_fields() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::LeaningOut));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::LeaningOut));
 
     // Launch a Move sequence element so there's an element to decorate.
     let elem = SequenceElement::new_movement(
@@ -5301,7 +5302,7 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     // Launch a SitDown element — the NPC translate arm pushes a single
     // TransitionWaitingUprightSitting animation order onto it and flips
@@ -5336,7 +5337,7 @@ fn equip_bow_translate_plays_transition_orders() {
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let pc_id = engine.add_entity(make_test_pc(Posture::Upright));
+    let pc_id = engine.add_test_entity(make_test_pc(Posture::Upright));
 
     let elem = SequenceElement::new(1, Command::EquipBow, Some(pc_id));
     let seq_id = engine.launch_element(elem);
@@ -5395,7 +5396,8 @@ fn assert_npc_translate_books(
             std::sync::Arc::make_mut(&mut assets.profile_manager)
                 .civilians
                 .push(crate::profiles::CivilianProfile::default());
-            let actor = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+            let actor =
+                engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
             let Entity::Civilian(civilian) = engine
                 .get_entity_mut(actor)
                 .expect("new BeggarShowFace civilian should exist")
@@ -5407,7 +5409,7 @@ fn assert_npc_translate_books(
             ));
             actor
         }
-        _ => engine.add_entity(make_test_soldier(crate::element::Posture::Upright)),
+        _ => engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright)),
     };
 
     let elem = crate::sequence::SequenceElement::new(1, command, Some(actor));
@@ -5454,8 +5456,8 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
     let mut display = HostDisplayState::default();
     let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_soldier(Posture::Lying));
+    let rescuer = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_soldier(Posture::Lying));
 
     bind_test_action_point(
         &mut engine,
@@ -5503,8 +5505,8 @@ fn waking_up_done_clears_target_concussion_and_waits() {
     use crate::sequence::SequenceState;
 
     let mut engine = EngineInner::new();
-    let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_soldier(Posture::Lying));
+    let rescuer = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_soldier(Posture::Lying));
     {
         let target_entity = engine.get_entity_mut(target).expect("target present");
         target_entity.human_data_mut().unwrap().unconscious = true;
@@ -5593,9 +5595,9 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_soldier(Posture::Upright));
-    let neighbour = engine.add_entity(make_test_soldier(Posture::Tied));
+    let rescuer = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let neighbour = engine.add_test_entity(make_test_soldier(Posture::Tied));
 
     {
         let target_entity = engine.get_entity_mut(target).expect("target present");
@@ -5700,8 +5702,8 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let killer = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Lying));
+    let killer = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Lying));
     if let Some(crate::element::Entity::Soldier(soldier)) = engine.world.entities.get_mut(victim) {
         soldier.npc.life_points = 30;
         soldier.soldier.cached_max_life_points = 30;
@@ -5756,8 +5758,8 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let killer = engine.add_entity(make_test_soldier(Posture::Upright));
-    let victim = engine.add_entity(make_test_pc(Posture::Lying));
+    let killer = engine.add_test_entity(make_test_soldier(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_pc(Posture::Lying));
     if let Some(crate::element::Entity::Pc(pc)) = engine.world.entities.get_mut(victim) {
         pc.pc.life_points = 80;
         pc.human.unconscious = true;
@@ -5853,7 +5855,7 @@ fn sitting_npc_point_auto_stands_up() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_test_soldier(Posture::Sitting));
+    let actor = engine.add_test_entity(make_test_soldier(Posture::Sitting));
 
     let changed = engine.auto_leave_disguise_if_needed(actor, Command::Point);
     assert!(changed, "auto-leave should fire for Sitting + Point");
@@ -5881,7 +5883,7 @@ fn enter_leisure_on_leisuring_npc_skips_auto_leave() {
     use crate::element::{Command, Posture};
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_test_soldier(Posture::Leisure));
+    let actor = engine.add_test_entity(make_test_soldier(Posture::Leisure));
 
     let changed = engine.auto_leave_disguise_if_needed(actor, Command::EnterLeisure);
     assert!(

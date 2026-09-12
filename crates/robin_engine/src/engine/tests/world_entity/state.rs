@@ -5,8 +5,8 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
     use crate::ai::{AiEntityHandle, Stimulus, StimulusInfo, StimulusType};
 
     let mut engine = EngineInner::new();
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let observer = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let observer = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     let mut human = Stimulus::new(StimulusType::EventDone);
     human.info = StimulusInfo::Human(AiEntityHandle::new(target.index()));
     let mut object = human;
@@ -69,7 +69,7 @@ fn geometry_only_level_reserves_zero_ai_handle_before_first_actor() {
     assert_eq!(engine.world.entities.len(), 1);
     assert!(engine.world.entities.get_legacy_slot(0).is_none());
 
-    let soldier = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Custom(2)));
+    let soldier = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Custom(2)));
     assert_eq!(soldier.index(), 1, "the first AI actor must not alias null");
     assert_eq!(
         engine
@@ -287,7 +287,7 @@ fn set_state_halt_prefix_retains_detached_goto_until_engine_rejection() {
         .element
         .set_position_map(crate::coordinates::MapPoint::new(90.0, 90.0));
     soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier_entity);
+    let owner = engine.add_test_entity(soldier_entity);
 
     {
         let ai = engine
@@ -388,7 +388,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     enemy.will_be_attentive = true;
     enemy.base.current_state = AiState::Default;
     enemy.base.current_substate = Substate::DefaultGotoPostTurn;
-    let owner = engine.add_entity(soldier_entity);
+    let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut face_prefix = AiActorOutbox::default();
@@ -545,7 +545,7 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
         AiState::Attacking,
         Substate::AttackingTooProudToAttackApproach,
     );
-    let owner = engine.add_entity(soldier_entity);
+    let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.drain_direct_ai_owner_boundary_mode(
@@ -611,7 +611,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     let mut turn = crate::order::AiOrderIntent::face_direction(14);
     turn.after_attentive_mode = true;
     enemy.base.outbox.actor.orders.push(turn);
-    let owner = engine.add_entity(soldier_entity);
+    let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.drain_direct_ai_owner_boundary_mode(
@@ -854,9 +854,10 @@ fn repeated_checkpoint_charly_drains_only_the_last_target() {
     let sim = crate::sim_rng::test_context();
     for clear in [false, true] {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-        let first = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-        let second = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+        let owner =
+            engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let first = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+        let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
         let ai = engine
             .get_entity_mut(owner)
             .unwrap()
@@ -883,8 +884,8 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     use crate::element::Posture;
 
     let mut engine = EngineInner::new();
-    let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let other_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let self_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let other_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     for id in [self_id, other_id] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
@@ -932,8 +933,8 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
 #[test]
 fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     let mut engine = EngineInner::new();
-    let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let dead_pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+    let self_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let dead_pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
 
     let Entity::Soldier(self_soldier) =
         engine.get_entity_mut(self_id).expect("test fighter exists")
@@ -1004,8 +1005,8 @@ fn reconsider_approach_route_settles_before_roof_wait_resume() {
         .expect("minimal mission exposes the installed test jump"),
     );
 
-    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let owner_position = Position {
         x: 0.0,
         y: 0.0,
@@ -1092,8 +1093,8 @@ fn reconsider_approach_route_settles_before_roof_wait_resume() {
     // Reachable first approaches must consume the same typed tail without
     // entering the roof-wait branch.
     let reachable_owner =
-        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let reachable_target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let reachable_target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let reachable_owner_position = Position {
         x: 200.0,
         y: 200.0,
@@ -1176,7 +1177,7 @@ fn battle_observe_continuation_fails_loud_for_stale_target() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let ai = engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -1207,8 +1208,8 @@ fn battle_observe_roof_fallback_fails_loud_without_mission() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let ai = engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -1238,7 +1239,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -1247,10 +1248,11 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let friend_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let old_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let new_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let old_target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let new_target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     for (id, position) in [
         (owner_id, MapPoint::new(100.0, 100.0)),
@@ -1567,7 +1569,7 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(500.0, 500.0);
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.scripts.mission = Some(
@@ -2076,8 +2078,8 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     use crate::messenger::{Message, MessageType, PcMessage};
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let second = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let first = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let second = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine.players.seats[0].selection = vec![first];
 
     // Original-game message forwarding handles these calls synchronously. In

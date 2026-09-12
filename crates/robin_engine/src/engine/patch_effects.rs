@@ -711,7 +711,7 @@ mod tests {
         sprite.current_frame = 1;
 
         let mut engine = EngineInner::new();
-        let entity_id = engine.add_entity(Entity::Fx(ElementFx {
+        let entity_id = engine.add_test_entity(Entity::Fx(ElementFx {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Fx;
@@ -757,7 +757,7 @@ mod tests {
         sprite.current_frame = 1;
 
         let mut engine = EngineInner::new();
-        let entity_id = engine.add_entity(Entity::Fx(ElementFx {
+        let entity_id = engine.add_test_entity(Entity::Fx(ElementFx {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Fx;
@@ -808,7 +808,7 @@ mod tests {
             .sprite
             .position_iface
             .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData::default(),
             human: HumanData::default(),

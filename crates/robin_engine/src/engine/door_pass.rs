@@ -2200,7 +2200,7 @@ mod tests {
     #[test]
     fn default_inside_outside_reserves_complete_translated_order_chain() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(8));
+        let owner = engine.add_test_entity(make_pc(8));
         let first_id = engine.orders.next_order_id;
 
         let (barrier, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
@@ -2252,8 +2252,8 @@ mod tests {
             } else {
                 (8, 5, 7, 2, crate::fast_find_grid::SectorIndex::new(0))
             };
-            let owner = engine.add_entity(make_pc(source_sector));
-            let carried = engine.add_entity(make_soldier(Some(99)));
+            let owner = engine.add_test_entity(make_pc(source_sector));
+            let carried = engine.add_test_entity(make_soldier(Some(99)));
             {
                 let owner_entity = engine.world.entities.get_mut(owner).unwrap();
                 owner_entity.element_data_mut().set_layer(source_layer);
@@ -2294,7 +2294,7 @@ mod tests {
             layer_in: 5,
             ..default_door()
         };
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         engine
             .world
             .entities
@@ -2302,7 +2302,7 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_layer(2);
-        let unrelated = engine.add_entity(make_soldier(Some(99)));
+        let unrelated = engine.add_test_entity(make_soldier(Some(99)));
         engine
             .world
             .entities
@@ -2381,7 +2381,7 @@ mod tests {
     fn fallback_wait_on_ladder_preserves_inherited_facing() {
         let mut engine = EngineInner::new();
         install_lift_sector(&mut engine, LiftType::Ladder);
-        let owner = engine.add_entity(make_pc(42));
+        let owner = engine.add_test_entity(make_pc(42));
         {
             let entity = engine.world.entities.get_mut(owner).unwrap();
             entity.set_posture(Posture::OnLadder);
@@ -2409,7 +2409,7 @@ mod tests {
     fn fallback_wait_preserves_unconscious_posture_inside_ladder_sector() {
         let mut engine = EngineInner::new();
         install_lift_sector(&mut engine, LiftType::Ladder);
-        let owner = engine.add_entity(make_pc(42));
+        let owner = engine.add_test_entity(make_pc(42));
         {
             let entity = engine.world.entities.get_mut(owner).unwrap();
             entity.set_posture(Posture::Lying);
@@ -2539,7 +2539,7 @@ mod tests {
             (8, false, MapPoint::new(10.0, 30.0)),
         ] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(make_soldier(Some(actor_sector)));
+            let owner = engine.add_test_entity(make_soldier(Some(actor_sector)));
             let (barrier, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
 
             assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
@@ -2585,7 +2585,7 @@ mod tests {
             (Posture::Upright, OrderType::RunningUpright),
         ] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(make_pc(7));
+            let owner = engine.add_test_entity(make_pc(7));
             engine
                 .world
                 .entities
@@ -2652,7 +2652,7 @@ mod tests {
     #[test]
     fn direct_pc_pass_uses_stamped_moving_fast_sword_state() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         assert_eq!(
             engine
                 .world
@@ -2700,7 +2700,7 @@ mod tests {
     #[test]
     fn direct_pc_pass_preserves_authored_run_without_fast_flag_in_sword_state() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         let door = crate::gate::Door {
             door_type: DoorType::Building,
             ..default_door()
@@ -2737,7 +2737,7 @@ mod tests {
     #[test]
     fn direct_stairs_pass_preserves_stamped_crouched_posture() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         install_lift_sector(&mut engine, LiftType::Stairs);
         let door = crate::gate::Door {
             door_type: DoorType::LiftHigh,
@@ -2797,7 +2797,7 @@ mod tests {
     fn indirect_stairs_pass_translates_dormant_lying_stamp_from_live_lift() {
         let mut engine = EngineInner::new();
         install_lift_sector(&mut engine, LiftType::Stairs);
-        let owner = engine.add_entity(make_pc(42));
+        let owner = engine.add_test_entity(make_pc(42));
         let door = crate::gate::Door {
             door_type: DoorType::LiftHigh,
             sector_in: crate::sector::SectorNumber::new(42),
@@ -2854,7 +2854,7 @@ mod tests {
     #[test]
     fn select_door_step_materializes_without_firing_its_hulk_callback() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         let actor = engine
             .world
             .entities
@@ -2932,7 +2932,7 @@ mod tests {
     #[test]
     fn wall_transition_and_passing_door_use_separate_owner_slots() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         engine
             .world
             .entities
@@ -3134,7 +3134,7 @@ mod tests {
         std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level)
             .sector_number_map
             .insert(crate::sector::SectorNumber::new(50), 0);
-        let owner = engine.add_entity(make_pc(62));
+        let owner = engine.add_test_entity(make_pc(62));
         {
             let entity = engine.world.entities.get_mut(owner).unwrap();
             entity.element_data_mut().set_layer(3);
@@ -3169,7 +3169,7 @@ mod tests {
             .interactables
             .doors
             .push(default_door());
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
 
         let before_map = MapPoint::new(29.0, 30.0);
         let elevation = 93.3318_f32;
@@ -3228,7 +3228,7 @@ mod tests {
                 .interactables
                 .doors
                 .push(default_door());
-            let owner = engine.add_entity(make_pc(7));
+            let owner = engine.add_test_entity(make_pc(7));
 
             // Competing authored projection: resolving the source-sector
             // projection at the midpoint would flatten the actor to Z=90.
@@ -3385,7 +3385,7 @@ mod tests {
                 .interactables
                 .doors
                 .push(default_door());
-            let owner = engine.add_entity(make_pc(7));
+            let owner = engine.add_test_entity(make_pc(7));
             {
                 let entity = engine.world.entities.get_mut(owner).unwrap();
                 entity.set_posture(initial_posture);
@@ -3427,7 +3427,7 @@ mod tests {
                 point_in: endpoint,
                 ..default_door()
             });
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
 
         // At this magnitude, `(map_y + z) - z` is one ULP below map_y.
         // That is exactly why the original game's direct door passage leaves the final rail
@@ -3462,7 +3462,7 @@ mod tests {
     #[test]
     fn denied_door_disables_anti_collision_before_marking_impossible() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         let door = crate::gate::Door {
             locked_pc: true,
             ..default_door()
@@ -3504,7 +3504,7 @@ mod tests {
     #[test]
     fn wall_lift_rejects_soldier_before_installing_an_order() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(Some(7)));
+        let owner = engine.add_test_entity(make_soldier(Some(7)));
         let lift_sector = crate::sector::SectorNumber::new(42);
         install_lift_sector(&mut engine, LiftType::Wall);
         let door = crate::gate::Door {
@@ -3537,7 +3537,7 @@ mod tests {
     #[test]
     fn ladder_lift_uses_ladder_translation_and_reaches_splice() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(Some(7)));
+        let owner = engine.add_test_entity(make_soldier(Some(7)));
         let lift_sector = crate::sector::SectorNumber::new(42);
         install_lift_sector(&mut engine, LiftType::Ladder);
         let door = crate::gate::Door {
@@ -3580,7 +3580,7 @@ mod tests {
     #[test]
     fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(Some(7)));
+        let owner = engine.add_test_entity(make_soldier(Some(7)));
         let door = crate::gate::Door {
             door_type: DoorType::BuildingTrap,
             ..default_door()
@@ -3683,7 +3683,7 @@ mod tests {
     fn real_ladder_nonzero_climb_keeps_lift_facing_and_posture() {
         let mut engine = EngineInner::new();
         install_lift_sector(&mut engine, LiftType::Ladder);
-        let owner = engine.add_entity(make_soldier(Some(42)));
+        let owner = engine.add_test_entity(make_soldier(Some(42)));
         let door = crate::gate::Door {
             door_type: DoorType::LiftLow,
             sector_in: crate::sector::SectorNumber::new(42),
@@ -3754,7 +3754,7 @@ mod tests {
     #[should_panic(expected = "has no sector for door 0 direction resolution")]
     fn missing_actor_sector_is_an_invariant_failure() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(None));
+        let owner = engine.add_test_entity(make_soldier(None));
 
         let _ = dispatch_pass(&mut engine, &[default_door()], owner);
     }
@@ -3767,7 +3767,7 @@ mod tests {
     #[test]
     fn actor_sector_outside_both_door_sides_passes_directly() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(Some(99)));
+        let owner = engine.add_test_entity(make_soldier(Some(99)));
 
         let (barrier, _seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
 
@@ -3787,7 +3787,7 @@ mod tests {
     #[should_panic(expected = "is a lift door but sector 8 has no lift type")]
     fn lift_door_requires_canonical_lift_type() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(Some(7)));
+        let owner = engine.add_test_entity(make_soldier(Some(7)));
         let door = crate::gate::Door {
             door_type: DoorType::LiftHigh,
             ..default_door()
@@ -3815,12 +3815,12 @@ mod tests {
             for owner_is_earlier in [true, false] {
                 let mut engine = EngineInner::new();
                 let owner = if owner_is_earlier {
-                    let owner = engine.add_entity(make_pc(7));
-                    let _observer = engine.add_entity(make_soldier(Some(7)));
+                    let owner = engine.add_test_entity(make_pc(7));
+                    let _observer = engine.add_test_entity(make_soldier(Some(7)));
                     owner
                 } else {
-                    let _observer = engine.add_entity(make_soldier(Some(7)));
-                    engine.add_entity(make_pc(7))
+                    let _observer = engine.add_test_entity(make_soldier(Some(7)));
+                    engine.add_test_entity(make_pc(7))
                 };
                 engine
                     .world
@@ -3960,10 +3960,13 @@ mod tests {
             for climber_is_earlier in [true, false] {
                 let mut engine = EngineInner::new();
                 let (climber, observer) = if climber_is_earlier {
-                    (engine.add_entity(make_pc(7)), engine.add_entity(make_pc(7)))
+                    (
+                        engine.add_test_entity(make_pc(7)),
+                        engine.add_test_entity(make_pc(7)),
+                    )
                 } else {
-                    let observer = engine.add_entity(make_pc(7));
-                    let climber = engine.add_entity(make_pc(7));
+                    let observer = engine.add_test_entity(make_pc(7));
+                    let climber = engine.add_test_entity(make_pc(7));
                     (climber, observer)
                 };
                 let _ = install_production_climb_fixture(
@@ -4025,12 +4028,12 @@ mod tests {
         for owner_is_earlier in [true, false] {
             let mut engine = EngineInner::new();
             let owner = if owner_is_earlier {
-                let owner = engine.add_entity(make_pc(7));
-                let _observer = engine.add_entity(make_pc(7));
+                let owner = engine.add_test_entity(make_pc(7));
+                let _observer = engine.add_test_entity(make_pc(7));
                 owner
             } else {
-                let _observer = engine.add_entity(make_pc(7));
-                engine.add_entity(make_pc(7))
+                let _observer = engine.add_test_entity(make_pc(7));
+                engine.add_test_entity(make_pc(7))
             };
             let (seq_id, order_id) = install_production_climb_fixture(
                 &mut engine,
@@ -4129,7 +4132,7 @@ mod tests {
     #[should_panic(expected = "is not movement data")]
     fn non_movement_pass_door_is_an_invariant_failure() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_soldier(Some(7)));
+        let owner = engine.add_test_entity(make_soldier(Some(7)));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -4166,7 +4169,7 @@ mod tests {
         ] {
             let mut engine = EngineInner::new();
             // Enter through `sector_out`, which is the `direct == true` side.
-            let owner = engine.add_entity(make_pc(7));
+            let owner = engine.add_test_entity(make_pc(7));
             engine
                 .world
                 .entities
@@ -4225,7 +4228,7 @@ mod tests {
     #[test]
     fn untranslated_loaded_pass_door_ignores_dormant_saved_direction() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         let action_state = engine
             .world
             .entities
@@ -4276,7 +4279,7 @@ mod tests {
     #[test]
     fn translated_loaded_pass_door_retains_saved_direction() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_pc(7));
+        let owner = engine.add_test_entity(make_pc(7));
         let action_state = engine
             .world
             .entities

@@ -4047,8 +4047,8 @@ mod tests {
     #[test]
     fn loaded_in_progress_falling_push_restores_serialized_flight() {
         let mut engine = EngineInner::new();
-        let attacker = engine.add_entity(falling_pushed_soldier(false));
-        let victim = engine.add_entity(falling_pushed_soldier(false));
+        let attacker = engine.add_test_entity(falling_pushed_soldier(false));
+        let victim = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, victim);
 
         let (sequence, element, _) = engine
@@ -4177,7 +4177,7 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(falling_ladder_pc(200));
+        let victim = engine.add_test_entity(falling_ladder_pc(200));
         {
             let actor = engine
                 .get_entity_mut(victim)
@@ -4222,7 +4222,7 @@ mod tests {
                 .map(|sector| sector.with_arena_index(goal_sector_index)),
             ..Default::default()
         });
-        let victim_id = engine.add_entity(victim);
+        let victim_id = engine.add_test_entity(victim);
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(&sim, &LevelAssets::default());
@@ -4251,7 +4251,7 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(falling_pushed_soldier(true));
+        let victim_id = engine.add_test_entity(falling_pushed_soldier(true));
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
         engine
             .get_entity_mut(victim_id)
@@ -4359,7 +4359,7 @@ mod tests {
         flight.goal_z = 0.0;
 
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
 
         // The actor update has already retired the falling order and changed
         // posture. The later terminal flight reconciliation must not
@@ -4441,7 +4441,7 @@ mod tests {
         flight.obstacle = crate::position_interface::ObstacleHandle::new(0);
 
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
         engine.tick_push_flight_terminal_landings(&sim, &assets);
 
         let victim = engine.get_entity(victim_id).unwrap();
@@ -4485,7 +4485,7 @@ mod tests {
         flight.goal_z = 0.0;
 
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_push_flight_for_owner(&sim, &LevelAssets::default(), victim_id);
@@ -4516,8 +4516,8 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
-        let earlier = engine.add_entity(falling_pushed_soldier(false));
-        let later = engine.add_entity(falling_pushed_soldier(false));
+        let earlier = engine.add_test_entity(falling_pushed_soldier(false));
+        let later = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, earlier);
         install_falling_pushed_order(&mut engine, later);
 
@@ -4604,7 +4604,7 @@ mod tests {
         actor.continuation.motion_state = crate::sprite::MotionState::Start;
 
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(entity);
+        let victim = engine.add_test_entity(entity);
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
@@ -4674,7 +4674,7 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(falling_ladder_pc(50));
+        let victim = engine.add_test_entity(falling_ladder_pc(50));
         let mut opponent_entity = falling_pushed_soldier(false);
         let Entity::Soldier(soldier) = &mut opponent_entity else {
             unreachable!()
@@ -4684,7 +4684,7 @@ mod tests {
             ..Default::default()
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
-        let opponent = engine.add_entity(opponent_entity);
+        let opponent = engine.add_test_entity(opponent_entity);
         {
             let ai = engine
                 .get_entity_mut(opponent)
@@ -4756,8 +4756,8 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(falling_ladder_pc(200));
-        let opponent = engine.add_entity(falling_pushed_soldier(false));
+        let victim = engine.add_test_entity(falling_ladder_pc(200));
+        let opponent = engine.add_test_entity(falling_pushed_soldier(false));
         engine
             .get_entity_mut(victim)
             .unwrap()
@@ -4815,7 +4815,7 @@ mod tests {
             .unwrap()
             .goal_x = 14.0;
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(&sim, &LevelAssets::default());
@@ -4843,7 +4843,7 @@ mod tests {
         let mut entity = falling_pushed_soldier(false);
         entity.human_data_mut().unwrap().unconscious = true;
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(sim, &LevelAssets::default());
@@ -4887,8 +4887,8 @@ mod tests {
         if let Entity::Soldier(soldier) = &mut victim {
             soldier.soldier.cached_camp = Camp::Lacklandists;
         }
-        let attacker_id = engine.add_entity(attacker);
-        let victim_id = engine.add_entity(victim);
+        let attacker_id = engine.add_test_entity(attacker);
+        let victim_id = engine.add_test_entity(victim);
 
         engine
             .get_entity_mut(attacker_id)

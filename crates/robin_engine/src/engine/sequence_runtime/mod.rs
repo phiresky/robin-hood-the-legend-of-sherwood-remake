@@ -2938,7 +2938,7 @@ mod sequence_phase_context_tests {
             .actor_data_mut()
             .expect("test soldier is an actor")
             .execution_frozen = true;
-        let owner = engine.add_entity(soldier);
+        let owner = engine.add_test_entity(soldier);
         let sequence = engine
             .orders
             .sequence_manager
@@ -2979,7 +2979,7 @@ mod sequence_phase_context_tests {
 
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(unconscious_lying_soldier());
+        let owner = engine.add_test_entity(unconscious_lying_soldier());
         let sequence = engine
             .orders
             .sequence_manager
@@ -3036,7 +3036,7 @@ mod sequence_phase_context_tests {
     #[test]
     fn redundant_equip_bow_terminates_even_with_generated_transition_queued() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(crate::element::ActionState::AimingWithBow));
+        let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::AimingWithBow));
         let mut element = crate::sequence::SequenceElement::new(1, Command::EquipBow, Some(owner));
         element.orders.push_back(crate::order::Order::test_new(
             crate::order::OrderType::TransitionEquipBow,
@@ -3081,8 +3081,8 @@ mod sequence_phase_context_tests {
             ),
         ] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(object_interaction_soldier(13));
-            let antagonist = engine.add_entity(interaction_object(object_type));
+            let owner = engine.add_test_entity(object_interaction_soldier(13));
+            let antagonist = engine.add_test_entity(interaction_object(object_type));
             let seq_id = engine.orders.sequence_manager.launch_element(
                 crate::sequence::SequenceElement::new_interaction(
                     1,
@@ -3126,13 +3126,14 @@ mod sequence_phase_context_tests {
         // PC Take already preserved its direction; keep that control while
         // removing the NPC-only synthetic pre-set.
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(crate::element::ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         engine
             .get_entity_mut(owner)
             .expect("PC owner exists")
             .element_data_mut()
             .set_direction_goal(7);
-        let antagonist = engine.add_entity(interaction_object(crate::element::ObjectType::Coin));
+        let antagonist =
+            engine.add_test_entity(interaction_object(crate::element::ObjectType::Coin));
         let seq_id = engine.orders.sequence_manager.launch_element(
             crate::sequence::SequenceElement::new_interaction(
                 1,
@@ -3165,7 +3166,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorSoldier;
@@ -3220,7 +3221,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::Bored));
+        let owner = engine.add_test_entity(shield_pc(ActionState::Bored));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::Upright;
         wait.action_state_after_transition = ActionState::Bored;
@@ -3258,7 +3259,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::DeadBack);
                 initial_element.kind = ElementKind::ActorSoldier;
@@ -3486,7 +3487,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::{Field, FieldValue, SequenceElement};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(crate::element::ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(false));
@@ -3536,7 +3537,7 @@ mod sequence_phase_context_tests {
         pc.playable = false;
         pc.command_interface = crate::human_control::CommandInterface::None;
         pc.mission_role = crate::human_control::MissionRole::RescueTarget;
-        let owner = engine.add_entity(entity);
+        let owner = engine.add_test_entity(entity);
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(true));
@@ -3571,8 +3572,8 @@ mod sequence_phase_context_tests {
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::Waiting));
-        let target = engine.add_entity(shield_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
+        let target = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let seq_id =
             engine
                 .orders
@@ -3719,7 +3720,7 @@ mod sequence_phase_context_tests {
         // FallingHitUpright action, then LowerShield resumes after StandingUp
         // has restored the actor to Waiting. Original still translates the
         // authored lowering animation at that point.
-        let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -3782,7 +3783,7 @@ mod sequence_phase_context_tests {
 
         for command in [Command::StandUp, Command::Recover] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+            let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
             engine
                 .get_entity_mut(owner)
                 .expect("recovery owner exists")
@@ -3828,7 +3829,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::WaitingSword));
+        let owner = engine.add_test_entity(shield_pc(ActionState::WaitingSword));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -3881,8 +3882,8 @@ mod sequence_phase_context_tests {
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::HoldingShield));
-        let protected = engine.add_entity(shield_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(ActionState::HoldingShield));
+        let protected = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let mut raise = SequenceElement::new_generic(1, Command::RaiseShield, Some(owner));
         raise.set_property(
             Field::ShieldDangerPoint,

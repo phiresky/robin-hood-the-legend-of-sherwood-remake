@@ -706,9 +706,9 @@ mod tests {
         }
 
         let mut engine = EngineInner::new();
-        let corpse = engine.add_entity(pc(0, true, 0xFFFF_FFFF));
-        let replacement = engine.add_entity(pc(100, false, 0xFFFF_FFFF));
-        let awaiting_replacement = engine.add_entity(pc(0, true, 12));
+        let corpse = engine.add_test_entity(pc(0, true, 0xFFFF_FFFF));
+        let replacement = engine.add_test_entity(pc(100, false, 0xFFFF_FFFF));
+        let awaiting_replacement = engine.add_test_entity(pc(0, true, 12));
 
         retire_loaded_replaced_pcs(&mut engine);
 

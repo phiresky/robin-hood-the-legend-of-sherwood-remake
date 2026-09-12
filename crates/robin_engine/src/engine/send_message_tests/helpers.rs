@@ -103,7 +103,7 @@ pub(super) fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, 
     engine.scripts.globals[904] = -1;
     engine.scripts.globals[907] = -1;
     engine.attach_script_bindings(&LevelAssets::new());
-    let receiver = engine.add_entity(scripted_receiver());
+    let receiver = engine.add_test_entity(scripted_receiver());
     let handle = ScriptHandleCodec::actor_handle(receiver);
     engine
         .scripts

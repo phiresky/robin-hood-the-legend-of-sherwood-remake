@@ -1319,7 +1319,7 @@ mod tests {
 
     fn selected_running_pc() -> (EngineInner, EntityId, SequenceId, std::num::NonZeroU32) {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1402,7 +1402,7 @@ mod tests {
     #[test]
     fn make_crouched_publishes_rewritten_walk_before_inserting_posture_transition() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1543,7 +1543,7 @@ mod tests {
     #[test]
     fn sword_door_pass_make_fast_rewrites_lazy_tail_without_inserting_transition() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
                 initial_element.kind = ElementKind::ActorPc;

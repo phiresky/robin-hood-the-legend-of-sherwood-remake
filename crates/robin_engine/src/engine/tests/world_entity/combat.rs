@@ -5,8 +5,8 @@ fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let initiator = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let initiator = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let opponent = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine
@@ -54,9 +54,9 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let old_principal = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let promoted = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let old_principal = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let promoted = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
@@ -154,9 +154,9 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let old_principal = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let promoted = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let old_principal = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let promoted = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
@@ -226,8 +226,8 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
 
     let mut engine = EngineInner::new();
 
-    let old_guarded_pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let current_guarded_pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let old_guarded_pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let current_guarded_pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let EntityId::Pc(old_guarded_pc_typed) = old_guarded_pc else {
         panic!("test PC has a non-PC entity ID")
     };
@@ -241,7 +241,7 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     };
     victim_soldier.element.active = true;
     victim_soldier.npc.life_points = 100;
-    let victim_id = engine.add_entity(victim);
+    let victim_id = engine.add_test_entity(victim);
 
     for guarded_pc in [old_guarded_pc, current_guarded_pc] {
         let Some(Entity::Pc(pc)) = engine.get_entity_mut(guarded_pc) else {
@@ -350,14 +350,15 @@ fn soldier_death_detaches_both_combat_neighbours_without_touching_another_line()
     let mut engine = EngineInner::new();
     // Reserve handle zero, which EnemyAi uses as its null neighbour sentinel.
     // This models Lane 36's Soldier 90 — dying Soldier 91 — Soldier 54 line.
-    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let left = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let victim = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let right = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let _sentinel =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let left = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let victim = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let right = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let unrelated_left =
-        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let unrelated_right =
-        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     let left_handle = left.index();
     let victim_handle = victim.index();
@@ -448,10 +449,12 @@ fn soldier_death_applies_queued_reciprocal_combat_neighbour_clears() {
     use crate::entity_id::SoldierId;
 
     let mut engine = EngineInner::new();
-    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let old_left = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let victim = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let old_right = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let _sentinel =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let old_left = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let victim = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let old_right =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let victim_handle = victim.index();
     let old_left_handle = old_left.index();
     let old_right_handle = old_right.index();
@@ -536,7 +539,8 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
 
     let mut engine = EngineInner::new();
     // EnemyAi reserves raw handle zero as its null human pointer.
-    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let _sentinel =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let make_enemy_ai_hero = || {
         let mut entity = make_test_pc(crate::element::Posture::Upright);
         let Entity::Pc(pc) = &mut entity else {
@@ -552,8 +556,8 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
         }));
         entity
     };
-    let owner = engine.add_entity(make_enemy_ai_hero());
-    let left = engine.add_entity(make_enemy_ai_hero());
+    let owner = engine.add_test_entity(make_enemy_ai_hero());
+    let left = engine.add_test_entity(make_enemy_ai_hero());
     for id in [owner, left] {
         engine
             .get_entity_mut(id)
@@ -606,7 +610,8 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
     use crate::element::{AiActorData, AiBrain};
 
     let mut engine = EngineInner::new();
-    let _sentinel = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let _sentinel =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let make_enemy_ai_hero = || {
         let mut entity = make_test_pc(crate::element::Posture::Upright);
         let Entity::Pc(pc) = &mut entity else {
@@ -623,9 +628,9 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
         }));
         entity
     };
-    let left = engine.add_entity(make_enemy_ai_hero());
-    let victim = engine.add_entity(make_enemy_ai_hero());
-    let right = engine.add_entity(make_enemy_ai_hero());
+    let left = engine.add_test_entity(make_enemy_ai_hero());
+    let victim = engine.add_test_entity(make_enemy_ai_hero());
+    let right = engine.add_test_entity(make_enemy_ai_hero());
     for id in [left, victim, right] {
         engine
             .get_entity_mut(id)
@@ -796,7 +801,8 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, refused_id, mut assets) = setup_review2_officer_and_soldier();
-    let accepted_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let accepted_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(accepted) = engine
         .get_entity_mut(accepted_id)
         .expect("partial-refusal acceptor exists")

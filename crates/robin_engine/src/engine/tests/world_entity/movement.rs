@@ -10,9 +10,10 @@ fn owner_boundary_positions_follow_original_creation_order_not_entity_slots() {
     // Deliberately allocate in the opposite order from Original's element
     // walk. Rust slots are loader/runtime storage identities; Original
     // Update visibility is determined by creation order.
-    let later_target = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let earlier_target = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let later_target = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let earlier_target =
+        engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     engine.world.install_original_creation_orders(
         BTreeMap::from([(later_target, 30), (owner, 20), (earlier_target, 10)]),
         31,
@@ -104,7 +105,7 @@ fn typed_route_continuation_keeps_end_think_open_for_its_fallback_move() {
     use crate::element::AiBrain;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(owner)
         .expect("typed-continuation test soldier exists")
@@ -172,7 +173,7 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     let mut movement = AiOrderIntent::new(OrderType::WalkingUpright, 100.0, 90.0);
     movement.after_attentive_mode = true;
     enemy.base.outbox.actor.orders.push(movement);
-    let owner = engine.add_entity(soldier_entity);
+    let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.drain_direct_ai_owner_boundary_mode(
@@ -312,7 +313,7 @@ fn unrelated_running_to_officer_failure_remains_generic() {
     use crate::ai::{AiState, StimulusType, Substate};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let ai = engine
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
@@ -398,7 +399,7 @@ fn entity_building_sector_uses_exact_identity_before_public_number_fallback() {
 #[test]
 fn selection_mark_skips_hidden_and_building_pcs() {
     let mut engine = EngineInner::new();
-    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine.players.seats[0].selection.push(pc_id);
 
     assert!(engine.pc_draws_selection_mark(pc_id));
@@ -434,9 +435,9 @@ fn friend_swap_candidates_resolve_both_friend_and_target_through_ai_position() {
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let friend = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let Entity::Soldier(friend_soldier) = engine.get_entity_mut(friend).unwrap() else {
         panic!("friend changed kind")
@@ -566,9 +567,9 @@ fn friend_swap_candidate_preserves_exact_duplicate_target_sector() {
     use crate::sector::{SectorNumber, SectorType};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let friend = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let square = |min: f32, max: f32| GridSector {
         points: vec![
@@ -648,7 +649,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
+    let object_id = engine.add_test_entity(Entity::Bonus(ElementBonus {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectBonus;
@@ -756,8 +757,8 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         })
         .expect("minimal mission enables roof-wait tick construction"),
     );
-    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let me_sector = crate::position_interface::SectorHandle::new(1);
 
     for (id, position) in [
@@ -969,7 +970,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     // Preserve Original's null AI-handle slot.
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -978,8 +979,8 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let friend_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let owner_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let friend_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     let owner_position = MapPoint::new(1155.7197, 1421.6211);
     let friend_raw_position = MapPoint::new(727.0, 1168.0);
 
@@ -1083,9 +1084,9 @@ fn optical_ai_position_uses_carrier_boundary_but_detects_the_target_world_point(
     use crate::coordinates::{MapPoint, WorldPoint3D};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let carrier = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::OnShoulders));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let carrier = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::OnShoulders));
 
     let carrier_world = WorldPoint3D::new(321.25, 654.5, 11.0);
     let Entity::Pc(carrier_pc) = engine.get_entity_mut(carrier).expect("carrier PC exists") else {
@@ -1195,7 +1196,8 @@ fn review2_instruct_gather_position_closes_at_owner_boundary() {
 #[test]
 fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let soldier_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(soldier_id)
         .expect("inactive snapshot soldier exists")

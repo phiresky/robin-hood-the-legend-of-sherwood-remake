@@ -1556,7 +1556,7 @@ mod tests {
                 0.0,
                 0.0,
             ));
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+        let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -1610,7 +1610,7 @@ mod tests {
             None,
             None,
         );
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+        let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element,
             actor: Default::default(),
             human: Default::default(),
@@ -1666,7 +1666,7 @@ mod tests {
             ));
 
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+        let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::ActorSoldier;
@@ -1696,7 +1696,7 @@ mod tests {
     #[test]
     fn eligible_uncontrolled_ally_uses_the_original_path_failure_flow() {
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+        let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::ActorSoldier;
@@ -1750,15 +1750,15 @@ mod tests {
             })
         };
         let mut engine = EngineInner::new();
-        let hostile_commandable = engine.add_entity(make_soldier(
+        let hostile_commandable = engine.add_test_entity(make_soldier(
             Camp::Lacklandists,
             crate::human_control::CommandInterface::TacticalOrders,
         ));
-        let friendly_uncommandable = engine.add_entity(make_soldier(
+        let friendly_uncommandable = engine.add_test_entity(make_soldier(
             Camp::Royalists,
             crate::human_control::CommandInterface::None,
         ));
-        let tactical_villain = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        let tactical_villain = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -1788,7 +1788,7 @@ mod tests {
     #[test]
     fn authored_tactical_stance_is_effective_before_the_first_order() {
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+        let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::ActorSoldier;
@@ -1841,7 +1841,7 @@ mod tests {
         ai.patrol_path = crate::ai::PatrolPath::new(path_id, &paths);
 
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
+        let soldier = engine.add_test_entity(Entity::Soldier(crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,

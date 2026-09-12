@@ -14,8 +14,8 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     });
     profiles.hth_weapons.push(Default::default());
     let mut engine = EngineInner::new();
-    let victim = engine.add_entity(make_test_pc(Posture::Flying));
-    let opponent = engine.add_entity(super::super::scenarios::make_test_ai_soldier(
+    let victim = engine.add_test_entity(make_test_pc(Posture::Flying));
+    let opponent = engine.add_test_entity(super::super::scenarios::make_test_ai_soldier(
         crate::element::Camp::Lacklandists,
     ));
     attach_test_campaign_identities(&mut engine);
@@ -88,7 +88,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let victim = engine.add_entity(make_test_pc(Posture::OnLadder));
+    let victim = engine.add_test_entity(make_test_pc(Posture::OnLadder));
     attach_test_campaign_identities(&mut engine);
 
     let damage =
@@ -193,7 +193,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
         (TargetKind::SelfHeal, true),
     ] {
         let mut engine = EngineInner::new();
-        let healer = engine.add_entity(make_test_pc(Posture::Upright));
+        let healer = engine.add_test_entity(make_test_pc(Posture::Upright));
         let healer_entity = engine.get_entity_mut(healer).unwrap();
         healer_entity.pc_data_mut().unwrap().life_points = 100;
         healer_entity
@@ -202,7 +202,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
 
         let target = match target_kind {
             TargetKind::Human(distance) => {
-                let target = engine.add_entity(make_test_pc(Posture::Upright));
+                let target = engine.add_test_entity(make_test_pc(Posture::Upright));
                 let entity = engine.get_entity_mut(target).unwrap();
                 entity.pc_data_mut().unwrap().life_points = 50;
                 entity
@@ -218,7 +218,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                     initial_element
                 };
                 element.set_position_map(MapPoint::new(distance, 0.0));
-                engine.add_entity(Entity::Fx(ElementFx {
+                engine.add_test_entity(Entity::Fx(ElementFx {
                     element,
                     fx: Default::default(),
                 }))
@@ -404,9 +404,9 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let _null_handle_slot = engine.add_entity(make_test_pc(Posture::Upright));
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let _null_handle_slot = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
     else {
         unreachable!()
@@ -635,8 +635,8 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
     else {
         unreachable!()
@@ -744,8 +744,8 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -896,9 +896,9 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let _null_handle_slot = engine.add_entity(make_test_pc(Posture::Upright));
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(Posture::Upright));
+    let _null_handle_slot = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
     assert_ne!(
         attacker.index(),
         0,
@@ -1201,7 +1201,7 @@ fn strangle_condolation_rejects_non_interaction_owner_data() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let seq = engine
         .orders
         .sequence_manager
@@ -1261,8 +1261,8 @@ fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
     let sim = crate::sim_rng::test_context();
     let assets = assets_with_test_pc_profile();
     let mut engine = EngineInner::new();
-    let survivor = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let victim = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let survivor = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let victim = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
     {
         let survivor_entity = engine.get_entity_mut(survivor).unwrap();
@@ -1305,7 +1305,7 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
     let sim = crate::sim_rng::test_context();
     let assets = assets_with_test_pc_profile();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1371,8 +1371,8 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
-    let victim = engine.add_entity(super::super::scenarios::make_test_ai_soldier(
+    let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let victim = engine.add_test_entity(super::super::scenarios::make_test_ai_soldier(
         crate::element::Camp::Lacklandists,
     ));
     {

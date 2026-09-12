@@ -40,7 +40,7 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
     };
     shooter_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     shooter_soldier.npc.life_points = 100;
-    let shooter_id = engine.add_entity(shooter);
+    let shooter_id = engine.add_test_entity(shooter);
 
     let victim_id = EntityId::Pc(PcId(if pc_before_arrow { 1 } else { 2 }));
     let make_arrow = || {
@@ -84,9 +84,9 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
 
     if pc_before_arrow {
         assert_eq!(engine.add_entity(victim), victim_id);
-        engine.add_entity(make_arrow());
+        engine.add_test_entity(make_arrow());
     } else {
-        engine.add_entity(make_arrow());
+        engine.add_test_entity(make_arrow());
         assert_eq!(engine.add_entity(victim), victim_id);
     }
 
@@ -113,8 +113,8 @@ fn corpse_exit_initialization_fixture(
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
-    let body = engine.add_entity(make_test_soldier(Posture::Carried));
-    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
+    let body = engine.add_test_entity(make_test_soldier(Posture::Carried));
+    let carrier = engine.add_test_entity(make_test_pc(Posture::CarryingCorpse));
     {
         let carrier_entity = engine.get_entity_mut(carrier).unwrap();
         carrier_entity.pc_data_mut().unwrap().carried = Some(body);
@@ -363,15 +363,15 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
 
     let (interrupter_id, chained_attacker_id) = if interrupter_first {
         (
-            engine.add_entity(interrupter),
-            engine.add_entity(chained_attacker),
+            engine.add_test_entity(interrupter),
+            engine.add_test_entity(chained_attacker),
         )
     } else {
-        let chained_attacker_id = engine.add_entity(chained_attacker);
-        let interrupter_id = engine.add_entity(interrupter);
+        let chained_attacker_id = engine.add_test_entity(chained_attacker);
+        let interrupter_id = engine.add_test_entity(interrupter);
         (interrupter_id, chained_attacker_id)
     };
-    let final_target_id = engine.add_entity(final_target);
+    let final_target_id = engine.add_test_entity(final_target);
     engine
         .get_entity_mut(chained_attacker_id)
         .unwrap()
@@ -564,15 +564,15 @@ fn chained_nonstraight_strike_lives(
 
     let (interrupter_id, chained_attacker_id) = if interrupter_first {
         (
-            engine.add_entity(interrupter),
-            engine.add_entity(chained_attacker),
+            engine.add_test_entity(interrupter),
+            engine.add_test_entity(chained_attacker),
         )
     } else {
-        let chained_attacker_id = engine.add_entity(chained_attacker);
-        let interrupter_id = engine.add_entity(interrupter);
+        let chained_attacker_id = engine.add_test_entity(chained_attacker);
+        let interrupter_id = engine.add_test_entity(interrupter);
         (interrupter_id, chained_attacker_id)
     };
-    let final_target_id = engine.add_entity(final_target);
+    let final_target_id = engine.add_test_entity(final_target);
     engine
         .get_entity_mut(chained_attacker_id)
         .unwrap()

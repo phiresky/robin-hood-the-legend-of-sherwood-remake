@@ -5,9 +5,9 @@ fn phalanx_them_list_snapshot_follows_inactive_linked_member() {
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
-    engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let chief = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let linked = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let linked = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
     for id in [chief, linked] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
@@ -44,9 +44,9 @@ fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
     use crate::element::{Camp, Detectable, DetectableType};
 
     let mut engine = EngineInner::new();
-    let earlier_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let later_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let earlier_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let later_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
     // The earlier NPC builds the lazy tactical snapshot before the PC's live
     // human-update slot. The later NPC's cadence is open at frame zero:
@@ -132,8 +132,8 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
     use crate::element::{Camp, Entity, EyeStatus};
 
     let mut engine = EngineInner::new();
-    let source_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let receiver_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let source_id = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let receiver_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for id in [source_id, receiver_id] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
             panic!("arrow-focus test NPC changed kind")

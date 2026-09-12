@@ -43,7 +43,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     };
     target_data.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
     target_data.npc.life_points = 100;
-    let target_id = engine.add_entity(target);
+    let target_id = engine.add_test_entity(target);
     assert_eq!(target_id, EntityId::Soldier(SoldierId(0)));
 
     let shooter_id = EntityId::Pc(PcId(2));
@@ -74,7 +74,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
             z: 0.0,
         },
     });
-    let existing_arrow_id = engine.add_entity(existing_arrow);
+    let existing_arrow_id = engine.add_test_entity(existing_arrow);
     assert_eq!(existing_arrow_id, EntityId::Projectile(ProjectileId(1)));
 
     let mut shooter = make_test_pc(Posture::Upright);
@@ -217,7 +217,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 #[should_panic(expected = "no original-game concrete-kind mapping for ObjectType::None")]
 fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_retention() {
     let mut engine = EngineInner::new();
-    engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
+    engine.add_test_entity(Entity::Projectile(crate::element::ElementProjectile {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::ObjectProjectile;
@@ -265,13 +265,13 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
     }
 
     let mut engine = EngineInner::new();
-    let apple = engine.add_entity(projectile(ObjectType::Apple, false));
-    let stone = engine.add_entity(projectile(ObjectType::Stone, false));
-    let grounded_purse = engine.add_entity(projectile(ObjectType::Purse, false));
-    let flying_purse = engine.add_entity(projectile(ObjectType::Purse, true));
-    let grounded_coin = engine.add_entity(projectile(ObjectType::Coin, false));
-    let flying_coin = engine.add_entity(projectile(ObjectType::Coin, true));
-    let grounded_net = engine.add_entity(Entity::Net(ElementNet {
+    let apple = engine.add_test_entity(projectile(ObjectType::Apple, false));
+    let stone = engine.add_test_entity(projectile(ObjectType::Stone, false));
+    let grounded_purse = engine.add_test_entity(projectile(ObjectType::Purse, false));
+    let flying_purse = engine.add_test_entity(projectile(ObjectType::Purse, true));
+    let grounded_coin = engine.add_test_entity(projectile(ObjectType::Coin, false));
+    let flying_coin = engine.add_test_entity(projectile(ObjectType::Coin, true));
+    let grounded_net = engine.add_test_entity(Entity::Net(ElementNet {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectNet;
@@ -289,7 +289,7 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
         },
         net: Default::default(),
     }));
-    let flying_net = engine.add_entity(Entity::Net(ElementNet {
+    let flying_net = engine.add_test_entity(Entity::Net(ElementNet {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectNet;
@@ -370,7 +370,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let arrow = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -463,7 +463,7 @@ fn frame_sound_refresh_waits_for_the_post_snapshot_presentation_boundary() {
     sprite.frame_count = 0;
 
     let mut engine = EngineInner::new();
-    let fx_id = engine.add_entity(Entity::Fx(ElementFx {
+    let fx_id = engine.add_test_entity(Entity::Fx(ElementFx {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::Fx;
@@ -513,7 +513,7 @@ fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let arrow = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -589,8 +589,8 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
     }
 
     let mut engine = EngineInner::new();
-    let shallower = engine.add_entity(falling_arrow(WorldPoint3D::new(0.0, 10.0, 0.0)));
-    let deeper = engine.add_entity(falling_arrow(WorldPoint3D::new(100.0, 20.0, 0.0)));
+    let shallower = engine.add_test_entity(falling_arrow(WorldPoint3D::new(0.0, 10.0, 0.0)));
+    let deeper = engine.add_test_entity(falling_arrow(WorldPoint3D::new(100.0, 20.0, 0.0)));
 
     // This rising masking edge classifies only the deeper arrow as behind the
     // FX. The phase-three display-sort merge therefore extracts it
@@ -602,7 +602,7 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
         initial_element
     };
     fx_element.set_position(WorldPoint3D::new(50.0, 50.0, 1.0));
-    let fx = engine.add_entity(Entity::Fx(ElementFx {
+    let fx = engine.add_test_entity(Entity::Fx(ElementFx {
         element: fx_element,
         fx: FxData {
             display_polyline: vec![MapPoint::new(-10.0, 0.0), MapPoint::new(110.0, 30.0)],
@@ -669,7 +669,7 @@ fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
 
     let mut engine = EngineInner::new();
     let old = crate::coordinates::WorldPoint3D::new(12.0, 8.0, 4.0);
-    let projectile = engine.add_entity(Entity::Projectile(ElementProjectile {
+    let projectile = engine.add_test_entity(Entity::Projectile(ElementProjectile {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectProjectile;
@@ -720,7 +720,7 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut selected = SequenceElement::new(1, Command::Wait, Some(owner));
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
     let order_id = order.order_id;
@@ -805,7 +805,7 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let script = SpriteScript {
         action_id: OrderType::TransitionEquipBow as u16,
         action_done: 1,
@@ -878,7 +878,7 @@ fn unbound_bow_transition_still_uses_generic_execute() {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let script = SpriteScript {
         action_id: OrderType::TransitionEquipBow as u16,
         action_done: 1,
@@ -946,7 +946,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
 
     let sim_context = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut element = SequenceElement::new(1, Command::ShootBow, Some(owner));
     let bow_order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
     let bow_order_id = bow_order.order_id;
@@ -1048,8 +1048,8 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
     use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
-    let shooter = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let shooter = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut element =
         SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter), Some(target));
     let mut order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
@@ -1131,8 +1131,8 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     let sim = crate::sim_rng::test_context();
     let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let target = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
         .get_entity_mut(target)
@@ -1216,7 +1216,7 @@ fn selected_listen_done_does_not_clear_newer_bow_action() {
     use crate::element::{ActionState, Posture};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
         let pc = engine.get_entity_mut(owner).unwrap();
         pc.actor_data_mut().unwrap().action_state = ActionState::Waiting;

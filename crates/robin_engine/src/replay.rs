@@ -1086,7 +1086,7 @@ mod tests {
         let mut live = crate::engine::EngineInner::new();
         let mut ai = crate::ai_enemy::EnemyAi::new(0);
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
-        let owner = live.add_entity(crate::element::Entity::Soldier(
+        let owner = live.add_test_entity(crate::element::Entity::Soldier(
             crate::element::ActorSoldier {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();

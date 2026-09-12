@@ -893,7 +893,7 @@ mod panic_boundary_tests {
     #[test]
     fn panic_state_dispatch_accepts_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(enemy_ai_hero());
+        let pc_id = engine.add_test_entity(enemy_ai_hero());
 
         engine.set_typed_npc_state(
             pc_id,
@@ -913,7 +913,7 @@ mod panic_boundary_tests {
     #[test]
     fn script_think_entry_dispatches_to_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(enemy_ai_hero());
+        let pc_id = engine.add_test_entity(enemy_ai_hero());
 
         engine.start_script_ai_native_think_pre_filter(pc_id);
 
@@ -931,7 +931,7 @@ mod panic_boundary_tests {
     fn enemy_ai_hero_completes_new_no_door_panic_boundary() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(enemy_ai_hero());
+        let pc_id = engine.add_test_entity(enemy_ai_hero());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -1022,7 +1022,7 @@ mod panic_boundary_tests {
         pc.ai_actor_data_mut()
             .expect("AI-controlled hero has AI actor data")
             .stuck_on_ladder_emergency_counter = 25;
-        let pc_id = engine.add_entity(pc);
+        let pc_id = engine.add_test_entity(pc);
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -1055,7 +1055,7 @@ mod panic_boundary_tests {
     fn new_no_door_panic_boundary_closes_recursive_reachpoint() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let npc_id = engine.add_entity(enemy_soldier());
+        let npc_id = engine.add_test_entity(enemy_soldier());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles
@@ -1093,7 +1093,7 @@ mod panic_boundary_tests {
     fn repeated_no_door_panic_boundary_preserves_red_and_larger_run_count() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let npc_id = engine.add_entity(enemy_soldier());
+        let npc_id = engine.add_test_entity(enemy_soldier());
         {
             let ai = engine
                 .get_entity_mut(npc_id)
@@ -1135,7 +1135,7 @@ mod panic_boundary_tests {
     fn synchronous_panic_boundary_consumes_recursive_reach_point_rng() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let npc_id = engine.add_entity(enemy_soldier());
+        let npc_id = engine.add_test_entity(enemy_soldier());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles
@@ -1630,7 +1630,7 @@ mod parity_tests {
     fn potential_detectables_include_inactive_authored_pcs() {
         let mut engine = EngineInner::new();
         let add_pc = |engine: &mut EngineInner, active, camp| {
-            engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -1713,7 +1713,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let sequence = engine.orders.sequence_manager.launch_element(
             crate::sequence::SequenceElement::new_movement(
                 1,
@@ -1782,7 +1782,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let sequence = engine.orders.sequence_manager.launch_element(
             crate::sequence::SequenceElement::new_movement(
                 1,
@@ -1841,7 +1841,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let ai = engine
             .world
             .entities
@@ -1910,7 +1910,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         let ai = engine
             .world
@@ -1994,7 +1994,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         {
             let ai = engine
@@ -2070,7 +2070,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         {
             let ai = engine
@@ -2141,7 +2141,7 @@ mod parity_tests {
             soldier: Default::default(),
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let ai = engine
             .world
             .entities
@@ -4262,7 +4262,7 @@ mod ai_view_position_sector_tests {
         assert_ne!(wrong, goal);
 
         let _legacy_null_slot =
-            engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -4272,7 +4272,7 @@ mod ai_view_position_sector_tests {
                 human: Default::default(),
                 pc: Default::default(),
             }));
-        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        let target = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -4379,7 +4379,7 @@ mod ai_view_position_sector_tests {
         );
 
         let _legacy_null_slot =
-            engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -4389,7 +4389,7 @@ mod ai_view_position_sector_tests {
                 human: Default::default(),
                 pc: Default::default(),
             }));
-        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        let target = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -4710,11 +4710,11 @@ mod prepared_entity_view_cache_tests {
     fn observation_classification_tracks_layer_admission_and_removal() {
         use crate::ai_entity_view::AiObservationUnavailable as Unavailable;
         let mut engine = EngineInner::new();
-        let observed = engine.add_entity(active_bonus(10.0));
-        let missing_layer = engine.add_entity(active_soldier_without_layer());
+        let observed = engine.add_test_entity(active_bonus(10.0));
+        let missing_layer = engine.add_test_entity(active_soldier_without_layer());
         let mut excluded = active_bonus(20.0);
         excluded.element_data_mut().active = false;
-        let excluded = engine.add_entity(excluded);
+        let excluded = engine.add_test_entity(excluded);
         let mut cache = PreparedAiEntityViewCache::default();
         refresh_prepared_entity_views(&engine, &mut cache);
 
@@ -4789,8 +4789,8 @@ mod prepared_entity_view_cache_tests {
     #[test]
     fn unchanged_views_are_reused_and_mutable_slot_access_invalidates_only_that_slot() {
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(active_bonus(10.0));
-        let second = engine.add_entity(active_bonus(20.0));
+        let first = engine.add_test_entity(active_bonus(10.0));
+        let second = engine.add_test_entity(active_bonus(20.0));
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 2);
@@ -4812,7 +4812,7 @@ mod prepared_entity_view_cache_tests {
     #[test]
     fn active_projectile_coin_is_available_to_ai_object_handle_lookups() {
         let mut engine = EngineInner::new();
-        let coin = engine.add_entity(active_coin_projectile(42.0));
+        let coin = engine.add_test_entity(active_coin_projectile(42.0));
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 1);
@@ -4847,7 +4847,7 @@ mod prepared_entity_view_cache_tests {
         let mut engine = EngineInner::new();
         let mut coin = active_coin_projectile(42.0);
         coin.element_data_mut().clear_layer();
-        let coin = engine.add_entity(coin);
+        let coin = engine.add_test_entity(coin);
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
@@ -4863,7 +4863,7 @@ mod prepared_entity_view_cache_tests {
     #[test]
     fn loaded_actor_without_layer_is_not_published_to_spatial_ai() {
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(active_soldier_without_layer());
+        let soldier = engine.add_test_entity(active_soldier_without_layer());
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);

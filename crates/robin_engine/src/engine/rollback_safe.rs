@@ -2923,7 +2923,7 @@ mod tests {
             .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
         let arrow = engine
             .inner
-            .add_entity(Entity::Projectile(ElementProjectile {
+            .add_test_entity(Entity::Projectile(ElementProjectile {
                 element,
                 object: ObjectData {
                     object_type: ObjectType::Arrow,
@@ -2988,7 +2988,7 @@ mod tests {
                 distance: 11,
             }],
         };
-        let id = inner.add_entity(crate::element::Entity::Soldier(
+        let id = inner.add_test_entity(crate::element::Entity::Soldier(
             crate::element::ActorSoldier {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
@@ -3431,27 +3431,28 @@ mod tests {
                 instanced: true,
                 ..Default::default()
             });
-        let pc_id = engine
-            .inner
-            .add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-                element: {
-                    let mut initial_element = crate::element::ElementData::from_initial_posture(
-                        crate::element::Posture::Upright,
-                    );
-                    initial_element.kind = crate::element::ElementKind::ActorPc;
-                    initial_element.active = true;
-                    initial_element
-                },
-                actor: crate::element::ActorData::default(),
-                human: crate::element::HumanData::default(),
-                pc: crate::element::PcData {
-                    profile_index: crate::profiles::CharacterProfileIdx(0),
-                    campaign_description_index: Some(0),
-                    life_points: 50,
-                    current_action: crate::profiles::Action::Net,
-                    ..Default::default()
-                },
-            }));
+        let pc_id =
+            engine
+                .inner
+                .add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+                    element: {
+                        let mut initial_element = crate::element::ElementData::from_initial_posture(
+                            crate::element::Posture::Upright,
+                        );
+                        initial_element.kind = crate::element::ElementKind::ActorPc;
+                        initial_element.active = true;
+                        initial_element
+                    },
+                    actor: crate::element::ActorData::default(),
+                    human: crate::element::HumanData::default(),
+                    pc: crate::element::PcData {
+                        profile_index: crate::profiles::CharacterProfileIdx(0),
+                        campaign_description_index: Some(0),
+                        life_points: 50,
+                        current_action: crate::profiles::Action::Net,
+                        ..Default::default()
+                    },
+                }));
 
         let mut wait = crate::sequence::SequenceElement::new_generic(
             1,
@@ -3539,7 +3540,7 @@ mod tests {
         let spawned_id =
             current
                 .inner
-                .add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+                .add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
                     element: {
                         let mut initial_element = crate::element::ElementData::default();
                         initial_element.kind = crate::element::ElementKind::Fx;
@@ -4391,7 +4392,7 @@ mod tests {
             .position_iface
             .set_cached_sprite_position(crate::coordinates::MapPoint::new(1688.0, 150.0));
         element.set_position_map(crate::coordinates::MapPoint::new(1836.2246, 301.3214));
-        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+        let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
             element,
             fx: Default::default(),
         }));
@@ -4422,7 +4423,7 @@ mod tests {
             .position_iface
             .set_cached_sprite_position(crate::coordinates::MapPoint::new(2791.0, 171.0));
         element.set_position_map_preserving_3d(crate::coordinates::MapPoint::new(2823.0, 312.0));
-        let id = inner.add_entity(crate::element::Entity::Target(
+        let id = inner.add_test_entity(crate::element::Entity::Target(
             crate::element::ElementTarget {
                 element,
                 fx: Default::default(),
@@ -4484,7 +4485,7 @@ mod tests {
             ],
             ..Default::default()
         }]);
-        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+        let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::Fx;
@@ -4556,7 +4557,7 @@ mod tests {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             ..Default::default()
         }]);
-        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+        let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::Fx;
@@ -4673,7 +4674,7 @@ mod tests {
                     dz: 0.0,
                 }),
             );
-            let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
                 element,
                 fx: Default::default(),
             }));
@@ -4933,8 +4934,8 @@ mod tests {
                 pc: crate::element::PcData::default(),
             })
         };
-        let first = inner.add_entity(new_pc());
-        let second = inner.add_entity(new_pc());
+        let first = inner.add_test_entity(new_pc());
+        let second = inner.add_test_entity(new_pc());
         inner.world.pc_ids = vec![first, second];
         inner.world.original_pc_registry_ids = vec![second, first];
 
@@ -5104,8 +5105,8 @@ mod tests {
                 pc: crate::element::PcData::default(),
             })
         };
-        let first = inner.add_entity(new_pc());
-        let second = inner.add_entity(new_pc());
+        let first = inner.add_test_entity(new_pc());
+        let second = inner.add_test_entity(new_pc());
         inner.script_domains.buildings.occupants.push(vec![
             crate::natives::ScriptHandleCodec::actor_handle(second),
             crate::natives::ScriptHandleCodec::actor_handle(first),
@@ -5345,7 +5346,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let id = inner.add_entity(crate::element::Entity::Projectile(projectile));
+        let id = inner.add_test_entity(crate::element::Entity::Projectile(projectile));
         let mut engine = Engine {
             inner,
             bootstrap_open: false,

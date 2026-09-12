@@ -10,7 +10,7 @@ fn enemy_ai_hero_rejects_soldier_speech_without_invalid_timing_or_stuck_latch() 
     assert_eq!(Remark::Panic as u32, 46);
     for remark in [Remark::Panic, Remark::SeesEnemy, Remark::VipWarcry] {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             pc: PcData {
                 ai: Some(Box::new(AiActorData {
                     ai_brain: AiBrain::Enemy(Box::default()),
@@ -75,7 +75,7 @@ fn enemy_ai_hero_speech_completion_clears_enemy_ai_latch() {
     let mut enemy = crate::ai_enemy::EnemyAi::default();
     enemy.base.current_remark = Remark::Arrow;
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(Entity::Pc(ActorPc {
+    let owner = engine.add_test_entity(Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorPc;
@@ -180,7 +180,7 @@ fn actor_effect_prefix_does_not_consume_caller_tail_self_stimulus() {
         .reentrant
         .self_stimuli
         .push(StimulusType::EventTimer.into());
-    let soldier_id = engine.add_entity(soldier_entity);
+    let soldier_id = engine.add_test_entity(soldier_entity);
 
     engine.drain_ai_owner_work_for(
         &crate::sim_rng::test_context(),
@@ -791,7 +791,7 @@ fn missing_speech_profile_is_lazy_for_early_and_non_type_rejections() {
     soldier.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(99);
     soldier.element.blipped = true;
     soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = early.add_entity(entity);
+    let owner = early.add_test_entity(entity);
     queue_and_settle_speech(
         &mut early,
         &assets,
@@ -838,7 +838,7 @@ fn live_this_type_forbid_candidate_requires_contextual_speech_profile() {
     };
     soldier.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(99);
     soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(entity);
+    let owner = engine.add_test_entity(entity);
     engine.ai.global.forbidden_remarks.push(ForbiddenRemark {
         remark: Remark::Arrow,
         flags: RemarkTargetFlags::THIS_TYPE.bits(),
@@ -861,7 +861,7 @@ fn alert_soldier_typed_tail_owns_couldnt_reachpoint_before_event_surface() {
     use crate::element::AiBrain;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(owner)
         .expect("soldier-alert test civilian exists")
@@ -913,7 +913,7 @@ fn tower_guard_alert_officer_tail_consumes_ignored_route_failure() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     {
         let ai = engine
             .get_entity_mut(owner)
@@ -973,7 +973,7 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
@@ -1058,7 +1058,7 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(owner)
         .expect("wrong-kind continuation owner exists")
@@ -1134,7 +1134,7 @@ fn alert_soldier_owner_boundary_first_failure_retries_and_consumes_success() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = make_alert_soldier_owner(&mut engine);
-    let soldier = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let soldier = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for (id, x) in [(owner, 0.0), (soldier, 100.0)] {
         let entity = engine
             .get_entity_mut(id)
@@ -1247,9 +1247,9 @@ fn alert_soldier_friend_append_drain_preserves_preexisting_duplicate_and_order()
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
-    let first_friend = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let second_friend = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
+    let first_friend = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let second_friend = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(civilian_id)
@@ -1326,8 +1326,8 @@ fn detectable_enemy_add_filters_targets_but_append_preserves_direct_calls() {
         ),
     ] {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_test_ai_soldier(camp));
-        let target = engine.add_entity(target_entity);
+        let owner = engine.add_test_entity(make_test_ai_soldier(camp));
+        let target = engine.add_test_entity(target_entity);
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -1357,7 +1357,7 @@ fn detectable_enemy_add_filters_targets_but_append_preserves_direct_calls() {
 fn detectable_enemy_add_requires_a_live_target() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1567,7 +1567,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
     // AI human handles use zero as missing, so keep production NPCs off slot 0.
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -1576,8 +1576,10 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let soldier_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -1656,8 +1658,10 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     for id in [officer_id, target_id] {
@@ -1706,7 +1710,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -1715,10 +1719,12 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    let reporter_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let reporter_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let callback_officer_id =
-        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -2095,7 +2101,7 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         soldier.npc.view_radius_goal = 400;
         soldier.npc.view_direction = [1.0, 0.0];
         soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
-        engine.add_entity(entity)
+        engine.add_test_entity(entity)
     }
 
     let sim = crate::sim_rng::test_context();
@@ -2416,7 +2422,8 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, refused_id, mut assets) = setup_review2_officer_and_soldier();
-    let accepted_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let accepted_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(accepted) = engine
         .get_entity_mut(accepted_id)
         .expect("partial alert acceptor exists")
@@ -2640,7 +2647,7 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
-    let body_id = engine.add_entity(make_test_pc(Posture::Upright));
+    let body_id = engine.add_test_entity(make_test_pc(Posture::Upright));
     let Entity::Pc(body) = engine.get_entity_mut(body_id).expect("report body exists") else {
         panic!("report body changed kind")
     };
@@ -2761,7 +2768,8 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
-    let second_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let second_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(second) = engine
         .get_entity_mut(second_id)
         .expect("review2 second alerted soldier exists")
@@ -2858,7 +2866,7 @@ fn review2_alert_result_and_report_finish_before_next_soldier_call() {
 fn review2_call_hey_to_civilian_panics_contextually() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, _, mut assets) = setup_review2_officer_and_soldier();
-    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
     queue_review2_wrong_kind_think(
         &mut engine,
@@ -2875,7 +2883,7 @@ fn review2_call_hey_to_civilian_panics_contextually() {
 fn review2_go_to_officer_to_civilian_panics_contextually() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, _, mut assets) = setup_review2_officer_and_soldier();
-    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+    let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
     queue_review2_wrong_kind_think(
         &mut engine,

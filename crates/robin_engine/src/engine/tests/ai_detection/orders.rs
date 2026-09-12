@@ -5,8 +5,8 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
     use super::super::tick::{ActorOwnerEnvelopePhase as Phase, capture_actor_owner_envelope};
 
     let mut engine = EngineInner::new();
-    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let npc = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let npc = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let mut display = HostDisplayState::default();
@@ -56,10 +56,10 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     profiles.characters.push(Default::default());
     assets.profile_manager = std::sync::Arc::new(profiles);
     let mut engine = EngineInner::new();
-    let listener = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let near = engine.add_entity(make_discovery_bonus(450.0));
-    let exact = engine.add_entity(make_discovery_bonus(450.0));
-    let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    let listener = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let near = engine.add_test_entity(make_discovery_bonus(450.0));
+    let exact = engine.add_test_entity(make_discovery_bonus(450.0));
+    let target = engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::Target;
@@ -315,8 +315,8 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
     use crate::sequence::SequenceElement;
 
     let (mut engine, target) = crate::engine::target_script_tests::build_engine_with_target();
-    let listener = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let reveal = engine.add_entity(make_discovery_bonus(10.0));
+    let listener = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let reveal = engine.add_test_entity(make_discovery_bonus(10.0));
     let Entity::Target(target_entity) = engine.get_entity_mut(target).unwrap() else {
         unreachable!()
     };
@@ -371,7 +371,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
                 .element_data()
                 .blipped,
         );
-        let appended_id = engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        let appended_id = engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Target;
@@ -425,8 +425,8 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
 #[test]
 fn tiredness_recovery_uses_original_creation_order_cadence() {
     let mut engine = EngineInner::new();
-    let restored = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let aligned = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let restored = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let aligned = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -496,8 +496,8 @@ fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
     use crate::element::{ActionState, Camp, Entity};
 
     let mut engine = EngineInner::new();
-    let chief = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let member = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let member = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -554,7 +554,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     use crate::element::Command;
 
     fn add_ready_civilian(engine: &mut EngineInner) -> EntityId {
-        let id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
+        let id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
         let Entity::Civilian(civilian) = engine.get_entity_mut(id).expect("civilian exists") else {
             panic!("civilian changed kind")
         };
@@ -594,7 +594,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     let self_owner = add_ready_civilian(&mut engine);
     let periodic_owner = add_ready_civilian(&mut engine);
     let macro_owner = add_ready_civilian(&mut engine);
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let Entity::Pc(pc) = engine.get_entity_mut(target).expect("face target exists") else {
         panic!("face target changed kind")
     };
@@ -704,8 +704,8 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     use crate::element::{Camp, Entity};
 
     let mut engine = EngineInner::new();
-    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let subordinate_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let subordinate_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for (id, x) in [(chief_id, 0.0), (subordinate_id, 10.0)] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
             panic!("patrol-dispatch test NPC changed kind")
@@ -789,7 +789,7 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
         } else {
             make_test_ai_soldier(Camp::Lacklandists)
         };
-        let npc_id = engine.add_entity(entity);
+        let npc_id = engine.add_test_entity(entity);
         let mut assets = LevelAssets::new();
         // Install the active soldier profile before marking the actor
         // unconscious; the fixture intentionally skips unconscious soldiers.
@@ -875,8 +875,8 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
     // Slot 0 has Original creation order 31; frame 1 opens the common
     // modulo-16 blip cadence.
     engine.control.frame_counter = 1;
-    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)
@@ -933,12 +933,12 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
         let mut engine = EngineInner::new();
         engine.ai.standard_view_polygon_radius = 100;
         let (pc_id, bonus_id) = if pc_first {
-            let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-            let bonus = engine.add_entity(make_discovery_bonus(10.0));
+            let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+            let bonus = engine.add_test_entity(make_discovery_bonus(10.0));
             (pc, bonus)
         } else {
-            let bonus = engine.add_entity(make_discovery_bonus(10.0));
-            let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+            let bonus = engine.add_test_entity(make_discovery_bonus(10.0));
+            let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
             (pc, bonus)
         };
         let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
@@ -971,7 +971,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
                     pc.element
                         .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
                     pc.element.set_position_map(MapPoint::new(0.0, 0.0));
-                    spawned = Some(engine.add_entity(make_discovery_bonus(10.0)));
+                    spawned = Some(engine.add_test_entity(make_discovery_bonus(10.0)));
                 },
             );
         });

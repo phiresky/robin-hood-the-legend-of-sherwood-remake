@@ -272,7 +272,7 @@ fn make_enemy_strike_pair(
     engine: &mut EngineInner,
     pending_consideration: bool,
 ) -> (EntityId, EntityId) {
-    let attacker = engine.add_entity(make_soldier(
+    let attacker = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -280,7 +280,7 @@ fn make_enemy_strike_pair(
         },
         None,
     ));
-    let target = engine.add_entity(make_pc(
+    let target = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -331,7 +331,7 @@ fn make_enemy_strike_pair(
 }
 
 fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -339,7 +339,7 @@ fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
         },
         None,
     ));
-    let target = engine.add_entity(make_pc(
+    let target = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -546,7 +546,7 @@ fn dispatch_crowded_cross_sector_swordfight(
     let opponent_sector = crate::position_interface::SectorHandle::new(2);
     assert_ne!(owner_sector, opponent_sector);
 
-    let owner = engine.add_entity(make_pc(
+    let owner = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -554,7 +554,7 @@ fn dispatch_crowded_cross_sector_swordfight(
         },
         owner_sector,
     ));
-    let opponent = engine.add_entity(make_soldier(
+    let opponent = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 60.0,
             y: 100.0,
@@ -563,7 +563,7 @@ fn dispatch_crowded_cross_sector_swordfight(
         opponent_sector,
     ));
     for index in 0..crowding {
-        let fighter = engine.add_entity(make_soldier(
+        let fighter = engine.add_test_entity(make_soldier(
             WorldPoint3D {
                 x: index as f32 * 10.0,
                 y: 120.0,

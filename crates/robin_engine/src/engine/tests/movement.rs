@@ -94,7 +94,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(minimal_movement_test_mission());
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     {
         let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
         level.sectors.push(make_sector(
@@ -416,13 +416,14 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(minimal_movement_test_mission());
-    let carrier = engine.add_entity(make_test_pc(crate::element::Posture::CarryingOnShoulders));
+    let carrier =
+        engine.add_test_entity(make_test_pc(crate::element::Posture::CarryingOnShoulders));
     let mut rider_entity = make_test_pc(crate::element::Posture::OnShoulders);
     rider_entity
         .human_data_mut()
         .expect("test rider is human")
         .carrier = Some(carrier);
-    let rider = engine.add_entity(rider_entity);
+    let rider = engine.add_test_entity(rider_entity);
     let owner = line_jump_approach_owner(&engine, rider);
     engine.script_domains.interactables.doors.push(Door {
         point_out: MapPoint::new(20.0, 10.0),
@@ -553,13 +554,13 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
     let mut mover = make_test_ai_soldier(Camp::Royalists);
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
     let mut opponent = make_test_pc(crate::element::Posture::Upright);
     opponent.element_data_mut().active = true;
     opponent
         .element_data_mut()
         .set_position_map(MapPoint::new(200.0, 100.0));
-    let opponent_id = engine.add_entity(opponent);
+    let opponent_id = engine.add_test_entity(opponent);
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -674,13 +675,13 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
     let mut mover = make_test_ai_soldier(Camp::Royalists);
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
     let mut opponent = make_test_pc(crate::element::Posture::Upright);
     opponent.element_data_mut().active = true;
     opponent
         .element_data_mut()
         .set_position_map(MapPoint::new(200.0, 100.0));
-    let opponent_id = engine.add_entity(opponent);
+    let opponent_id = engine.add_test_entity(opponent);
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -799,9 +800,9 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     use std::sync::Arc;
 
     let mut engine = EngineInner::new();
-    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
-    let body = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let observer = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let carrier = engine.add_test_entity(make_test_pc(Posture::CarryingCorpse));
+    let body = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let observer = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     engine.world.install_original_creation_orders(
         std::collections::BTreeMap::from([(carrier, 1), (observer, 2), (body, 3)]),
         4,
@@ -1028,7 +1029,8 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let mut engine = EngineInner::new();
         install_door_sectors(&mut engine);
         engine.scripts.mission = Some(minimal_mission());
-        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let owner =
+            engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         engine.script_domains.interactables.doors = vec![Door {
             point_out: MapPoint::new(1393.0, 502.0),
             point_in: MapPoint::new(1382.0, 480.0),
@@ -1157,7 +1159,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             unreachable!()
         };
         pc.pc.has_lockpick = true;
-        let owner = engine.add_entity(pc_entity);
+        let owner = engine.add_test_entity(pc_entity);
         engine.script_domains.interactables.doors = vec![Door {
             point_out: MapPoint::new(1298.0, 539.0),
             point_in: MapPoint::new(1265.0, 505.0),
@@ -1250,9 +1252,9 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
 
     let mut engine = EngineInner::new();
-    let first_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let dead_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let last_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let first_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let dead_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let last_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     // The fixture graph has no nodes, so every A* search fails; it still needs
@@ -1377,9 +1379,9 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let earlier_timer_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let expired_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let nonexpired_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let earlier_timer_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let expired_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let nonexpired_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -1505,7 +1507,7 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let mut selected = SequenceElement::new(1, Command::Generic, Some(owner));
     selected
@@ -1555,7 +1557,7 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
 #[test]
 fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1587,7 +1589,7 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
 #[test]
 fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let source_sector = crate::position_interface::SectorHandle::new(7);
     {
         let entity = engine.get_entity_mut(owner).unwrap();
@@ -1747,7 +1749,7 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let (rider, sequence, order_id) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
-    let later = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let later = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine.set_actors_frozen(true);
     let callback_closed = std::rc::Rc::new(std::cell::Cell::new(false));
     let callback_observed = callback_closed.clone();
@@ -1790,7 +1792,7 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
 #[should_panic(expected = "GALOPP Execute callback owner Soldier(SoldierId(0)) is not a rider")]
 fn galopp_execute_callback_rejects_non_rider_owner() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     engine.dispatch_galopp_loop_event(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
 }
 
@@ -1798,7 +1800,7 @@ fn galopp_execute_callback_rejects_non_rider_owner() {
 #[should_panic(expected = "disappeared before its synchronous GALOPP Execute callback")]
 fn galopp_execute_callback_rejects_missing_selected_owner() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     engine.remove_entity(owner);
     engine.dispatch_galopp_loop_event(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
 }
@@ -1960,7 +1962,7 @@ fn install_rider_charge_fixture(
     soldier
         .element
         .set_position_map(MapPoint::new(100.0, 100.0));
-    let rider_id = engine.add_entity(rider);
+    let rider_id = engine.add_test_entity(rider);
 
     let order_id = engine.orders.allocate_order_id();
     let mut order = Order::new(order_type, 300.0, 100.0, order_id);
@@ -2047,7 +2049,7 @@ fn add_charge_victim(engine: &mut EngineInner, position: MapPoint) -> EntityId {
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             -4.0, -4.0, 4.0, 4.0,
         ));
-    engine.add_entity(victim)
+    engine.add_test_entity(victim)
 }
 
 fn install_charge_victim_motion(
@@ -2130,7 +2132,7 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
     mover
         .element_data_mut()
         .publish_order_posture(Posture::Upright);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
     install_charge_victim_motion(
         &mut engine,
         mover_id,
@@ -2149,8 +2151,8 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         .and_then(|actor| actor.active_movement.sequence_id)
         .expect("movement is armed");
 
-    let foreign_owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let nested_owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let foreign_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let nested_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let foreign_seq = engine
         .orders
         .sequence_manager
@@ -2403,7 +2405,7 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
         100.0 + 100.0 * forward_x + 30.0 * side_x,
         100.0 + 100.0 * forward_y + 30.0 * side_y,
     ));
-    let victim_id = engine.add_entity(victim);
+    let victim_id = engine.add_test_entity(victim);
     let sim = crate::sim_rng::test_context();
 
     engine.tick_entity_movement(&sim, &assets);
@@ -2863,7 +2865,7 @@ fn rider_charge_perform_motion_uses_live_anti_collision_diversion() {
     obstacle
         .element_data_mut()
         .set_position_map(MapPoint::new(108.0, 102.0));
-    engine.add_entity(obstacle);
+    engine.add_test_entity(obstacle);
 
     tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
 
@@ -3456,7 +3458,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
     let mut mover = make_test_pc(Posture::Upright);
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
 
     let action = OrderType::WalkingUpright;
     let script = SpriteScript {
@@ -3560,7 +3562,7 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(position);
     mover.actor_data_mut().unwrap().action_state = ActionState::Moving;
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
 
     let preserved_action = OrderType::TransitionWaitingUprightRunningUpright;
     let script = SpriteScript {
@@ -3698,12 +3700,12 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         );
 
         let (observer_id, target_id) = if observer_before_target {
-            let observer_id = engine.add_entity(observer);
-            let target_id = engine.add_entity(target);
+            let observer_id = engine.add_test_entity(observer);
+            let target_id = engine.add_test_entity(target);
             (observer_id, target_id)
         } else {
-            let target_id = engine.add_entity(target);
-            let observer_id = engine.add_entity(observer);
+            let target_id = engine.add_test_entity(target);
+            let observer_id = engine.add_test_entity(observer);
             (observer_id, target_id)
         };
 
@@ -3908,12 +3910,12 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         target.element_data_mut().set_sector(SectorHandle::new(1));
 
         let (seeker_id, target_id) = if seeker_before_target {
-            let seeker_id = engine.add_entity(seeker);
-            let target_id = engine.add_entity(target);
+            let seeker_id = engine.add_test_entity(seeker);
+            let target_id = engine.add_test_entity(target);
             (seeker_id, target_id)
         } else {
-            let target_id = engine.add_entity(target);
-            let seeker_id = engine.add_entity(seeker);
+            let target_id = engine.add_test_entity(target);
+            let seeker_id = engine.add_test_entity(seeker);
             (seeker_id, target_id)
         };
 
@@ -4101,8 +4103,8 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     blocker.element_data_mut().set_position_map(destination);
     blocker.element_data_mut().set_sector(SectorHandle::new(1));
 
-    let mover_id = engine.add_entity(mover);
-    let blocker_id = engine.add_entity(blocker);
+    let mover_id = engine.add_test_entity(mover);
+    let blocker_id = engine.add_test_entity(blocker);
     bind_walking_sprite(&mut engine, mover_id);
     bind_walking_sprite(&mut engine, blocker_id);
 
@@ -4193,7 +4195,7 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
     mover.element_data_mut().set_sector(SectorHandle::new(1));
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
 
     let action = OrderType::WalkingUpright;
     let script = SpriteScript {
@@ -4347,7 +4349,7 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let soldier_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let ai = engine
@@ -4423,9 +4425,9 @@ fn deferred_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
     use crate::element::{Camp, Posture};
 
     let mut engine = EngineInner::new();
-    let waker = engine.add_entity(make_test_pc(Posture::Upright));
-    let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let waker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let same_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, same_camp_npc, waker);
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
@@ -4455,9 +4457,9 @@ fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
         .global
         .soldier_camps
         .extend([Camp::Royalists, Camp::Lacklandists]);
-    let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let waker = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let same_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, same_camp_npc, waker);
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
@@ -4490,8 +4492,8 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
     use crate::element::Camp;
 
     let mut engine = EngineInner::new();
-    let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let waker = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
     engine

@@ -178,7 +178,7 @@ pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
             ..TargetData::default()
         },
     });
-    let target_id = engine.add_entity(target);
+    let target_id = engine.add_test_entity(target);
 
     // Bind the target to its script class. Production binds instances before
     // dispatching Initialize through the shared engine driver.

@@ -98,8 +98,8 @@ fn half_circle_done_seed_combines_3d_range_with_ground_space_sector() {
 #[test]
 fn straight_strike_range_uses_stored_world_position() {
     let mut engine = EngineInner::new();
-    let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
-    let target = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+    let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
+    let target = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
     engine
         .get_entity_mut(target)
         .unwrap()
@@ -122,11 +122,11 @@ fn straight_strike_range_uses_stored_world_position() {
 #[test]
 fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D::default(),
         crate::position_interface::SectorHandle::new(42),
     ));
-    let target = engine.add_entity(make_soldier(
+    let target = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 20.0,
             ..WorldPoint3D::default()
@@ -197,7 +197,7 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
 #[test]
 fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(
+    let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -205,7 +205,7 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
         },
         None,
     ));
-    let pending_victim = engine.add_entity(make_soldier(
+    let pending_victim = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -257,7 +257,7 @@ fn domino_propagates_to_actors_in_flight_path() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let hitter = engine.add_entity(make_pc(
+    let hitter = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -265,7 +265,7 @@ fn domino_propagates_to_actors_in_flight_path() {
         },
         None,
     ));
-    let flyer = engine.add_entity(make_soldier(
+    let flyer = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -273,7 +273,7 @@ fn domino_propagates_to_actors_in_flight_path() {
         },
         None,
     ));
-    let mid = engine.add_entity(make_soldier(
+    let mid = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 16.0,
             y: 100.0,
@@ -281,7 +281,7 @@ fn domino_propagates_to_actors_in_flight_path() {
         },
         None,
     ));
-    let far = engine.add_entity(make_soldier(
+    let far = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 22.0,
             y: 100.0,

@@ -2411,7 +2411,7 @@ mod mission_level_builder_tests {
         let builder = MissionLevelBuilder::new("trap-tenant", false, &loaded);
         let assets = door_assets(2, 1);
         let mut engine = EngineInner::new();
-        let carried_id = engine.add_entity(civilian());
+        let carried_id = engine.add_test_entity(civilian());
         {
             let carried = engine
                 .get_entity_mut(carried_id)
@@ -2421,7 +2421,7 @@ mod mission_level_builder_tests {
             carried.set_sector(crate::position_interface::SectorHandle::new(12));
             carried.set_position_map(MapPoint::new(80.0, 90.0));
         }
-        engine.add_entity(Entity::Pc(ActorPc {
+        engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::ActorPc;
@@ -6971,7 +6971,7 @@ mod accessory_publication_tests {
             initial_velocity: WorldVec3D::new(4.0, 0.0, 0.0),
         });
         let mut engine = super::EngineInner::new();
-        let arrow_id = engine.add_entity(arrow);
+        let arrow_id = engine.add_test_entity(arrow);
 
         engine.attach_accessory_sprite(&assets, arrow_id);
 

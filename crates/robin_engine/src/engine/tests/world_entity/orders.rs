@@ -9,10 +9,10 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     use crate::sequence::SequenceId;
 
     let mut engine = EngineInner::new();
-    let removed = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let last = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let observer = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let removed = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let first = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let last = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let observer = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     engine.players.seats.push(SeatState::default()); // disconnected seat is still an owner
     for (index, seat) in engine.players.seats.iter_mut().enumerate() {
         seat.selection = vec![first, removed, last];
@@ -278,8 +278,8 @@ fn forbidden_scan_is_lazy_ordered_and_equal_deadline_is_live() {
 #[test]
 fn original_pc_registry_is_independent_from_portrait_priority_order() {
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let second = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let first = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let second = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     // Authoritative topology can differ from Rust's provisional construction
     // slots. Installing it establishes the original game's element order once.
@@ -315,8 +315,8 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
 
-    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let near = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let near = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let mut far_entity = make_test_pc(crate::element::Posture::Upright);
     far_entity
         .element_data_mut()
@@ -324,7 +324,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     far_entity
         .element_data_mut()
         .set_position_map(MapPoint::new(1_000.0, 0.0));
-    let far = engine.add_entity(far_entity);
+    let far = engine.add_test_entity(far_entity);
     let mut far_partner_entity = make_test_soldier(crate::element::Posture::Upright);
     far_partner_entity
         .element_data_mut()
@@ -332,7 +332,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     far_partner_entity
         .element_data_mut()
         .set_position_map(MapPoint::new(1_000.0, 0.0));
-    let far_partner = engine.add_entity(far_partner_entity);
+    let far_partner = engine.add_test_entity(far_partner_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     {
@@ -393,9 +393,11 @@ fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let foreign_a = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let foreign_b = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let foreign_a =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let foreign_b =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -495,8 +497,8 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
     // Save052's shape: the first approach crosses sectors and cannot construct
     // a route, while the target's jump gate provides Original's avenger-on-
     // roof recovery point.
-    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let owner_position = Position {
         x: 10.0,
         y: 10.0,
@@ -604,8 +606,8 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
     // A reachable route consumes the same typed tail, enters Approach, and
     // publishes the Observe decision exactly once.
     let reachable_owner =
-        engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let reachable_target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let reachable_target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let reachable_owner_position = Position {
         x: 200.0,
         y: 200.0,
@@ -700,7 +702,7 @@ fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -775,7 +777,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
     let mut add_body = || {
-        let id = engine.add_entity(make_test_pc(Posture::Lying));
+        let id = engine.add_test_entity(make_test_pc(Posture::Lying));
         let Entity::Pc(body) = engine.get_entity_mut(id).expect("report body exists") else {
             panic!("report body changed kind")
         };

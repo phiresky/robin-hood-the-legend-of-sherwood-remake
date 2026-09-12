@@ -15,7 +15,7 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
         bz: 0.0,
         dz: 75.0,
     };
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.position_iface_mut().set_sector_topology(
@@ -163,7 +163,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -250,7 +250,7 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
     let assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -308,7 +308,7 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
     soldier
         .element_data_mut()
         .set_position_map(MapPoint::new(100.0, 100.0));
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
     let target = MapPoint::new(200.0, 100.0);
     let expected_direction =
         crate::position_interface::vector_to_sector_0_to_15_iso(target.x - 100.0, target.y - 100.0);
@@ -391,7 +391,7 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
 
     let old_goal = MapPoint::new(70.0, 80.0);
     let mut movement =
@@ -462,7 +462,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -531,7 +531,7 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
 
     let mut waiting = SequenceElement::new_movement(
         1,
@@ -597,7 +597,7 @@ fn deferred_ai_move_skips_recursive_owner_drain_then_promotes_globally() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
 
     let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
     intent.defer_instruction = true;
@@ -646,7 +646,7 @@ fn path_waiter_tail_halts_registered_roof_move_before_instruction() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
 
     let mut intent = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
     intent.halt_after_launch_for_path_waiter = true;
@@ -682,7 +682,7 @@ fn fallback_staging_preserves_authored_path_waiter_tail_after_waiter_is_gone() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
 
     let mut fallback = AiOrderIntent::new(OrderType::RunningUpright, 100.0, 200.0);
     fallback.halt_after_launch_for_path_waiter = true;
@@ -720,7 +720,7 @@ fn ordinary_move_staging_does_not_invent_path_waiter_tail() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
 
     engine
         .get_entity_mut(owner)
@@ -764,7 +764,7 @@ fn ration_set_path_updates_eat_or_guzzle_slot_without_out_of_ammo_speech() {
         pc_data.disabled_actions = vec![false; 3];
         pc_data.disabled_actions_temp = vec![false; 3];
         pc_data.disabled_actions[0] = true;
-        let pc_id = engine.add_entity(pc);
+        let pc_id = engine.add_test_entity(pc);
 
         let mut desc = PcDescription {
             character_profile_idx: Some(CharacterProfileIdx(0)),

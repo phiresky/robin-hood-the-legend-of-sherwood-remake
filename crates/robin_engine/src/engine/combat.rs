@@ -2365,7 +2365,7 @@ mod tests {
             Entity::Projectile(projectile) if projectile.projectile.noise_distraction
         ));
 
-        let projectile_id = engine.add_entity(restored);
+        let projectile_id = engine.add_test_entity(restored);
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
@@ -2384,7 +2384,7 @@ mod tests {
         };
         element.clear_layer();
         element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 120.0, 2.0));
-        let projectile_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+        let projectile_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
                 object_type: crate::element::ObjectType::Arrow,
@@ -2462,7 +2462,7 @@ mod tests {
             .set_position_map(MapPoint::new(400.0, 500.0));
         thrower.element_data_mut().set_layer(2);
         thrower.element_data_mut().set_sector(SectorHandle::new(7));
-        let thrower = engine.add_entity(thrower);
+        let thrower = engine.add_test_entity(thrower);
         let start = WorldPoint3D::new(64.0, 64.0, 20.0);
         let target = WorldPoint3D::new(200.0, 64.0, 0.0);
         let mut entity = crate::bow_shot::spawn_purse(thrower, start, target, 2, None);
@@ -2517,7 +2517,7 @@ mod tests {
         let mut unplaced_thrower = make_pc(Posture::Upright);
         unplaced_thrower.element_data_mut().clear_layer();
         unplaced_thrower.element_data_mut().set_sector(None);
-        let thrower = engine.add_entity(unplaced_thrower);
+        let thrower = engine.add_test_entity(unplaced_thrower);
         let start = WorldPoint3D::new(20.0, 30.0, 10.0);
 
         let mut empty = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
@@ -2604,7 +2604,7 @@ mod tests {
             let sim = crate::sim_rng::test_context();
             let assets = purse_publication_assets();
             let mut engine = EngineInner::new();
-            let thrower = engine.add_entity(make_pc(Posture::Upright));
+            let thrower = engine.add_test_entity(make_pc(Posture::Upright));
             let start = WorldPoint3D::new(20.0, 30.0, 10.0);
             let mut purse = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
             let Entity::Projectile(projectile) = &mut purse else {
@@ -2642,7 +2642,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = purse_publication_assets();
         let mut engine = EngineInner::new();
-        let thrower = engine.add_entity(make_pc(Posture::Upright));
+        let thrower = engine.add_test_entity(make_pc(Posture::Upright));
         let mut holder = make_arrow_warning_soldier();
         holder
             .element_data_mut()
@@ -2664,7 +2664,7 @@ mod tests {
                 },
             ));
         }
-        let holder = engine.add_entity(holder);
+        let holder = engine.add_test_entity(holder);
 
         let start = WorldPoint3D::new(100.0, 0.0, 40.0);
         let end = WorldPoint3D::new(50.0, 0.0, 40.0);
@@ -2754,7 +2754,7 @@ mod tests {
         let mut engine = EngineInner::new();
         // Legacy human handles reserve zero as missing; production has a hidden
         // pre-level prefix, so keep the test shooter on a nonzero handle too.
-        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Target;
@@ -2773,7 +2773,7 @@ mod tests {
             .element_data_mut()
             .set_position_map(MapPoint::new(shooter_x, 0.0));
         shooter.pc_data_mut().unwrap().life_points = 100;
-        let shooter_id = engine.add_entity(shooter);
+        let shooter_id = engine.add_test_entity(shooter);
 
         let mut target = make_arrow_warning_soldier();
         bind_arrow_warning_sprite(&mut target);
@@ -2784,7 +2784,7 @@ mod tests {
             .element_data_mut()
             .set_position_map(MapPoint::new(0.0, 0.0));
         target.element_data_mut().set_direction_instantly(4);
-        let target_id = engine.add_entity(target);
+        let target_id = engine.add_test_entity(target);
         assert!(shooter_id.index() < target_id.index());
 
         let mut assets = LevelAssets::new();
@@ -2956,12 +2956,12 @@ mod tests {
         crate::element::EntityId,
     ) {
         let mut engine = EngineInner::new();
-        let target_id = engine.add_entity(make_pc(Posture::Carried));
+        let target_id = engine.add_test_entity(make_pc(Posture::Carried));
         let mut carrier = make_pc(Posture::CarryingCorpse);
         attach_drop_test_sprite(&mut carrier);
         carrier.pc_data_mut().unwrap().carried = Some(target_id);
         carrier.element_data_mut().set_position_map(carrier_pos);
-        let carrier_id = engine.add_entity(carrier);
+        let carrier_id = engine.add_test_entity(carrier);
         engine
             .get_entity_mut(target_id)
             .unwrap()
@@ -3125,7 +3125,7 @@ mod tests {
             .human_data_mut()
             .unwrap()
             .last_is_lying_for_corpse_intersection = Some(true);
-        let neighbour_id = engine.add_entity(neighbour);
+        let neighbour_id = engine.add_test_entity(neighbour);
 
         engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
 
@@ -3284,13 +3284,13 @@ mod tests {
         crate::element::EntityId,
     ) {
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(make_pc(Posture::OnShoulders));
+        let victim_id = engine.add_test_entity(make_pc(Posture::OnShoulders));
         let mut carrier = make_pc(Posture::CarryingOnShoulders);
         let Entity::Pc(carrier_pc) = &mut carrier else {
             unreachable!()
         };
         carrier_pc.pc.carried = Some(victim_id);
-        let carrier_id = engine.add_entity(carrier);
+        let carrier_id = engine.add_test_entity(carrier);
         engine
             .get_entity_mut(victim_id)
             .unwrap()
@@ -3448,13 +3448,13 @@ mod tests {
     #[test]
     fn projectile_damage_waits_for_sequence_manager_dispatch() {
         let mut engine = EngineInner::new();
-        let shooter = engine.add_entity(make_pc(Posture::Upright));
+        let shooter = engine.add_test_entity(make_pc(Posture::Upright));
         let mut victim = make_pc(Posture::Upright);
         let Entity::Pc(victim_pc) = &mut victim else {
             unreachable!()
         };
         victim_pc.pc.life_points = 100;
-        let victim = engine.add_entity(victim);
+        let victim = engine.add_test_entity(victim);
 
         engine.queue_projectile_damage(
             victim,

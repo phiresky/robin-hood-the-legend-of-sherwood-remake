@@ -5011,9 +5011,9 @@ mod campaign_lifecycle_tests {
         let mut engine = EngineInner::new_with_campaign(campaign);
         engine.mission_domain.mission_stat.living_soldier_count = 2;
         engine.mission_domain.mission_stat.total_soldier_count = 9;
-        engine.add_entity(lacklandist_soldier(100));
-        engine.add_entity(lacklandist_soldier(50));
-        engine.add_entity(lacklandist_soldier(0));
+        engine.add_test_entity(lacklandist_soldier(100));
+        engine.add_test_entity(lacklandist_soldier(50));
+        engine.add_test_entity(lacklandist_soldier(0));
 
         engine.apply_quit_mission_updates(
             sim,

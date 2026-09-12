@@ -5,9 +5,9 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
     use super::super::tick::{ActorOwnerEnvelopePhase as Phase, capture_actor_owner_envelope};
 
     let mut engine = EngineInner::new();
-    let inactive = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
-    let fried = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let npc = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let inactive = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
+    let fried = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let npc = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Pc(inactive_pc) = engine.get_entity_mut(inactive).expect("inactive PC exists")
     else {
         panic!("inactive PC changed kind")
@@ -89,20 +89,20 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
     fn member_is_admitted(member_before_chief: bool, spawn_after_snapshot: bool) -> bool {
         let mut engine = EngineInner::new();
         let (chief, initial_member) = if member_before_chief {
-            let member = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-            let chief = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let member = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
             (chief, Some(member))
         } else {
-            let chief = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
             let member = (!spawn_after_snapshot)
-                .then(|| engine.add_entity(make_test_ai_soldier(Camp::Lacklandists)));
+                .then(|| engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists)));
             (chief, member)
         };
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let mut positions = engine.boundary_positions_snapshot();
         let member = initial_member
-            .unwrap_or_else(|| engine.add_entity(make_test_ai_soldier(Camp::Lacklandists)));
+            .unwrap_or_else(|| engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists)));
 
         for id in [chief, member] {
             let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
@@ -177,8 +177,8 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
     use crate::ai::AiLockFlags;
 
     let mut engine = EngineInner::new();
-    let locked = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let unlocked = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let locked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let unlocked = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     for id in [locked, unlocked] {
@@ -242,7 +242,7 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
 
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let npc_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.control.frame_counter = 100;
@@ -300,8 +300,8 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
 
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let quiet_owner = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
-    let door_actor = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let quiet_owner = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
+    let door_actor = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -497,8 +497,8 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
     use crate::sector::SectorNumber;
 
     let mut engine = EngineInner::new();
-    let chief_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let minion_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let minion_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     {
         let chief = engine.get_entity_mut(chief_id).unwrap();
         chief
@@ -569,7 +569,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
     fn observed(observer_before_target: bool, spawn_after_snapshot: bool) -> bool {
         let mut engine = EngineInner::new();
-        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
                 initial_element.kind = crate::element::ElementKind::Target;
@@ -579,20 +579,20 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
             target: Default::default(),
         }));
         let (observer_id, initial_target) = if observer_before_target {
-            let observer = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-            let target =
-                (!spawn_after_snapshot).then(|| engine.add_entity(make_test_pc(Posture::Upright)));
+            let observer = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let target = (!spawn_after_snapshot)
+                .then(|| engine.add_test_entity(make_test_pc(Posture::Upright)));
             (observer, target)
         } else {
-            let target = engine.add_entity(make_test_pc(Posture::Upright));
-            let observer = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+            let target = engine.add_test_entity(make_test_pc(Posture::Upright));
+            let observer = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
             (observer, Some(target))
         };
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let mut positions = engine.boundary_positions_snapshot();
-        let target_id =
-            initial_target.unwrap_or_else(|| engine.add_entity(make_test_pc(Posture::Upright)));
+        let target_id = initial_target
+            .unwrap_or_else(|| engine.add_test_entity(make_test_pc(Posture::Upright)));
         if spawn_after_snapshot {
             complete_test_runtime_fixture(&mut engine, &mut assets);
         }
@@ -686,10 +686,12 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         // Slot 0 has Original creation order 31; frame 2 opens its
         // three-frame hearing cadence.
         engine.control.frame_counter = 2;
-        let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-        let indoor_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-        let inactive_outdoor_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-        let runner_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        let indoor_target_id =
+            engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+        let inactive_outdoor_id =
+            engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+        let runner_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         let building = crate::position_interface::SectorHandle::new(42).unwrap();
         install_test_building_sector(&mut engine, 42);
 
@@ -913,8 +915,8 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
         // Slot 0 has Original creation order 31; frame 1 opens the common
         // modulo-16 blip cadence.
         engine.control.frame_counter = 1;
-        let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-        let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+        let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         install_test_building_sector(&mut engine, 42);
 
         let Entity::Soldier(observer) = engine
@@ -985,8 +987,8 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     // frame 48, opening both the three-frame hearing cadence and the
     // modulo-16 blip cadence.
     engine.control.frame_counter = 17;
-    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let runner_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let runner_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)
@@ -1130,8 +1132,8 @@ fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
     use crate::element::{Camp, Detectable, DetectableType, Entity};
 
     let mut engine = EngineInner::new();
-    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
-    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
+    let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(civilian_id)
         .expect("missing-AI civilian exists")
@@ -1174,7 +1176,7 @@ fn mixed_enemy_walk_rejects_friendly_ai_on_a_soldier() {
     use crate::element::{AiBrain, Camp, Entity};
 
     let mut engine = EngineInner::new();
-    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let soldier_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(soldier_id)
         .expect("wrong-AI soldier exists")
@@ -1305,8 +1307,8 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     use crate::element::{Camp, Detectable, DetectableType, Entity};
 
     let mut engine = EngineInner::new();
-    let civilian_id = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
-    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let civilian_id = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
+    let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let Entity::Civilian(civilian) = engine
         .get_entity_mut(civilian_id)

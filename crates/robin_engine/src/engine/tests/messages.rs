@@ -22,7 +22,7 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
     use crate::ai::{StimulusType, Substate};
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
     engine
         .get_entity_mut(soldier)
@@ -73,7 +73,7 @@ fn post_reentrant_macro_cleanup_preserves_nested_wait_deadline() {
     };
     civilian_data.npc.ai_brain =
         crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
-    let civilian = engine.add_entity(entity);
+    let civilian = engine.add_test_entity(entity);
     {
         let ai = engine
             .get_entity_mut(civilian)
@@ -122,7 +122,7 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
     };
     civilian_data.npc.ai_brain =
         crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
-    let civilian = engine.add_entity(entity);
+    let civilian = engine.add_test_entity(entity);
     let paths = vec![RawHikingPath {
         waypoints: vec![RawWaypoint {
             x: 40,
@@ -204,7 +204,7 @@ fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
     };
     civilian_data.npc.ai_brain =
         crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
-    let civilian = engine.add_entity(entity);
+    let civilian = engine.add_test_entity(entity);
     let paths = vec![RawHikingPath {
         waypoints: vec![RawWaypoint {
             x: 40,
@@ -258,7 +258,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let ale_destination = crate::coordinates::MapPoint::new(40.0, 20.0);
     let mut ale_element = {
         let mut initial_element = crate::element::ElementData::default();
@@ -268,7 +268,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     };
     ale_element.set_position_map(ale_destination);
     ale_element.set_sector(crate::ai::SectorHandle::new(1));
-    let ale = engine.add_entity(Entity::Bonus(crate::element::ElementBonus {
+    let ale = engine.add_test_entity(Entity::Bonus(crate::element::ElementBonus {
         element: ale_element,
         object: crate::element::ObjectData {
             object_type: crate::element::ObjectType::Ale,
@@ -417,7 +417,7 @@ fn condolation_reenters_think_before_dispatch_returns() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
 
     let seq_id = engine
@@ -465,7 +465,7 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
@@ -543,7 +543,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::OnWall));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::OnWall));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -595,7 +595,7 @@ fn delayed_selected_movement_card_clears_goal_after_wait_is_selected() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(536.9613, 447.9872);
 
     let movement =
@@ -658,7 +658,7 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(1183.0403, 743.6907);
 
     let mut movement =
@@ -724,7 +724,7 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(70.0, 80.0);
 
     let movement =
@@ -769,7 +769,7 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
     use crate::sequence::{Sequence, SequenceElement, SequencePriority, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::SimulatingBeggar));
+    let owner = engine.add_test_entity(make_test_pc(Posture::SimulatingBeggar));
 
     let mut leave_beggar = SequenceElement::new(1, Command::LeaveBeggar, Some(owner));
     leave_beggar.priority = SequencePriority::NonInterruptable;
@@ -821,7 +821,7 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let goal = MapPoint::new(1004.836, 1774.2802);
 
     let movement =
@@ -880,7 +880,7 @@ fn halt_condolation_does_not_instruct_a_prequeued_replacement_move() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let outgoing =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let outgoing_seq = engine.orders.sequence_manager.launch_element(outgoing);
@@ -927,7 +927,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     use crate::sequence::{Sequence, SequenceAction, SequenceElement};
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
 
     let mut parent = Sequence::new();
@@ -1009,9 +1009,9 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
     use crate::sequence::{CascadeFlags, Sequence, SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let second = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let third = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let first = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let third = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     for owner in [second, third] {
         engine
             .get_entity_mut(owner)
@@ -1078,7 +1078,7 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
     // The mission regression had three actor elements at the current command
     // level and an ownerless Timer at index 3.  The last actor condolence

@@ -70,7 +70,7 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let pc = engine.add_entity(make_pc(
+    let pc = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -78,7 +78,7 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
         },
         None,
     ));
-    let opponent = engine.add_entity(make_soldier(
+    let opponent = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,

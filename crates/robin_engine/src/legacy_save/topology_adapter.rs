@@ -1088,19 +1088,19 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
 
-        let proto_fx = engine.add_entity(fx(None));
-        let soldier = engine.add_entity(soldier(
+        let proto_fx = engine.add_test_entity(fx(None));
+        let soldier = engine.add_test_entity(soldier(
             "GuardScript",
             AiBrain::Enemy(Box::new(EnemyAi::new(0))),
         ));
-        let target = engine.add_entity(target("BellTarget"));
-        let bonus = engine.add_entity(bonus(ObjectType::BonusAle));
-        let scroll = engine.add_entity(Entity::Scroll(crate::element::ElementScroll {
+        let target = engine.add_test_entity(target("BellTarget"));
+        let bonus = engine.add_test_entity(bonus(ObjectType::BonusAle));
+        let scroll = engine.add_test_entity(Entity::Scroll(crate::element::ElementScroll {
             script_class: "ClueScroll".to_owned(),
             ..Default::default()
         }));
-        let beam_pc = engine.add_entity(pc("RobinScript", 0));
-        let mobile_child = engine.add_entity(fx(Some(0)));
+        let beam_pc = engine.add_test_entity(pc("RobinScript", 0));
+        let mobile_child = engine.add_test_entity(fx(Some(0)));
         engine
             .world
             .mobile_elements
@@ -1166,7 +1166,7 @@ mod tests {
     fn element_metadata_rejects_attachment_and_local_ai_mismatches() {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let soldier = engine.add_entity(soldier("Guard", AiBrain::None));
+        let soldier = engine.add_test_entity(soldier("Guard", AiBrain::None));
         assets.entities.soldier_entity_ids = vec![soldier];
         assets.entities.legacy_mission_element_chunk_order = vec![MissionElementChunk::Element];
         assets.entities.legacy_mission_element_group_order = vec![MissionElementGroup::Soldier];
@@ -1178,7 +1178,7 @@ mod tests {
                 .contains("ActorNpcSoldier has incompatible local AI")
         );
 
-        let child = engine.add_entity(fx(Some(0)));
+        let child = engine.add_test_entity(fx(Some(0)));
         engine.world.mobile_elements.push(mobile(vec![child]));
         let error = derive_static_element_topology(&engine, &assets).unwrap_err();
         assert!(matches!(

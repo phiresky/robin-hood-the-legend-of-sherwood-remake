@@ -1391,7 +1391,7 @@ mod tests {
             .add_sector(grid_sector(100.0, 200.0), 2);
         assert_ne!(wrong, exact);
 
-        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        let target = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,

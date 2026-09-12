@@ -4,15 +4,15 @@ use super::*;
 fn lying_arrow_victim_speaks_before_posture_termination() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_pc(WorldPoint3D::default(), None));
-    let lying = engine.add_entity(make_soldier(
+    let attacker = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
+    let lying = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 20.0,
             ..WorldPoint3D::default()
         },
         None,
     ));
-    let upright = engine.add_entity(make_soldier(
+    let upright = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 40.0,
             ..WorldPoint3D::default()
@@ -108,7 +108,7 @@ fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
 fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_soldier(
+    let attacker = engine.add_test_entity(make_soldier(
         WorldPoint3D {
             x: 0.0,
             y: 100.0,
@@ -116,7 +116,7 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         },
         None,
     ));
-    let victim = engine.add_entity(make_pc(
+    let victim = engine.add_test_entity(make_pc(
         WorldPoint3D {
             x: 10.0,
             y: 100.0,
@@ -228,8 +228,8 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
 fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
-    let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+    let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
+    let victim = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
     let sprite_script = crate::sprite_script::SpriteScript {
         action_id: crate::order::OrderType::WaitingUpright as u16,
         action_done: 0,
@@ -305,8 +305,8 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
 fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
-    let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+    let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
+    let victim = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
     engine
         .get_entity_mut(victim)
         .unwrap()
@@ -403,8 +403,8 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
     ] {
         let sim = crate::sim_rng::test_context();
         let mut engine = make_engine();
-        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
-        let victim = engine.add_entity(if use_pc {
+        let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let victim = engine.add_test_entity(if use_pc {
             make_pc(WorldPoint3D::ZERO, None)
         } else {
             make_soldier(WorldPoint3D::ZERO, None)
@@ -457,9 +457,9 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
 fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
-    let carrier = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
-    let victim = engine.add_entity(make_pc(WorldPoint3D::ZERO, None));
+    let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
+    let carrier = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
+    let victim = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
     engine
         .get_entity_mut(carrier)
         .unwrap()

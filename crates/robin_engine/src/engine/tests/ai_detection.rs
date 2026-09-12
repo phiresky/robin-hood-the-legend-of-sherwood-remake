@@ -8,9 +8,9 @@ fn mixed_enemy_fifo_fixture(
     use crate::element::{Camp, Detectable, DetectableType, Entity};
 
     let mut engine = EngineInner::new();
-    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let royalist_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+    let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let royalist_id = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
 
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)

@@ -379,8 +379,8 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
         );
         entity
     };
-    let persistent_pc = engine.add_entity(make_pc());
-    let posture_pc = engine.add_entity(make_pc());
+    let persistent_pc = engine.add_test_entity(make_pc());
+    let posture_pc = engine.add_test_entity(make_pc());
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let persistent_handle = ScriptHandleCodec::actor_handle(persistent_pc);
     let posture_handle = ScriptHandleCodec::actor_handle(posture_pc);
@@ -569,7 +569,7 @@ fn recorded_timer_is_registered_before_thanx_returns() {
 fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let pc_id = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+    let pc_id = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;

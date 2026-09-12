@@ -468,7 +468,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
         s.conversion = Arc::new(vec![0, 1, 2]);
         s.alternate_conversion = Some(Arc::new(vec![3, 4, 5]));
     }
-    engine.add_entity(Entity::Soldier(ActorSoldier {
+    engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element,
         actor: Default::default(),
         human: Default::default(),
@@ -602,7 +602,7 @@ fn measure_engine_size() {
             npc: Default::default(),
             soldier: Default::default(),
         });
-        engine.add_entity(entity);
+        engine.add_test_entity(entity);
     }
     for i in 0..4u32 {
         let mut element = {
@@ -617,7 +617,7 @@ fn measure_engine_size() {
             human: Default::default(),
             pc: Default::default(),
         });
-        engine.add_entity(entity);
+        engine.add_test_entity(entity);
     }
 
     // JSON size = meaningful serialized state

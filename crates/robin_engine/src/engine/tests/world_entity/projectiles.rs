@@ -152,8 +152,8 @@ fn specialized_ai_continuation_snapshot_roundtrip_and_hash_cover_pending_barrier
     };
 
     let mut engine = EngineInner::new();
-    let caller = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let caller = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     engine
         .get_entity_mut(caller)
         .and_then(Entity::ai_controller_mut)
@@ -253,8 +253,8 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let opponent = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut shot = crate::sequence::SequenceElement::new_interaction(
@@ -290,8 +290,8 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let initiator = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
-    let opponent = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let initiator = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    let opponent = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let mut shot = crate::sequence::SequenceElement::new_interaction(
@@ -348,7 +348,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .element
         .set_position(WorldPoint3D::new(10.0, 10.0, 0.0));
     soldier.element.set_position_map(MapPoint::new(10.0, 10.0));
-    let listener_id = engine.add_entity(listener);
+    let listener_id = engine.add_test_entity(listener);
     engine
         .get_entity_mut(listener_id)
         .and_then(Entity::enemy_ai_mut)
@@ -401,8 +401,8 @@ fn one_shot_noise_listener_walk_uses_restored_original_creation_order() {
     use crate::element::Camp;
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let second = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let first = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let second = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let first_order = engine.world.original_creation_order(first);
     let second_order = engine.world.original_creation_order(second);
     engine.world.install_original_creation_orders(
@@ -431,7 +431,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
         .element
         .set_position(WorldPoint3D::new(10.0, 10.0, 0.0));
     soldier.element.set_position_map(MapPoint::new(10.0, 10.0));
-    let listener_id = engine.add_entity(listener);
+    let listener_id = engine.add_test_entity(listener);
 
     let audible = engine.one_shot_noise(
         NoiseType::Bonk,
@@ -534,7 +534,7 @@ fn one_shot_hearing_uses_authoritative_world_y_at_uword_volume_boundary() {
     soldier
         .element
         .set_position_map_preserving_3d(MapPoint::new(0.0, reconstructed_y));
-    let listener_id = engine.add_entity(listener);
+    let listener_id = engine.add_test_entity(listener);
     let drawbridge = engine.one_shot_noise(
         NoiseType::Drawbridge,
         MapPoint::new(0.0, 0.0),
@@ -559,8 +559,8 @@ fn fighter_snapshot_recovers_exact_duplicate_pc_sector_for_combat_routes() {
     use crate::sector::{SectorNumber, SectorType};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -625,8 +625,8 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
     use crate::profiles::{BowProfile, BowShootMode, CharacterProfile, ProfileManager};
 
     let mut engine = EngineInner::new();
-    let shooter = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    let target = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+    let shooter = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
     let Entity::Pc(dead_target) = engine.get_entity_mut(target).expect("dead target exists") else {
         panic!("dead target changed kind")
     };
@@ -664,8 +664,8 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let target_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let self_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let target_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
 
     for (id, x) in [(self_id, 0.0), (target_id, 20.0)] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
@@ -785,7 +785,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     // Human handle zero means no entry in original-game AI lists.
-    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Target;
@@ -794,9 +794,11 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         fx: Default::default(),
         target: Default::default(),
     }));
-    let owner_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let raw_near_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let raw_far_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let raw_near_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let raw_far_id =
+        engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     for (id, x) in [(owner_id, 0.0), (raw_near_id, 20.0), (raw_far_id, 600.0)] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")

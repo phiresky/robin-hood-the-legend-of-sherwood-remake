@@ -42,7 +42,7 @@ fn constructor_primed_throwables_receive_exactly_one_appended_live_slot_advance(
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_test_pc(Posture::Upright));
+    let actor = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let start = WorldPoint3D::new(0.0, 0.0, 20.0);
@@ -72,7 +72,7 @@ fn constructor_primed_throwables_receive_exactly_one_appended_live_slot_advance(
                 crate::bow_shot::spawn_apple(actor, start, end, None, None, 0, None),
                 crate::bow_shot::spawn_stone(actor, start, end, None, None, 0, None),
             ] {
-                let id = engine.add_entity(entity);
+                let id = engine.add_test_entity(entity);
                 let frame_count = match engine.get_entity(id).unwrap() {
                     Entity::Projectile(projectile) => projectile.projectile.frame_count,
                     Entity::Net(net) => net.projectile.frame_count,
@@ -154,7 +154,7 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
         // fixture must stamp it too so the burst-row regression below can
         // prove the burst ignores a nonzero direction.
         element.set_direction_instantly(4);
-        let projectile_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+        let projectile_id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
                 object_type,
@@ -299,8 +299,8 @@ fn instant_corpse_drop_leaves_the_goal_at_the_carrier_heading() {
     use crate::element::Posture;
 
     let mut engine = EngineInner::new();
-    let body = engine.add_entity(make_test_soldier(Posture::Carried));
-    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
+    let body = engine.add_test_entity(make_test_soldier(Posture::Carried));
+    let carrier = engine.add_test_entity(make_test_pc(Posture::CarryingCorpse));
     {
         let carrier_entity = engine.get_entity_mut(carrier).unwrap();
         carrier_entity.pc_data_mut().unwrap().carried = Some(body);
@@ -344,8 +344,8 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
-    let body = engine.add_entity(make_test_soldier(Posture::Tied));
-    let carrier = engine.add_entity(make_test_pc(Posture::Upright));
+    let body = engine.add_test_entity(make_test_soldier(Posture::Tied));
+    let carrier = engine.add_test_entity(make_test_pc(Posture::Upright));
     let carrier_position = crate::coordinates::MapPoint::new(1005.0, 827.0);
     {
         let carrier_entity = engine.get_entity_mut(carrier).unwrap();
@@ -447,7 +447,7 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
     let assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -529,7 +529,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         unreachable!("make_test_soldier returned a non-soldier")
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-    let owner = engine.add_entity(soldier);
+    let owner = engine.add_test_entity(soldier);
     let old_goal = MapPoint::new(1004.836, 1774.2802);
 
     let mut movement =
@@ -595,7 +595,7 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut element = SequenceElement::new(1, Command::WaitTimer, Some(owner));
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
     let order_id = order.order_id;
@@ -643,7 +643,7 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut element = SequenceElement::new(1, Command::EatCmd, Some(owner));
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
     let order_id = order.order_id;
@@ -713,7 +713,7 @@ fn injury_postponement_rebuilds_eat_with_a_fresh_ability_identity() {
     let assets = LevelAssets::default();
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     attach_test_campaign_identities(&mut engine);
     engine.mission_domain.campaign.characters[0]
         .status
@@ -820,7 +820,7 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     use crate::sequence::{SequenceElement, SequenceId};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let original = ActiveAbility {
         kind: Some(AbilityKind::Listen),
         sequence_id: Some(SequenceId(41)),
@@ -922,8 +922,8 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let pc = engine.add_entity(make_test_pc(Posture::Upright));
-    let beggar = engine.add_entity(make_test_civilian(Posture::Upright));
+    let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let beggar = engine.add_test_entity(make_test_civilian(Posture::Upright));
     let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() else {
         unreachable!()
     };
@@ -1338,8 +1338,8 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let beggar = engine.add_entity(make_test_pc(Posture::SimulatingBeggar));
-    let donor = engine.add_entity(make_test_civilian(Posture::Upright));
+    let beggar = engine.add_test_entity(make_test_pc(Posture::SimulatingBeggar));
+    let donor = engine.add_test_entity(make_test_civilian(Posture::Upright));
     let donor_actor = engine
         .get_entity_mut(donor)
         .unwrap()
@@ -1493,7 +1493,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let order_types = [
         OrderType::TransitionWaitingUprightListening,
         OrderType::Listening,
@@ -1905,7 +1905,7 @@ fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
     assets.profile_manager = std::sync::Arc::new(profiles);
     let mut engine = EngineInner::new();
 
-    let pc_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+    let pc_id = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
         element: {
             let mut initial_element =
                 crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
@@ -2127,7 +2127,7 @@ fn evaluate_opponents_maps_legacy_climb_like_original_release() {
     let sim = crate::sim_rng::test_context();
     let assets = assets_with_test_pc_profile();
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(crate::element::Posture::OnWall));
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::OnWall));
     let mut legacy_movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::ClimbingWallUp);
     legacy_movement.state = SequenceState::InProgress;

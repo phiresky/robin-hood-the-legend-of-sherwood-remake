@@ -1593,8 +1593,8 @@ mod tests {
     #[test]
     fn deferred_pickpocket_keeps_victim_money_when_thief_disappears() {
         let mut engine = EngineInner::new();
-        let thief = engine.add_entity(test_soldier());
-        let victim = engine.add_entity(test_soldier());
+        let thief = engine.add_test_entity(test_soldier());
+        let victim = engine.add_test_entity(test_soldier());
         engine
             .get_entity_mut(victim)
             .and_then(Entity::npc_data_mut)
@@ -1636,7 +1636,7 @@ mod tests {
         };
         actor.npc.ai.ai_brain =
             crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(0)));
-        let soldier_id = engine.add_entity(soldier);
+        let soldier_id = engine.add_test_entity(soldier);
 
         engine.drain_drink_done(&assets, vec![(soldier_id, None)]);
         assert_eq!(
@@ -1670,7 +1670,7 @@ mod tests {
     fn taking_net_tail_pulls_eight_ticks_then_removes_on_ninth() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let taker = engine.add_entity(test_soldier());
+        let taker = engine.add_test_entity(test_soldier());
         let mut net_element = {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectNet;
@@ -1682,7 +1682,7 @@ mod tests {
             .sprite
             .position_iface
             .set_map_increment(crate::coordinates::MapVec::new(1.0, 0.0));
-        let net = engine.add_entity(Entity::Net(ElementNet {
+        let net = engine.add_test_entity(Entity::Net(ElementNet {
             element: net_element,
             object: ObjectData {
                 object_type: ObjectType::Net,

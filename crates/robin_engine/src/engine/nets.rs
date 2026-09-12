@@ -1140,7 +1140,7 @@ mod tests {
         net.projectile.trajectory_frame_count = 1;
         net.net.time_till_unfolding = 1;
         net.object.animation = crate::element::Animation::ObjectFlying;
-        let net_id = engine.add_entity(entity);
+        let net_id = engine.add_test_entity(entity);
 
         let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
         let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
@@ -1178,7 +1178,7 @@ mod tests {
             };
             net.net.crumpled = crumpled;
             net.object.animation = source;
-            let net_id = engine.add_entity(entity);
+            let net_id = engine.add_test_entity(entity);
             let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
             let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
                 unreachable!()
@@ -1200,7 +1200,7 @@ mod tests {
         };
         net.object.animation = crate::element::Animation::NetMoving;
         net.net.landed_animation_resolved = true;
-        let net_id = engine.add_entity(entity);
+        let net_id = engine.add_test_entity(entity);
         let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
         let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
             unreachable!()
@@ -1231,7 +1231,7 @@ mod tests {
             };
             net.element.active = false;
             net.object.animation = animation;
-            let net_id = engine.add_entity(entity);
+            let net_id = engine.add_test_entity(entity);
 
             let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
             assert_eq!(
@@ -1255,7 +1255,7 @@ mod tests {
         net.projectile.trajectory_frame_count = 1;
         net.projectile.velocity_increment = WorldVec3D::new(3.0, 4.0, 1.0);
         net.object.animation = crate::element::Animation::ObjectFlying;
-        let net_id = engine.add_entity(entity);
+        let net_id = engine.add_test_entity(entity);
         engine.set_actors_frozen(true);
 
         let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
@@ -1319,7 +1319,7 @@ mod tests {
         profile_idx: u32,
         rider: bool,
     ) -> EntityId {
-        let id = engine.add_entity(make_soldier(pos, profile_idx, rider));
+        let id = engine.add_test_entity(make_soldier(pos, profile_idx, rider));
         let enemy = engine
             .world
             .entities
@@ -1402,7 +1402,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let soldiers: Vec<EntityId> = (0..3)
             .map(|i| {
                 add_soldier(
@@ -1473,7 +1473,7 @@ mod tests {
         };
         net_data.projectile.flying = true;
         net_data.net.was_flying = true;
-        let net_id = engine.add_entity(net);
+        let net_id = engine.add_test_entity(net);
         let victim_id = add_soldier(&mut engine, landing, 0, false);
 
         engine.tick_net(sim, &assets, net_id);
@@ -1505,7 +1505,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let victim_id = add_soldier(
             &mut engine,
             WorldPoint3D {
@@ -1549,8 +1549,8 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
-        let rider_id = engine.add_entity(make_soldier(
+        let net_id = engine.add_test_entity(make_net(landing));
+        let rider_id = engine.add_test_entity(make_soldier(
             WorldPoint3D {
                 x: LAND_X + 5.0,
                 y: LAND_Y,
@@ -1586,7 +1586,7 @@ mod tests {
             .net_selective_immunity = true;
         let assets = assets_with_profiles();
         let landing = WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z);
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let rider_id = add_soldier(
             &mut engine,
             WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z),
@@ -1613,7 +1613,7 @@ mod tests {
             false,
         );
         let stuteley_id =
-            engine.add_entity(make_pc(WorldPoint3D::new(LAND_X + 15.0, LAND_Y, LAND_Z), 1));
+            engine.add_test_entity(make_pc(WorldPoint3D::new(LAND_X + 15.0, LAND_Y, LAND_Z), 1));
 
         engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -1640,7 +1640,7 @@ mod tests {
             .net_selective_immunity = true;
         let assets = assets_with_profiles();
         let landing = WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z);
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let inside_id = add_soldier(
             &mut engine,
             WorldPoint3D::new(LAND_X + 39.999, LAND_Y, LAND_Z),
@@ -1674,9 +1674,9 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         // Profile 1 = VIP soldier
-        let vip_id = engine.add_entity(make_soldier(
+        let vip_id = engine.add_test_entity(make_soldier(
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
@@ -1712,8 +1712,8 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
-        let existing_id = engine.add_entity(make_soldier(
+        let net_id = engine.add_test_entity(make_net(landing));
+        let existing_id = engine.add_test_entity(make_soldier(
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
@@ -1722,7 +1722,7 @@ mod tests {
             0,
             false,
         ));
-        let rider_id = engine.add_entity(make_soldier(
+        let rider_id = engine.add_test_entity(make_soldier(
             WorldPoint3D {
                 x: LAND_X + 5.0,
                 y: LAND_Y,
@@ -1765,7 +1765,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let near_id = add_soldier(
             &mut engine,
             WorldPoint3D {
@@ -1810,9 +1810,9 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         // Character profile 1 = Stuteley (Action::Net present).
-        let _ = engine.add_entity(make_pc(
+        let _ = engine.add_test_entity(make_pc(
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
@@ -1842,7 +1842,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let victim_id = add_soldier(
             &mut engine,
             WorldPoint3D {
@@ -1928,7 +1928,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         let mut vip = make_soldier(
             WorldPoint3D {
                 x: LAND_X,
@@ -1944,7 +1944,7 @@ mod tests {
                 ..Default::default()
             }));
         }
-        let vip_id = engine.add_entity(vip);
+        let vip_id = engine.add_test_entity(vip);
 
         engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -1970,7 +1970,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
         // The victim already has a default Sprite (non-Option).
         let victim_id = add_soldier(
             &mut engine,
@@ -2009,7 +2009,7 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
+        let net_id = engine.add_test_entity(make_net(landing));
 
         // Manually fire the landing-time helper (no flight ticking).
         engine.register_net_repulsive_points(net_id);
@@ -2050,8 +2050,8 @@ mod tests {
             y: LAND_Y,
             z: LAND_Z,
         };
-        let net_id = engine.add_entity(make_net(landing));
-        let pc_id = engine.add_entity(make_pc(
+        let net_id = engine.add_test_entity(make_net(landing));
+        let pc_id = engine.add_test_entity(make_pc(
             WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,

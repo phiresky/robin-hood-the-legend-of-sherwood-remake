@@ -1200,7 +1200,7 @@ mod tests {
         thrower: Option<EntityId>,
     ) -> EntityId {
         let thrower = thrower.or_else(|| {
-            Some(engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            Some(engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -1238,7 +1238,7 @@ mod tests {
             },
             projectile,
         });
-        engine.add_entity(entity)
+        engine.add_test_entity(entity)
     }
 
     fn landing_coin(material: crate::element::GameMaterial, dive: bool, disappear: bool) -> Entity {
@@ -1490,7 +1490,7 @@ mod tests {
             let assets = purse_test_assets();
 
             let mut registered = EngineInner::new();
-            let coin_id = registered.add_entity(landing_coin(material, dive, disappear));
+            let coin_id = registered.add_test_entity(landing_coin(material, dive, disappear));
             WATER_IMPACT_ORDER.with(|order| order.borrow_mut().clear());
             let result = registered.with_simulation_context(|engine, sim| {
                 engine.tick_purse_or_coin(sim, &assets, coin_id)
@@ -1577,7 +1577,7 @@ mod tests {
         coin.element
             .set_sector(crate::position_interface::SectorHandle::new(7));
         coin.projectile.purse.sector_goal = None;
-        let coin_id = engine.add_entity(dry);
+        let coin_id = engine.add_test_entity(dry);
         engine.with_simulation_context(|engine, sim| {
             engine.tick_purse_or_coin(sim, &assets, coin_id)
         });
