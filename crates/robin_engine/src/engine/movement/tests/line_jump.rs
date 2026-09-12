@@ -376,7 +376,8 @@ mod suite {
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
-        let captures = crate::movement_diagnostics::take_parity_movement_capture();
+        let captures =
+            crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
 
         let position = engine
             .get_entity(owner)
@@ -496,6 +497,7 @@ mod suite {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
         let capture = crate::movement_diagnostics::take_parity_movement_capture()
+            .expect("capture started")
             .into_iter()
             .find(|capture| capture.entity == owner)
             .expect("running-stairs owner must emit a production movement capture");
@@ -685,6 +687,7 @@ mod suite {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
         let capture = crate::movement_diagnostics::take_parity_movement_capture()
+            .expect("capture started")
             .into_iter()
             .find(|capture| capture.entity == owner)
             .expect("running-stairs owner must emit a production movement capture");

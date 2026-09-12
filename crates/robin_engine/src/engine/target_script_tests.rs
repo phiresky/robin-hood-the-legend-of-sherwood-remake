@@ -8,62 +8,21 @@ use crate::element::{
     Command, ElementData, ElementKind, ElementTarget, Entity, FxData, Posture, TargetData,
     TargetFilter,
 };
+use crate::engine::test_support::asm::{
+    q_aff0_iconstant as q_aff0_i_constant, q_begin_function, q_native_call, q_native_param,
+    q_return,
+};
 use crate::engine::{
     DevState, EngineInner, HostDisplayState, InputState, LevelAssets, MissionScript,
 };
 use crate::entity_id::EntityId;
 use crate::scb::{ClassEntry, Function, ScbFile};
 use crate::sequence::{SequenceElement, SequenceElementData};
-use crate::vm::{Opcode, Quad};
+use crate::vm::Quad;
 
 // ────────────────────────────────────────────────────────────────────
 // Quad encoders (the disk format is `{u8 op, [u8;8] operands}`).
 // ────────────────────────────────────────────────────────────────────
-
-fn q_begin_function(volatile: u16, temp: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&volatile.to_le_bytes());
-    ops[2..4].copy_from_slice(&temp.to_le_bytes());
-    Quad {
-        operation: Opcode::BeginFunction as u8,
-        operands: ops,
-    }
-}
-
-fn q_aff0_i_constant(dst: u16, constant: i32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[4..8].copy_from_slice(&constant.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff0IConstant as u8,
-        operands: ops,
-    }
-}
-
-fn q_native_param(sym: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    Quad {
-        operation: Opcode::NativeParam as u8,
-        operands: ops,
-    }
-}
-
-fn q_native_call(index: u32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..4].copy_from_slice(&index.to_le_bytes());
-    Quad {
-        operation: Opcode::NativeCall as u8,
-        operands: ops,
-    }
-}
-
-fn q_return() -> Quad {
-    Quad {
-        operation: Opcode::Return as u8,
-        operands: [0u8; 8],
-    }
-}
 
 // Native index 0 is `InitGlobal(id, value)` — see
 // `crates/robin_engine/src/natives/defs.rs`.  Use Init rather than Set

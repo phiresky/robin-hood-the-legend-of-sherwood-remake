@@ -33,7 +33,8 @@ use robin_engine::tactical_control::TacticalFormation;
 /// Resolve a left-click at `map_pt` into player commands.
 ///
 /// The engine is read-only; all mutations are expressed as commands.
-pub fn resolve_left_click(
+#[cfg(test)]
+fn resolve_left_click(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
@@ -43,23 +44,42 @@ pub fn resolve_left_click(
     is_double: bool,
 ) -> Vec<PlayerCommand> {
     resolve_left_click_with_planning(
-        host, engine, assets, map_pt, shift_held, shift_held, ctrl_held, is_double,
+        host,
+        engine,
+        assets,
+        map_pt,
+        ClickModifiers {
+            shift: shift_held,
+            planning: shift_held,
+            control: ctrl_held,
+            double: is_double,
+        },
     )
 }
 
 /// Resolve a click with Original physical-Shift behaviour separated from the
 /// post-port planning modifier.
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct ClickModifiers {
+    pub shift: bool,
+    pub planning: bool,
+    pub control: bool,
+    pub double: bool,
+}
+
 pub fn resolve_left_click_with_planning(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
     map_pt: MapPoint,
-    shift_held: bool,
-    planning_held: bool,
-    ctrl_held: bool,
-    is_double: bool,
+    modifiers: ClickModifiers,
 ) -> Vec<PlayerCommand> {
+    let ClickModifiers {
+        shift: shift_held,
+        planning: planning_held,
+        control: ctrl_held,
+        double: is_double,
+    } = modifiers;
     let local_seat = host.transport.local_seat();
     let selected = engine.hero_selection(local_seat);
     let num_selected = selected.len();

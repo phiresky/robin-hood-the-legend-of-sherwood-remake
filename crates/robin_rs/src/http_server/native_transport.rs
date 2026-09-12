@@ -38,13 +38,10 @@ pub(super) struct NativeRequest {
     body: Bytes,
 }
 
-impl<'de> serde::Deserialize<'de> for NativeRequest {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "HTTP request must be acquired from its transport",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    NativeRequest,
+    "HTTP request must be acquired from its transport"
+);
 
 impl NativeRequest {
     pub(super) fn header(&self, name: &str) -> Option<&str> {

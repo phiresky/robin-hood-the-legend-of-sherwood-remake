@@ -902,12 +902,16 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         // matching the Original recorder's frame envelope.
         robin_engine::sight_obstacle::begin_parity_visibility_capture();
         let actual_movement_steps =
-            robin_engine::movement_diagnostics::take_parity_movement_capture();
-        let actual_flight_steps = robin_engine::movement_diagnostics::take_parity_flight_capture();
+            robin_engine::movement_diagnostics::take_parity_movement_capture()
+                .expect("frame movement capture started before simulation");
+        let actual_flight_steps = robin_engine::movement_diagnostics::take_parity_flight_capture()
+            .expect("frame movement capture started before simulation");
         let actual_move_box_extractions =
-            robin_engine::movement_diagnostics::take_parity_move_box_extractions();
+            robin_engine::movement_diagnostics::take_parity_move_box_extractions()
+                .expect("frame movement capture started before simulation");
         let late_movement_retranslations =
-            robin_engine::movement_diagnostics::take_parity_late_movement_retranslations();
+            robin_engine::movement_diagnostics::take_parity_late_movement_retranslations()
+                .expect("frame movement capture started before simulation");
         let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
         // Restart immediately: the post-frame comparison and one-shot
         // PostInitialize below precede the next recorded frame boundary.

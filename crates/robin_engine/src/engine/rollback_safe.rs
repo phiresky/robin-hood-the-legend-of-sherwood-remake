@@ -784,7 +784,7 @@ impl Engine {
         let mission_idx = inner.with_simulation_context(|inner, sim| {
             inner
                 .mission_domain
-                .required_campaign_mut("selecting the next mission")
+                .campaign_mut()
                 .determine_next_mission(sim, profiles)
         });
         let rng_seed = inner.rng_seed();
@@ -1424,7 +1424,6 @@ impl Engine {
         if frame.run_hourglass {
             self.bootstrap_open = false;
         }
-        self.require_live_campaign("advancing a simulation frame");
 
         if let Some(failure) = self.inner.scripts.spellforge.failure.clone() {
             let frame_counter = self.inner.control.frame_counter;
@@ -1706,7 +1705,6 @@ impl Engine {
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> SideEffects {
-        self.require_live_campaign("performing an engine tick");
         self.inner.perform_hourglass(display, input, assets, dev)
     }
 
@@ -1720,7 +1718,6 @@ impl Engine {
         assets: &LevelAssets,
         cmds: &[PlayerInput],
     ) {
-        self.require_live_campaign("applying replay or network commands");
         let sim = self.inner.control.simulation_context();
         self.inner
             .apply_commands(&sim, display, input, assets, cmds);
@@ -1788,10 +1785,6 @@ impl Engine {
         let rng_seed = self.inner.rng_seed();
         let sim_config = self.inner.control.sim_config;
         (self.inner.into_campaign(), rng_seed, sim_config)
-    }
-
-    fn require_live_campaign(&self, context: &str) {
-        self.inner.mission_domain.required_campaign(context);
     }
 
     /// Attach host-only run eligibility to the exact terminal campaign
@@ -1969,7 +1962,7 @@ impl Engine {
     #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub fn test_add_entity(&mut self, entity: crate::element::Entity) -> EntityId {
-        self.inner.add_entity(entity)
+        self.inner.add_test_entity(entity)
     }
 
     /// Seed real sequence-manager insertion order for persistence regressions.

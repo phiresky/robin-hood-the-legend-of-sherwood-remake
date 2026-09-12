@@ -1,5 +1,24 @@
 use super::*;
 
+/// Complete authored route input. Flags are named at construction sites;
+/// their order no longer depends on thirteen positional arguments.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct GateRouteRequest {
+    pub entity_id: EntityId,
+    pub source_sector: Option<crate::position_interface::SectorHandle>,
+    pub gate_path: Vec<crate::gate::GatePathStep>,
+    pub goal: GoalShape,
+    pub goal_layer: u16,
+    pub base_action: OrderType,
+    pub move_after_last_door: bool,
+    pub speed_factor: f32,
+    pub initial_flags: crate::sequence::MoveFlags,
+    pub prefix_elements: Vec<crate::sequence::SequenceElement>,
+    pub tail_elements: Vec<crate::sequence::SequenceElement>,
+    pub append_arrival_speech: bool,
+    pub append_recovery: bool,
+}
+
 impl EngineInner {
     /// Build a movement sequence that traverses a gate path from
     /// `find_path_gates` and ends at `goal` on `goal_layer`.
@@ -44,28 +63,30 @@ impl EngineInner {
     ///   carrying `MoveFlags::LINE` and the line id so the actor's
     ///   arrival check snaps to line tolerance.  Intermediate gate
     ///   moves never carry `MoveFlags::LINE`.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn build_gate_movement_sequence(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        entity_id: EntityId,
-        source_sector: Option<crate::position_interface::SectorHandle>,
-        gate_path: Vec<crate::gate::GatePathStep>,
-        goal: GoalShape,
-        goal_layer: u16,
-        base_action: OrderType,
-        move_after_last_door: bool,
-        speed_factor: f32,
-        initial_flags: crate::sequence::MoveFlags,
-        prefix_elements: Vec<crate::sequence::SequenceElement>,
-        tail_elements: Vec<crate::sequence::SequenceElement>,
-        append_arrival_speech: bool,
-        append_recovery: bool,
+        request: GateRouteRequest,
     ) -> Option<crate::sequence::SequenceId> {
         use crate::element::Command;
         use crate::sequence::{
             Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
         };
+        let GateRouteRequest {
+            entity_id,
+            source_sector,
+            gate_path,
+            goal,
+            goal_layer,
+            base_action,
+            move_after_last_door,
+            speed_factor,
+            initial_flags,
+            prefix_elements,
+            tail_elements,
+            append_arrival_speech,
+            append_recovery,
+        } = request;
 
         // Determine first jump gate.  Every gate *before* the first
         // jump gets the `TO_JUMP` flag so its movement element sets

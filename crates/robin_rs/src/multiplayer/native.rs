@@ -54,6 +54,9 @@ use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 // Non-poisoning mutex: a panicking worker must not turn every later
 // lock of the shared peer state into a second panic.
+#[cfg(test)]
+use super::clock::checked_epoch_ms;
+use super::clock::try_current_epoch_ms as current_epoch_ms;
 use parking_lot::Mutex;
 use robin_engine::multiplayer::{
     BrowserPeerAuth, LeaderboardCoSignResponse, browser_seat_proof_message,
@@ -69,7 +72,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -290,18 +293,6 @@ async fn write_frame_with_timeout(
     tokio::time::timeout(timeout, write_frame(send, msg))
         .await
         .map_err(|_| format!("{phase} timed out after {timeout:?}"))?
-}
-
-fn checked_epoch_ms(millis: u128) -> Result<u64, String> {
-    u64::try_from(millis)
-        .map_err(|_| "system clock timestamp exceeds the u64 Unix range".to_owned())
-}
-
-fn current_epoch_ms() -> Result<u64, String> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("system clock precedes the Unix epoch: {error}"))?;
-    checked_epoch_ms(duration.as_millis())
 }
 
 /// Bridge a std mpsc receiver (game loop side) onto a tokio unbounded

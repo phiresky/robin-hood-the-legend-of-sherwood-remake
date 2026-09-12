@@ -21,7 +21,7 @@ robin_engine.workspace = true
 robin_util.workspace = true
 robin_replay_format.workspace = true
 robin_ranked_verification.workspace = true
-robin_run_protocol.workspace = true
+robin_run_protocol = { workspace = true, features = ["authentication"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true

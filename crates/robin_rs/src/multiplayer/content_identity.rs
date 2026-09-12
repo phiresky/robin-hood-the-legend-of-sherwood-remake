@@ -360,13 +360,7 @@ fn hash_reader(reader: &mut impl std::io::Read, hasher: &mut Sha256) -> std::io:
 
 #[cfg(not(target_arch = "wasm32"))]
 fn validate_relative_path(path: &str) -> Result<(), String> {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.ends_with('/')
-        || path.contains('\\')
-        || path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+    if robin_util::asset_fs::validate_canonical_relative_path(path).is_err()
         || !path
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))

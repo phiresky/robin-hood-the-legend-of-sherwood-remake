@@ -10,14 +10,12 @@ use anyhow::{Context as _, Result, ensure};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(target_os = "linux")]
 #[derive(Debug)]
 enum PinnedVpsActivationLockDescriptorV2 {
     Owned(std::os::fd::OwnedFd),
     InheritedDuplicate(NixOwnedFdV2),
 }
 
-#[cfg(target_os = "linux")]
 impl PinnedVpsActivationLockDescriptorV2 {
     fn as_raw_fd(&self) -> std::os::fd::RawFd {
         use std::os::fd::AsRawFd as _;
@@ -29,7 +27,6 @@ impl PinnedVpsActivationLockDescriptorV2 {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct PinnedVpsActivationLockV2 {
     lock_fd: PinnedVpsActivationLockDescriptorV2,
@@ -41,7 +38,6 @@ pub struct PinnedVpsActivationLockV2 {
     lock_inode: u64,
 }
 
-#[cfg(target_os = "linux")]
 impl PinnedVpsActivationLockV2 {
     pub fn as_raw_fd(&self) -> std::os::fd::RawFd {
         self.lock_fd.as_raw_fd()
@@ -113,19 +109,16 @@ impl PinnedVpsActivationLockV2 {
     }
 }
 
-#[cfg(target_os = "linux")]
 pub fn acquire_vps_activation_lock_v2() -> Result<PinnedVpsActivationLockV2> {
     acquire_vps_activation_lock_at(Path::new(INSTALL_ROOT))
 }
 
-#[cfg(target_os = "linux")]
 pub fn pin_inherited_vps_activation_lock_v2(
     activation_lock_fd: std::os::fd::RawFd,
 ) -> Result<PinnedVpsActivationLockV2> {
     pin_inherited_vps_activation_lock_at(Path::new(INSTALL_ROOT), activation_lock_fd)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn pin_inherited_vps_activation_lock_at(
     opt_root: &Path,
     activation_lock_fd: std::os::fd::RawFd,
@@ -213,7 +206,6 @@ pub(super) fn pin_inherited_vps_activation_lock_at(
     Ok(pinned)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn acquire_vps_activation_lock_at(opt_root: &Path) -> Result<PinnedVpsActivationLockV2> {
     use rustix::fs::{FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
     use rustix::io::Errno;

@@ -44,13 +44,10 @@ impl CurrentMissionLoad {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for CurrentMissionLoad {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "current-mission load permission is process-local",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    CurrentMissionLoad,
+    "current-mission load permission is process-local"
+);
 
 pub(super) enum LoadCompletion {
     Restart,
@@ -99,13 +96,7 @@ pub(super) struct AppliedLoad {
     identity: crate::save_file::ReplaySaveIdentity,
 }
 
-impl<'de> serde::Deserialize<'de> for AppliedLoad {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "load application receipts are process-local",
-        ))
-    }
-}
+robin_util::deny_deserialize!(AppliedLoad, "load application receipts are process-local");
 
 impl AppliedLoad {
     pub(super) fn outcome(self, completion: LoadCompletion) -> OperationOutcome {

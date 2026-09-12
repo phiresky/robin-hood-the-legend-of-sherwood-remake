@@ -644,7 +644,6 @@ impl SimulationContentProjectionV1 {
             .unwrap_or_else(|| panic!("prepared projection is missing required {kind:?} component"))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_prepared_engine_inputs(
         loaded_level: &LoadedLevel,
         assets: &LevelAssets,

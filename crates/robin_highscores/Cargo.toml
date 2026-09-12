@@ -44,7 +44,7 @@ ipnet = "2"
 libc = "0.2"
 rand = "0.10"
 ring = "0.17"
-robin_run_protocol.workspace = true
+robin_run_protocol = { workspace = true, features = ["authentication"] }
 robin_engine.workspace = true
 robin_replay_format.workspace = true
 rustix = { version = "1", features = ["fs", "process"] }

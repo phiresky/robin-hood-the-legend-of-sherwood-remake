@@ -112,13 +112,7 @@ pub struct SessionIngress {
     replay: Option<ReplayStatus>,
 }
 
-impl<'de> Deserialize<'de> for SessionIngress {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live RPC ingress cannot be deserialized",
-        ))
-    }
-}
+robin_util::deny_deserialize!(SessionIngress, "live RPC ingress cannot be deserialized");
 
 impl SessionIngress {
     pub(super) fn attach(server: Option<&HttpServer>) -> Self {

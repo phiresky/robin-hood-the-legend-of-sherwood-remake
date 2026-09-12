@@ -1189,10 +1189,12 @@ fn on_world_click(
                 engine,
                 assets,
                 map_pt,
-                shift_held,
-                planning_held,
-                ctrl_held,
-                is_double,
+                crate::game_input::ClickModifiers {
+                    shift: shift_held,
+                    planning: planning_held,
+                    control: ctrl_held,
+                    double: is_double,
+                },
             );
         }
         let queued_action = if planning_held {

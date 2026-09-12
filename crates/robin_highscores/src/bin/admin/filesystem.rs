@@ -295,7 +295,7 @@ pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Resul
     #[cfg(target_os = "linux")]
     let (file, created) = {
         use std::os::fd::AsFd as _;
-        let create = rustix::fs::openat2(
+        let create = robin_highscores::secure_fs::open_no_symlinks_at(
             root.as_fd(),
             name,
             rustix::fs::OFlags::RDWR
@@ -303,23 +303,17 @@ pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Resul
                 | rustix::fs::OFlags::CREATE
                 | rustix::fs::OFlags::EXCL,
             rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-            rustix::fs::ResolveFlags::BENEATH
-                | rustix::fs::ResolveFlags::NO_SYMLINKS
-                | rustix::fs::ResolveFlags::NO_MAGICLINKS
-                | rustix::fs::ResolveFlags::NO_XDEV,
+            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
         );
         match create {
             Ok(descriptor) => (std::fs::File::from(descriptor), true),
             Err(rustix::io::Errno::EXIST) => {
-                let descriptor = rustix::fs::openat2(
+                let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
                     root.as_fd(),
                     name,
                     rustix::fs::OFlags::RDWR | rustix::fs::OFlags::CLOEXEC,
                     rustix::fs::Mode::empty(),
-                    rustix::fs::ResolveFlags::BENEATH
-                        | rustix::fs::ResolveFlags::NO_SYMLINKS
-                        | rustix::fs::ResolveFlags::NO_MAGICLINKS
-                        | rustix::fs::ResolveFlags::NO_XDEV,
+                    rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
                 )?;
                 (std::fs::File::from(descriptor), false)
             }
@@ -686,17 +680,14 @@ pub(super) fn open_cap_directory_nofollow(
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsFd as _;
-        let descriptor = rustix::fs::openat2(
+        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
             parent.as_fd(),
             name,
             rustix::fs::OFlags::RDONLY
                 | rustix::fs::OFlags::CLOEXEC
                 | rustix::fs::OFlags::DIRECTORY,
             rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH
-                | rustix::fs::ResolveFlags::NO_SYMLINKS
-                | rustix::fs::ResolveFlags::NO_MAGICLINKS
-                | rustix::fs::ResolveFlags::NO_XDEV,
+            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
         )?;
         Ok(cap_std::fs::Dir::from_std_file(std::fs::File::from(
             descriptor,
@@ -719,15 +710,12 @@ pub(super) fn open_cap_regular_nofollow(
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsFd as _;
-        let descriptor = rustix::fs::openat2(
+        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
             parent.as_fd(),
             name,
             rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
             rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH
-                | rustix::fs::ResolveFlags::NO_SYMLINKS
-                | rustix::fs::ResolveFlags::NO_MAGICLINKS
-                | rustix::fs::ResolveFlags::NO_XDEV,
+            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
         )?;
         let file = std::fs::File::from(descriptor);
         anyhow::ensure!(
@@ -1140,14 +1128,14 @@ pub(super) async fn sync_directory(path: &Path) -> anyhow::Result<()> {
 pub(super) fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
     #[cfg(target_os = "linux")]
     {
-        let descriptor = rustix::fs::openat2(
+        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             rustix::fs::OFlags::RDONLY
                 | rustix::fs::OFlags::CLOEXEC
                 | rustix::fs::OFlags::DIRECTORY,
             rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::NO_SYMLINKS | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         let file = std::fs::File::from(descriptor);
         anyhow::ensure!(file.metadata()?.is_dir(), "path is not a directory");
@@ -1168,12 +1156,12 @@ pub(super) fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::Fi
 pub(super) fn open_regular_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
     #[cfg(target_os = "linux")]
     {
-        let descriptor = rustix::fs::openat2(
+        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
             rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::NO_SYMLINKS | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         let file = std::fs::File::from(descriptor);
         anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");

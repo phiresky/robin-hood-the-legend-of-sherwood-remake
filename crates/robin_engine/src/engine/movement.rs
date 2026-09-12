@@ -12,6 +12,7 @@ use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionSt
 mod combat_motion;
 mod diagnostics;
 mod door_traversal;
+pub(crate) use door_traversal::GateRouteRequest;
 mod elevation;
 mod formation;
 mod order_advancement;
@@ -958,18 +959,20 @@ mod group_move_authorization_tests {
             );
             legacy_unmapped_jump_goal_matches_spatial_source(
                 Some(&topology),
-                Some((crate::sector::SectorNumber::new(806), 0)),
-                exact_goal,
-                route_outcome,
-                door_route,
-                door,
-                jump,
-                lift,
-                true,
-                Some(source),
-                0,
-                retained_jump_falls_back_to_spatial,
-                all_match,
+                LegacyUnmappedJumpGoal {
+                    recorded_goal: Some((crate::sector::SectorNumber::new(806), 0)),
+                    exact_goal_index: exact_goal,
+                    has_recorded_route_outcome: route_outcome,
+                    recorded_door_route: door_route,
+                    is_door_click: door,
+                    is_jump_click: jump,
+                    is_lift_click: lift,
+                    is_valid: true,
+                    selected_sector_index: Some(source),
+                    selected_layer: 0,
+                    retained_jump_falls_back_to_spatial: retained_jump_falls_back_to_spatial,
+                    all_source_arenas_match_spatial: all_match,
+                },
             )
         };
 
@@ -1008,40 +1011,44 @@ mod group_move_authorization_tests {
         assert!(!recognized(None, false, None, false, false, false, false));
         assert!(!legacy_unmapped_jump_goal_matches_spatial_source(
             Some(&topology),
-            Some((crate::sector::SectorNumber::new(806), 0)),
-            None,
-            false,
-            Some(false),
-            false,
-            false,
-            false,
-            true,
-            Some(source),
-            0,
-            false,
-            true,
+            LegacyUnmappedJumpGoal {
+                recorded_goal: Some((crate::sector::SectorNumber::new(806), 0)),
+                exact_goal_index: None,
+                has_recorded_route_outcome: false,
+                recorded_door_route: Some(false),
+                is_door_click: false,
+                is_jump_click: false,
+                is_lift_click: false,
+                is_valid: true,
+                selected_sector_index: Some(source),
+                selected_layer: 0,
+                retained_jump_falls_back_to_spatial: false,
+                all_source_arenas_match_spatial: true,
+            }
         ));
 
         level.sectors.push(jump);
         assert!(!legacy_unmapped_jump_goal_matches_spatial_source(
             Some(&topology),
-            Some((crate::sector::SectorNumber::new(806), 0)),
-            None,
-            false,
-            None,
-            false,
-            false,
-            false,
-            true,
-            Some(source),
-            0,
-            retained_jump_goal_uses_underlying_sector(
-                &level,
-                crate::sector::SectorNumber::new(806),
-                0,
-                Some(source),
-            ),
-            true,
+            LegacyUnmappedJumpGoal {
+                recorded_goal: Some((crate::sector::SectorNumber::new(806), 0)),
+                exact_goal_index: None,
+                has_recorded_route_outcome: false,
+                recorded_door_route: None,
+                is_door_click: false,
+                is_jump_click: false,
+                is_lift_click: false,
+                is_valid: true,
+                selected_sector_index: Some(source),
+                selected_layer: 0,
+                retained_jump_falls_back_to_spatial: retained_jump_goal_uses_underlying_sector(
+                    &level,
+                    crate::sector::SectorNumber::new(806),
+                    0,
+                    Some(source),
+                ),
+                all_source_arenas_match_spatial: true,
+            }
         ));
     }
 
@@ -2965,7 +2972,7 @@ pub(crate) fn mercenary_formation_destinations(
 /// Unifies the three goal flavours (point, door, line) into a single
 /// builder; the function switches on this enum to pick the right
 /// trailing-step shape.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) enum GoalShape {
     /// Point-goal. The actor walks to this map point after the last gate,
     /// retaining the caller's arrival tolerance (notably for AI approaches).
@@ -4091,9 +4098,8 @@ fn retained_jump_goal_uses_underlying_sector(
 /// valid non-door/non-jump/non-lift sector, and its exact arena is already every
 /// actor's exact source arena. Explicit modern route outcomes and identities
 /// remain authoritative.
-#[allow(clippy::too_many_arguments)]
-fn legacy_unmapped_jump_goal_matches_spatial_source(
-    topology: Option<&crate::engine::LegacyGridTopologyAssets>,
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct LegacyUnmappedJumpGoal {
     recorded_goal: Option<(crate::sector::SectorNumber, u16)>,
     exact_goal_index: Option<crate::fast_find_grid::SectorIndex>,
     has_recorded_route_outcome: bool,
@@ -4106,7 +4112,26 @@ fn legacy_unmapped_jump_goal_matches_spatial_source(
     selected_layer: u16,
     retained_jump_falls_back_to_spatial: bool,
     all_source_arenas_match_spatial: bool,
+}
+
+fn legacy_unmapped_jump_goal_matches_spatial_source(
+    topology: Option<&crate::engine::LegacyGridTopologyAssets>,
+    request: LegacyUnmappedJumpGoal,
 ) -> bool {
+    let LegacyUnmappedJumpGoal {
+        recorded_goal,
+        exact_goal_index,
+        has_recorded_route_outcome,
+        recorded_door_route,
+        is_door_click,
+        is_jump_click,
+        is_lift_click,
+        is_valid,
+        selected_sector_index,
+        selected_layer,
+        retained_jump_falls_back_to_spatial,
+        all_source_arenas_match_spatial,
+    } = request;
     if exact_goal_index.is_some()
         || has_recorded_route_outcome
         || recorded_door_route == Some(true)
@@ -5047,7 +5072,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let (old_pos, new_pos, layer, posture, is_carried, is_pc, is_human) = {
+        let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 panic!("delayed-position owner {entity_id:?} disappeared before actor update");
             };
@@ -5055,16 +5080,13 @@ impl EngineInner {
             let is_carried = entity
                 .human_data()
                 .is_some_and(|human| human.carrier.is_some());
-            let is_pc = entity.is_pc();
             let is_human = entity.is_human();
             let Some((old_pos, new_pos, layer)) =
                 entity.element_data_mut().apply_next_delayed_position()
             else {
                 return;
             };
-            (
-                old_pos, new_pos, layer, posture, is_carried, is_pc, is_human,
-            )
+            (old_pos, new_pos, layer, posture, is_carried, is_human)
         };
 
         if !actor_line_crossing_eligible(
@@ -5124,7 +5146,6 @@ impl EngineInner {
                     .compute_increment_all(compute_direction);
             }
         }
-        let _ = is_pc;
         self.check_for_non_elevation_line_crossing_indices(
             sim,
             assets,
@@ -7423,25 +7444,18 @@ impl EngineInner {
         }
     }
 
-    /// Movement Execute body for the single movement owner. The caller's
-    /// actor-id collection filters the entity table down to `actor_id ==
-    /// owner`, so this runs at most once per `tick_entity_movement_owner`
-    /// call; every early `return` is a per-actor "done" exit.
+    /// Rider charge owns Execute completely; retain its callback/identity ordering.
     #[allow(clippy::too_many_arguments)]
-    fn tick_one_movement_actor(
+    fn tick_movement_rider_charge(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        owner: EntityId,
+        assets: &LevelAssets,
+        entity_id: EntityId,
         selected: MovementOwnerSelection,
-        actor_id: crate::entity_id::ActorId,
-        prepass: &MovementPrepass,
         prepared: &LiveMobileGeometry,
         anti_snapshots: &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
         deferred: &mut MovementDeferred,
-    ) {
-        let mut speed_factor = prepass.speed_factor;
-        let entity_id = actor_id.into();
+    ) -> bool {
         let rider_entry_compute_direction = self
             .orders
             .sequence_manager
@@ -7509,6 +7523,39 @@ impl EngineInner {
                     entity.position_iface_mut().reset_box_blocked();
                 }
             }
+            return true;
+        }
+        false
+    }
+
+    /// Movement Execute body for the single movement owner. The caller's
+    /// actor-id collection filters the entity table down to `actor_id ==
+    /// owner`, so this runs at most once per `tick_entity_movement_owner`
+    /// call; every early `return` is a per-actor "done" exit.
+    #[allow(clippy::too_many_arguments)]
+    fn tick_one_movement_actor(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        owner: EntityId,
+        selected: MovementOwnerSelection,
+        actor_id: crate::entity_id::ActorId,
+        prepass: &MovementPrepass,
+        prepared: &LiveMobileGeometry,
+        anti_snapshots: &mut EntitySlots<Option<super::anti_collision::ActorSnapshot>>,
+        deferred: &mut MovementDeferred,
+    ) {
+        let mut speed_factor = prepass.speed_factor;
+        let entity_id = actor_id.into();
+        if self.tick_movement_rider_charge(
+            sim,
+            assets,
+            entity_id,
+            selected,
+            prepared,
+            anti_snapshots,
+            deferred,
+        ) {
             return;
         }
         let ft = prepass.final_tolerance;

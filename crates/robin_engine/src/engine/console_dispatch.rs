@@ -658,8 +658,12 @@ impl EngineInner {
                     // output.
                     return ConsoleResponse::Ok(String::new());
                 };
-                let is_npc = self.get_entity(id).map(|e| e.is_npc()).unwrap_or(false);
-                if !is_npc {
+                let Some(entity) = self.get_entity(id) else {
+                    return ConsoleResponse::Ok(format!(
+                        "Error: selected entity {id:?} no longer exists"
+                    ));
+                };
+                if !entity.is_npc() {
                     return ConsoleResponse::Ok(String::new());
                 }
                 let active_now = self

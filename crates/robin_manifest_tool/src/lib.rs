@@ -14,6 +14,7 @@ pub mod release_admission_v1;
 pub mod sandbox_v3;
 pub mod typed_js_authority;
 pub mod verifier_catalog_v1;
+#[cfg(target_os = "linux")]
 pub mod vps_release_v2;
 
 use std::collections::{BTreeMap, BTreeSet};

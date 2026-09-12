@@ -7,6 +7,8 @@
 //! the engine channel bundle in [`NetChannels`] so the channels and their
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
+mod clock;
+
 #[cfg(feature = "multiplayer")]
 mod client_gameplay;
 #[cfg(feature = "multiplayer")]

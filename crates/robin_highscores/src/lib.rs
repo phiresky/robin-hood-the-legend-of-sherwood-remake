@@ -20,7 +20,7 @@ pub mod model;
 pub mod physical_work;
 pub mod replay_store;
 pub mod runtime_authority;
-mod secure_fs;
+pub mod secure_fs;
 pub mod service;
 pub mod storage_admission;
 mod submission;

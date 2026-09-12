@@ -3504,9 +3504,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert_ne!(id, replacement, "deleted surface IDs must not be reused");
     crate::mission_render_resources::verify_gpu_lifecycle(&mut renderer);
     crate::corner_hud::verify_gpu_ownership(&mut renderer);
-    crate::zoom_hud::verify_gpu_ownership(&mut renderer);
-    crate::stature_hud::verify_gpu_ownership(&mut renderer);
-    crate::sherwood_hud::verify_gpu_ownership(&mut renderer);
+    crate::hud_sprite::tests::verify_gpu_ownership(&mut renderer);
     crate::main_menu::credits::verify_gpu_retirement(&mut renderer);
     let mut portrait_renderer = Renderer::with_optional_surface(
         renderer.gpu.clone(),

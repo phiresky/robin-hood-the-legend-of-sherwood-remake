@@ -11,6 +11,7 @@ use crate::sequence::{
 };
 
 mod helpers;
+mod script_fixture;
 
 use helpers::*;
 

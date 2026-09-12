@@ -389,29 +389,14 @@ impl EngineInner {
                 // post-seek work exactly like the Original. Arrival speech
                 // and generic posture recovery belong to PC group moves, not
                 // soldier interaction.
-                let _ = self.build_gate_movement_sequence(
-                    sim,
-                    pc_id,
-                    Some(
+                let _ = self.build_gate_movement_sequence(sim, crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
                         crate::position_interface::SectorHandle::new(adj_src_sector)
                             .unwrap_or_else(|| {
                                 panic!(
                                     "swordfight route for {pc_id:?} adapted to invalid source sector {adj_src_sector}"
                                 )
                             }),
-                    ),
-                    path,
-                    goal_shape,
-                    arrival_layer,
-                    action_style,
-                    true,
-                    1.0,
-                    MoveFlags::empty(),
-                    Vec::new(),
-                    vec![enter_elem],
-                    false,
-                    false,
-                );
+                    ), gate_path: path, goal: goal_shape, goal_layer: arrival_layer, base_action: action_style, move_after_last_door: true, speed_factor: 1.0, initial_flags: MoveFlags::empty(), prefix_elements: Vec::new(), tail_elements: vec![enter_elem], append_arrival_speech: false, append_recovery: false });
                 return;
             }
 

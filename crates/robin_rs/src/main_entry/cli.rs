@@ -163,7 +163,11 @@ pub struct CliArgs {
     /// TCP port for the local script-RPC HTTP server.
     /// Default 17640 (loopback only). Set to 0 to disable.
     /// See `crate::http_server` for the wire format.
-    #[arg(long, default_value_t = crate::http_server::DEFAULT_PORT)]
+    #[cfg_attr(any(feature = "script-rpc", target_arch = "wasm32"), arg(long, default_value_t = crate::http_server::DEFAULT_PORT))]
+    #[cfg_attr(
+        all(not(feature = "script-rpc"), not(target_arch = "wasm32")),
+        arg(skip = 0)
+    )]
     pub http_server: u16,
 
     /// Run the frame loop with no 25 fps pacing sleep — ticks and
@@ -434,7 +438,11 @@ impl Default for CliArgs {
             proto: None,
             custom_mission: None,
             custom_mission_entry: None,
-            http_server: crate::http_server::DEFAULT_PORT,
+            http_server: if cfg!(any(feature = "script-rpc", target_arch = "wasm32")) {
+                crate::http_server::DEFAULT_PORT
+            } else {
+                0
+            },
             fast_forward: false,
             headless: false,
             start_paused: false,

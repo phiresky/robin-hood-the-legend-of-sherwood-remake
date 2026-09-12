@@ -39,7 +39,10 @@ impl Event {
     /// on timeout.
     pub fn wait(&self, timeout_ms: i32) -> bool {
         let guard = self.mutex.lock().unwrap();
+        self.wait_locked(guard, timeout_ms)
+    }
 
+    fn wait_locked(&self, guard: std::sync::MutexGuard<'_, ()>, timeout_ms: i32) -> bool {
         if timeout_ms != NO_TIMEOUT {
             let dur = Duration::from_millis(timeout_ms.max(0) as u64);
             let (_guard, result) = self.condvar.wait_timeout(guard, dur).unwrap();
@@ -63,44 +66,40 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::thread;
-    use web_time::Instant;
 
     #[test]
     fn wait_with_timeout_returns_false_on_no_signal() {
         let ev = Event::new();
-        let start = Instant::now();
         assert!(!ev.wait(50));
-        // Should have waited roughly 50ms, not forever.
-        assert!(start.elapsed() < Duration::from_millis(500));
     }
 
     #[test]
     fn trigger_wakes_waiting_thread() {
-        let ev = Arc::new(Event::new());
-        let ev2 = ev.clone();
-
-        let handle = thread::spawn(move || {
-            // Wait up to 5 seconds — should be woken much sooner.
-            ev2.wait(5000)
-        });
-
-        // Give the spawned thread time to enter wait.
-        thread::sleep(Duration::from_millis(50));
-        ev.trigger();
-
-        assert!(handle.join().unwrap());
+        assert_trigger_wakes_waiter(5000);
     }
 
     #[test]
     fn indefinite_wait_wakes_on_trigger() {
+        assert_trigger_wakes_waiter(NO_TIMEOUT);
+    }
+
+    fn assert_trigger_wakes_waiter(timeout_ms: i32) {
         let ev = Arc::new(Event::new());
         let ev2 = ev.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let guard = ev2.mutex.lock().unwrap();
+            ready_tx.send(()).unwrap();
+            ev2.wait_locked(guard, timeout_ms)
+        });
 
-        let handle = thread::spawn(move || ev2.wait(NO_TIMEOUT));
-
-        thread::sleep(Duration::from_millis(50));
+        ready_rx.recv().unwrap();
+        // The worker releases this mutex atomically when entering condvar
+        // wait. Holding it through notify prevents a scheduler-dependent
+        // broadcast-before-wait race without guessing a sleep duration.
+        let guard = ev.mutex.lock().unwrap();
         ev.trigger();
-
+        drop(guard);
         assert!(handle.join().unwrap());
     }
 

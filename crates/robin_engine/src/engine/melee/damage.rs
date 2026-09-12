@@ -1509,35 +1509,16 @@ impl EngineInner {
             }
         }
 
-        let victim = match self.world.entities.get(victim_id) {
-            Some(e) => e,
-            None => return,
-        };
-        let ctx = concussion_ctx_full(
-            victim,
-            self.is_sherwood(&assets.profile_manager),
-            Some(&self.mission_domain.campaign),
-            self.control.sim_config.difficulty,
-        );
-        let max_lp = get_max_life_points(victim);
-        let life_points_before = get_life_points(victim);
-        // Applying concussion only runs
-        // the knock-out cascade from its `else` arm, i.e. when the victim was
-        // still conscious before this hit. A victim that was already
-        // unconscious never re-enters it.
-        let unconscious_before = victim
-            .human_data()
-            .map(|human| human.unconscious)
-            .unwrap_or(false);
-
-        let victim = match self.world.entities.get_mut(victim_id) {
-            Some(e) => e,
-            None => return,
-        };
-        let (human, lp) = match victim.human_and_life_points_mut() {
-            Some(pair) => pair,
-            None => return,
-        };
+        let (ctx, max_lp, life_points_before, unconscious_before) =
+            self.damage_victim_snapshot(assets, victim_id);
+        let victim = self
+            .world
+            .entities
+            .get_mut(victim_id)
+            .expect("damage victim disappeared after immutable snapshot");
+        let (human, lp) = victim
+            .human_and_life_points_mut()
+            .expect("damage victim lost its human life points");
 
         let _died = combat::receive_generic_damage(human, lp, damage, concussion, max_lp, &ctx);
         let raw_life_points_after = *lp;
@@ -1663,35 +1644,16 @@ impl EngineInner {
             .map(|e| e.element_data().posture())
             .unwrap_or_default();
 
-        let victim = match self.world.entities.get(victim_id) {
-            Some(e) => e,
-            None => return,
-        };
-        let ctx = concussion_ctx_full(
-            victim,
-            self.is_sherwood(&assets.profile_manager),
-            Some(&self.mission_domain.campaign),
-            self.control.sim_config.difficulty,
-        );
-        let max_lp = get_max_life_points(victim);
-        let life_points_before = get_life_points(victim);
-        // Applying concussion only runs
-        // the knock-out cascade from its `else` arm, i.e. when the victim was
-        // still conscious before this hit. A victim that was already
-        // unconscious never re-enters it.
-        let unconscious_before = victim
-            .human_data()
-            .map(|human| human.unconscious)
-            .unwrap_or(false);
-
-        let victim = match self.world.entities.get_mut(victim_id) {
-            Some(e) => e,
-            None => return,
-        };
-        let (human, lp) = match victim.human_and_life_points_mut() {
-            Some(pair) => pair,
-            None => return,
-        };
+        let (ctx, max_lp, life_points_before, unconscious_before) =
+            self.damage_victim_snapshot(assets, victim_id);
+        let victim = self
+            .world
+            .entities
+            .get_mut(victim_id)
+            .expect("damage victim disappeared after immutable snapshot");
+        let (human, lp) = victim
+            .human_and_life_points_mut()
+            .expect("damage victim lost its human life points");
 
         let _died = combat::receive_piercing_damage(human, lp, damage, concussion, max_lp, &ctx);
         let raw_life_points_after = *lp;
@@ -3612,5 +3574,37 @@ mod provoke_tests {
     fn exact_provoke_threshold_remains_exclusive() {
         assert!(provoke_roll_succeeds(9, 50));
         assert!(!provoke_roll_succeeds(10, 50));
+    }
+}
+
+impl EngineInner {
+    /// Sample the pre-hit unconscious latch once: already unconscious victims
+    /// do not re-enter the knock-out cascade after concussion is applied.
+    fn damage_victim_snapshot(
+        &self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+    ) -> (ConcussionContext, i16, i16, bool) {
+        let victim = self
+            .world
+            .entities
+            .get(victim_id)
+            .unwrap_or_else(|| panic!("damage victim {victim_id:?} disappeared"));
+        let unconscious = victim
+            .human_data()
+            .unwrap_or_else(|| panic!("damage victim {victim_id:?} is not human"))
+            .unconscious;
+        let context = concussion_ctx_full(
+            victim,
+            self.is_sherwood(&assets.profile_manager),
+            Some(&self.mission_domain.campaign),
+            self.control.sim_config.difficulty,
+        );
+        (
+            context,
+            get_max_life_points(victim),
+            get_life_points(victim),
+            unconscious,
+        )
     }
 }

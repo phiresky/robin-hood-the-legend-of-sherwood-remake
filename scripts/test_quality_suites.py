@@ -30,7 +30,9 @@ class QualitySuitesTests(unittest.TestCase):
             "import json, os, sys\n"
             "with open(os.environ['QUALITY_TEST_CALLS'], 'a') as output:\n"
             "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-            "if sys.argv[1] == 'tree': print(sys.argv[sys.argv.index('-p') + 1] + ' v0.1.0')\n",
+            "if sys.argv[1] == 'tree': print(sys.argv[sys.argv.index('-p') + 1] + ' v0.1.0')\n"
+            "if '--list' in sys.argv and not os.environ.get('QUALITY_TEST_EMPTY_SELECTION'):\n"
+            "    print(sys.argv[sys.argv.index('--') - 1] + ': test')\n",
             encoding="utf-8",
         )
         cargo.chmod(0o755)
@@ -56,8 +58,9 @@ class QualitySuitesTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, expected, result.stderr)
 
-    def calls(self):
-        return [json.loads(line) for line in self.log.read_text().splitlines()]
+    def calls(self, include_listings=False):
+        calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+        return calls if include_listings else [call for call in calls if '--list' not in call]
 
     def test_every_workspace_crate_has_an_explicit_gate(self):
         for suite in RUST_SUITES:
@@ -181,6 +184,23 @@ class QualitySuitesTests(unittest.TestCase):
              "--", "--ignored", "--exact"]
             for name in names
         ])
+
+    def test_fixture_gates_reject_empty_compiled_selections(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        self.environment["QUALITY_TEST_EMPTY_SELECTION"] = "1"
+        for suite in ("fixtures-demo", "fixtures-fullgame", "fixtures-legacy-linux"):
+            with self.subTest(suite=suite):
+                self.run_suite(suite, expected=1)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(len(self.calls(include_listings=True)), 3)
+
+    def test_fixture_listing_matches_execution_features_and_selector(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        self.run_suite("fixtures-demo")
+        calls = self.calls(include_listings=True)
+        self.assertEqual(len(calls), 2 * len(self.calls()))
+        for listing, execution in zip(calls[::2], calls[1::2]):
+            self.assertEqual(listing, [*execution, "--list"])
 
     def test_converter_fixtures_are_selected_exactly_for_their_distribution(self):
         self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)

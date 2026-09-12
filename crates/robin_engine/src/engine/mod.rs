@@ -969,9 +969,7 @@ impl EngineInner {
         }
 
         let profiles = &assets.profile_manager;
-        let campaign = self
-            .mission_domain
-            .required_campaign_mut("quit-mission updates");
+        let campaign = self.mission_domain.campaign_mut();
         if campaign.current_mission_idx.is_some() {
             campaign.set_mission_done(won, None, profiles);
         }
@@ -980,13 +978,7 @@ impl EngineInner {
 
         self.reset_all_pc_comas(assets);
 
-        if won
-            && self
-                .mission_domain
-                .required_campaign("quit-mission updates")
-                .current_mission_idx
-                .is_some()
-        {
+        if won && self.mission_domain.campaign().current_mission_idx.is_some() {
             // The LIVING/DEAD/SCORE value additions are gated on
             // `mission_won` — a lost mission must NOT accumulate these
             // totals onto the campaign.
@@ -1050,8 +1042,7 @@ impl EngineInner {
             feedback,
             ..
         } = self;
-        let (campaign, mission_stat) =
-            mission_domain.required_campaign_and_stat("quit-mission updates");
+        let (campaign, mission_stat) = mission_domain.campaign_and_stat_mut();
         QuitMissionContext {
             campaign,
             mission_stat,
@@ -1130,9 +1121,7 @@ impl EngineInner {
     /// (amulet death-save).
     pub(crate) fn reset_all_pc_comas(&mut self, assets: &LevelAssets) {
         let coma_pc_ids: Vec<EntityId> = {
-            let campaign = self
-                .mission_domain
-                .required_campaign("quit-mission updates");
+            let campaign = self.mission_domain.campaign();
             self.world
                 .pc_ids
                 .iter()
@@ -1280,7 +1269,14 @@ impl EngineInner {
         self.initialize_entity_for_publication(id, &mut entity);
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
-        #[cfg(any(test, feature = "test-helpers"))]
+        id
+    }
+
+    /// Publish a fixture and explicitly complete identities normally supplied
+    /// by level loading. Gameplay publication never changes under `cfg(test)`.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub(crate) fn add_test_entity(&mut self, entity: Entity) -> EntityId {
+        let id = self.add_entity(entity);
         self.backfill_test_entity_identity(id);
         id
     }
@@ -1297,8 +1293,6 @@ impl EngineInner {
         self.world.entities.push(Some(entity));
         self.world
             .assign_reserved_original_creation_order(id, creation_order);
-        #[cfg(any(test, feature = "test-helpers"))]
-        self.backfill_test_entity_identity(id);
         id
     }
 
@@ -1379,8 +1373,8 @@ impl EngineInner {
     /// Give a directly-constructed test actor the identity fields that level
     /// loading writes in production.
     ///
-    /// Unit-test fixtures build `Entity` values from `Default` and hand them
-    /// straight to [`Self::add_entity`], so two required identities are never
+    /// Unit-test fixtures build `Entity` values from `Default` and publish them
+    /// explicitly through [`Self::add_test_entity`], so two required identities are never
     /// filled in: a PC's stable campaign description
     /// identity behind coma/guard/ammo lookups) and an NPC brain's own actor
     /// handle. Both are backfilled here so individual fixtures don't have to
@@ -4615,7 +4609,7 @@ impl EngineInner {
     /// begins ticking.
     pub(crate) fn register_peasant_name(&mut self, name: String) {
         self.mission_domain
-            .required_campaign_mut("registering a mission peasant name")
+            .campaign_mut()
             .register_peasant_name(name);
     }
 

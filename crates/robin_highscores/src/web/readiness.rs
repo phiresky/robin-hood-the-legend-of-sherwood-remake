@@ -194,24 +194,21 @@ pub(super) fn pin_readiness_status_parent(
     // The configured state root may itself be a dedicated mount. Pin it with
     // symlink/magic-link rejection, then prohibit any mount crossing beneath
     // that authority while resolving its exact status-directory child.
-    let anchor_descriptor = rustix::fs::openat2(
+    let anchor_descriptor = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         configured_anchor,
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::DIRECTORY,
         rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::NO_SYMLINKS | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )?;
     let anchor = std::fs::File::from(anchor_descriptor);
     use std::os::fd::AsFd as _;
-    let descriptor = rustix::fs::openat2(
+    let descriptor = crate::secure_fs::open_no_symlinks_at(
         anchor.as_fd(),
         std::path::Path::new(parent_name),
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::DIRECTORY,
         rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH
-            | rustix::fs::ResolveFlags::NO_SYMLINKS
-            | rustix::fs::ResolveFlags::NO_MAGICLINKS
-            | rustix::fs::ResolveFlags::NO_XDEV,
+        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let directory = std::fs::File::from(descriptor);
     let metadata = directory.metadata()?;
@@ -284,15 +281,12 @@ fn open_readiness_status_leaf(
 ) -> anyhow::Result<(std::fs::File, ReadinessObjectIdentity)> {
     use std::os::fd::AsFd as _;
 
-    let descriptor = rustix::fs::openat2(
+    let descriptor = crate::secure_fs::open_no_symlinks_at(
         parent.directory.as_fd(),
         std::path::Path::new("backup-status.json"),
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
         rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH
-            | rustix::fs::ResolveFlags::NO_SYMLINKS
-            | rustix::fs::ResolveFlags::NO_MAGICLINKS
-            | rustix::fs::ResolveFlags::NO_XDEV,
+        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let file = std::fs::File::from(descriptor);
     let metadata = file.metadata()?;

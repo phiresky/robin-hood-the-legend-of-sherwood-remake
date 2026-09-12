@@ -15,40 +15,15 @@ use crate::sector::{LiftType, SectorNumber};
 // DoorIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into the engine's door table.
 ///
 /// Runtime absence uses `Option<DoorIndex>`. `u32::MAX` was the historical
 /// Rust/JSON null marker and cannot be represented by this type; the Original
 /// binary gate-pointer codec instead writes signed 16-bit `-1`, which legacy
 /// readers translate at their boundary.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct DoorIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(DoorIndex, u32);
-
-impl DoorIndex {
-    #[inline]
-    pub fn new(value: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(value).map(Self)
-    }
-
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
+pub struct DoorIndex(pub nonmax::NonMaxU32), u32
+);
 
 impl Default for DoorIndex {
     fn default() -> Self {
@@ -56,27 +31,10 @@ impl Default for DoorIndex {
     }
 }
 
-impl From<DoorIndex> for u32 {
-    #[inline]
-    fn from(i: DoorIndex) -> u32 {
-        i.get()
-    }
-}
-impl From<DoorIndex> for usize {
-    #[inline]
-    fn from(i: DoorIndex) -> usize {
-        i.get() as usize
-    }
-}
 impl From<u32> for DoorIndex {
     #[inline]
     fn from(v: u32) -> Self {
         Self::new(v).expect("door index cannot equal the legacy null sentinel")
-    }
-}
-impl std::fmt::Display for DoorIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get().fmt(f)
     }
 }
 

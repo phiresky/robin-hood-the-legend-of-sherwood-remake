@@ -4489,8 +4489,10 @@ mod tests {
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_push_flight_for_owner(&sim, &LevelAssets::default(), victim_id);
-        let flights = crate::movement_diagnostics::take_parity_flight_capture();
-        let _ = crate::movement_diagnostics::take_parity_movement_capture();
+        let flights =
+            crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
+        let _ =
+            crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().position_map(), exact_goal);
@@ -4549,8 +4551,10 @@ mod tests {
                 .position_map(),
             MapPoint::new(15.0, 20.0)
         );
-        let flights = crate::movement_diagnostics::take_parity_flight_capture();
-        let _ = crate::movement_diagnostics::take_parity_movement_capture();
+        let flights =
+            crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
+        let _ =
+            crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
         assert_eq!(flights.len(), 2);
         assert_eq!(flights[0].entity, earlier);
         assert_eq!(flights[1].entity, later);
@@ -4560,7 +4564,7 @@ mod tests {
             flights[0].post_position_map.x.bits
         );
         assert!(
-            crate::movement_diagnostics::take_parity_flight_capture().is_empty(),
+            crate::movement_diagnostics::take_parity_flight_capture().is_none(),
             "taking one frame's flight diagnostics must isolate the next frame"
         );
     }

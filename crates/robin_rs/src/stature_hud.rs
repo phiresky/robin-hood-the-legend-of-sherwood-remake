@@ -23,13 +23,8 @@ use crate::gfx_types::{Point, Rect as ScreenRect};
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
 use robin_engine::resource_ids::{RHID_DOWN_ARROW, RHID_UP_ARROW};
 
-use crate::hud_sprite::screen_rect_to_sprite_bbox;
 use crate::ingame_menu::layout::button_sprite_state;
-#[cfg(test)]
-use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED};
-use crate::native_font::Font;
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use robin_assets::resource_manager::ResourceManager;
+use crate::renderer::Renderer;
 use robin_engine::player_command::PlayerCommand;
 
 /// Which stature arrow widget was hit.
@@ -199,10 +194,10 @@ impl StatureHudLayout {
         let frame_origin_y = screen_h as i32 - PANNEL_HEIGHT as i32;
 
         let (up_w, up_h) = sprites
-            .up_size()
+            .size(StatureButton::Up)
             .unwrap_or((FALLBACK_W as u16, FALLBACK_H as u16));
         let (down_w, down_h) = sprites
-            .down_size()
+            .size(StatureButton::Down)
             .unwrap_or((FALLBACK_W as u16, FALLBACK_H as u16));
 
         // Up arrow at (1, -27) from the panel origin, down arrow at (0, 33).
@@ -240,119 +235,22 @@ impl StatureHudLayout {
     }
 }
 
-use crate::hud_sprite::{SpriteBank, load_bank};
+pub type StatureSprites = crate::hud_sprite::ButtonSprites<StatureButton, 2>;
+pub type StatureHoverState = crate::hud_sprite::HoverState<StatureButton>;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
-    let mut sprites = StatureSprites::default();
-    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
-    let handle = upload.handle();
-    sprites.up[BTN_STATE_NORMAL] = Some((upload, 1, 1));
-    assert_eq!(
-        sprites.frame(StatureButton::Up, BTN_STATE_HOVER).unwrap().0,
-        handle
-    );
-    renderer.draw_surface(handle, None, None, 0).unwrap();
-    sprites.retire(renderer);
-    sprites.retire(renderer);
-    assert!(sprites.frame(StatureButton::Up, BTN_STATE_NORMAL).is_none());
-    assert!(renderer.surface_dimensions(handle).is_err());
-    assert_eq!(
-        &renderer.try_capture_frame_rgba().unwrap().2[..4],
-        &[248, 252, 248, 255]
-    );
-}
-
-#[test]
-fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
-    let mut sprites = StatureSprites::default();
-    sprites.up[BTN_STATE_NORMAL] = Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
-    sprites.up[BTN_STATE_PRESSED] = Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
-    assert_eq!(
-        sprites.frame(StatureButton::Up, BTN_STATE_HOVER).unwrap().1,
-        7
-    );
-    assert_eq!(
-        sprites
-            .frame(StatureButton::Up, BTN_STATE_PRESSED)
-            .unwrap()
-            .1,
-        8
-    );
-    let restored: StatureSprites =
-        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
-    assert!(
-        restored
-            .frame(StatureButton::Up, BTN_STATE_NORMAL)
-            .is_none()
-    );
-    sprites.up[BTN_STATE_NORMAL] = None;
-    assert!(sprites.frame(StatureButton::Up, BTN_STATE_HOVER).is_none());
-    assert_eq!(
-        sprites
-            .frame(StatureButton::Up, BTN_STATE_PRESSED)
-            .unwrap()
-            .1,
-        8
-    );
-}
-
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct StatureSprites {
-    #[serde(skip)]
-    up: SpriteBank,
-    #[serde(skip)]
-    down: SpriteBank,
-}
-
-impl StatureSprites {
-    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
-        let banks = [&mut self.up, &mut self.down];
-        crate::hud_sprite::retire(renderer, banks);
+impl crate::hud_sprite::HudButton<2> for StatureButton {
+    const ALL: [Self; 2] = [Self::Up, Self::Down];
+    fn index(self) -> usize {
+        self as usize
     }
-
-    /// Walk the four button-state sub-ids for each arrow resource.
-    /// Same loader pattern as `CornerButtonSprites::load`.
-    pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        Self {
-            up: load_bank(res, renderer, RHID_UP_ARROW, "StatureUp"),
-            down: load_bank(res, renderer, RHID_DOWN_ARROW, "StatureDown"),
+    fn resource(self) -> (i32, &'static str) {
+        match self {
+            Self::Up => (RHID_UP_ARROW, "StatureUp"),
+            Self::Down => (RHID_DOWN_ARROW, "StatureDown"),
         }
     }
-
-    fn frames(&self, btn: StatureButton) -> &SpriteBank {
-        match btn {
-            StatureButton::Up => &self.up,
-            StatureButton::Down => &self.down,
-        }
-    }
-
-    fn frame(
-        &self,
-        btn: StatureButton,
-        state: usize,
-    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
-        let f = self.frames(btn);
-        crate::hud_sprite::frame(f, state)
-    }
-
-    pub fn up_size(&self) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(&self.up)
-    }
-
-    pub fn down_size(&self) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(&self.down)
-    }
 }
 
-/// Per-frame hover state passed to the draw routine.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StatureHoverState {
-    pub hovered: Option<StatureButton>,
-    pub mouse_pressed: bool,
-}
-
-/// Draw the two stature arrows.  Disabled arrows are not rendered.
 pub fn draw_with_sprites(
     renderer: &mut Renderer,
     layout: &StatureHudLayout,
@@ -374,38 +272,11 @@ pub fn draw_with_sprites(
         let pressed = selected || (hovered && hover.mouse_pressed);
         let state = button_sprite_state(true, hovered || selected, pressed);
 
-        let Some((sid, _, _)) = sprites.frame(btn, state) else {
-            continue;
-        };
-        let dst = screen_rect_to_sprite_bbox(*rect);
-        // The original game's stature arrows are bitmap toggle buttons,
-        // so they use the regular transparent bitmap path.
-        renderer
-            .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
-            .expect("live HUD upload");
+        sprites.draw(renderer, btn, *rect, state, 0);
     }
 }
 
-/// Hover tracker for the stature arrow tooltips.  Mirrors
-/// `ZoomTooltipTracker` exactly — shared HUD hover delay.
-#[derive(Default, Clone)]
-pub struct StatureTooltipTracker {
-    inner: crate::ui_panel::HoverTooltipTracker<StatureButton>,
-}
-
-impl StatureTooltipTracker {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn update(&mut self, hovered: Option<StatureButton>) {
-        self.inner.update(hovered);
-    }
-
-    pub fn ready_button(&self) -> Option<StatureButton> {
-        self.inner.ready_slot()
-    }
-}
+pub type StatureTooltipTracker = crate::hud_sprite::ButtonTooltipTracker<StatureButton>;
 
 /// Menu-text id for the tooltip attached to the given stature button.
 pub fn stature_button_tooltip_mt_id(btn: StatureButton) -> usize {
@@ -416,35 +287,7 @@ pub fn stature_button_tooltip_mt_id(btn: StatureButton) -> usize {
     }
 }
 
-/// Draw the hover tooltip for the stature HUD buttons.  Does nothing
-/// when no tooltip is ready or the font stack isn't available.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_tooltip(
-    renderer: &mut Renderer,
-    ready_button: Option<StatureButton>,
-    tooltip_text: impl Fn(StatureButton) -> String,
-    font: &Font,
-    shadow: Option<&Font>,
-    mouse_x: i32,
-    mouse_y: i32,
-    cursor_size: (i32, i32),
-) {
-    if let Some(btn) = ready_button {
-        let text = tooltip_text(btn);
-        if text.is_empty() {
-            return;
-        }
-        crate::ui_panel::draw_screen_tooltip(
-            renderer,
-            font,
-            shadow,
-            &text,
-            mouse_x,
-            mouse_y,
-            cursor_size,
-        );
-    }
-}
+pub use crate::hud_sprite::{TooltipPlacement, draw_tooltip};
 
 #[cfg(test)]
 mod hit_order_tests {

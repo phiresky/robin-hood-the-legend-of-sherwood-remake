@@ -620,23 +620,25 @@ impl EngineInner {
 
         self.build_gate_movement_sequence(
             sim,
-            actor,
-            gate_source_sector,
-            gate_path,
-            GoalShape::Target {
-                point: target_pos,
-                target,
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: actor,
+                source_sector: gate_source_sector,
+                gate_path: gate_path,
+                goal: GoalShape::Target {
+                    point: target_pos,
+                    target,
+                    tolerance: 0.0,
+                },
+                goal_layer: target_layer,
+                base_action: action,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: vec![turn, interaction],
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            target_layer,
-            action,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            vec![turn, interaction],
-            false,
-            false,
         )
         .unwrap_or_else(|| {
             panic!("target interaction route for {actor:?} -> {target:?} was empty")

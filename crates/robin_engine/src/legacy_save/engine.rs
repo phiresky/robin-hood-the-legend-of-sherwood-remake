@@ -604,12 +604,7 @@ mod tests {
     use crate::sbfile::SbFile;
 
     #[allow(dead_code)]
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
+    use robin_test_support::original_data;
 
     fn repository_fixture(relative: &str) -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

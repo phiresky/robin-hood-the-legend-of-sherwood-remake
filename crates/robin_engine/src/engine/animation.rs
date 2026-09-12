@@ -12,53 +12,7 @@ const WEAKNESS_DISMISH: u16 = 5;
 /// frame or a bounded frame range. This keeps an accidentally enabled release
 /// runner from printing every actor's `Turn()` calls.
 fn turn_provenance_matches(frame: u32, owner: EntityId) -> bool {
-    if std::env::var_os("PARITY_DEBUG_TURN_PROVENANCE").is_none() {
-        return false;
-    }
-
-    let parse_u32 = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for Turn provenance diagnostic: {error}")
-            })
-        })
-    };
-    let owner_filter = std::env::var("PARITY_DEBUG_TURN_OWNER").unwrap_or_else(|_| {
-        panic!(
-            "PARITY_DEBUG_TURN_PROVENANCE requires PARITY_DEBUG_TURN_OWNER=pc|soldier|civilian:INDEX"
-        )
-    });
-    let (kind, index) = owner_filter.split_once(':').unwrap_or_else(|| {
-        panic!("PARITY_DEBUG_TURN_OWNER must look like pc|soldier|civilian:INDEX")
-    });
-    let index = index.parse::<u32>().unwrap_or_else(|error| {
-        panic!("invalid PARITY_DEBUG_TURN_OWNER={owner_filter:?}: {error}")
-    });
-    let owner_matches = match (kind, owner) {
-        ("pc", EntityId::Pc(_))
-        | ("soldier", EntityId::Soldier(_))
-        | ("civilian", EntityId::Civilian(_)) => owner.index() == index,
-        ("pc" | "soldier" | "civilian", _) => false,
-        _ => panic!("PARITY_DEBUG_TURN_OWNER has unsupported kind {kind:?}"),
-    };
-    if !owner_matches {
-        return false;
-    }
-
-    if let Some(exact) = parse_u32("PARITY_DEBUG_TURN_FRAME") {
-        return frame == exact;
-    }
-    let from = parse_u32("PARITY_DEBUG_TURN_FROM").unwrap_or_else(|| {
-        panic!(
-            "PARITY_DEBUG_TURN_PROVENANCE requires PARITY_DEBUG_TURN_FRAME or PARITY_DEBUG_TURN_FROM"
-        )
-    });
-    let until = parse_u32("PARITY_DEBUG_TURN_UNTIL").unwrap_or(from);
-    assert!(
-        from <= until,
-        "PARITY_DEBUG_TURN_FROM must not exceed PARITY_DEBUG_TURN_UNTIL"
-    );
-    (from..=until).contains(&frame)
+    super::diagnostics::config().turn_provenance_matches(frame, owner)
 }
 
 /// Emit one direction-latch boundary for the opt-in Turn provenance probe.

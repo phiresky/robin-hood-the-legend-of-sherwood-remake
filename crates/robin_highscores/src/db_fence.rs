@@ -82,13 +82,13 @@ impl RuntimeDatabaseFence {
         );
         #[cfg(target_os = "linux")]
         let directory_file = {
-            use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-            let descriptor = openat2(
+            use rustix::fs::{Mode, OFlags};
+            let descriptor = crate::secure_fs::open_no_symlinks_at(
                 rustix::fs::CWD,
                 directory_path,
                 OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
                 Mode::empty(),
-                ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+                rustix::fs::ResolveFlags::empty(),
             )?;
             std::fs::File::from(descriptor)
         };
@@ -165,17 +165,14 @@ impl RuntimeDatabaseFence {
 
     #[cfg(target_os = "linux")]
     fn open_leaf_from(directory: &cap_std::fs::Dir, name: &str) -> anyhow::Result<std::fs::File> {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
-        let descriptor = openat2(
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             directory.as_fd(),
             Path::new(name),
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH
-                | ResolveFlags::NO_SYMLINKS
-                | ResolveFlags::NO_MAGICLINKS
-                | ResolveFlags::NO_XDEV,
+            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
         )?;
         Ok(std::fs::File::from(descriptor))
     }
@@ -210,13 +207,13 @@ impl RuntimeDatabaseFence {
 
     #[cfg(target_os = "linux")]
     fn open_directory_file(path: &Path) -> anyhow::Result<std::fs::File> {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-        let descriptor = openat2(
+        use rustix::fs::{Mode, OFlags};
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         Ok(std::fs::File::from(descriptor))
     }

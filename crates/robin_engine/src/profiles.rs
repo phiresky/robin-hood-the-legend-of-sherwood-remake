@@ -2144,12 +2144,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
+    use robin_test_support::original_data;
 
     #[test]
     fn hackable_soldier_identifier_is_readable_and_uniquely_resolved() {

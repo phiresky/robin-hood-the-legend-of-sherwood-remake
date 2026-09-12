@@ -554,13 +554,13 @@ use std::os::unix::fs::PermissionsExt as _;
 async fn set_private_directory_permissions(path: &Path) -> Result<(), StoreError> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-        let fd = openat2(
+        use rustix::fs::{Mode, OFlags};
+        let fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )
         .map_err(std::io::Error::from)?;
         let directory = std::fs::File::from(fd);

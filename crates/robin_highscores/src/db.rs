@@ -3409,19 +3409,19 @@ async fn verify_pinned_database_leaf(
     let current = tokio::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
         #[cfg(target_os = "linux")]
         {
-            use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+            use rustix::fs::{Mode, OFlags};
             use std::os::fd::AsFd as _;
 
             // Closing any ordinary descriptor for this inode would discard
             // SQLite's process-wide POSIX locks, even on another thread. An
             // O_PATH descriptor can authenticate the leaf without that close
             // side effect. Keep the same beneath/no-symlink path confinement.
-            let fd = openat2(
+            let fd = crate::secure_fs::open_no_symlinks_at(
                 opened_parent.as_fd(),
                 std::path::Path::new(&opened_leaf),
                 OFlags::PATH | OFlags::CLOEXEC,
                 Mode::empty(),
-                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+                rustix::fs::ResolveFlags::BENEATH,
             )
             .map_err(std::io::Error::from)?;
             let file = std::fs::File::from(fd);
@@ -3503,18 +3503,18 @@ async fn ensure_schema_current(pool: &SqlitePool) -> Result<(), DbError> {
 async fn set_private_permissions(path: &std::path::Path, directory: bool) -> Result<(), DbError> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::unix::fs::PermissionsExt as _;
         let mut flags = OFlags::RDONLY | OFlags::CLOEXEC;
         if directory {
             flags |= OFlags::DIRECTORY;
         }
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             flags,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )
         .map_err(std::io::Error::from)
         .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;

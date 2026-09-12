@@ -30,7 +30,12 @@ pub(super) fn handle_gamepad_events(
         return;
     }
     let now_ms = crate::window::process_uptime_ms();
-    let gamepad_frame = device.process(now_ms, &manager.engine, threaded_input);
+    let gamepad_frame = device.process(
+        now_ms,
+        &manager.engine,
+        host.transport.local_seat(),
+        threaded_input,
+    );
     for cmd in &gamepad_frame.viewport {
         match cmd {
             ViewportCommand::Scroll(dir) => apply_local_viewport_scroll(host, *dir),

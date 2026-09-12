@@ -972,14 +972,14 @@ fn read_std_bounded(source: &mut File, limit: u64, name: &str) -> Result<Vec<u8>
 
 #[cfg(target_os = "linux")]
 fn open_pinned_file(path: &Path, name: &str) -> Result<File, ProcessError> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     validate_absolute_normalized_path(path, name)?;
-    let descriptor = openat2(
+    let descriptor = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         path,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(std::io::Error::from)?;
     let file = File::from(descriptor);
@@ -993,15 +993,15 @@ fn open_pinned_file(path: &Path, name: &str) -> Result<File, ProcessError> {
 
 #[cfg(target_os = "linux")]
 fn open_pinned_directory(path: &Path, name: &str) -> Result<File, ProcessError> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     validate_absolute_normalized_path(path, name)?;
     mount_parent_directories(path)?;
-    let descriptor = openat2(
+    let descriptor = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(std::io::Error::from)?;
     let file = File::from(descriptor);

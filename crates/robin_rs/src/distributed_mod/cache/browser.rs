@@ -228,9 +228,7 @@ fn bytes_from_js(value: JsValue, label: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn hex_hash(hash: &[u8; 32]) -> String {
-    robin_engine::spellforge::hex_hash(hash)
-}
+use robin_engine::spellforge::hex_hash;
 
 fn validate_hash(value: &str) -> Result<(), String> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {

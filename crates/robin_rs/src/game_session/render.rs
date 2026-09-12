@@ -1723,11 +1723,12 @@ fn render_frame_with_hud(
                     sherwood_hud::sherwood_button_tooltip_mt_id(btn, is_sherwood, men_to_blazon)
                         .map(|mt_id| resources.menu_text.get(mt_id))
                 },
-                &fonts.tooltip_font,
-                fonts.shadow_font.as_ref(),
-                mp.x as i32,
-                mp.y as i32,
-                (cw as i32, ch as i32),
+                sherwood_hud::TooltipPlacement {
+                    font: &fonts.tooltip_font,
+                    shadow: fonts.shadow_font.as_ref(),
+                    mouse: (mp.x as i32, mp.y as i32),
+                    cursor_size: (cw as i32, ch as i32),
+                },
             );
         }
     }
@@ -1829,11 +1830,12 @@ fn render_frame_with_hud(
                     let mt_id = stature_hud::stature_button_tooltip_mt_id(btn);
                     resources.menu_text.get(mt_id)
                 },
-                &fonts.tooltip_font,
-                fonts.shadow_font.as_ref(),
-                mp.x as i32,
-                mp.y as i32,
-                (cw as i32, ch as i32),
+                stature_hud::TooltipPlacement {
+                    font: &fonts.tooltip_font,
+                    shadow: fonts.shadow_font.as_ref(),
+                    mouse: (mp.x as i32, mp.y as i32),
+                    cursor_size: (cw as i32, ch as i32),
+                },
             );
         }
 

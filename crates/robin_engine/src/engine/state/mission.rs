@@ -46,28 +46,22 @@ impl MissionDomain {
         }
     }
 
-    pub(crate) fn required_campaign(&self, context: &str) -> &Campaign {
-        let _ = context;
+    pub(crate) fn campaign(&self) -> &Campaign {
         &self.campaign
     }
 
-    pub(crate) fn required_campaign_mut(&mut self, context: &str) -> &mut Campaign {
-        let _ = context;
+    pub(crate) fn campaign_mut(&mut self) -> &mut Campaign {
         &mut self.campaign
     }
 
     /// Borrow the required campaign and mission statistics as disjoint parts
     /// of their common owner.
-    pub(crate) fn required_campaign_and_stat(
-        &mut self,
-        context: &str,
-    ) -> (&mut Campaign, &mut MissionStat) {
+    pub(crate) fn campaign_and_stat_mut(&mut self) -> (&mut Campaign, &mut MissionStat) {
         let Self {
             campaign,
             mission_stat,
             ..
         } = self;
-        let _ = context;
         (campaign, mission_stat)
     }
 }

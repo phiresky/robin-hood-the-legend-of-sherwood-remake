@@ -21,8 +21,10 @@ mod multiplayer;
 mod render;
 pub(crate) mod replay_init;
 mod replay_launch;
+use replay_launch::choose_pending_replay;
+#[cfg(test)]
+use replay_launch::prepare_replay_mission;
 pub(crate) use replay_launch::{PreparedReplayLaunch, prepare_replay_launch};
-use replay_launch::{choose_pending_replay, prepare_replay_mission};
 mod retirement;
 mod runtime;
 mod session_policy;
@@ -80,10 +82,12 @@ use modal_state::{
     pop_matching_dismissal, start_active_debriefing_batch, start_active_dialogue_batch,
     start_active_popup_scroll_batch, start_active_sherwood_report, tick_active_modal,
 };
+#[cfg(test)]
+use mouse_input::allied_portrait_center;
 use mouse_input::{
-    allied_portrait_center, dispatch_corner_button_left_click, dispatch_corner_button_right_click,
-    handle_mouse_input, handle_pause_menu_events, handle_sherwood_campaign_map_overlay,
-    handle_sherwood_hud_buttons, request_sherwood_trading_panel, sherwood_trading_access,
+    dispatch_corner_button_left_click, dispatch_corner_button_right_click, handle_mouse_input,
+    handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
+    request_sherwood_trading_panel, sherwood_trading_access,
 };
 use multiplayer::{drain_mission_network, setup_multiplayer_session};
 pub use render::RenderContext;

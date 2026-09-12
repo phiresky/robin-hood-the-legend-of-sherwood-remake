@@ -1,3 +1,4 @@
+use super::scenarios::assets_with_test_pc_profile;
 use super::*;
 
 #[test]
@@ -47,17 +48,6 @@ fn instruct_publication_reads_the_translated_element_not_owner_wide_selection() 
             order_type: OrderType::LoweringShield,
         })
     );
-}
-
-fn assets_with_test_pc_profile() -> LevelAssets {
-    let mut profiles = crate::profiles::ProfileManager::new();
-    profiles
-        .characters
-        .push(crate::profiles::CharacterProfile::default());
-    LevelAssets {
-        profile_manager: std::sync::Arc::new(profiles),
-        ..LevelAssets::new()
-    }
 }
 
 #[test]

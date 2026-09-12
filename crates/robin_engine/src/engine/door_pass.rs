@@ -1040,8 +1040,6 @@ impl PassDoorLaunchContext<'_> {
         // matches the current visual regardless of which side of the
         // open/close cycle we're on.  No pre-emptive call is needed
         // here — the patch's applied-ness *is* the gate's state.
-        let _ = door_type;
-
         // Only building and lift passage mark direct door passage.
         let sets_passing_door_directly = matches!(
             door_type,
