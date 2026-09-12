@@ -24,31 +24,8 @@ fn door_battle_outside_sector(door: &crate::gate::Door) -> crate::position_inter
         .unwrap_or(handle)
 }
 
-struct DamageParryHandoffDebugConfig {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<DamageParryHandoffDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when damage-parry handoff debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for damage-parry handoff diagnostic: {error}")
-                })
-            };
-            Some(DamageParryHandoffDebugConfig {
-                frame: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_FRAME"),
-                creation_order: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_CREATION_ORDER"),
-            })
-        })
-        .as_ref()
+fn damage_parry_handoff_debug_config() -> Option<&'static super::diagnostics::ExactOwnerFrame> {
+    super::diagnostics::config().damage_parry.as_ref()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -59,136 +36,62 @@ pub(crate) enum AttentiveModeCaller {
     Unclassified,
 }
 
-struct AttentiveModeCallerDebugConfig {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn attentive_mode_caller_debug_config() -> Option<&'static AttentiveModeCallerDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<AttentiveModeCallerDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_ATTENTIVE_MODE_CALLER")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when attentive-mode caller debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for attentive-mode caller diagnostic: {error}")
-                })
-            };
-            Some(AttentiveModeCallerDebugConfig {
-                frame: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_FRAME"),
-                creation_order: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_CREATION_ORDER"),
-            })
-        })
-        .as_ref()
+fn attentive_mode_caller_debug_config() -> Option<&'static super::diagnostics::ExactOwnerFrame> {
+    super::diagnostics::config().attentive_mode_caller.as_ref()
 }
 
 fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
-        return false;
-    }
-    let value = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME").unwrap_or_else(|_| {
-        panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
-    });
-    let expected = value
-        .parse::<u32>()
-        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME={value:?}: {error}"));
-    frame == expected
+    super::diagnostics::config().goal_owner_frame_matches(frame)
 }
 
 #[cfg(test)]
 thread_local! {
-    static CONDOLATION_CARD_TRACE: std::cell::RefCell<Option<Vec<(EntityId, Command)>>> =
-        const { std::cell::RefCell::new(None) };
-    static CONDOLATION_STIMULUS_TRACE: std::cell::RefCell<Option<Vec<(EntityId, StimulusType)>>> =
-        const { std::cell::RefCell::new(None) };
+    static CONDOLATION_CARD_TRACE: super::test_support::Probe<(EntityId, Command)> =
+        const { super::test_support::Probe::new() };
+    static CONDOLATION_STIMULUS_TRACE: super::test_support::Probe<(EntityId, StimulusType)> =
+        const { super::test_support::Probe::new() };
     static CONDOLATION_NESTED_TERMINATION: std::cell::RefCell<Option<(EntityId, StimulusType, SequenceId, usize)>> =
         const { std::cell::RefCell::new(None) };
-    static OWNER_BOUNDARY_RESUME_TRACE: std::cell::RefCell<Option<Vec<EntityId>>> =
-        const { std::cell::RefCell::new(None) };
-    static OWNER_BOUNDARY_REENTRANT_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
-        const { std::cell::RefCell::new(None) };
-    static STRANGLE_CONDOLATION_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
-        const { std::cell::RefCell::new(None) };
+    static OWNER_BOUNDARY_RESUME_TRACE: super::test_support::Probe<EntityId> =
+        const { super::test_support::Probe::new() };
+    static OWNER_BOUNDARY_REENTRANT_TRACE: super::test_support::Probe<&'static str> =
+        const { super::test_support::Probe::new() };
+    static STRANGLE_CONDOLATION_TRACE: super::test_support::Probe<&'static str> =
+        const { super::test_support::Probe::new() };
 }
 
 #[cfg(test)]
 pub(super) fn capture_condolation_cards<T>(f: impl FnOnce() -> T) -> (T, Vec<(EntityId, Command)>) {
-    CONDOLATION_CARD_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = CONDOLATION_CARD_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("condolation card trace remains installed")
-    });
-    (result, observed)
+    CONDOLATION_CARD_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 fn observe_condolation_card(owner: EntityId, command: Command) {
-    CONDOLATION_CARD_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((owner, command));
-        }
-    });
+    CONDOLATION_CARD_TRACE.with(|trace| trace.record((owner, command)));
 }
 
 #[cfg(test)]
 pub(super) fn capture_strangle_condolation_order<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<&'static str>) {
-    STRANGLE_CONDOLATION_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = STRANGLE_CONDOLATION_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("strangle condolation trace remains installed")
-    });
-    (result, observed)
+    STRANGLE_CONDOLATION_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 pub(super) fn observe_strangle_condolation_step(step: &'static str) {
-    STRANGLE_CONDOLATION_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(step);
-        }
-    });
+    STRANGLE_CONDOLATION_TRACE.with(|trace| trace.record(step));
 }
 
 #[cfg(test)]
 pub(super) fn capture_condolation_stimuli<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, StimulusType)>) {
-    CONDOLATION_STIMULUS_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = CONDOLATION_STIMULUS_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("condolation trace remains installed")
-    });
-    (result, observed)
+    CONDOLATION_STIMULUS_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 fn observe_condolation_stimulus(owner: EntityId, stimulus: StimulusType) {
-    CONDOLATION_STIMULUS_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((owner, stimulus));
-        }
-    });
+    CONDOLATION_STIMULUS_TRACE.with(|trace| trace.record((owner, stimulus)));
 }
 
 #[cfg(test)]
@@ -210,43 +113,19 @@ pub(super) fn install_condolation_nested_termination(
 
 #[cfg(test)]
 pub(super) fn capture_owner_boundary_resumes<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
-    OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("owner-boundary resume trace remains installed")
-    });
-    (result, observed)
+    OWNER_BOUNDARY_RESUME_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 pub(super) fn capture_owner_boundary_reentrant_order<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<&'static str>) {
-    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
-        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
-    });
-    let result = f();
-    let observed = OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("owner-boundary reentrant trace remains installed")
-    });
-    (result, observed)
+    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| trace.capture(f))
 }
 
 #[cfg(test)]
 fn observe_owner_boundary_reentrant_step(step: &'static str) {
-    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(step);
-        }
-    });
+    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| trace.record(step));
 }
 
 #[cfg(test)]
@@ -542,9 +421,6 @@ impl EngineInner {
             .unwrap_or(1)
             .min(u16::MAX as u32) as u16;
 
-        // Drop the immutable entity borrow before any mutable self calls.
-        let _ = entity;
-
         // Process the ladder fall before the wasp-struggle orders are
         // queued; the soldier needs to leave the lift first and the
         // animation queue would otherwise be clobbered.
@@ -815,11 +691,7 @@ impl EngineInner {
         }
 
         #[cfg(test)]
-        OWNER_BOUNDARY_RESUME_TRACE.with(|trace| {
-            if let Some(trace) = trace.borrow_mut().as_mut() {
-                trace.push(card_owner);
-            }
-        });
+        OWNER_BOUNDARY_RESUME_TRACE.with(|trace| trace.record(card_owner));
         self.orders
             .sequence_manager
             .finish_pending_condolation(dispatch);
@@ -1663,7 +1535,7 @@ impl EngineInner {
 
         // Pick the unlocked door nearest to first_pos by maximum norm of
         // (door.point_in - first_pos).
-        let (point_in, point_out, point_mid, out_layer, out_sector_handle) = {
+        let (point_out, point_mid, out_layer, out_sector_handle) = {
             if self.scripts.mission.is_none() {
                 return;
             }
@@ -1711,14 +1583,12 @@ impl EngineInner {
                 "selected door {best_idx} has no exact outside-sector identity in an exact gate graph"
             );
             (
-                door.point_in,
                 door.point_out,
                 door.point_mid,
                 door.layer_out,
                 door_battle_outside_sector(door),
             )
         };
-        let _ = point_in;
 
         // Battle center = door.point_out; facing = sector(point_out -
         // point_mid) via `vector_to_sector_0_to_15_iso` on the door
@@ -2036,24 +1906,26 @@ impl EngineInner {
                     // Attribute only a route that is actually about to enter the
                     // gate builder, where RuntimeBuildingExitWait can be drawn.
                     self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
-                    let _ = self.build_gate_movement_sequence(
+                    self.launch_gate_movement_order(
                         sim,
-                        pc_id,
-                        Some(source_sector),
-                        path,
-                        GoalShape::Point {
-                            point: MapPoint::new(goal.x, goal.y),
-                            tolerance: 0.0,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: pc_id,
+                            source_sector: Some(source_sector),
+                            gate_path: path,
+                            goal: GoalShape::Point {
+                                point: MapPoint::new(goal.x, goal.y),
+                                tolerance: 0.0,
+                            },
+                            goal_layer: goal.level,
+                            base_action: crate::order::OrderType::RunningUpright,
+                            move_after_last_door: true,
+                            speed_factor: 1.0,
+                            initial_flags: MoveFlags::empty(),
+                            prefix_elements: vec![wait],
+                            tail_elements: tail_elements,
+                            append_arrival_speech: false,
+                            append_recovery: false,
                         },
-                        goal.level,
-                        crate::order::OrderType::RunningUpright,
-                        true,
-                        1.0,
-                        MoveFlags::empty(),
-                        vec![wait],
-                        tail_elements,
-                        false,
-                        false,
                     );
                     return;
                 }
@@ -2145,7 +2017,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let owner = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -2289,7 +2161,7 @@ mod tests {
         element.set_position_map(point_in);
         element.set_sector(crate::position_interface::SectorHandle::new(118));
         element.set_layer(6);
-        let pc = engine.add_entity(Entity::Pc(ActorPc {
+        let pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {

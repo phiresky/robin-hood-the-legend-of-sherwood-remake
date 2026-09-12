@@ -170,12 +170,6 @@ bitflags! {
 crate::bitcode_adapters::impl_native_bitcode_flags!(PositionComputed, u8);
 crate::bitcode_adapters::impl_native_bitcode_flags!(IncrementComputed, u8);
 
-impl robin_util::state_hash::StateHash for PositionComputed {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        robin_util::state_hash::StateHash::state_hash(&self.bits(), state);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Posture
 // ---------------------------------------------------------------------------
@@ -242,6 +236,7 @@ impl Posture {
 // Opaque handles
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Elevation-layer index.
 ///
 /// The original game uses scalar `0xffff` as the special projectile
@@ -249,41 +244,13 @@ impl Posture {
 /// projection-area layer. Runtime `None` represents precisely that special
 /// no-elevation-layer state, and legacy readers translate it only after they
 /// have selected the correct pointer namespace. Layer zero remains live.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct Layer(nonmax::NonMaxU16);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(Layer, u16);
+pub struct Layer(nonmax::NonMaxU16), u16
+);
 
 impl Layer {
     pub const ZERO: Layer = Layer(nonmax::NonMaxU16::new(0).unwrap());
-    #[inline]
-    pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u16 {
-        self.0.get()
-    }
 }
 
-impl From<Layer> for u16 {
-    #[inline]
-    fn from(l: Layer) -> u16 {
-        l.get()
-    }
-}
 impl From<Layer> for u32 {
     #[inline]
     fn from(l: Layer) -> u32 {
@@ -296,12 +263,6 @@ impl From<Layer> for i16 {
         l.get() as i16
     }
 }
-impl From<Layer> for usize {
-    #[inline]
-    fn from(l: Layer) -> usize {
-        l.get() as usize
-    }
-}
 
 impl Default for Layer {
     #[inline]
@@ -310,56 +271,11 @@ impl Default for Layer {
     }
 }
 
-impl std::fmt::Display for Layer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get().fmt(f)
-    }
-}
-
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into the loaded pathfinder/move-box table. `0xffff` means
 /// "unconfigured" during original-game initialization and at binary boundaries.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct PathfinderIndex(pub nonmax::NonMaxU16);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(PathfinderIndex, u16);
-
-impl PathfinderIndex {
-    #[inline]
-    pub fn new(value: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(value).map(Self)
-    }
-
-    #[inline]
-    pub fn get(self) -> u16 {
-        self.0.get()
-    }
-}
-
-impl From<PathfinderIndex> for u16 {
-    #[inline]
-    fn from(index: PathfinderIndex) -> Self {
-        index.get()
-    }
-}
-
-impl From<PathfinderIndex> for usize {
-    #[inline]
-    fn from(index: PathfinderIndex) -> Self {
-        usize::from(index.get())
-    }
-}
+pub struct PathfinderIndex(pub nonmax::NonMaxU16), u16
+);
 
 /// 16-sector compass direction (0..=15).  All compass arithmetic masks
 /// with `& 15`; this newtype enforces the invariant and encapsulates
@@ -933,7 +849,6 @@ impl Default for PositionInterface {
 }
 
 impl PositionInterface {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             computed_position: PositionComputed::ALL,

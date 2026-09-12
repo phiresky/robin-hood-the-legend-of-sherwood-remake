@@ -28,56 +28,15 @@ use crate::sector_production;
 // BuildingIdx — nominal newtype
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into the engine's building table.  Wraps [`nonmax::NonMaxU16`]
 /// so `Option<BuildingIdx>` is 2 bytes via niche optimization.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct BuildingIdx(pub nonmax::NonMaxU16);
+pub struct BuildingIdx(pub nonmax::NonMaxU16), u16
+);
 
-crate::bitcode_adapters::impl_native_bitcode_index!(BuildingIdx, u16);
-
-impl BuildingIdx {
-    #[inline]
-    pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u16 {
-        self.0.get()
-    }
-}
-impl From<BuildingIdx> for u16 {
-    #[inline]
-    fn from(i: BuildingIdx) -> u16 {
-        i.0.get()
-    }
-}
 impl From<BuildingIdx> for u32 {
-    #[inline]
-    fn from(i: BuildingIdx) -> u32 {
-        u32::from(i.0.get())
-    }
-}
-impl From<BuildingIdx> for usize {
-    #[inline]
-    fn from(i: BuildingIdx) -> usize {
-        usize::from(i.0.get())
-    }
-}
-impl std::fmt::Display for BuildingIdx {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
+    fn from(index: BuildingIdx) -> Self {
+        u32::from(index.get())
     }
 }
 
@@ -296,7 +255,9 @@ impl SectorType {
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    num_enum::TryFromPrimitive,
 )]
+#[repr(u8)]
 pub enum LiftType {
     #[default]
     Normal,
@@ -307,13 +268,7 @@ pub enum LiftType {
 
 impl LiftType {
     pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => Self::Normal,
-            1 => Self::Stairs,
-            2 => Self::Ladder,
-            3 => Self::Wall,
-            _ => panic!("unknown lift type: {v}"),
-        }
+        Self::try_from(v).unwrap_or_else(|_| panic!("unknown lift type: {v}"))
     }
 
     /// Wall and ladder lifts restrict who can traverse them.

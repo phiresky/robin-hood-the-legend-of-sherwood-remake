@@ -2,7 +2,7 @@
 
 use super::TimelineFrame;
 use robin_engine::player_command::PlayerInput;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 #[derive(Default, Serialize)]
@@ -110,13 +110,10 @@ impl NetworkReconciliation {
     }
 }
 
-impl<'de> Deserialize<'de> for NetworkReconciliation {
-    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "network reconciliation is live prediction authority, not a saved game",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    NetworkReconciliation,
+    "network reconciliation is live prediction authority, not a saved game"
+);
 
 #[cfg(test)]
 mod tests {

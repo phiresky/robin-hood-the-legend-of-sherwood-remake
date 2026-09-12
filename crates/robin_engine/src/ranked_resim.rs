@@ -371,8 +371,7 @@ fn validate_terminal_recorder_shape(
             let PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code,
                 difficulty,
-                completed_at_unix_seconds,
-                campaign_run_nonce,
+                ..
             } = &command.player_input().command
             else {
                 continue;
@@ -387,7 +386,6 @@ fn validate_terminal_recorder_shape(
                     message: "ApplyQuitMissionUpdates difficulty differs from SimConfig".into(),
                 });
             }
-            let _ = (completed_at_unix_seconds, campaign_run_nonce);
             recorded_terminal = Some(*exit_code);
             terminals.insert(replay_ordinal, *exit_code);
         }

@@ -91,7 +91,9 @@ mod tests {
         std::fs::create_dir_all(root.path().join("Day")).unwrap();
         std::fs::write(root.path().join("Day/Test.map"), [1, 0, 2, 0]).unwrap();
         let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-        assert_eq!(files.set_primary_path(root.path().to_str().unwrap()), 0);
+        files
+            .set_primary_path(root.path().to_str().unwrap())
+            .expect("mount fixture asset directory");
         assert!(files.try_exists("Night/Test.map").unwrap());
         let error = open_candidate("Night/Test.map", &files)
             .err()

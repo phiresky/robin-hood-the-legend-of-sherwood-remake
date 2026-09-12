@@ -692,21 +692,23 @@ impl EngineInner {
             // an AssertPosition and postpone the real Move one manager-FIFO
             // position behind later actors.
             let route_assert_sector = route_identity_differs.then_some(source_sector);
-            return self.build_gate_movement_sequence(
+            return self.launch_gate_movement_sequence(
                 sim,
-                entity_id,
-                route_assert_sector,
-                gate_path,
-                goal,
-                goal_layer,
-                action,
-                door_goal.is_none(),
-                intent.speed_factor,
-                move_flags,
-                prefix,
-                tail,
-                false,
-                false,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: entity_id,
+                    source_sector: route_assert_sector,
+                    gate_path: gate_path,
+                    goal: goal,
+                    goal_layer: goal_layer,
+                    base_action: action,
+                    move_after_last_door: door_goal.is_none(),
+                    speed_factor: intent.speed_factor,
+                    initial_flags: move_flags,
+                    prefix_elements: prefix,
+                    tail_elements: tail,
+                    append_arrival_speech: false,
+                    append_recovery: false,
+                },
             );
         }
 
@@ -1307,12 +1309,13 @@ impl EngineInner {
 #[cfg(test)]
 mod exact_ai_goto_source_tests {
     use super::*;
-    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::coordinates::MapPoint;
     use crate::element::{ActorSoldier, AiBrain, ElementData, ElementKind, Entity, Posture};
-    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::engine::test_support::square_sector;
+    use crate::fast_find_grid::SectorIndex;
     use crate::gate::{Door, GatePathStep};
     use crate::position_interface::{DoorHandle, SectorHandle};
-    use crate::sector::{SectorNumber, SectorType};
+    use crate::sector::SectorNumber;
 
     fn minimal_mission() -> crate::engine::MissionScript {
         use crate::scb::{ClassEntry, Function};
@@ -1347,32 +1350,6 @@ mod exact_ai_goto_source_tests {
             }],
         })
         .expect("minimal mission")
-    }
-
-    fn square_sector(number: i16, layer: u16, min: MapPoint, max: MapPoint) -> GridSector {
-        GridSector {
-            points: vec![
-                min,
-                MapPoint::new(max.x, min.y),
-                max,
-                MapPoint::new(min.x, max.y),
-            ],
-            bounding_box: MapBBox::from_coords(min.x, min.y, max.x, max.y),
-            sector_type: SectorType::MOTION | SectorType::AREA,
-            layer,
-            sector_number: SectorNumber::new(number),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
-        }
     }
 
     #[test]
@@ -1435,7 +1412,7 @@ mod exact_ai_goto_source_tests {
             .set_position_map(MapPoint::new(110.0, 200.0));
         soldier.element.set_sector(Some(raw_sector));
         soldier.element.set_layer(2);
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
         position.set_sector_topology(Some(raw_sector), Some(raw_index));
         position.set_door(
@@ -1560,7 +1537,7 @@ mod exact_ai_goto_source_tests {
         soldier.element.set_layer(4);
         // Legacy adoption retained the public sector but not its exact sector reference.
         soldier.element.set_sector(SectorHandle::new(104));
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         let mut intent = crate::order::AiOrderIntent::new(
             crate::order::OrderType::RunningUpright,

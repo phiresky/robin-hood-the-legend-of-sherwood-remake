@@ -12,7 +12,6 @@ use crate::{
     element::{Command, Entity},
     engine::{EngineInner, LevelAssets, TimerEntry},
     natives::{ComputedScriptLocation, ScriptHandleCodec},
-    scb::TypeTag,
     sequence::{Field, FieldValue, SequenceElementRef, SequenceState},
 };
 
@@ -265,22 +264,14 @@ fn preflight_global_vm(
         validate_member_schema(index, &saved_member.schema, runtime_member)?;
         let address = usize::try_from(saved_member.schema.address)
             .expect("u32 member address is representable on supported hosts");
-        let end = address.checked_add(4).ok_or_else(|| {
+        let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
             LegacyTailRuntimeAdoptError::GlobalVmHeapRange {
                 member: saved_member.schema.name.clone(),
                 heap_len: heap.len(),
                 address,
-                end: usize::MAX,
+                end,
             }
         })?;
-        if end > heap.len() {
-            return Err(LegacyTailRuntimeAdoptError::GlobalVmHeapRange {
-                member: saved_member.schema.name.clone(),
-                heap_len: heap.len(),
-                address,
-                end,
-            });
-        }
 
         let bits = match (&saved_member.schema.kind, &saved_member.value) {
             (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
@@ -378,37 +369,8 @@ fn validate_member_schema(
     saved: &LegacyVmMemberSchema,
     runtime: &crate::scb::MemberVariable,
 ) -> Result<(), LegacyTailRuntimeAdoptError> {
-    let expected_kind = if runtime.ty.tag == TypeTag::NativeType {
-        match runtime.ty.native_type_name.as_str() {
-            "Actor" => LegacyVmMemberKind::ActorRef,
-            "Scroll" => LegacyVmMemberKind::ScrollRef,
-            "Location" => LegacyVmMemberKind::Location,
-            other => {
-                return Err(LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch {
-                    index,
-                    detail: format!("initialized class uses unsupported native type {other:?}"),
-                });
-            }
-        }
-    } else {
-        LegacyVmMemberKind::Raw32 {
-            tag: runtime.ty.tag,
-        }
-    };
-    let runtime_address = u32::try_from(runtime.address).ok();
-    if saved.name != runtime.name
-        || Some(saved.address) != runtime_address
-        || saved.kind != expected_kind
-    {
-        return Err(LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch {
-            index,
-            detail: format!(
-                "saved ({:?}, {}, {:?}) != runtime ({:?}, {}, {:?})",
-                saved.name, saved.address, saved.kind, runtime.name, runtime.address, expected_kind
-            ),
-        });
-    }
-    Ok(())
+    super::vm_schema::check_member_schema(saved, runtime)
+        .map_err(|detail| LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch { index, detail })
 }
 
 fn resolve_entity_handle(
@@ -448,6 +410,7 @@ fn resolve_entity_handle(
 
 #[cfg(test)]
 mod tests {
+    use crate::scb::TypeTag;
     use std::collections::BTreeMap;
 
     use super::*;

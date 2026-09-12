@@ -120,8 +120,15 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
     for (path, stem, out_path) in planned {
         // Missing-mission errors from the profile lookup are non-fatal here —
         // fall through and decompile without names.
-        let names =
-            load_actor_names(args.datadir.as_deref(), Some(&stem), path).unwrap_or_default();
+        let names = match load_actor_names(args.datadir.as_deref(), Some(&stem), path) {
+            Ok(names) => names,
+            Err(_) => {
+                tracing::warn!(
+                    "{path}: continuing decompilation without actor names after lookup failure"
+                );
+                None
+            }
+        };
         let scb = match robin_assets::scb::parse_file(path) {
             Ok(s) => s,
             Err(e) => {
@@ -173,17 +180,22 @@ fn load_actor_names(
     datadir: Option<&str>,
     mission: Option<&str>,
     scb_path: &str,
-) -> Result<Option<robin_assets::actor_names::ActorNames>, std::process::ExitCode> {
+) -> Result<Option<robin_modding_tools::actor_names::ActorNames>, std::process::ExitCode> {
     let Some(dd) = datadir else {
         return Ok(None);
     };
-    let m = mission.map(str::to_owned).unwrap_or_else(|| {
+    let m = mission.or_else(|| {
         Path::new(scb_path)
             .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .and_then(|stem| stem.to_str())
     });
-    match robin_assets::actor_names::load_from_datadir(Path::new(dd), &m) {
+    let Some(m) = m.filter(|name| !name.is_empty()) else {
+        tracing::error!(
+            "{scb_path}: cannot derive a nonempty UTF-8 mission name; supply --mission"
+        );
+        return Err(std::process::ExitCode::FAILURE);
+    };
+    match robin_modding_tools::actor_names::load_from_datadir(Path::new(dd), &m) {
         Ok(n) => Ok(Some(n)),
         Err(e) => {
             tracing::error!("{scb_path}: actor names: {e}");
@@ -195,12 +207,12 @@ fn load_actor_names(
 fn render(
     scb: &robin_assets::scb::ScbFile,
     decompile: bool,
-    names: Option<&robin_assets::actor_names::ActorNames>,
+    names: Option<&robin_modding_tools::actor_names::ActorNames>,
 ) -> String {
     if decompile {
-        robin_assets::decompile::decompile_with_names(scb, names)
+        robin_modding_tools::decompile::decompile_with_names(scb, names)
     } else {
-        robin_assets::disasm::dump(scb)
+        robin_modding_tools::disasm::dump(scb)
     }
 }
 

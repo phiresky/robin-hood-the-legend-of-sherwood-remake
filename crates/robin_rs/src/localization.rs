@@ -8,7 +8,9 @@
 //! commands.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use robin_assets::resource_manager::ResourceManager;
@@ -20,7 +22,7 @@ use thiserror::Error;
 mod catalog;
 mod feature40_text;
 
-#[cfg(any(not(target_arch = "wasm32"), test))]
+#[cfg(not(target_arch = "wasm32"))]
 const PREFERENCES_FILE: &str = "language.json";
 #[cfg(target_arch = "wasm32")]
 const BROWSER_PREFERENCES_KEY: &str = "robin_hood.language.v1";
@@ -114,7 +116,7 @@ pub enum LocalizationError {
         source: std::io::Error,
     },
     #[error("failed to install language resource lookup (file status {0})")]
-    FileLookup(i32),
+    FileLookup(robin_engine::sbfile::SbFileError),
     #[error("failed to install shipping language resources: {0:#}")]
     Shipping(anyhow::Error),
     #[error(
@@ -131,6 +133,7 @@ pub enum LocalizationError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum PreferenceStore {
+    #[cfg(not(target_arch = "wasm32"))]
     Native(PathBuf),
     #[cfg(target_arch = "wasm32")]
     Browser,
@@ -591,7 +594,7 @@ fn loose_path_exists(root: &str, relative: &str, files: &SbFileSystem) -> bool {
             tracing::warn!(
                 root,
                 relative,
-                status,
+                %status,
                 "Cannot inspect optional language pack content"
             );
             false
@@ -684,11 +687,9 @@ fn install_file_lookup(
             .map(|pack| pack.data_root.as_str())
             .filter(|root| *root != selected)
     });
-    let status =
-        files.set_presentation_locale(selected, fallback, active.map(|pack| pack.locale.as_str()));
-    if status != robin_engine::sbfile::SBFILE_NO_ERROR {
-        return Err(LocalizationError::FileLookup(status));
-    }
+    files
+        .set_presentation_locale(selected, fallback, active.map(|pack| pack.locale.as_str()))
+        .map_err(LocalizationError::FileLookup)?;
     if let Some(shipping) = shipping {
         let shipping_locale = active
             .filter(|pack| pack.data_root.is_empty())
@@ -828,6 +829,7 @@ fn persist_preferences(
     let encoded = serde_json::to_string_pretty(preferences)
         .expect("LocalizationPreferences serialization cannot fail");
     match store {
+        #[cfg(not(target_arch = "wasm32"))]
         PreferenceStore::Native(path) => persist_native(path, encoded.as_bytes()),
         #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => {
@@ -843,6 +845,7 @@ fn persist_preferences(
 
 fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationError> {
     match store {
+        #[cfg(not(target_arch = "wasm32"))]
         PreferenceStore::Native(path) => match std::fs::read_to_string(path) {
             Ok(encoded) => Ok(Some(encoded)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -863,6 +866,7 @@ fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationErr
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
     crate::desktop_persistence::write_bytes(path, bytes).map_err(|source| {
         LocalizationError::PersistPreferences {
@@ -874,6 +878,7 @@ fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
 
 fn store_display_path(store: &PreferenceStore) -> PathBuf {
     match store {
+        #[cfg(not(target_arch = "wasm32"))]
         PreferenceStore::Native(path) => path.clone(),
         #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => PathBuf::from(BROWSER_PREFERENCES_KEY),
@@ -1370,6 +1375,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn preference_store_round_trips_atomically() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(PREFERENCES_FILE);
@@ -1670,6 +1676,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn missing_preference_file_uses_auto_migration_default() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing.json");
@@ -1708,22 +1715,21 @@ mod tests {
         for language in [
             "ja-JP", "zh-CN", "ko-KR", "th-TH", "ru-RU", "pl-PL", "cs-CZ",
         ] {
-            assert_eq!(
-                files.set_presentation_locale(Some("1033"), None, Some(language)),
-                0
-            );
+            files
+                .set_presentation_locale(Some("1033"), None, Some(language))
+                .expect("configure fixture locale");
             assert!(locale_prefers_truetype(&files), "{language}");
         }
         for language in [None, Some("en-US"), Some("de-DE"), Some("und")] {
-            assert_eq!(
-                files.set_presentation_locale(Some("1041"), None, language),
-                0
-            );
+            files
+                .set_presentation_locale(Some("1041"), None, language)
+                .expect("configure fixture locale");
             assert!(!locale_prefers_truetype(&files), "{language:?}");
         }
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn failed_preference_publication_restores_reader_and_keeps_service_state() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("preferences-is-a-directory");
@@ -1772,10 +1778,9 @@ mod tests {
             robin_util::asset_fs::AssetVfs::new(),
         )));
         let other = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-        assert_eq!(
-            other.set_presentation_locale(Some("other-locale"), None, Some("en-US")),
-            0
-        );
+        other
+            .set_presentation_locale(Some("other-locale"), None, Some("en-US"))
+            .expect("configure fixture locale");
         let mut service = LocalizationService::initialize_with_store(
             None,
             PreferenceStore::Memory,
@@ -1783,10 +1788,9 @@ mod tests {
         )
         .unwrap();
         assert!(Arc::ptr_eq(service.files.as_ref().unwrap(), &files));
-        assert_eq!(
-            files.set_presentation_locale(Some("application-locale"), None, Some("ja-JP")),
-            0
-        );
+        files
+            .set_presentation_locale(Some("application-locale"), None, Some("ja-JP"))
+            .expect("configure fixture locale");
         let mission = files.snapshot();
         service
             .set_selection(LanguageSelection::Auto, None)
@@ -1825,6 +1829,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn explicit_unavailable_saved_locale_fails_initialization() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(PREFERENCES_FILE);

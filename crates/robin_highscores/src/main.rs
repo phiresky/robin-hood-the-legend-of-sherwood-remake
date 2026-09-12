@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use robin_highscores::{
     CampaignStore, Database, ReplayStore, ServerConfig, garbage_collect_campaigns,
@@ -130,48 +132,7 @@ struct Arguments {
     config: PathBuf,
 }
 
-trait StartupStatusNotifier {
-    fn status(&self, status: &str) -> anyhow::Result<()>;
-}
-
-trait ServiceNotifier: StartupStatusNotifier {
-    fn ready(&self) -> anyhow::Result<()>;
-}
-
-struct SystemdNotifier;
-
-#[cfg(target_os = "linux")]
-impl StartupStatusNotifier for SystemdNotifier {
-    fn status(&self, status: &str) -> anyhow::Result<()> {
-        sd_notify::notify(&[sd_notify::NotifyState::Status(status)])
-            .map_err(|error| anyhow::anyhow!("could not update systemd startup status: {error}"))
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-impl StartupStatusNotifier for SystemdNotifier {
-    fn status(&self, _status: &str) -> anyhow::Result<()> {
-        anyhow::bail!("the production leaderboard API requires Linux systemd readiness")
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl ServiceNotifier for SystemdNotifier {
-    fn ready(&self) -> anyhow::Result<()> {
-        sd_notify::notify(&[
-            sd_notify::NotifyState::Status("Ready; serving leaderboard API"),
-            sd_notify::NotifyState::Ready,
-        ])
-        .map_err(|error| anyhow::anyhow!("could not notify systemd of API readiness: {error}"))
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-impl ServiceNotifier for SystemdNotifier {
-    fn ready(&self) -> anyhow::Result<()> {
-        anyhow::bail!("the production leaderboard API requires Linux systemd readiness")
-    }
-}
+use robin_highscores::service::{ServiceNotifier, StartupStatusNotifier, SystemdNotifier};
 
 struct ApiRuntime {
     application: axum::Router,
@@ -196,7 +157,7 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
-    let notifier = SystemdNotifier;
+    let notifier = SystemdNotifier::Api;
     let runtime = initialize_api(&arguments.config, &notifier).await?;
     if let Err(error) = notifier.ready() {
         return finish_api_runtime(runtime, Err(error)).await;
@@ -414,20 +375,9 @@ async fn finish_api_components(
 }
 
 async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("install SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = terminate.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    tokio::signal::ctrl_c()
+    robin_highscores::service::wait_for_shutdown_signal()
         .await
-        .expect("install Ctrl-C handler");
+        .expect("receive service shutdown signal");
 }
 
 #[cfg(test)]
@@ -645,7 +595,7 @@ mod tests {
     #[tokio::test]
     async fn systemd_notifier_process_child() {
         let mode = std::env::var("ROBIN_HIGHSCORES_API_NOTIFY_TEST_MODE").unwrap();
-        let notifier = SystemdNotifier;
+        let notifier = SystemdNotifier::Api;
         let startup_notifier = &notifier;
         let serving_notifier = &notifier;
         run_api_lifecycle(

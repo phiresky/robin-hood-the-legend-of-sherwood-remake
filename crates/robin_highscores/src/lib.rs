@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Public high-score API, durable admission queue, and replay storage.
 //!
 //! The HTTP process never decides that a run is valid. It admits signed replay
@@ -7,6 +9,7 @@
 //! results. This separation is deliberate: there is no debug or loopback HTTP
 //! endpoint capable of promoting a submission.
 
+mod authentication;
 pub mod backup;
 pub mod campaign_store;
 pub mod config;
@@ -20,9 +23,12 @@ pub mod model;
 pub mod physical_work;
 pub mod replay_store;
 pub mod runtime_authority;
-mod secure_fs;
+pub mod secure_fs;
+pub mod service;
 pub mod storage_admission;
 mod submission;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod verifier;
 pub mod web;
 

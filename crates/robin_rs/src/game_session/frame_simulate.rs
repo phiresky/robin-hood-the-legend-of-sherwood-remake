@@ -162,7 +162,6 @@ struct SimulationVisualRefresh<'a> {
     dev: &'a mut robin_engine::engine::DevState,
     presentation: &'a mut MissionPresentation,
     resources: &'a mut MissionResources,
-    window: &'a GameWindow,
 }
 
 impl SimulationVisualRefresh<'_> {
@@ -175,7 +174,6 @@ impl SimulationVisualRefresh<'_> {
             dev,
             presentation,
             resources,
-            window,
         } = self;
 
         let dynamic_visuals = host
@@ -206,7 +204,6 @@ impl SimulationVisualRefresh<'_> {
             presentation.rebind_shadow_key(
                 resources,
                 host,
-                &window.gpu,
                 current_shadow_color,
                 current_visual_ambiance,
                 engine.sim_config().bypass_fog_sprites_crash,
@@ -615,7 +612,6 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
     ) -> SimulationModalState {
-        let window = &mut *services.window;
         let args = services.args;
         // File-backed screenshot runs have no player to dismiss a dialogue
         // which appears before their requested frame. Use the established
@@ -672,7 +668,6 @@ impl InteractiveFrameSimulation {
             dev,
             presentation,
             resources,
-            window,
         }
         .run();
 
@@ -688,14 +683,118 @@ impl InteractiveFrameSimulation {
         }
     }
 
-    async fn drive_modals(
+    fn dispatch_options_simulation_changes(
+        result: &super::ui_task_state::OptionsTaskResult,
+        host: &Host,
+        frame: &mut MissionFrame,
+    ) {
+        let mut dispatch = |command: PlayerCommand| {
+            dispatch_local_command(&host.transport, &mut frame.stage_post_commands(), &command);
+        };
+        if result.sound_config.amount_of_speaking != result.original_amount_of_speaking {
+            dispatch(PlayerCommand::SetAmountOfSpeaking {
+                amount: result.sound_config.amount_of_speaking,
+            });
+        }
+        if result.gameplay_config.fix_hard_reaction_times
+            != result.original_gameplay_config.fix_hard_reaction_times
+        {
+            dispatch(PlayerCommand::SetFixHardReactionTimes {
+                enabled: result.gameplay_config.fix_hard_reaction_times,
+            });
+        }
+        if result.gameplay_config.enable_unbinding
+            != result.original_gameplay_config.enable_unbinding
+        {
+            dispatch(PlayerCommand::SetUnbindingEnabled {
+                enabled: result.gameplay_config.enable_unbinding,
+            });
+        }
+        if result.gameplay_config.clean_hands_npc_kills_invalidate
+            != result
+                .original_gameplay_config
+                .clean_hands_npc_kills_invalidate
+        {
+            dispatch(PlayerCommand::SetCleanHandsNpcKillsInvalidate {
+                enabled: result.gameplay_config.clean_hands_npc_kills_invalidate,
+            });
+        }
+        if result.gameplay_config.reusable_cloaks != result.original_gameplay_config.reusable_cloaks
+        {
+            dispatch(PlayerCommand::SetReusableCloaks {
+                enabled: result.gameplay_config.reusable_cloaks,
+            });
+        }
+        if result.gameplay_config.item_gameplay != result.original_gameplay_config.item_gameplay {
+            dispatch(PlayerCommand::SetItemGameplayConfig {
+                config: result.gameplay_config.item_gameplay,
+            });
+        }
+        if result.gameplay_config.noise_distraction_feedback
+            != result.original_gameplay_config.noise_distraction_feedback
+        {
+            dispatch(PlayerCommand::SetNoiseDistractionFeedback {
+                enabled: result.gameplay_config.noise_distraction_feedback,
+            });
+        }
+        if result.gameplay_config.sherwood_trading
+            != result.original_gameplay_config.sherwood_trading
+        {
+            dispatch(PlayerCommand::SetSherwoodTrading {
+                enabled: result.gameplay_config.sherwood_trading,
+            });
+        }
+        if result.gameplay_config.enable_timed_missions
+            != result.original_gameplay_config.enable_timed_missions
+        {
+            dispatch(PlayerCommand::SetTimedMissionsEnabled {
+                enabled: result.gameplay_config.enable_timed_missions,
+            });
+        }
+        if result.gameplay_config.enable_dynamic_ambience
+            != result.original_gameplay_config.enable_dynamic_ambience
+        {
+            dispatch(PlayerCommand::SetDynamicAmbienceEnabled {
+                enabled: result.gameplay_config.enable_dynamic_ambience,
+            });
+        }
+        if result.gameplay_config.diplomacy != result.original_gameplay_config.diplomacy {
+            dispatch(PlayerCommand::SetDiplomacyEnabled {
+                enabled: result.gameplay_config.diplomacy,
+            });
+        }
+        if result.gameplay_config.npc_faction_wars
+            != result.original_gameplay_config.npc_faction_wars
+        {
+            dispatch(PlayerCommand::SetNpcFactionWars {
+                enabled: result.gameplay_config.npc_faction_wars,
+            });
+        }
+        if result.gameplay_config.more_combat_gestures
+            != result.original_gameplay_config.more_combat_gestures
+            || result.gameplay_config.gesture_quality_damage
+                != result.original_gameplay_config.gesture_quality_damage
+        {
+            dispatch(PlayerCommand::SetCombatGestureRules {
+                more_combat_gestures: result.gameplay_config.more_combat_gestures,
+                gesture_quality_damage: result.gameplay_config.gesture_quality_damage,
+            });
+        }
+        if result.gameplay_config.fog_of_war != result.original_gameplay_config.fog_of_war {
+            dispatch(PlayerCommand::SetFogOfWar {
+                enabled: result.gameplay_config.fog_of_war,
+            });
+        }
+    }
+
+    /// Local pause-side work runs before authoritative scripted/terminal lanes.
+    fn drive_pause_ui_tasks(
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
-        state: SimulationModalState,
-    ) -> Result<FrameSimulationOutcome, String> {
+        state: &mut SimulationModalState,
+    ) -> bool {
         let window = &mut *services.window;
         let callbacks = &mut *services.callbacks;
-        callbacks.poll_leaderboard_submissions();
         let profiles = services.profiles;
         let InteractiveMission {
             runtime, frontend, ..
@@ -703,7 +802,6 @@ impl InteractiveFrameSimulation {
         let MissionRuntime {
             world,
             timeline: runtime,
-            leaderboard,
             http,
             ..
         } = runtime;
@@ -720,22 +818,11 @@ impl InteractiveFrameSimulation {
         let ui = &mut frontend.ui;
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
-        let SimulationModalState {
-            mut frame,
-            rewind_active,
-            consumed_buffered,
-            shift_held,
-            mut modal_rendered_this_frame,
-            auto_dismiss_modals,
-            tick_exit_code,
-            history_commit_pending,
-        } = state;
-
-        let modal_mode = if auto_dismiss_modals {
-            ScriptedModalMode::AutoDismiss
-        } else {
-            ScriptedModalMode::Interactive
-        };
+        let frame = &mut state.frame;
+        let shift_held = state.shift_held;
+        let rewind_active = state.rewind_active;
+        let auto_dismiss_modals = state.auto_dismiss_modals;
+        let mut modal_rendered_this_frame = state.modal_rendered_this_frame;
         let mut ui_task_exit_requested = false;
 
         // Pause-side UI is a cooperative process state just like scripted
@@ -813,7 +900,7 @@ impl InteractiveFrameSimulation {
                     &mut render_context,
                 );
                 post_render_engine_cleanup(
-                    &mut frame,
+                    frame,
                     host.transport.local_seat(),
                     runtime.playback().is_some(),
                 );
@@ -916,171 +1003,7 @@ impl InteractiveFrameSimulation {
                                 &PlayerCommand::ReleaseTacticalControl,
                             );
                         }
-                        if result.sound_config.amount_of_speaking
-                            != result.original_amount_of_speaking
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetAmountOfSpeaking {
-                                    amount: result.sound_config.amount_of_speaking,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.fix_hard_reaction_times
-                            != result.original_gameplay_config.fix_hard_reaction_times
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetFixHardReactionTimes {
-                                    enabled: result.gameplay_config.fix_hard_reaction_times,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.enable_unbinding
-                            != result.original_gameplay_config.enable_unbinding
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetUnbindingEnabled {
-                                    enabled: result.gameplay_config.enable_unbinding,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.clean_hands_npc_kills_invalidate
-                            != result
-                                .original_gameplay_config
-                                .clean_hands_npc_kills_invalidate
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetCleanHandsNpcKillsInvalidate {
-                                    enabled: result
-                                        .gameplay_config
-                                        .clean_hands_npc_kills_invalidate,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.reusable_cloaks
-                            != result.original_gameplay_config.reusable_cloaks
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetReusableCloaks {
-                                    enabled: result.gameplay_config.reusable_cloaks,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.item_gameplay
-                            != result.original_gameplay_config.item_gameplay
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetItemGameplayConfig {
-                                    config: result.gameplay_config.item_gameplay,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.noise_distraction_feedback
-                            != result.original_gameplay_config.noise_distraction_feedback
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetNoiseDistractionFeedback {
-                                    enabled: result.gameplay_config.noise_distraction_feedback,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.sherwood_trading
-                            != result.original_gameplay_config.sherwood_trading
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetSherwoodTrading {
-                                    enabled: result.gameplay_config.sherwood_trading,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.enable_timed_missions
-                            != result.original_gameplay_config.enable_timed_missions
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetTimedMissionsEnabled {
-                                    enabled: result.gameplay_config.enable_timed_missions,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.enable_dynamic_ambience
-                            != result.original_gameplay_config.enable_dynamic_ambience
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetDynamicAmbienceEnabled {
-                                    enabled: result.gameplay_config.enable_dynamic_ambience,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.diplomacy
-                            != result.original_gameplay_config.diplomacy
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetDiplomacyEnabled {
-                                    enabled: result.gameplay_config.diplomacy,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.npc_faction_wars
-                            != result.original_gameplay_config.npc_faction_wars
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetNpcFactionWars {
-                                    enabled: result.gameplay_config.npc_faction_wars,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.more_combat_gestures
-                            != result.original_gameplay_config.more_combat_gestures
-                            || result.gameplay_config.gesture_quality_damage
-                                != result.original_gameplay_config.gesture_quality_damage
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetCombatGestureRules {
-                                    more_combat_gestures: result
-                                        .gameplay_config
-                                        .more_combat_gestures,
-                                    gesture_quality_damage: result
-                                        .gameplay_config
-                                        .gesture_quality_damage,
-                                },
-                            );
-                        }
-                        if result.gameplay_config.fog_of_war
-                            != result.original_gameplay_config.fog_of_war
-                        {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::SetFogOfWar {
-                                    enabled: result.gameplay_config.fog_of_war,
-                                },
-                            );
-                        }
+                        Self::dispatch_options_simulation_changes(&result, host, frame);
 
                         presentation
                             .renderer
@@ -1215,6 +1138,58 @@ impl InteractiveFrameSimulation {
             }
         }
 
+        state.modal_rendered_this_frame = modal_rendered_this_frame;
+        ui_task_exit_requested
+    }
+
+    async fn drive_modals(
+        mission: &mut InteractiveMission,
+        services: &mut MissionServices<'_>,
+        state: SimulationModalState,
+    ) -> Result<FrameSimulationOutcome, String> {
+        services.callbacks.poll_leaderboard_submissions();
+        let mut state = state;
+        let ui_task_exit_requested = Self::drive_pause_ui_tasks(mission, services, &mut state);
+        let window = &mut *services.window;
+        let callbacks = &mut *services.callbacks;
+        let profiles = services.profiles;
+        let InteractiveMission {
+            runtime, frontend, ..
+        } = mission;
+        let MissionRuntime {
+            world,
+            timeline: runtime,
+            leaderboard,
+            ..
+        } = runtime;
+        let MissionMutation {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        } = world.mutation();
+        let input = &mut frontend.input;
+        let audio = &mut frontend.audio;
+        let resources = &mut frontend.resources;
+        let ui = &mut frontend.ui;
+        let presentation = &mut frontend.presentation;
+        let SimulationModalState {
+            mut frame,
+            rewind_active,
+            consumed_buffered,
+            shift_held,
+            mut modal_rendered_this_frame,
+            auto_dismiss_modals,
+            tick_exit_code,
+            history_commit_pending,
+        } = state;
+
+        let modal_mode = if auto_dismiss_modals {
+            ScriptedModalMode::AutoDismiss
+        } else {
+            ScriptedModalMode::Interactive
+        };
         let lost_sherwood_progress = drive_lost_sherwood_gate(
             &mut ui.lost_sherwood_gate,
             window,
@@ -1516,11 +1491,7 @@ impl InteractiveFrameSimulation {
         http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
         save_manager: &crate::savegame::SaveGameManager,
-        host: &mut Host,
-        game: &mut crate::game::Game,
-        manager: &mut robin_engine::engine_manager::EngineManager,
-        assets: &std::sync::Arc<robin_engine::engine::LevelAssets>,
-        dev: &mut robin_engine::engine::DevState,
+        mutation: super::runtime::MissionMutation<'_>,
         manual_pause: &mut bool,
         ui: &mut super::interactive::MissionUi,
         window: &crate::window::GameWindow,
@@ -1530,6 +1501,13 @@ impl InteractiveFrameSimulation {
         keyboard_step: KeyboardStep,
     ) {
         // ── Pending `/step-forward` / `/step-back` requests ──
+        let super::runtime::MissionMutation {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        } = mutation;
         // Run each queued step synchronously with its own tick +
         // bookkeeping (forward) or rewind-buffer seek (back).  These
         // requests intentionally bypass the `paused` gate — their whole
@@ -1550,11 +1528,13 @@ impl InteractiveFrameSimulation {
         let mut dismissed_ui_task = false;
         drain_steps(
             http.take_pending_steps(),
-            manager,
-            host,
-            assets.as_ref(),
-            dev,
-            game,
+            super::runtime::MissionMutation {
+                manager,
+                host,
+                assets,
+                dev,
+                game,
+            },
             runtime,
             manual_pause,
             &mut ui.active_modal,

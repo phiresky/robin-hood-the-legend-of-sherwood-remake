@@ -360,13 +360,7 @@ fn hash_reader(reader: &mut impl std::io::Read, hasher: &mut Sha256) -> std::io:
 
 #[cfg(not(target_arch = "wasm32"))]
 fn validate_relative_path(path: &str) -> Result<(), String> {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.ends_with('/')
-        || path.contains('\\')
-        || path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
+    if robin_util::asset_fs::validate_canonical_relative_path(path).is_err()
         || !path
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
@@ -485,7 +479,9 @@ mod tests {
         let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         ));
-        assert_eq!(files.add_overlay_path(overlay.path().to_str().unwrap()), 0);
+        files
+            .add_overlay_path(overlay.path().to_str().unwrap())
+            .expect("mount fixture asset directory");
         let error = super::active_content_identity(&files).unwrap_err();
         assert!(error.contains("unsupported overlay is active"), "{error}");
     }

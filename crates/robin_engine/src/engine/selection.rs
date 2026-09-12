@@ -1058,6 +1058,11 @@ impl EngineInner {
         let profile_idx = pc.profile_index;
 
         let Some(profile) = assets.profile_manager.get_character(profile_idx) else {
+            tracing::warn!(
+                ?pc_id,
+                ?profile_idx,
+                "PC action slot references a missing character profile"
+            );
             return false;
         };
         let action = profile
@@ -1071,9 +1076,7 @@ impl EngineInner {
         // The widget enable bit is gated on **both** `disabled_actions` and
         // `disabled_actions_temp` being clear, so OR the persistent and temp
         // masks together.
-        let disabled_persistent = pc.disabled_actions.get(idx).copied().unwrap_or(false);
-        let disabled_temp = pc.disabled_actions_temp.get(idx).copied().unwrap_or(false);
-        !(disabled_persistent || disabled_temp)
+        !pc.action_slot_disabled(idx)
     }
 
     /// Whether `action` is in `pc_id`'s profile and currently enabled.
@@ -1097,14 +1100,13 @@ impl EngineInner {
             return false;
         };
         let Some(profile) = profiles.get_character(pc.profile_index) else {
+            tracing::warn!(profile_index = ?pc.profile_index, "PC action selection references a missing character profile");
             return false;
         };
         let Some(idx) = crate::inventory::find_action_slot(profile, action) else {
             return false;
         };
-        let disabled_persistent = pc.disabled_actions.get(idx).copied().unwrap_or(false);
-        let disabled_temp = pc.disabled_actions_temp.get(idx).copied().unwrap_or(false);
-        !(disabled_persistent || disabled_temp)
+        !pc.action_slot_disabled(idx)
     }
 
     pub(crate) fn select_pc_action_by_index_from_message(
@@ -1119,6 +1121,7 @@ impl EngineInner {
             return false;
         };
         let Some(profile) = assets.profile_manager.get_character(pc.profile_index) else {
+            tracing::warn!(?pc_id, profile_index = ?pc.profile_index, "PC action message references a missing character profile");
             return false;
         };
         let action = profile
@@ -1126,10 +1129,7 @@ impl EngineInner {
             .get(idx)
             .copied()
             .unwrap_or(Action::NoAction);
-        if action == Action::NoAction
-            || pc.disabled_actions.get(idx).copied().unwrap_or(false)
-            || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false)
-        {
+        if action == Action::NoAction || pc.action_slot_disabled(idx) {
             return false;
         }
         self.set_pc_action_from_message(assets, seat, pc_id, action);
@@ -1434,7 +1434,7 @@ mod tests {
     use crate::sequence::SequenceState;
 
     fn add_selectable_test_pc(engine: &mut EngineInner) -> EntityId {
-        engine.add_entity(Entity::Pc(ActorPc {
+        engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;
@@ -1452,7 +1452,7 @@ mod tests {
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
         let previously_selected = add_selectable_test_pc(&mut engine);
-        let rescued_pc = engine.add_entity(Entity::Pc(ActorPc {
+        let rescued_pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;
@@ -1487,7 +1487,7 @@ mod tests {
             ..LevelAssets::new()
         };
         let mut engine = EngineInner::new();
-        let rescued_pc = engine.add_entity(Entity::Pc(ActorPc {
+        let rescued_pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;
@@ -1523,7 +1523,7 @@ mod tests {
     fn single_selection_restitution_replays_current_action_side_effects() {
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+        let pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.active = true;

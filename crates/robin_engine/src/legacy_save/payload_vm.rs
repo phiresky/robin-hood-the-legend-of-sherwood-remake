@@ -7,6 +7,8 @@
 //! `Location`. Consequently an RHSG payload cannot be decoded without the
 //! exact mission SCB used to create it.
 
+use super::payload_base::read_element_ref;
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -14,7 +16,6 @@ use crate::scb::{MemberVariable, ScbFile, TypeTag};
 
 use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacySectorRef};
 
-const NULL_U32: u32 = u32::MAX;
 const NULL_U16: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub struct LegacyVmDecodeLimits {
 impl Default for LegacyVmDecodeLimits {
     fn default() -> Self {
         Self {
-            members_per_class: 65_535,
+            members_per_class: DEFAULT_BULK_LIMIT,
         }
     }
 }
@@ -285,16 +286,6 @@ fn read_member_value(
     }
 }
 
-fn read_element_ref(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<LegacyElementRef> {
-    let creation_order = reader.read_u32(field)?;
-    Ok(LegacyElementRef(
-        (creation_order != NULL_U32).then_some(creation_order),
-    ))
-}
-
 fn read_location(reader: &mut LegacyReader<'_>) -> LegacyResult<Option<LegacyVmLocation>> {
     if !reader.read_bool("initialized")? {
         return Ok(None);
@@ -320,22 +311,11 @@ fn read_location(reader: &mut LegacyReader<'_>) -> LegacyResult<Option<LegacyVmL
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
     use crate::scb::{ClassEntry, ScType};
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn member(name: &str, address: i32, tag: TypeTag, native_type_name: &str) -> MemberVariable {
         MemberVariable {

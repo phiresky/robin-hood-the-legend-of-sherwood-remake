@@ -659,13 +659,8 @@ impl EngineInner {
         if command != Command::Move && command != Command::MoveOk && command != Command::PassDoor {
             return false;
         }
-        let (mut animation_movement, flags, tolerance, owner) = match &elem.data {
-            SequenceElementData::Movement {
-                action,
-                flags,
-                tolerance,
-                ..
-            } => (*action, *flags, *tolerance, elem.owner),
+        let (mut animation_movement, flags, owner) = match &elem.data {
+            SequenceElementData::Movement { action, flags, .. } => (*action, *flags, elem.owner),
             _ => return false,
         };
         let Some(owner) = owner else {
@@ -688,9 +683,6 @@ impl EngineInner {
         let state = elem.state;
         let elem_posture_after = elem.posture_after_transition;
         let elem_action_state_after = elem.action_state_after_transition;
-        let distance_start_posture_anim = None::<OrderType>;
-        let _ = distance_start_posture_anim; // placeholder for clarity
-
         let (current_posture, current_action_state, position, current_sector) = {
             let Some(entity) = self.get_entity(owner) else {
                 return false;
@@ -767,8 +759,6 @@ impl EngineInner {
             .and_then(|anim| self.sprite_distance_for_animation(owner, anim));
         let end_distance =
             animation_end.and_then(|anim| self.sprite_distance_for_animation(owner, anim));
-
-        let _ = tolerance; // `tolerance` is folded into insert_transition_end internally
 
         // ── Apply transitions in order ──────────────────────────
         let next_order_id = &mut self.orders.next_order_id;
@@ -1322,7 +1312,7 @@ mod tests {
 
     fn selected_running_pc() -> (EngineInner, EntityId, SequenceId, std::num::NonZeroU32) {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1405,7 +1395,7 @@ mod tests {
     #[test]
     fn make_crouched_publishes_rewritten_walk_before_inserting_posture_transition() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1546,7 +1536,7 @@ mod tests {
     #[test]
     fn sword_door_pass_make_fast_rewrites_lazy_tail_without_inserting_transition() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
                 initial_element.kind = ElementKind::ActorPc;

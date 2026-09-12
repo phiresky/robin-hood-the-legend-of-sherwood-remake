@@ -123,7 +123,8 @@ impl Hardware {
         let (processor_speed_mhz, physical_memory_mb) = Self::query_speed_and_memory();
 
         Hardware {
-            processor_identifier: CString::new(identifier).unwrap_or_default(),
+            processor_identifier: CString::new(identifier)
+                .expect("platform CPU identifier must not contain NUL bytes"),
             processor_type: proc_type,
             processor_speed_mhz,
             physical_memory_mb,

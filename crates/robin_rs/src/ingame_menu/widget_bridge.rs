@@ -37,6 +37,17 @@ use super::layout::{
 };
 use super::resources::{IngameMenuResources, MenuSurface};
 
+/// Borrowed services for one modal frame, not serializable screen state.
+///
+/// This grants exactly the window/render/resource/cursor access already held
+/// by screen wrappers. It owns neither services nor input/selection state.
+pub struct ModalScreenIo<'frame, 'cursor> {
+    pub window: &'frame mut crate::window::GameWindow,
+    pub renderer: &'frame mut Renderer,
+    pub resources: &'frame IngameMenuResources,
+    pub cursor: Option<&'frame ModalCursor<'cursor>>,
+}
+
 /// Shared thumb geometry for the artwork renderer and scroll-view hit testing.
 /// The top is relative to the track; minimum-sized thumbs stay inside it.
 pub(crate) fn listbox_scrollbar_thumb(

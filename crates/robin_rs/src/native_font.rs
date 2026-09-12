@@ -103,7 +103,7 @@ impl NativeFont {
 
         // ── File header ─────────────────────────────────────────────
         let mut tag = [0u8; TAG_LEN];
-        file.serialize_bytes(&mut tag)
+        file.read(&mut tag)
             .map_err(|e| anyhow::anyhow!("read tag: {e}"))?;
         if &tag != SBFONT_TAG {
             bail!(
@@ -116,7 +116,7 @@ impl NativeFont {
         // ── FONT_HEADER ─────────────────────────────────────────────
         let name = {
             let mut buf = [0u8; FONT_NAME_LEN];
-            file.serialize_bytes(&mut buf)
+            file.read(&mut buf)
                 .map_err(|e| anyhow::anyhow!("read name: {e}"))?;
             let len = buf.iter().position(|&b| b == 0).unwrap_or(FONT_NAME_LEN);
             String::from_utf8_lossy(&buf[..len]).to_string()
@@ -643,7 +643,9 @@ mod tests {
             )
             .unwrap();
             let files = SbFileSystem::new(vfs);
-            assert_eq!(files.set_presentation_locale(None, None, Some(locale)), 0);
+            files
+                .set_presentation_locale(None, None, Some(locale))
+                .expect("configure fixture locale");
             files
         };
         let config = parse_font_config("Default: choice.sbf, choice.tfn");
@@ -654,7 +656,9 @@ mod tests {
             let font = load_font_by_name_for_locale(&config, "Default", files).unwrap();
             assert_eq!(matches!(font, Font::TrueType(_)), truetype);
         }
-        international.set_presentation_locale(None, None, Some("en-US"));
+        international
+            .set_presentation_locale(None, None, Some("en-US"))
+            .expect("switch fixture presentation locale");
         assert!(matches!(
             load_font_by_name_for_locale(&config, "Default", &international).unwrap(),
             Font::Native(_)

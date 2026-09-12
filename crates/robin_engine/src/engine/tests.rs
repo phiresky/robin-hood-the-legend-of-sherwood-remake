@@ -1,14 +1,9 @@
-#![allow(unused_mut)]
-
 use super::movement::{
     assign_circular_dispatch_candidates, circular_dispatch_candidate_points,
     circular_dispatch_destinations, mercenary_formation_destinations,
     uses_mercenary_group_formation,
 };
-use super::tick::{
-    HourglassPhase, begin_hourglass_phase_capture, capture_ordered_gameplay_entities,
-    end_hourglass_phase_capture,
-};
+use super::tick::{HourglassPhase, capture_hourglass_phases, capture_ordered_gameplay_entities};
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};

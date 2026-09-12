@@ -621,6 +621,63 @@ impl ProjectedSimulationContentComponentV1 {
     }
 }
 
+/// Authored inputs consumed by construction, captured without retaining a second
+/// LoadedLevel. Navigation, entity counts, and script bindings are deliberately
+/// excluded here: their authoritative values exist only after construction.
+#[derive(Serialize, Deserialize)]
+pub(crate) struct AuthoredSimulationInputs {
+    loaded_level: SimulationContentComponentDocumentV1,
+    interface: SimulationContentComponentDocumentV1,
+}
+
+impl AuthoredSimulationInputs {
+    pub(crate) fn capture(
+        loaded_level: &LoadedLevel,
+        ground_mark_sprite: Option<&GroundMarkSpriteData>,
+        titbit_row_frame_counts: &[u16],
+    ) -> Result<Self, ProjectionError> {
+        #[derive(Serialize)]
+        struct LoadedLevelPayload<'a> {
+            loaded_level: &'a LoadedLevel,
+        }
+
+        #[derive(Serialize)]
+        struct InterfaceSimulationMetadataPayload<'a> {
+            ground_mark_sprite: Option<GroundMarkSpriteProjectionV1<'a>>,
+            titbit_row_frame_counts: &'a [u16],
+        }
+
+        #[derive(Serialize)]
+        struct GroundMarkSpriteProjectionV1<'a> {
+            half_w_bits: u32,
+            half_h_bits: u32,
+            frame_sizes: &'a [(u16, u16)],
+            per_frame_offsets: &'a [(i16, i16)],
+        }
+
+        let ground_mark_sprite = ground_mark_sprite.map(|ground| GroundMarkSpriteProjectionV1 {
+            half_w_bits: ground.half_w.to_bits(),
+            half_h_bits: ground.half_h.to_bits(),
+            frame_sizes: &ground.frame_sizes,
+            per_frame_offsets: &ground.per_frame_offsets,
+        });
+
+        Ok(Self {
+            loaded_level: component_document(
+                SimulationContentComponentKindV1::LoadedLevel,
+                LoadedLevelPayload { loaded_level },
+            )?,
+            interface: component_document(
+                SimulationContentComponentKindV1::InterfaceSimulationMetadata,
+                InterfaceSimulationMetadataPayload {
+                    ground_mark_sprite,
+                    titbit_row_frame_counts,
+                },
+            )?,
+        })
+    }
+}
+
 /// Exact ordered static-content projection for a prepared mission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimulationContentProjectionV1 {
@@ -644,13 +701,10 @@ impl SimulationContentProjectionV1 {
             .unwrap_or_else(|| panic!("prepared projection is missing required {kind:?} component"))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_prepared_engine_inputs(
-        loaded_level: &LoadedLevel,
+        authored: AuthoredSimulationInputs,
         assets: &LevelAssets,
         bg_pixel_dims: (f32, f32),
-        ground_mark_sprite: Option<&GroundMarkSpriteData>,
-        titbit_row_frame_counts: &[u16],
     ) -> Result<Self, ProjectionError> {
         // Exhaustive destructuring is intentional. Adding a LevelAssets field
         // must force an explicit projection/derivation/exclusion decision.
@@ -697,11 +751,6 @@ impl SimulationContentProjectionV1 {
             accessory_sprite_prototypes,
             character_sprite_prototypes: _, // Run-derived from campaign; sealed in run projection.
         } = assets;
-
-        #[derive(Serialize)]
-        struct LoadedLevelPayload<'a> {
-            loaded_level: &'a LoadedLevel,
-        }
 
         #[derive(Serialize)]
         struct MissionScriptsPayload<'a> {
@@ -760,33 +809,9 @@ impl SimulationContentProjectionV1 {
             sound_source_required_ids: &'a std::collections::BTreeSet<u32>,
         }
 
-        #[derive(Serialize)]
-        struct InterfaceSimulationMetadataPayload<'a> {
-            ground_mark_sprite: Option<GroundMarkSpriteProjectionV1<'a>>,
-            titbit_row_frame_counts: &'a [u16],
-        }
-
-        #[derive(Serialize)]
-        struct GroundMarkSpriteProjectionV1<'a> {
-            half_w_bits: u32,
-            half_h_bits: u32,
-            frame_sizes: &'a [(u16, u16)],
-            per_frame_offsets: &'a [(i16, i16)],
-        }
-
-        let ground_mark_sprite = ground_mark_sprite.map(|ground| GroundMarkSpriteProjectionV1 {
-            half_w_bits: ground.half_w.to_bits(),
-            half_h_bits: ground.half_h.to_bits(),
-            frame_sizes: &ground.frame_sizes,
-            per_frame_offsets: &ground.per_frame_offsets,
-        });
-
         let documents = [
             profiles_component_document_v1(profile_manager)?,
-            component_document(
-                SimulationContentComponentKindV1::LoadedLevel,
-                LoadedLevelPayload { loaded_level },
-            )?,
+            authored.loaded_level,
             component_document(
                 SimulationContentComponentKindV1::MissionScripts,
                 MissionScriptsPayload {
@@ -846,13 +871,7 @@ impl SimulationContentProjectionV1 {
                     sound_source_required_ids,
                 },
             )?,
-            component_document(
-                SimulationContentComponentKindV1::InterfaceSimulationMetadata,
-                InterfaceSimulationMetadataPayload {
-                    ground_mark_sprite,
-                    titbit_row_frame_counts,
-                },
-            )?,
+            authored.interface,
         ];
 
         let components = documents

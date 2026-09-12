@@ -52,7 +52,7 @@ fn initializer_reports_each_ordered_stage_boundary_once() {
             &mut staging,
             "stage-order-test",
             "stage-order-proto",
-            crate::level_data::LoadedLevel::empty_for_test(),
+            crate::level_data::LoadedLevel::empty(),
             "Data/Levels",
             (0.0, 0.0),
             &mut |progress| progress_updates.push(progress),

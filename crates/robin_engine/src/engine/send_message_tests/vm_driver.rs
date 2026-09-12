@@ -81,7 +81,7 @@ fn reversible_patch_target_keeps_clickable_visual_through_queued_spent_animation
                 std::sync::Arc::new(rows),
                 std::sync::Arc::new(conversion),
             );
-            let owner = engine.add_entity(target);
+            let owner = engine.add_test_entity(target);
             if bound {
                 let mut patch = crate::patch::Patch::new();
                 patch.repeat_activation = Some((
@@ -154,7 +154,7 @@ fn empty_positions(
 fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(message_script());
-    let scroll_id = engine.add_entity(animated_scroll());
+    let scroll_id = engine.add_test_entity(animated_scroll());
     let handle = ScriptHandleCodec::actor_handle(scroll_id);
     let instance = engine
         .scripts
@@ -194,7 +194,7 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
         "entry-active Scroll still animates after self-deactivation"
     );
 
-    let frozen_id = engine.add_entity(animated_scroll());
+    let frozen_id = engine.add_test_entity(animated_scroll());
     let frozen_handle = ScriptHandleCodec::actor_handle(frozen_id);
     let frozen_instance = engine
         .scripts
@@ -233,7 +233,7 @@ fn due_scroll_callback_changes_same_slot_freeze_gate_live() {
     fn run(class_name: &str, initially_frozen: bool) -> (bool, u16) {
         let mut engine = EngineInner::new();
         engine.scripts.mission = Some(message_script());
-        let scroll_id = engine.add_entity(animated_scroll());
+        let scroll_id = engine.add_test_entity(animated_scroll());
         let handle = ScriptHandleCodec::actor_handle(scroll_id);
         let instance = engine
             .scripts
@@ -284,7 +284,7 @@ fn due_scroll_callback_changes_same_slot_freeze_gate_live() {
 #[should_panic(expected = "disappeared immediately after live legacy-slot resolution")]
 fn resolved_static_owner_must_still_exist_at_dispatch() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(animated_target(crate::sprite::FrameProgression::Default));
+    let owner = engine.add_test_entity(animated_target(crate::sprite::FrameProgression::Default));
     engine.remove_entity(owner);
     engine.tick_static_entity_hourglass_for(
         &crate::sim_rng::test_context(),
@@ -298,12 +298,16 @@ fn target_bored_rng_draws_follow_live_slot_order_exactly_once() {
     fn run(seed: u64, reverse: bool) -> (u16, u16) {
         let mut engine = EngineInner::new();
         let (a, b) = if reverse {
-            let b = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
-            let a = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            let b =
+                engine.add_test_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            let a =
+                engine.add_test_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
             (a, b)
         } else {
-            let a = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
-            let b = engine.add_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            let a =
+                engine.add_test_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
+            let b =
+                engine.add_test_entity(animated_target(crate::sprite::FrameProgression::BoredAnim));
             (a, b)
         };
         let positions = empty_positions(&engine);
@@ -346,28 +350,29 @@ fn target_bored_rng_draws_follow_live_slot_order_exactly_once() {
 #[test]
 fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let mut engine = EngineInner::new();
-    let target = engine.add_entity(animated_target(crate::sprite::FrameProgression::Default));
-    let ale = engine.add_entity(animated_bonus(crate::element::ObjectType::Ale, false));
-    let cape = engine.add_entity(animated_bonus(crate::element::ObjectType::Cape, false));
-    let bonus = engine.add_entity(animated_bonus(
+    let target = engine.add_test_entity(animated_target(crate::sprite::FrameProgression::Default));
+    let ale = engine.add_test_entity(animated_bonus(crate::element::ObjectType::Ale, false));
+    let cape = engine.add_test_entity(animated_bonus(crate::element::ObjectType::Cape, false));
+    let bonus = engine.add_test_entity(animated_bonus(
         crate::element::ObjectType::BonusApple,
         false,
     ));
-    let projectile = engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
-        element: {
-            let mut initial_element = ElementData::default();
-            initial_element.kind = ElementKind::ObjectProjectile;
-            initial_element.active = true;
-            initial_element.sprite = animated_sprite();
-            initial_element
-        },
-        object: crate::element::ObjectData {
-            object_type: crate::element::ObjectType::Wasp,
-            ..Default::default()
-        },
-        projectile: Default::default(),
-    }));
-    let net = engine.add_entity(Entity::Net(crate::element::ElementNet {
+    let projectile =
+        engine.add_test_entity(Entity::Projectile(crate::element::ElementProjectile {
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element.sprite = animated_sprite();
+                initial_element
+            },
+            object: crate::element::ObjectData {
+                object_type: crate::element::ObjectType::Wasp,
+                ..Default::default()
+            },
+            projectile: Default::default(),
+        }));
+    let net = engine.add_test_entity(Entity::Net(crate::element::ElementNet {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectNet;
@@ -454,7 +459,7 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
         net_frame
     );
 
-    let mobile_child = engine.add_entity(Entity::Fx(crate::element::ElementFx {
+    let mobile_child = engine.add_test_entity(Entity::Fx(crate::element::ElementFx {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::Fx;
@@ -506,8 +511,8 @@ fn completed_fx_patch_is_visible_to_the_later_live_slot() {
             ..Default::default()
         },
     });
-    let fx_id = engine.add_entity(fx);
-    let later = engine.add_entity(animated_target(crate::sprite::FrameProgression::Default));
+    let fx_id = engine.add_test_entity(fx);
+    let later = engine.add_test_entity(animated_target(crate::sprite::FrameProgression::Default));
     engine
         .script_domains
         .interactables
@@ -567,7 +572,7 @@ fn ownerless_send_message_routes_to_global_process_message() {
 fn every_script_vm_flavor_drives_yields_through_the_shared_engine_boundary() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let actor_id = engine.add_entity(scripted_soldier("YieldingFlavor"));
+    let actor_id = engine.add_test_entity(scripted_soldier("YieldingFlavor"));
     let actor_handle = bind_script_actor(&mut engine, actor_id, "YieldingFlavor");
     let zone = 7;
     let target_handle = ScriptHandleCodec::actor_handle_from_index(7001);
@@ -684,7 +689,7 @@ fn shared_driver_preserves_same_actor_outer_activation() {
 fn self_reentrant_driver_preserves_and_shares_the_instance_member_heap() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let actor_id = engine.add_entity(scripted_soldier("HeapA"));
+    let actor_id = engine.add_test_entity(scripted_soldier("HeapA"));
     let handle = bind_script_actor(&mut engine, actor_id, "HeapA");
 
     engine
@@ -759,7 +764,7 @@ fn completed_reentrant_continuation_round_trips_as_an_idle_snapshot() {
 fn real_active_driver_rejects_snapshot_and_idle_driver_serializes() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let actor_id = engine.add_entity(scripted_soldier("YieldingFlavor"));
+    let actor_id = engine.add_test_entity(scripted_soldier("YieldingFlavor"));
     let handle = bind_script_actor(&mut engine, actor_id, "YieldingFlavor");
 
     super::script::arm_active_driver_snapshot_probe();
@@ -785,7 +790,7 @@ fn real_active_driver_rejects_snapshot_and_idle_driver_serializes() {
 fn shared_driver_preserves_a_b_a_activation_stack() {
     let (mut engine, _receiver, a_handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let relay_id = engine.add_entity(scripted_soldier("RelayReceiver"));
+    let relay_id = engine.add_test_entity(scripted_soldier("RelayReceiver"));
     let b_handle = ScriptHandleCodec::actor_handle(relay_id);
     engine
         .scripts
@@ -814,8 +819,8 @@ fn shared_driver_preserves_a_b_a_activation_stack() {
 fn a_b_a_driver_preserves_each_instances_member_heap() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let a_id = engine.add_entity(scripted_soldier("HeapA"));
-    let b_id = engine.add_entity(scripted_soldier("HeapB"));
+    let a_id = engine.add_test_entity(scripted_soldier("HeapA"));
+    let b_id = engine.add_test_entity(scripted_soldier("HeapB"));
     let a_handle = bind_script_actor(&mut engine, a_id, "HeapA");
     let b_handle = bind_script_actor(&mut engine, b_id, "HeapB");
 
@@ -875,7 +880,7 @@ fn shared_driver_reports_missing_vm_and_depth_overflow_as_errors() {
             .contains("required VM is not bound")
     );
 
-    let recursive_id = engine.add_entity(scripted_soldier("RecursiveReceiver"));
+    let recursive_id = engine.add_test_entity(scripted_soldier("RecursiveReceiver"));
     let recursive_handle = bind_script_actor(&mut engine, recursive_id, "RecursiveReceiver");
     let error = engine
         .call_script_vm(
@@ -914,7 +919,7 @@ fn shared_driver_reports_missing_vm_and_depth_overflow_as_errors() {
     );
 
     let (mut external, _receiver, _handle) = engine_with_receiver();
-    let recursive_id = external.add_entity(scripted_soldier("RecursiveReceiver"));
+    let recursive_id = external.add_test_entity(scripted_soldier("RecursiveReceiver"));
     let recursive_handle = bind_script_actor(&mut external, recursive_id, "RecursiveReceiver");
     let error = external
         .call_external_native(

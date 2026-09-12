@@ -180,7 +180,7 @@ pub(super) fn init_recording(
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
     engine_rng_seed: u64,
     engine_sim_config: robin_engine::engine::SimConfig,
-) -> Option<crate::replay_recording::SharedReplayRecorder> {
+) -> Result<Option<crate::replay_recording::SharedReplayRecorder>, String> {
     // No recording while playing back (either source).
     let is_playing_back = args.replay_data.is_some() || args.replay.is_some();
     #[cfg(not(target_arch = "wasm32"))]
@@ -196,8 +196,7 @@ pub(super) fn init_recording(
         match crate::replay_archive::browser_recording_directory() {
             Ok(path) => Some(path),
             Err(error) => {
-                tracing::error!("Browser replay storage is unavailable: {error:#}");
-                return None;
+                return Err(format!("Browser replay storage is unavailable: {error:#}"));
             }
         }
     };
@@ -213,13 +212,9 @@ pub(super) fn init_recording(
         } else {
             let path = replay_path.as_deref().expect("live recording path");
             let archive = crate::replay_archive::MissionArchive::create(std::path::Path::new(path));
-            let primary = archive
+            let (primary, archive) = archive
                 .and_then(|archive| Ok((archive.writer()?, archive)))
-                .map_err(|error| {
-                    tracing::error!("Failed to create mission recording: {error:#}");
-                    error
-                })
-                .ok();
+                .map_err(|error| format!("Failed to create mission recording: {error:#}"))?;
 
             // `mission_id` (e.g. `"Dem_Lei_MP"`, `"Sherwood"`) is the
             // `.rhm` filename — stamped into the header so a later
@@ -228,7 +223,7 @@ pub(super) fn init_recording(
             // immediately before Engine construction; the engine-owned campaign
             // may already have been changed by level initialization (Sherwood
             // clears its mission team after using it to spawn PCs).
-            primary.and_then(|(primary, archive)| {
+            {
                 let writer: Box<dyn std::io::Write + Send> = Box::new(TeeWriter {
                     primary,
                     mirror: rpc_spool,
@@ -268,12 +263,11 @@ pub(super) fn init_recording(
                             rec, archive,
                         ))
                     }
-                    Err(e) => {
-                        tracing::error!("Failed to initialize replay recorder: {e}");
-                        None
+                    Err(error) => {
+                        return Err(format!("Failed to initialize replay recorder: {error}"));
                     }
                 }
-            })
+            }
         };
 
     if let Some(recorder) = recorder.as_mut() {
@@ -288,7 +282,7 @@ pub(super) fn init_recording(
     args.global_options
         .replay_recording()
         .install_capture_recorder(recorder.clone());
-    recorder
+    Ok(recorder)
 }
 
 #[cfg(test)]
@@ -355,7 +349,7 @@ pub(super) fn init_replay_and_rollback(
     engine_sim_config: robin_engine::engine::SimConfig,
     is_multiplayer: bool,
     prepared_recorder: Option<crate::replay_recording::SharedReplayRecorder>,
-) -> ReplayAndRollback {
+) -> Result<ReplayAndRollback, String> {
     // Every queued replay must be converted into `args.replay_data` before
     // mission construction. Reseeding an already-built Engine cannot recreate
     // random draws performed during level initialization.
@@ -372,7 +366,9 @@ pub(super) fn init_replay_and_rollback(
     );
 
     let is_playing_back = args.replay_data.is_some();
-    let recorder = prepared_recorder.or_else(|| {
+    let recorder = if prepared_recorder.is_some() {
+        prepared_recorder
+    } else {
         init_recording(
             replay_campaign,
             &assets,
@@ -381,8 +377,8 @@ pub(super) fn init_replay_and_rollback(
             mission_assets.clone(),
             engine_rng_seed,
             engine_sim_config,
-        )
-    });
+        )?
+    };
     let player = if let Some(data) = args.replay_data.clone() {
         assert_eq!(
             data.header().mission_assets,
@@ -452,19 +448,49 @@ pub(super) fn init_replay_and_rollback(
     // owns the command stream.
     let rewind_buffer = RewindBuffer::new();
 
-    ReplayAndRollback {
+    Ok(ReplayAndRollback {
         recording_control: args.global_options.replay_recording(),
         recorder,
         player,
         rollback_checker,
         rewind_buffer,
         start_paused: args.start_paused,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_archive_creation_failure_rejects_mission_initialization() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocker = directory.path().join("not-a-directory");
+        std::fs::write(&blocker, b"occupied").unwrap();
+        let args = crate::main_entry::MissionLaunch {
+            config: crate::main_entry::CliArgs {
+                record: Some(blocker.join("recording").to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error = init_recording(
+            &Default::default(),
+            &LevelAssets::new(),
+            &args,
+            "Fixture",
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "Fixture", "Fixture", "Fixture",
+            )
+            .unwrap(),
+            0,
+            Default::default(),
+        )
+        .err()
+        .expect("recording creation failure must reject setup");
+        assert!(error.contains("Failed to create mission recording"));
+        assert_eq!(std::fs::read(blocker).unwrap(), b"occupied");
+    }
     use std::io::Write as _;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};

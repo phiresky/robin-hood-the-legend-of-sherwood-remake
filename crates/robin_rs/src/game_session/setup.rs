@@ -6,6 +6,7 @@
 mod custom_sprites;
 mod error;
 mod localization;
+mod preparation;
 mod resources;
 
 use custom_sprites::prepare_custom_character_dirs;
@@ -664,7 +665,7 @@ pub(super) fn load_mission_sprites(
     // ── Titbit renderer ──
     // Upload and retain the GPU textures for every titbit sprite row.
     let mut titbit_renderer = TitbitRenderer::new();
-    titbit_renderer.load(cursor_res, renderer.gpu(), visual_shadow_color);
+    titbit_renderer.load(cursor_res, renderer, visual_shadow_color);
     // Row frame counts were absorbed by the engine at construction via
     // `EngineArgs::titbit_row_frame_counts`; no post-load setter needed.
     timer.step("titbit renderer");
@@ -1036,7 +1037,6 @@ pub(super) fn prepare_mission(
     interface: MissionInterfaceSetup,
     launch: MissionLaunchSetup,
 ) -> Result<PreparedMission, MissionLoadError> {
-    let (event_pump, loading_screen) = feedback;
     let MissionInterfaceSetup {
         ground_mark: ground_mark_sprite,
         titbit_rows: titbit_row_frame_counts,
@@ -1077,39 +1077,21 @@ pub(super) fn prepare_mission(
     // background-map decode start on a worker thread (native) while this
     // thread continues with the sprite bank, scripts, and minimap.
     let level_directory = game.global_options.level_directory.clone();
-    let loaded_result = {
-        let mut progress = |delta: f32| {
-            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-        };
-        if let Some(name) = mission_name.as_deref()
-            && let Some(level) = host
-                .frontend
-                .resources
-                .shipping
-                .as_ref()
-                .and_then(|datadir| datadir.loaded_level(name))
-        {
-            tracing::info!(mission = name, "level loaded from shipping mission payload");
-            progress(1.0);
-            progress(1.0);
-            engine_api::level_loading::apply_loaded_level_patch(level, name, &files)
-                .map_err(|e| format!("Level patch failed: {e}"))
-        } else {
-            engine_api::level_loading::load_mission_for_campaign_with_files(
-                &campaign,
-                &assets.profile_manager,
-                &level_directory,
-                &mut progress,
-                &files,
-            )
-            .map_err(|e| format!("Level load failed: {e}"))
-        }
-    };
+    let loaded_result = preparation::load_mission_binaries(
+        host,
+        &campaign,
+        &assets.profile_manager,
+        mission_name.as_deref(),
+        &level_directory,
+        &files,
+        feedback,
+    );
     let loaded = match loaded_result {
         Ok(loaded) => loaded,
         Err(message) => return Err(MissionLoadError::new(campaign, message)),
     };
     timer.step("mission binaries");
+    let (event_pump, loading_screen) = feedback;
 
     let authored_initial_ambiance = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance);
     let effective_initial_ambiance = loaded
@@ -1131,52 +1113,16 @@ pub(super) fn prepare_mission(
     // the `wasm-threads` build initialized one, and otherwise decodes
     // synchronously right here (single-threaded browser fallback — the
     // progress closure keeps feeding the loading bar in that case).
-    let early_terrain = match (
+    let pending_terrain = match preparation::start_mission_terrain(
+        host,
         mission_name.as_deref(),
-        host.frontend.resources.shipping.as_ref(),
+        &map_name,
+        &ambiance_dir,
+        &level_directory,
+        &files,
     ) {
-        (Some(mission), Some(shipping)) => {
-            let cache = match host.application_context().asset_cache() {
-                Ok(cache) => cache,
-                Err(message) => return Err(MissionLoadError::new(campaign, message)),
-            };
-            match cache.take_early_terrain(shipping, mission, &map_name, &ambiance_dir) {
-                Some(job) => match job.matches_source(shipping, &files, &level_directory) {
-                    Ok(true) => Some(job),
-                    Ok(false) => {
-                        tracing::debug!(
-                            "discarding early terrain overridden by preparation reader"
-                        );
-                        None
-                    }
-                    Err(message) => return Err(MissionLoadError::new(campaign, message)),
-                },
-                None => None,
-            }
-        }
-        _ => None,
-    };
-    let pending_terrain = if let Some(job) = early_terrain {
-        tracing::info!("early terrain decode handed to mission setup");
-        crate::level_loading_host::PendingTerrainDecode::Early {
-            job,
-            level_directory: level_directory.clone(),
-            shipping: host
-                .frontend
-                .resources
-                .shipping
-                .clone()
-                .expect("early terrain requires shipping"),
-            files: files.clone(),
-        }
-    } else {
-        crate::level_loading_host::PendingTerrainDecode::start_with_files(
-            &map_name,
-            &ambiance_dir,
-            &level_directory,
-            host.frontend.resources.shipping.clone(),
-            files.clone(),
-        )
+        Ok(pending) => pending,
+        Err(message) => return Err(MissionLoadError::new(campaign, message)),
     };
     timer.step("terrain decode start");
 
@@ -1271,54 +1217,16 @@ pub(super) fn prepare_mission(
     // and stores the programs in `LevelAssets` before level load.
     // Shipping programs have already crossed bytecode validation. Retain their
     // Arcs rather than cloning SCBs and decoding a second runtime copy.
-    let mut script_programs = resources.programs().clone();
-    if let Some(name) = mission_name.as_ref()
-        && !script_programs.contains_key(name)
-    {
-        let path = format!("Data/Levels/{name}.scb");
-        match resources
-            .read_required_asset(&path)
-            .and_then(|b| assets_scb::parse_bytes(&b).map_err(|e| format!("parse {path}: {e}")))
-        {
-            Ok(scb) => {
-                let program = match engine_script_manager::ScriptProgram::from_scb(scb) {
-                    Ok(program) => program,
-                    Err(error) => {
-                        return Err(MissionLoadError::new(
-                            campaign,
-                            format!("prepare mission script {name}: {error}"),
-                        ));
-                    }
-                };
-                script_programs.insert(name.clone(), std::sync::Arc::new(program));
-            }
-            Err(e)
-                if engine_sprite_script::original_mission_program_required(
-                    &assets,
-                    authoritative_sim_config.script_enabled,
-                ) =>
-            {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("Mission script {name}: {e}"),
-                ));
-            }
-            Err(e) => tracing::warn!(
-                "Original script intentionally optional for disabled scripting or a prepared replacement: {name}: {e}"
-            ),
-        }
-    }
-    let legacy_capture_scb = args.mission_start_legacy_save.as_ref().map(|_| {
-        let name = mission_name
-            .as_ref()
-            .expect("legacy frame-zero capture requires a current mission");
-        script_programs
-            .get(name)
-            .unwrap_or_else(|| panic!("legacy frame-zero capture has no mission script {name}"))
-            .scb()
-            .clone()
-    });
-    assets.scripts.mission_programs = std::sync::Arc::new(script_programs);
+    let legacy_capture_scb = match preparation::prepare_mission_programs(
+        &resources,
+        &mut assets,
+        mission_name.as_deref(),
+        authoritative_sim_config.script_enabled,
+        args.mission_start_legacy_save.is_some(),
+    ) {
+        Ok(capture) => capture,
+        Err(message) => return Err(MissionLoadError::new(campaign, message)),
+    };
     timer.step("mission scripts");
 
     // Initialize Game's per-mission state from the campaign before we
@@ -1331,24 +1239,9 @@ pub(super) fn prepare_mission(
     // this single call.  Mission script was already loaded inside
     // `load_level()` → `load_mission_script()` so the level loader
     // does not re-load it.
-    (assets.peasant_firstnames, assets.peasant_surnames) = match load_peasant_name_pool(text_res) {
-        Ok(names) => names,
-        Err(error) => {
-            return Err(MissionLoadError::new(
-                campaign,
-                format!("Localized names: {error:#}"),
-            ));
-        }
-    };
-    assets.fixed_vip_names = match load_fixed_vip_name_map(text_res) {
-        Ok(names) => names,
-        Err(error) => {
-            return Err(MissionLoadError::new(
-                campaign,
-                format!("Localized VIP names: {error:#}"),
-            ));
-        }
-    };
+    if let Err(message) = preparation::prepare_localized_names(&mut assets, text_res) {
+        return Err(MissionLoadError::new(campaign, message));
+    }
 
     // Run the single-threaded wasm fallback decode here — the exact point
     // the old synchronous branch used — so the loading bar behaves the same
@@ -1435,111 +1328,35 @@ pub(super) fn prepare_mission(
             ambiance_mask |= cue.ambiance.to_bitmask();
         }
     }
-    assets.audio.required_exclamation_ids =
-        match required_mission_exclamation_ids(&loaded, &campaign, profiles) {
-            Ok(ids) => ids,
-            Err(error) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("Deterministic speech dependency load failed: {error}"),
-                ));
-            }
-        };
-    assets.audio.sound_source_required_ids = loaded
-        .proto
-        .sound_sources
-        .iter()
-        .filter(|source| source.ambience_filter & ambiance_mask != 0)
-        .map(|source| source.id as u32)
-        .collect();
-    if let Err(message) = initialize_mission_sound_caches(
+    if let Err(message) = preparation::prepare_deterministic_audio(
         host,
+        &mut assets,
+        &loaded,
+        &campaign,
         profiles,
-        &assets.audio.sound_source_required_ids,
-        files.clone(),
+        &files,
+        ambiance_mask,
     ) {
         return Err(MissionLoadError::new(campaign, message));
-    }
-    if let Err(error) = robin_engine::audio_durations::AudioDurations::load(&files)
-        .and_then(|timing| timing.populate(&mut assets.audio, profiles))
-    {
-        return Err(MissionLoadError::new(
-            campaign,
-            format!("Deterministic audio metadata load failed: {error}"),
-        ));
     }
     timer.step("deterministic audio metadata");
 
     // Decode every additional authored ambience once during mission loading.
     // Feature 14's active-mission-only prefetch remains scoped to this load;
     // nothing is retained in the process cache for unrelated missions.
-    let mut scheduled_ambiances = Vec::new();
-    if authored_initial_ambiance != effective_initial_ambiance {
-        scheduled_ambiances.push(authored_initial_ambiance);
-    }
-    for cue in &loaded.mission.ambience_schedule {
-        if cue.ambiance != effective_initial_ambiance
-            && !scheduled_ambiances.contains(&cue.ambiance)
-        {
-            scheduled_ambiances.push(cue.ambiance);
-        }
-    }
-    let mut pre_decoded_ambience_backgrounds = Vec::new();
-    let mut pre_decoded_ambience_minimaps = Vec::new();
-    for ambiance in scheduled_ambiances {
-        let dir = ambiance.directory();
-        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
-            assets_frame_holder::ProgressUpdate::Tick(delta) => {
-                tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-            }
-            assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
-                if let Some(screen) = loading_screen.as_mut() {
-                    screen.set_status(text, LOADING_MAP_DECODE_PROGRESS);
-                }
-            }
-        };
-        let decoded = crate::level_loading_host::pre_decode_background_map_with_files(
-            &map_name,
-            dir,
+    let (pre_decoded_ambience_backgrounds, pre_decoded_ambience_minimaps) =
+        match preparation::prepare_scheduled_ambiances(
+            host,
+            &loaded,
+            effective_initial_ambiance,
+            bg_pixel_dims,
             &level_directory,
-            host.frontend.resources.shipping.as_deref(),
-            &mut update,
             &files,
-        )
-        .map_err(|error| {
-            MissionLoadError::new(
-                campaign.clone(),
-                format!("{ambiance:?} background map load failed: {error}"),
-            )
-        })?;
-        drop(update);
-        if let Some(decoded) = decoded {
-            let decoded_dims = (decoded.width as f32, decoded.height as f32);
-            if bg_pixel_dims == (0.0, 0.0) || decoded_dims == bg_pixel_dims {
-                pre_decoded_ambience_backgrounds.push((ambiance, decoded));
-            } else {
-                tracing::warn!(
-                    ?ambiance,
-                    ?decoded_dims,
-                    ?bg_pixel_dims,
-                    "ignoring runtime ambience background with mismatched dimensions"
-                );
-            }
-        }
-        let mut progress = |delta: f32| {
-            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-        };
-        if let Some(decoded) = crate::level_loading_host::pre_decode_minimap_with_files(
-            &map_name,
-            dir,
-            &level_directory,
-            host.frontend.resources.shipping.as_deref(),
-            &mut progress,
-            &files,
+            &mut (event_pump.as_deref_mut(), &mut **loading_screen),
         ) {
-            pre_decoded_ambience_minimaps.push((ambiance, decoded));
-        }
-    }
+            Ok(decoded) => decoded,
+            Err(message) => return Err(MissionLoadError::new(campaign, message)),
+        };
 
     timer.step("scheduled ambiance preparation");
 
@@ -2213,7 +2030,7 @@ mod tests {
         let mut assets = LevelAssets::new();
         let fixture = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
             .expect("fixture campaign");
-        let loaded = robin_engine::level_data::LoadedLevel::empty_for_test();
+        let loaded = robin_engine::level_data::LoadedLevel::empty();
         let ambiance = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance);
         let (r, g, b) = ambiance.night_color_rgb();
         PreparedMission {

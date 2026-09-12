@@ -5,7 +5,7 @@ use super::modal_state::ActiveModal;
 use super::multiplayer::drain_mission_network;
 use super::runtime::{
     FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionHostPhase,
-    MissionIngress, MissionMutation, MissionRuntime, TickPolicy,
+    MissionIngress, MissionRuntime, TickPolicy,
 };
 use super::session_policy::SessionModalScheduler;
 use crate::multiplayer::matchmaking::current_epoch_ms;
@@ -67,17 +67,17 @@ impl HeadlessMission {
     pub(super) async fn run(
         &mut self,
         args: &crate::main_entry::MissionLaunch,
-    ) -> HeadlessMissionOutcome {
+    ) -> Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError> {
         loop {
-            let frame_result = self.run_frame(args);
+            let frame_result = self.run_frame(args)?;
             match frame_result.outcome {
                 FrameOutcome::Exit(code) => {
-                    return HeadlessMissionOutcome {
+                    return Ok(HeadlessMissionOutcome {
                         code,
                         exit: frame_result
                             .exit
                             .expect("runtime exit must have a campaign finalization context"),
-                    };
+                    });
                 }
                 FrameOutcome::Continue { sleep_ms } if frame_result.paused => {
                     crate::window::sleep_ms(u64::from(sleep_ms.max(10))).await;
@@ -101,7 +101,7 @@ impl HeadlessMission {
     pub(super) fn run_frame(
         &mut self,
         args: &crate::main_entry::MissionLaunch,
-    ) -> HeadlessFrameResult {
+    ) -> Result<HeadlessFrameResult, super::multiplayer::MultiplayerSessionError> {
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
         let frame_started_at_ms = crate::window::process_uptime_ms();
@@ -114,7 +114,7 @@ impl HeadlessMission {
                 manager,
                 assets,
             } = world.ingress();
-            drain_mission_network(timeline, host, manager, assets, true, current_epoch_ms())
+            drain_mission_network(timeline, host, manager, assets, true, current_epoch_ms())?
         };
         let network_paused = net_drain.pause_simulation;
         let tick_paused = self.runtime.control.manual_pause || network_paused;
@@ -253,7 +253,7 @@ impl HeadlessMission {
             paused,
         };
         super::frame_perf::record(super::frame_perf::Phase::Total, total_start);
-        result
+        Ok(result)
     }
 
     fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
@@ -344,21 +344,10 @@ impl HeadlessMission {
             http,
             leaderboard: _,
         } = &mut self.runtime;
-        let MissionMutation {
-            host,
-            game,
-            manager,
-            assets,
-            dev,
-        } = world.mutation();
         let mut active_modal: Option<ActiveModal> = None;
         drain_steps(
             http.take_pending_steps(),
-            manager,
-            host,
-            assets,
-            dev,
-            game,
+            world.mutation(),
             timeline,
             &mut control.manual_pause,
             &mut active_modal,
@@ -523,6 +512,7 @@ mod tests {
             assert_eq!(
                 mission
                     .run_frame(&crate::main_entry::MissionLaunch::default())
+                    .expect("network drain succeeds")
                     .exit,
                 None
             );
@@ -530,6 +520,7 @@ mod tests {
         assert_eq!(
             mission
                 .run_frame(&crate::main_entry::MissionLaunch::default())
+                .expect("network drain succeeds")
                 .exit,
             Some(super::HeadlessFrameExit::ReplayComplete)
         );
@@ -593,7 +584,9 @@ mod tests {
             policy: HeadlessPolicy::replay_runner(),
         };
 
-        mission.run_frame(&crate::main_entry::MissionLaunch::default());
+        mission
+            .run_frame(&crate::main_entry::MissionLaunch::default())
+            .expect("network drain succeeds");
         assert!(
             !mission
                 .runtime

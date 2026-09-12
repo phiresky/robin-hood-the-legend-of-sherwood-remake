@@ -345,7 +345,6 @@ mod tests {
 /// platform IME via `GameEvent::TextInput`, so character keys aren't
 /// enumerated here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(non_camel_case_types)]
 pub enum Keycode {
     Escape,
     Return,

@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::coordinates::{MapBBox, MapPoint};
-use crate::element::{BonusItemTypeExt, Entity, EntityId};
+use crate::element::{Entity, EntityId};
 
 mod entities;
 mod environment;
@@ -983,7 +983,7 @@ mod legacy_grid_topology_tests {
 
     #[test]
     fn retains_mixed_door_jump_order_and_sparse_special_sector_slots() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.grid_chunk_order = vec![
             ProtoGridChunk::Lift,
             ProtoGridChunk::Building,
@@ -1084,7 +1084,7 @@ mod legacy_grid_topology_tests {
             ..LegacyGridTopologyAssets::default()
         });
 
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         let mut first = door(false);
         first.door_type = 1;
         first.sector_out = 0;
@@ -1213,7 +1213,7 @@ mod legacy_grid_topology_tests {
     #[test]
     fn tactic_seek_position_resolves_sparse_slot_to_exact_sector_object() {
         let mut assets = LevelAssets::new();
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: Vec::new(),
             ambush_points: Vec::new(),
@@ -1287,7 +1287,7 @@ mod legacy_grid_topology_tests {
             ],
             ..LegacyGridTopologyAssets::default()
         });
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: Vec::new(),
             ambush_points: vec![RawAmbushPoint {
@@ -1319,7 +1319,7 @@ mod legacy_grid_topology_tests {
 
     #[test]
     fn archery_waypoint_resolves_to_exact_motion_sector_after_loading() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: Vec::new(),
             ambush_points: Vec::new(),
@@ -1961,7 +1961,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn door_stage_keeps_building_and_standalone_authored_order() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![
             RawBuildingEntry::Building {
                 doors: vec![door(1), door(2)],
@@ -1992,7 +1992,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn door_stage_rejects_illegal_standalone_type_with_context() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors {
             doors: vec![door(4)],
         }];
@@ -2012,7 +2012,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn script_preflight_rejects_authored_level_without_startup_when_enabled() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors { doors: Vec::new() }];
         let builder = MissionLevelBuilder::new("missing-script", true, &loaded);
 
@@ -2026,7 +2026,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn no_script_mode_still_constructs_doors_lifts_and_sector_links() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![
             RawBuildingEntry::StandaloneDoors {
                 doors: vec![door(3)],
@@ -2236,7 +2236,7 @@ mod mission_level_builder_tests {
             ],
             ..LegacyGridTopologyAssets::default()
         });
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: vec![RawReinforcementPoint {
                 x: 10,
@@ -2346,7 +2346,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn building_stage_requires_one_tenant_record_per_building() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::Building {
             doors: vec![door(1)],
         }];
@@ -2376,7 +2376,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn building_without_doors_is_valid_when_it_has_no_tenants() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::Building { doors: Vec::new() }];
         loaded.mission.building_tenants = vec![RawBuildingTenants {
             tenant_element_indices: Vec::new(),
@@ -2395,7 +2395,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn building_trap_tenant_uses_canonical_adapted_first_door() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![
             RawBuildingEntry::StandaloneDoors {
                 doors: vec![door(3)],
@@ -2411,7 +2411,7 @@ mod mission_level_builder_tests {
         let builder = MissionLevelBuilder::new("trap-tenant", false, &loaded);
         let assets = door_assets(2, 1);
         let mut engine = EngineInner::new();
-        let carried_id = engine.add_entity(civilian());
+        let carried_id = engine.add_test_entity(civilian());
         {
             let carried = engine
                 .get_entity_mut(carried_id)
@@ -2421,7 +2421,7 @@ mod mission_level_builder_tests {
             carried.set_sector(crate::position_interface::SectorHandle::new(12));
             carried.set_position_map(MapPoint::new(80.0, 90.0));
         }
-        engine.add_entity(Entity::Pc(ActorPc {
+        engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::ActorPc;
@@ -2924,15 +2924,58 @@ fn map_pc_initial_action(
 }
 
 /// Spawn the animation elements owned by proto- or mission-level patches.
+fn load_fx_sprite(
+    assets: &mut LevelAssets,
+    fname: &str,
+    profile: &str,
+    ambiance: Option<crate::sprite_script::Ambiance>,
+) -> Result<crate::sprite::Sprite, String> {
+    use crate::sprite_script::FrameKind;
+    let path = assets.sprite_scriptor.resolve_rhs_path(
+        FrameKind::Animation,
+        "Data/Animations",
+        fname,
+        ambiance,
+    )?;
+    let cache_key = format!("{fname}/{profile}");
+    let bank_signature = assets.bank_signature;
+    let info = assets.sprite_scriptor_mut().load(
+        &path,
+        profile,
+        &cache_key,
+        FrameKind::Animation,
+        |file| {
+            let signature = robin_data_io::legacy_io::LegacyReader::new(file)
+                .read_u32("bank signature")
+                .map_err(|error| error.to_string())?;
+            if signature != bank_signature {
+                return Err(format!(
+                    "bank signature mismatch: file {signature:#x} != bank {bank_signature:#x}"
+                ));
+            }
+            Ok(())
+        },
+    )?;
+    Ok(crate::sprite::Sprite {
+        scripts: info.scripts.clone(),
+        conversion: info.conversion.clone(),
+        center: info.center,
+        current_width: info.size.x as u16,
+        current_height: info.size.y as u16,
+        frame_profile_name: fname.to_owned(),
+        profile_cache_key: cache_key,
+        ..Default::default()
+    })
+}
+
+/// Spawn the animation elements owned by proto- or mission-level patches.
 fn spawn_patch_fx_entities(
     engine: &mut EngineInner,
     assets: &mut LevelAssets,
     patches: &[crate::level_data::RawPatch],
     patch_index_offset: usize,
 ) -> Vec<Option<i32>> {
-    let anim_base_dir = "Data/Animations";
     let sprite_ambiance = Some(engine.world.weather.ambiance.to_sprite_ambiance());
-    let bank_signature = assets.bank_signature;
     let mut handles = Vec::with_capacity(patches.len());
 
     for (local_patch_idx, raw) in patches.iter().enumerate() {
@@ -2946,52 +2989,11 @@ fn spawn_patch_fx_entities(
         // profile.  Keep that identity for legacy topology/save ordering;
         // only the optional sprite lookup is absent in this case.
         if !fname.is_empty() {
-            match assets.sprite_scriptor.resolve_rhs_path(
-                crate::sprite_script::FrameKind::Animation,
-                anim_base_dir,
-                fname,
-                sprite_ambiance,
-            ) {
-                Ok(path) => {
-                    let cache_key = format!("{fname}/{profile}");
-                    match assets.sprite_scriptor_mut().load(
-                        &path,
-                        profile,
-                        &cache_key,
-                        crate::sprite_script::FrameKind::Animation,
-                        |file| {
-                            let sig = robin_data_io::legacy_io::LegacyReader::new(file).read_u32("bank signature").map_err(|error| error.to_string())?;
-                            if sig != bank_signature {
-                                return Err(format!(
-                                    "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                                ));
-                            }
-                            Ok(())
-                        },
-                    ) {
-                        Ok(info) => {
-                            sprite.scripts = info.scripts.clone();
-                            sprite.conversion = info.conversion.clone();
-                            sprite.center = info.center;
-                            sprite.current_width = info.size.x as u16;
-                            sprite.current_height = info.size.y as u16;
-                            sprite.frame_profile_name = fname.clone();
-                            sprite.profile_cache_key = cache_key;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to load sprite for patch {patch_idx} animation \
-                                 '{fname}' profile '{profile}': {e}"
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to resolve RHS path for patch {patch_idx} animation \
-                         '{fname}': {e}"
-                    );
-                }
+            match load_fx_sprite(assets, fname, profile, sprite_ambiance) {
+                Ok(loaded) => sprite = loaded,
+                Err(error) => tracing::error!(
+                    "Failed to load patch {patch_idx} animation '{fname}' profile '{profile}': {error}"
+                ),
             }
         }
 
@@ -3046,58 +3048,16 @@ fn spawn_proto_animation_fx_entities(
     assets: &mut LevelAssets,
     animations: &[crate::level_data::RawElementFx],
 ) {
-    let anim_base_dir = "Data/Animations";
     let sprite_ambiance = Some(engine.world.weather.ambiance.to_sprite_ambiance());
-    let bank_signature = assets.bank_signature;
 
     for raw in animations {
         let fname = &raw.sprite.frame_profile_name;
         let profile = &raw.sprite.profile_name;
         let mut sprite = crate::sprite::Sprite::default();
-        match assets.sprite_scriptor.resolve_rhs_path(
-            crate::sprite_script::FrameKind::Animation,
-            anim_base_dir,
-            fname,
-            sprite_ambiance,
-        ) {
-            Ok(path) => {
-                let cache_key = format!("{fname}/{profile}");
-                match assets.sprite_scriptor_mut().load(
-                    &path,
-                    profile,
-                    &cache_key,
-                    crate::sprite_script::FrameKind::Animation,
-                    |file| {
-                        let sig = robin_data_io::legacy_io::LegacyReader::new(file)
-                            .read_u32("bank signature")
-                            .map_err(|error| error.to_string())?;
-                        if sig != bank_signature {
-                            return Err(format!(
-                                "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                            ));
-                        }
-                        Ok(())
-                    },
-                ) {
-                    Ok(info) => {
-                        sprite.scripts = info.scripts.clone();
-                        sprite.conversion = info.conversion.clone();
-                        sprite.center = info.center;
-                        sprite.current_width = info.size.x as u16;
-                        sprite.current_height = info.size.y as u16;
-                        sprite.frame_profile_name = fname.clone();
-                        sprite.profile_cache_key = cache_key;
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to load sprite scripts for animation '{fname}' \
-                             profile '{profile}': {e}"
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to resolve animation RHS path for '{fname}': {e}");
+        match load_fx_sprite(assets, fname, profile, sprite_ambiance) {
+            Ok(loaded) => sprite = loaded,
+            Err(error) => {
+                tracing::error!("Failed to load animation '{fname}' profile '{profile}': {error}")
             }
         }
         apply_animation_sprite_placement(&mut sprite, &raw.sprite);
@@ -3774,6 +3734,18 @@ impl EngineInner {
             .fast_grid_mut()
             .allocate_layers(conventional_layers);
 
+        self.register_motion_sight_obstacles(assets);
+        self.register_motion_masks(staging);
+        self.register_motion_elevation_lines(assets, staging);
+        self.register_motion_obstacle_lines(assets, motion_data);
+        self.initialize_motion_pathfinder_graph(assets, motion_data);
+        self.initialize_motion_sector_conversion(assets);
+        self.initialize_motion_obstacle_states(assets);
+        self.register_motion_sectors(assets, staging, motion_data, lifts);
+        self.initialize_motion_jump_zones(staging);
+    }
+
+    fn register_motion_sight_obstacles(&mut self, assets: &mut LevelAssets) {
         // Register the already-loaded sight obstacles with the grid so
         // per-cell queries (`get_obstacle_indices`) can restrict the
         // 3D raycast scan to overlapping obstacles.
@@ -3802,7 +3774,9 @@ impl EngineInner {
                     .add_obstacle_index(idx, layer, &box_ground);
             }
         }
+    }
 
+    fn register_motion_masks(&mut self, staging: &mut LevelLoadStaging) {
         // Drain raw masks stashed by `initialize_from_mission` and push the
         // decoded `RuntimeMask`s into the grid.  Masks are pushed just
         // after the grid is sized.
@@ -3822,7 +3796,13 @@ impl EngineInner {
                 raw_count - added,
             );
         }
+    }
 
+    fn register_motion_elevation_lines(
+        &mut self,
+        assets: &mut LevelAssets,
+        staging: &mut LevelLoadStaging,
+    ) {
         // ── Elevation (bond) lines → grid lines ──
         //
         // Each bond line separates two adjacent sight obstacles on the
@@ -3879,7 +3859,13 @@ impl EngineInner {
                 elev_skipped_layer,
             );
         }
+    }
 
+    fn register_motion_obstacle_lines(
+        &mut self,
+        assets: &mut LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+    ) {
         // ── Part 1: Motion obstacles → grid lines + pathfinder move_layers ──
         // Part 5 registers these same areas/obstacles in exactly this order.
         // Reserve their flat sector slots now so pathfinder state changes can
@@ -4091,7 +4077,13 @@ impl EngineInner {
             static_data.move_layers.push(move_areas);
             static_data.alternative_move_layers.push(alt_move_areas);
         }
+    }
 
+    fn initialize_motion_pathfinder_graph(
+        &mut self,
+        assets: &mut LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+    ) {
         // ── Part 2: Pathfinder graph ──
         let graph_started = web_time::Instant::now();
         if !motion_data.graph_bytes.is_empty()
@@ -4144,10 +4136,14 @@ impl EngineInner {
             graph.alternative_layers = graph.layers.clone();
             graph.states = shape.iter().map(|layer| vec![0; layer.len()]).collect();
         }
+    }
 
+    fn initialize_motion_sector_conversion(&mut self, assets: &mut LevelAssets) {
         // ── Part 3: Build sector conversion table ──
         std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph).build_sector_conversion();
+    }
 
+    fn initialize_motion_obstacle_states(&mut self, assets: &mut LevelAssets) {
         // ── Part 4: Initialize pathfinder obstacle states ──
         // Must happen after graph is loaded, not during engine.initialize() which
         // runs before load_background_map processes the motion data.
@@ -4158,7 +4154,15 @@ impl EngineInner {
                 .pathfinder
                 .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
+    }
 
+    fn register_motion_sectors(
+        &mut self,
+        assets: &mut LevelAssets,
+        staging: &mut LevelLoadStaging,
+        motion_data: &crate::level_data::RawMotionData,
+        lifts: &[crate::level_data::RawLift],
+    ) {
         // ── Part 5: Register sectors in grid blocks ──
         //
         // Each motion area polygon becomes a MOTION | AREA | MOUSE
@@ -4665,7 +4669,9 @@ impl EngineInner {
                 .sector_conversion
                 .len(),
         );
+    }
 
+    fn initialize_motion_jump_zones(&mut self, staging: &mut LevelLoadStaging) {
         // ── Jump zones + jump line pairs ──
         //
         // Must run after all motion-area sectors are registered so
@@ -7011,7 +7017,7 @@ mod accessory_publication_tests {
             initial_velocity: WorldVec3D::new(4.0, 0.0, 0.0),
         });
         let mut engine = super::EngineInner::new();
-        let arrow_id = engine.add_entity(arrow);
+        let arrow_id = engine.add_test_entity(arrow);
 
         engine.attach_accessory_sprite(&assets, arrow_id);
 

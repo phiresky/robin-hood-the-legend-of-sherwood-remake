@@ -5,6 +5,8 @@
 //! members before calling Object, while Target writes its leaf state, script
 //! members, and linked FX list before calling FX.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
+use super::read_helpers::hex16;
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -21,25 +23,6 @@ const FINGERPRINT_OBJECT: [u8; 16] = hex16("90062155c12beef1e93d3c32cb21776f");
 const FINGERPRINT_SCROLL: [u8; 16] = hex16("b02a77c4c704497d4cf06c506b5166e7");
 const FINGERPRINT_TARGET: [u8; 16] = hex16("6554b7c74493712f6dbb7269f195aac7");
 const FINGERPRINT_FX_MASKED: [u8; 16] = hex16("40b36826668c188dd5344e4b4c74c8e3");
-
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 /// Mission-initialized VM metadata required by Scroll and Target payloads.
 ///
@@ -63,7 +46,7 @@ pub struct LegacyNonActorPayloadLimits {
 impl Default for LegacyNonActorPayloadLimits {
     fn default() -> Self {
         Self {
-            target_linked_fxs: 65_535,
+            target_linked_fxs: DEFAULT_BULK_LIMIT,
         }
     }
 }
@@ -366,18 +349,15 @@ pub fn read_fx_payload(
     expected_creation_order: u32,
 ) -> LegacyResult<LegacyStandaloneFxPayload> {
     reader.scope("fx_leaf", |reader| {
-        let start_offset = reader.offset();
-        let fx = LegacyFxPayload::read(
-            reader,
-            limits,
-            Some(expected_creation_order),
-            Some(LegacyElementClass::Fx),
-        )?;
-        let end_offset = reader.offset();
         Ok(LegacyStandaloneFxPayload {
-            start_offset,
-            fx,
-            end_offset,
+            start_offset: reader.offset(),
+            fx: LegacyFxPayload::read(
+                reader,
+                limits,
+                Some(expected_creation_order),
+                Some(LegacyElementClass::Fx),
+            )?,
+            end_offset: reader.offset(),
         })
     })
 }
@@ -478,13 +458,10 @@ fn is_bonus_class(class: LegacyElementClass) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
+    use crate::legacy_save::test_support::{push_f32, push_u32};
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SbFile;
 
     struct NoScript;
 
@@ -499,24 +476,9 @@ mod tests {
         }
     }
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temporary = NamedTempFile::new().unwrap();
-        temporary.write_all(bytes).unwrap();
-        temporary.flush().unwrap();
-        let path = temporary.path().to_str().unwrap();
-        let mut file = SbFile::open(path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
-
-    fn push_f32(bytes: &mut Vec<u8>, value: f32) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn push_f64(bytes: &mut Vec<u8>, value: f64) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
 

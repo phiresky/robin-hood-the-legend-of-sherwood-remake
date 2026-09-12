@@ -220,7 +220,7 @@ pub(super) fn compute_trajectory_ballistic_with_terminal_metadata(
 /// damping coefficients, further multiplied by the struck obstacle's
 /// per-material bounce coefficients on wall / top impacts.  Nets use
 /// `(0.1, 0.1)` and wasp nests use the coin bounce factors.
-pub fn compute_trajectory_ballistic_bounce(
+pub(super) fn compute_trajectory_ballistic_bounce(
     start: WorldPoint3D,
     initial_velocity: WorldVec3D,
     mass: f32,
@@ -653,7 +653,7 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 )
             });
 
-            let Some(ratio) = ratio_3d else {
+            let Some((r, ratio)) = impact_3d.zip(ratio_3d) else {
                 trajectory.push(TrajectoryPoint {
                     position: new_position,
                     time: TIME_FLYSEGMENT,
@@ -663,7 +663,6 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 last_impact = None;
                 continue;
             };
-            let r = impact_3d.unwrap();
             let impact_obstacle = r.obstacle_index;
             let obstacle = r
                 .obstacle_index

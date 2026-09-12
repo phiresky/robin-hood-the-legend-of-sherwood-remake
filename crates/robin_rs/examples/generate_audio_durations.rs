@@ -84,10 +84,9 @@ fn main() -> Result<()> {
             continue;
         }
         let files = Arc::new(SbFileSystem::new(Arc::new(AssetVfs::new())));
-        ensure!(
-            files.set_primary_path(root.to_str().context("non-UTF8 sound root")?) == 0,
-            "cannot mount English sound root"
-        );
+        files
+            .set_primary_path(root.to_str().context("non-UTF8 sound root")?)
+            .with_context(|| format!("cannot mount English sound root {}", root.display()))?;
         let mut resources = ResourceManager::with_files(files);
         resources.attach_resource_file("Exclamations/actors.res")?;
         for path in &paths {

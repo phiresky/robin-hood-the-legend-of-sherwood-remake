@@ -4,6 +4,8 @@
 //! Element decoding belongs to a later importer milestone; no scan or guessed
 //! byte skip is used to find that boundary.
 
+use super::read_helpers::DEFAULT_LIST_LIMIT;
+use super::read_helpers::{read_array, read_point2};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -43,8 +45,8 @@ pub struct LegacyEngineLimits {
 impl Default for LegacyEngineLimits {
     fn default() -> Self {
         Self {
-            short_briefings: 4096,
-            sound_sources: 4096,
+            short_briefings: DEFAULT_LIST_LIMIT,
+            sound_sources: DEFAULT_LIST_LIMIT,
             sound_source_shape_points: 65535,
         }
     }
@@ -89,83 +91,40 @@ impl LegacyEnginePreamble {
         limits: &LegacyEngineLimits,
     ) -> LegacyResult<Self> {
         reader.scope("rhsg.engine", |reader| {
-            let start_offset = reader.offset();
-            let cheat_used_flags = reader.read_u32("cheat_used_flags")?;
-            let shield_protected = reader.read_bool("shield_protected")?;
-            let freeze_all = reader.read_bool("freeze_all")?;
-            let view = LegacyPoint2::read(reader, "view")?;
-            let zoom_factor = reader.read_f32("zoom_factor")?;
-            let camera_slide = LegacyPoint2::read(reader, "camera_slide")?;
-            let fixed_camera_speed = reader.read_u16("fixed_camera_speed")?;
-            let speed = reader.read_f32("speed")?;
-            let speed_index = reader.read_u16("speed_index")?;
-            let desired_zoom_factor = reader.read_f32("desired_zoom_factor")?;
-            let old_zoom_factor = reader.read_f32("old_zoom_factor")?;
-            let background_transform = LegacyBackgroundTransform::read(reader, abi_profile)?;
-            let universal_frame_counter = reader.read_u32("universal_frame_counter")?;
-            let creation_counter = reader.read_u32("creation_counter")?;
-            let repulsive_point_counter = reader.read_u32("repulsive_point_counter")?;
-            let lock_engine = reader.read_bool("lock_engine")?;
-            let mission_won = reader.read_bool("mission_won")?;
-            let mission_won_first_time = reader.read_bool("mission_won_first_time")?;
-            let camera_wanted = LegacyPoint2::read(reader, "camera_wanted")?;
-            let locker = reader.read_bool("locker")?;
-            let skip_data = reader.read_string("skip_data")?;
-            let short_briefings = LegacyShortBriefings::read(reader, limits)?;
-            let sound = LegacySound::read(reader, limits)?;
-            let messenger = LegacyMessenger::read(reader)?;
-            let game = LegacyGameState::read(reader)?;
-            let elements_offset = reader.offset();
-
             Ok(Self {
-                start_offset,
-                cheat_used_flags,
-                shield_protected,
-                freeze_all,
-                view,
-                zoom_factor,
-                camera_slide,
-                fixed_camera_speed,
-                speed,
-                speed_index,
-                desired_zoom_factor,
-                old_zoom_factor,
-                background_transform,
-                universal_frame_counter,
-                creation_counter,
-                repulsive_point_counter,
-                lock_engine,
-                mission_won,
-                mission_won_first_time,
-                camera_wanted,
-                locker,
-                skip_data,
-                short_briefings,
-                sound,
-                messenger,
-                game,
-                elements_offset,
+                start_offset: reader.offset(),
+                cheat_used_flags: reader.read_u32("cheat_used_flags")?,
+                shield_protected: reader.read_bool("shield_protected")?,
+                freeze_all: reader.read_bool("freeze_all")?,
+                view: read_point2(reader, "view")?,
+                zoom_factor: reader.read_f32("zoom_factor")?,
+                camera_slide: read_point2(reader, "camera_slide")?,
+                fixed_camera_speed: reader.read_u16("fixed_camera_speed")?,
+                speed: reader.read_f32("speed")?,
+                speed_index: reader.read_u16("speed_index")?,
+                desired_zoom_factor: reader.read_f32("desired_zoom_factor")?,
+                old_zoom_factor: reader.read_f32("old_zoom_factor")?,
+                background_transform: LegacyBackgroundTransform::read(reader, abi_profile)?,
+                universal_frame_counter: reader.read_u32("universal_frame_counter")?,
+                creation_counter: reader.read_u32("creation_counter")?,
+                repulsive_point_counter: reader.read_u32("repulsive_point_counter")?,
+                lock_engine: reader.read_bool("lock_engine")?,
+                mission_won: reader.read_bool("mission_won")?,
+                mission_won_first_time: reader.read_bool("mission_won_first_time")?,
+                camera_wanted: read_point2(reader, "camera_wanted")?,
+                locker: reader.read_bool("locker")?,
+                skip_data: reader.read_string("skip_data")?,
+                short_briefings: LegacyShortBriefings::read(reader, limits)?,
+                sound: LegacySound::read(reader, limits)?,
+                messenger: LegacyMessenger::read(reader)?,
+                game: LegacyGameState::read(reader)?,
+                elements_offset: reader.offset(),
             })
         })
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LegacyPoint2 {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl LegacyPoint2 {
-    fn read(reader: &mut LegacyReader<'_>, field: impl Into<String>) -> LegacyResult<Self> {
-        reader.scope(field, |reader| {
-            Ok(Self {
-                x: reader.read_f32("x")?,
-                y: reader.read_f32("y")?,
-            })
-        })
-    }
-}
+pub use super::payload_base::LegacyPoint2;
 
 /// Raw background transform as emitted by the original game's save format.
 ///
@@ -231,9 +190,9 @@ impl LegacyBackgroundTransform {
             let current_zoom_level = reader.read_u16("current_zoom_level")?;
             let padding_before_zoom_values = read_array::<2>(reader, "padding_before_zoom_values")?;
             let zoom_values = read_f32_array(reader, "zoom_values")?;
-            let center_zoom = LegacyPoint2::read(reader, "center_zoom")?;
-            let clipped_zoom = LegacyPoint2::read(reader, "clipped_zoom")?;
-            let scrolling = LegacyPoint2::read(reader, "scrolling")?;
+            let center_zoom = read_point2(reader, "center_zoom")?;
+            let clipped_zoom = read_point2(reader, "clipped_zoom")?;
+            let scrolling = read_point2(reader, "scrolling")?;
 
             debug_assert_eq!(reader.offset() - start, Self::SERIALIZED_SIZE);
             Ok(Self {
@@ -388,7 +347,7 @@ impl LegacySoundGeometry {
                 "sound-geometry fingerprint",
             )?;
             Ok(Self {
-                listen_point: LegacyPoint2::read(reader, "listen_point")?,
+                listen_point: read_point2(reader, "listen_point")?,
                 zoom_factor: reader.read_f32("zoom_factor")?,
             })
         })
@@ -504,7 +463,7 @@ impl LegacySoundSource {
             }
             let mut shape = try_vec(reader, "shape", count)?;
             for index in 0..count {
-                shape.push(LegacyPoint2::read(reader, format!("shape[{index}]"))?);
+                shape.push(read_point2(reader, format!("shape[{index}]"))?);
             }
             Ok(Self {
                 kind,
@@ -587,15 +546,6 @@ impl LegacyGameState {
     }
 }
 
-fn read_array<const N: usize>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<[u8; N]> {
-    let mut value = [0; N];
-    reader.read_bytes(field, &mut value)?;
-    Ok(value)
-}
-
 fn read_f32_array<const N: usize>(
     reader: &mut LegacyReader<'_>,
     field: &'static str,
@@ -632,12 +582,7 @@ mod tests {
     use crate::sbfile::SbFile;
 
     #[allow(dead_code)]
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
+    use robin_test_support::original_data;
 
     fn repository_fixture(relative: &str) -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

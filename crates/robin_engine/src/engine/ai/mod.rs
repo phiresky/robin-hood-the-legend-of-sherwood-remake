@@ -344,45 +344,53 @@ fn door_belongs_to_ai_house(door_type: crate::gate::DoorType) -> bool {
 /// Narrow, process-local diagnostics for the Save050 area-search point-count
 /// mismatch. Environment reads and stderr output must remain outside engine
 /// state so enabling this cannot affect snapshots, hashes, or simulation RNG.
+fn seek_area_owner_position_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SEEK_AREA_OWNER_POSITION",
+            [
+                "PARITY_DEBUG_SEEK_AREA_FRAME",
+                "PARITY_DEBUG_SEEK_AREA_CREATION_ORDER",
+            ],
+        )
+    })
+}
+
 fn seek_area_owner_position_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_some()
+    seek_area_owner_position_debug_gate().enabled()
 }
 
 fn seek_area_owner_position_debug_matches(frame: u32, creation_order: u32) -> bool {
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for SEEKAREA diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_SEEK_AREA_FRAME").is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER")
-            .is_none_or(|expected| creation_order == expected)
+    seek_area_owner_position_debug_gate().matches([Some(frame), Some(creation_order)])
 }
 
 /// Opt-in, stderr-only provenance for the Save024
 /// swordfight observation reconsideration fighter-list mismatch. Keep the enable
 /// check ahead of identity lookup so the disabled path performs no additional
 /// world reads.
+fn reconsider_observation_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_RECONSIDER_OBSERVATION",
+            [
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME",
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_CREATION_ORDER",
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE",
+            ],
+        )
+    })
+}
+
 fn reconsider_observation_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_RECONSIDER_OBSERVATION").is_some()
+    reconsider_observation_debug_gate().enabled()
 }
 
 fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle: u32) -> bool {
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for RECONSIDER diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME")
-        .is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_CREATION_ORDER")
-            .is_none_or(|expected| creation_order == expected)
-        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE")
-            .is_none_or(|expected| handle == expected)
+    reconsider_observation_debug_gate().matches([Some(frame), Some(creation_order), Some(handle)])
 }
 
 #[derive(Debug)]
@@ -404,14 +412,7 @@ fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugCo
                 creation_order: 0,
             };
         }
-        let parse = |name: &str| {
-            let value = std::env::var(name).unwrap_or_else(|error| {
-                panic!("CIVRANDSPEECH diagnostic requires {name}: {error}")
-            });
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for CIVRANDSPEECH diagnostic: {error}")
-            })
-        };
+        let parse = crate::engine::diagnostics::required_u32_env;
         CivilianRandomSpeechDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_FRAME"),
@@ -438,13 +439,7 @@ fn speech_lifecycle_debug_config() -> &'static SpeechLifecycleDebugConfig {
                 actor: None,
             };
         }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for SPEECHLIFE diagnostic: {error}")
-                })
-            })
-        };
+        let parse = crate::engine::diagnostics::optional_u32_env;
         SpeechLifecycleDebugConfig {
             enabled: true,
             frame: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_FRAME"),
@@ -471,13 +466,7 @@ fn patrol_turn_lifecycle_debug_config() -> &'static PatrolTurnLifecycleDebugConf
                 creation_order: None,
             };
         }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for PATROLTURN diagnostic: {error}")
-                })
-            })
-        };
+        let parse = crate::engine::diagnostics::optional_u32_env;
         PatrolTurnLifecycleDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_PATROL_TURN_FRAME"),
@@ -507,13 +496,7 @@ fn archer_step_back_lifecycle_debug_config() -> &'static ArcherStepBackLifecycle
                 owner_handle: None,
             };
         }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for ARCHERSTEP diagnostic: {error}")
-                })
-            })
-        };
+        let parse = crate::engine::diagnostics::optional_u32_env;
         ArcherStepBackLifecycleDebugConfig {
             enabled,
             frame: parse("PARITY_DEBUG_ARCHER_STEP_BACK_FRAME"),
@@ -893,7 +876,7 @@ mod panic_boundary_tests {
     #[test]
     fn panic_state_dispatch_accepts_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(enemy_ai_hero());
+        let pc_id = engine.add_test_entity(enemy_ai_hero());
 
         engine.set_typed_npc_state(
             pc_id,
@@ -913,7 +896,7 @@ mod panic_boundary_tests {
     #[test]
     fn script_think_entry_dispatches_to_enemy_ai_hero_enemy_ai() {
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(enemy_ai_hero());
+        let pc_id = engine.add_test_entity(enemy_ai_hero());
 
         engine.start_script_ai_native_think_pre_filter(pc_id);
 
@@ -931,7 +914,7 @@ mod panic_boundary_tests {
     fn enemy_ai_hero_completes_new_no_door_panic_boundary() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let pc_id = engine.add_entity(enemy_ai_hero());
+        let pc_id = engine.add_test_entity(enemy_ai_hero());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -1022,7 +1005,7 @@ mod panic_boundary_tests {
         pc.ai_actor_data_mut()
             .expect("AI-controlled hero has AI actor data")
             .stuck_on_ladder_emergency_counter = 25;
-        let pc_id = engine.add_entity(pc);
+        let pc_id = engine.add_test_entity(pc);
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles.characters.push(crate::profiles::CharacterProfile {
@@ -1055,7 +1038,7 @@ mod panic_boundary_tests {
     fn new_no_door_panic_boundary_closes_recursive_reachpoint() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let npc_id = engine.add_entity(enemy_soldier());
+        let npc_id = engine.add_test_entity(enemy_soldier());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles
@@ -1093,7 +1076,7 @@ mod panic_boundary_tests {
     fn repeated_no_door_panic_boundary_preserves_red_and_larger_run_count() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let npc_id = engine.add_entity(enemy_soldier());
+        let npc_id = engine.add_test_entity(enemy_soldier());
         {
             let ai = engine
                 .get_entity_mut(npc_id)
@@ -1135,7 +1118,7 @@ mod panic_boundary_tests {
     fn synchronous_panic_boundary_consumes_recursive_reach_point_rng() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let npc_id = engine.add_entity(enemy_soldier());
+        let npc_id = engine.add_test_entity(enemy_soldier());
         let mut assets = LevelAssets::default();
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
         profiles
@@ -1630,7 +1613,7 @@ mod parity_tests {
     fn potential_detectables_include_inactive_authored_pcs() {
         let mut engine = EngineInner::new();
         let add_pc = |engine: &mut EngineInner, active, camp| {
-            engine.add_entity(Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -1699,21 +1682,10 @@ mod parity_tests {
     #[test]
     fn pending_move_condolation_owns_failure_before_engine_completion_surface() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let sequence = engine.orders.sequence_manager.launch_element(
             crate::sequence::SequenceElement::new_movement(
                 1,
@@ -1768,21 +1740,10 @@ mod parity_tests {
     #[test]
     fn selected_move_preflight_failure_has_condolation_provenance() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let sequence = engine.orders.sequence_manager.launch_element(
             crate::sequence::SequenceElement::new_movement(
                 1,
@@ -1827,21 +1788,10 @@ mod parity_tests {
     #[test]
     fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let ai = engine
             .world
             .entities
@@ -1896,21 +1846,10 @@ mod parity_tests {
     #[test]
     fn engine_deferred_completion_preserves_recursive_think_depth_until_success() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         let ai = engine
             .world
@@ -1980,21 +1919,10 @@ mod parity_tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         {
             let ai = engine
@@ -2056,21 +1984,10 @@ mod parity_tests {
     #[test]
     fn detached_goto_tail_does_not_turn_an_absent_verdict_into_success() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
         {
             let ai = engine
@@ -2127,21 +2044,10 @@ mod parity_tests {
     #[test]
     fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let ai = engine
             .world
             .entities
@@ -3228,6 +3134,50 @@ mod seek_area_friend_position_tests {
     }
 }
 
+impl EngineInner {
+    /// Build a dispatch context from the selected observation, preserving the
+    /// caller's frame and building-sector boundary rather than resampling them.
+    pub(in crate::engine) fn ai_context_from_entity(
+        &self,
+        entity: &Entity,
+        frame: u32,
+        building_sector: Option<crate::position_interface::SectorHandle>,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+    ) -> AiContext {
+        build_ai_context_from_entity(
+            entity,
+            frame,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        )
+    }
+
+    /// Resolve an NPC and its current building sector at the dispatch boundary.
+    /// Split-borrow translators continue to use the entity-based primitive.
+    #[track_caller]
+    pub(in crate::engine) fn ai_context_for(
+        &self,
+        npc_id: EntityId,
+        frame: u32,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+    ) -> AiContext {
+        let entity = self.expect_entity(npc_id, "building AI dispatch context");
+        let building_sector = self.entity_building_sector(entity.element_data().sector());
+        self.ai_context_from_entity(entity, frame, building_sector, scratch, assets)
+    }
+}
+
 /// Build an [`AiContext`] from a generic [`Entity`] reference.
 ///
 /// Extracts position, direction, posture, camp, building status, and
@@ -4182,35 +4132,18 @@ fn unique_gate_endpoint_sector(
 #[cfg(test)]
 mod ai_view_position_sector_tests {
     use super::*;
-    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::coordinates::MapPoint;
     use crate::fast_find_grid::{GridSector, SectorIndex};
     use crate::gate::Door;
-    use crate::sector::{SectorNumber, SectorType};
+    use crate::sector::SectorNumber;
 
     fn square_sector(number: i16, layer: u16, min: f32, max: f32) -> GridSector {
-        GridSector {
-            points: vec![
-                MapPoint::new(min, min),
-                MapPoint::new(max, min),
-                MapPoint::new(max, max),
-                MapPoint::new(min, max),
-            ],
-            bounding_box: MapBBox::from_coords(min, min, max, max),
-            sector_type: SectorType::MOTION | SectorType::AREA,
+        crate::engine::test_support::square_sector(
+            number,
             layer,
-            sector_number: SectorNumber::new(number),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
-        }
+            MapPoint::new(min, min),
+            MapPoint::new(max, max),
+        )
     }
 
     #[test]
@@ -4233,7 +4166,7 @@ mod ai_view_position_sector_tests {
         assert_ne!(wrong, goal);
 
         let _legacy_null_slot =
-            engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -4243,7 +4176,7 @@ mod ai_view_position_sector_tests {
                 human: Default::default(),
                 pc: Default::default(),
             }));
-        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        let target = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -4350,7 +4283,7 @@ mod ai_view_position_sector_tests {
         );
 
         let _legacy_null_slot =
-            engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+            engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::ActorPc;
@@ -4360,7 +4293,7 @@ mod ai_view_position_sector_tests {
                 human: Default::default(),
                 pc: Default::default(),
             }));
-        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        let target = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -4681,11 +4614,11 @@ mod prepared_entity_view_cache_tests {
     fn observation_classification_tracks_layer_admission_and_removal() {
         use crate::ai_entity_view::AiObservationUnavailable as Unavailable;
         let mut engine = EngineInner::new();
-        let observed = engine.add_entity(active_bonus(10.0));
-        let missing_layer = engine.add_entity(active_soldier_without_layer());
+        let observed = engine.add_test_entity(active_bonus(10.0));
+        let missing_layer = engine.add_test_entity(active_soldier_without_layer());
         let mut excluded = active_bonus(20.0);
         excluded.element_data_mut().active = false;
-        let excluded = engine.add_entity(excluded);
+        let excluded = engine.add_test_entity(excluded);
         let mut cache = PreparedAiEntityViewCache::default();
         refresh_prepared_entity_views(&engine, &mut cache);
 
@@ -4760,8 +4693,8 @@ mod prepared_entity_view_cache_tests {
     #[test]
     fn unchanged_views_are_reused_and_mutable_slot_access_invalidates_only_that_slot() {
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(active_bonus(10.0));
-        let second = engine.add_entity(active_bonus(20.0));
+        let first = engine.add_test_entity(active_bonus(10.0));
+        let second = engine.add_test_entity(active_bonus(20.0));
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 2);
@@ -4783,7 +4716,7 @@ mod prepared_entity_view_cache_tests {
     #[test]
     fn active_projectile_coin_is_available_to_ai_object_handle_lookups() {
         let mut engine = EngineInner::new();
-        let coin = engine.add_entity(active_coin_projectile(42.0));
+        let coin = engine.add_test_entity(active_coin_projectile(42.0));
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 1);
@@ -4818,7 +4751,7 @@ mod prepared_entity_view_cache_tests {
         let mut engine = EngineInner::new();
         let mut coin = active_coin_projectile(42.0);
         coin.element_data_mut().clear_layer();
-        let coin = engine.add_entity(coin);
+        let coin = engine.add_test_entity(coin);
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
@@ -4834,7 +4767,7 @@ mod prepared_entity_view_cache_tests {
     #[test]
     fn loaded_actor_without_layer_is_not_published_to_spatial_ai() {
         let mut engine = EngineInner::new();
-        let soldier = engine.add_entity(active_soldier_without_layer());
+        let soldier = engine.add_test_entity(active_soldier_without_layer());
         let mut cache = PreparedAiEntityViewCache::default();
 
         assert_eq!(refresh_prepared_entity_views(&engine, &mut cache), 0);
@@ -5114,20 +5047,12 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
             };
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(civ_id, &mut ctx);
@@ -5499,20 +5424,12 @@ impl EngineInner {
             };
             let entity_sector = entity.element_data().sector();
             let building_sector = self.entity_building_sector(entity_sector);
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
@@ -5764,9 +5681,10 @@ impl EngineInner {
             if is_civilian {
                 self.world
                     .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| panic!("panic owner {} lost AI", npc_id.index()))
+                    .expect_ai_controller_mut(
+                        npc_id,
+                        format_args!("panic owner {} lost AI", npc_id.index()),
+                    )
                     .say(crate::ai::Remark::CivPanic);
                 self.drain_ai_owner_work_for(sim, assets, npc_id);
             }
@@ -5808,14 +5726,13 @@ impl EngineInner {
             if couldnt_reachpoint {
                 self.world
                     .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
+                    .expect_ai_controller_mut(
+                        npc_id,
+                        format_args!(
                             "panic owner {} lost AI after failed movement",
                             npc_id.index()
-                        )
-                    })
+                        ),
+                    )
                     .couldnt_reachpoint = false;
                 if directed_after_door_pick
                     && let Some((retry_door, _)) = pick_door(&self.ai.global.door_seek_infos, false)
@@ -5849,11 +5766,13 @@ impl EngineInner {
                     }
                     self.world
                         .entities
-                        .get_mut(npc_id)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("panic owner {} lost AI after failed retry", npc_id.index())
-                        })
+                        .expect_ai_controller_mut(
+                            npc_id,
+                            format_args!(
+                                "panic owner {} lost AI after failed retry",
+                                npc_id.index()
+                            ),
+                        )
                         .couldnt_reachpoint = false;
                     self.begin_panic_no_door_branch(
                         sim,
@@ -5962,17 +5881,13 @@ impl EngineInner {
                 // and remains deferred to the normal path-request processing phase.
                 self.launch_pending_orders_for_npc(sim, assets, npc_id);
                 let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "panic seek fallback owner {} disappeared after movement",
-                            npc_id.index()
-                        )
-                    });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!(
+                        "panic seek fallback owner {} disappeared after movement",
+                        npc_id.index()
+                    ),
+                );
                 if ai.couldnt_reachpoint {
                     // Emergency-case retry — decrement runs and
                     // self-fire `EventReachPoint` so the common-stuff
@@ -6036,9 +5951,10 @@ impl EngineInner {
             );
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()))
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("panic owner {} has no AI", npc_id.index()),
+                )
                 .say(if is_civilian {
                     crate::ai::Remark::CivPanic
                 } else {
@@ -6074,14 +5990,13 @@ impl EngineInner {
             self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!(
                         "panic owner {} lost AI after recursive Think",
                         npc_id.index()
-                    )
-                })
+                    ),
+                )
                 .outbox
                 .reentrant
                 .self_stimuli
@@ -6090,12 +6005,10 @@ impl EngineInner {
             // Not new: upgrade-only bump of `lasting_panic_runs`
             // (`if lasting_panic_runs < runs`).  No state change, no
             // `say()`, no self-fire.
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("panic owner {} has no AI", npc_id.index()),
+            );
             if ai.lasting_panic_runs < request.runs {
                 ai.lasting_panic_runs = request.runs;
             }
@@ -6179,14 +6092,13 @@ impl EngineInner {
         let static_ai_frozen = self.ai.global.freeze;
         self.world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "SetAIState post-filter decision-entry owner {} lost its typed AI",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .start_no_event_post_filter(static_ai_frozen, self_is_dead, self_is_unconscious)
     }
 
@@ -6201,14 +6113,13 @@ impl EngineInner {
         let normal_depth_complete = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "SetAIState decision-completion owner {} lost its typed AI",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .end_think_completion_events();
         if normal_depth_complete {
             return;
@@ -6321,17 +6232,13 @@ impl EngineInner {
             })
         };
 
-        let enemy_ai = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "accepted SetAIState SEEKING owner {} requires Enemy AI",
-                    npc_id.index()
-                )
-            });
+        let enemy_ai = self.world.entities.expect_enemy_ai_mut(
+            npc_id,
+            format_args!(
+                "accepted SetAIState SEEKING owner {} requires Enemy AI",
+                npc_id.index()
+            ),
+        );
         if crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_enabled()
             && crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_matches(
                 ctx.frame,

@@ -1,6 +1,16 @@
 //! Small color helpers used by both the renderer and sim-facing code
 //! that bakes constant colors (e.g. entity outline colors).
 
+/// Pack native 5/6/5-bit channel values, masking bits outside each channel.
+pub const fn pack_rgb565(r: u16, g: u16, b: u16) -> u16 {
+    ((r & 0x1f) << 11) | ((g & 0x3f) << 5) | (b & 0x1f)
+}
+
+/// Unpack native 5/6/5-bit channels without scaling to eight bits.
+pub const fn unpack_rgb565(color: u16) -> (u16, u16, u16) {
+    ((color >> 11) & 0x1f, (color >> 5) & 0x3f, color & 0x1f)
+}
+
 /// Pack (r, g, b) into a 16-bit RGB565 word.
 #[inline]
 pub const fn rgb565(r: u8, g: u8, b: u8) -> u16 {
@@ -35,6 +45,8 @@ mod tests {
     #[test]
     fn every_packed_color_roundtrips_with_discarded_low_bits() {
         for packed in 0..=u16::MAX {
+            let (r5, g6, b5) = unpack_rgb565(packed);
+            assert_eq!(pack_rgb565(r5, g6, b5), packed);
             let r = ((packed >> 11) as u8) << 3;
             let g = (((packed >> 5) & 63) as u8) << 2;
             let b = ((packed & 31) as u8) << 3;

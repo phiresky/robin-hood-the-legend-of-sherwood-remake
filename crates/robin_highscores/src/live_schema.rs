@@ -421,13 +421,13 @@ impl LiveDatabaseSnapshot {
 
 #[cfg(target_os = "linux")]
 fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    let descriptor = openat2(
+    use rustix::fs::{Mode, OFlags};
+    let descriptor = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOATIME,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(std::io::Error::from)?;
     Ok(std::fs::File::from(descriptor))
@@ -473,17 +473,14 @@ fn validate_live_file(
 
 #[cfg(target_os = "linux")]
 fn open_live_leaf(parent: &Dir, leaf: &str) -> anyhow::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::os::fd::AsFd as _;
-    let descriptor = openat2(
+    let descriptor = crate::secure_fs::open_no_symlinks_at(
         parent.as_fd(),
         Path::new(leaf),
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOATIME | OFlags::NONBLOCK,
         Mode::empty(),
-        ResolveFlags::BENEATH
-            | ResolveFlags::NO_SYMLINKS
-            | ResolveFlags::NO_MAGICLINKS
-            | ResolveFlags::NO_XDEV,
+        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )
     .map_err(std::io::Error::from)?;
     Ok(std::fs::File::from(descriptor))
@@ -818,7 +815,7 @@ mod tests {
         let original = UnixMetadata {
             device: 1,
             inode: 2,
-            mode: libc::S_IFDIR | DATABASE_DIRECTORY_MODE,
+            mode: rustix::fs::FileType::Directory.as_raw_mode() | DATABASE_DIRECTORY_MODE,
             links: 3,
             owner: 4,
             group: 5,
@@ -991,7 +988,7 @@ mod tests {
                 let state = if path.exists() {
                     let file = std::fs::OpenOptions::new()
                         .read(true)
-                        .custom_flags(libc::O_NOATIME)
+                        .custom_flags(rustix::fs::OFlags::NOATIME.bits() as i32)
                         .open(&path)
                         .unwrap();
                     Some(capture_file_state(&file).unwrap())
@@ -1214,7 +1211,7 @@ mod tests {
                 let unblocking = std::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .custom_flags(libc::O_NONBLOCK)
+                    .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
                     .open(&special)
                     .unwrap();
                 let result = tokio::time::timeout(Duration::from_secs(1), task)

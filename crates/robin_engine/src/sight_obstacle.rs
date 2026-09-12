@@ -13,36 +13,14 @@ use crate::geo2d::{self, Polygon2D, pt, segment};
 // SightObstacleIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `EngineInner::sight_obstacles` (the flat static + dynamic
 /// view exposed by [`ObstacleList`]).  Wraps [`nonmax::NonMaxU32`] so
 /// `Option<SightObstacleIndex>` is 4 bytes via the niche.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct SightObstacleIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(SightObstacleIndex, u32);
+pub struct SightObstacleIndex(pub nonmax::NonMaxU32), u32
+);
 
 impl SightObstacleIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-
     /// Decode an original-game optional obstacle-table reference. The legacy stream
     /// stores exact obstacle indices in 16 bits and reserves `0xffff` for
     /// empty; runtime code must not retain that raw sentinel.
@@ -51,23 +29,6 @@ impl SightObstacleIndex {
         (v != u16::MAX).then(|| {
             Self::new(u32::from(v)).expect("u16 obstacle index collides with runtime null niche")
         })
-    }
-}
-impl From<SightObstacleIndex> for u32 {
-    #[inline]
-    fn from(i: SightObstacleIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<SightObstacleIndex> for usize {
-    #[inline]
-    fn from(i: SightObstacleIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for SightObstacleIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
     }
 }
 

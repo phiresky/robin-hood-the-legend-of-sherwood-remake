@@ -373,10 +373,11 @@ impl EngineInner {
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        let (victim_pos3, victim_sector) = match self.get_entity(victim_id) {
-            Some(e) => (e.position_iface().get_position(), e.element_data().sector()),
-            None => return,
-        };
+        let victim = self.expect_entity(victim_id, "ladder damage effect victim");
+        let (victim_pos3, victim_sector) = (
+            victim.position_iface().get_position(),
+            victim.element_data().sector(),
+        );
 
         // Destination is the ladder's low entry point, resolved to 3D
         // via the low sector's projection-area plane.  If we can't
@@ -664,10 +665,7 @@ impl EngineInner {
 
         // Read posture + carrier/carried relationships.
         let (posture, carrier_id, carried_id) = {
-            let v = match self.get_entity(victim_id) {
-                Some(e) => e,
-                None => return,
-            };
+            let v = self.expect_entity(victim_id, "damage effect carry-state victim");
             let posture = v.element_data().posture();
             let carrier = v.human_data().and_then(|h| h.carrier);
             let carried = v.pc_data().and_then(|p| p.carried);
@@ -892,10 +890,7 @@ impl EngineInner {
 
         // Read victim state for animation selection
         let (posture, action_state, is_dead, is_unconscious, concussion) = {
-            let victim = match self.get_entity(victim_id) {
-                Some(e) => e,
-                None => return false,
-            };
+            let victim = self.expect_entity(victim_id, "damage effect animation victim");
             let posture = victim.element_data().posture();
             let action = victim
                 .actor_data()
@@ -1368,13 +1363,12 @@ impl EngineInner {
         entity_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        let normal = match self.get_roll_normal(assets, entity_id) {
-            Some(n) => n,
-            None => return,
+        // A surface can have no downhill normal or no authorized roll point.
+        let Some(normal) = self.get_roll_normal(assets, entity_id) else {
+            return;
         };
-        let dest = match self.find_roll_point(entity_id, normal, false) {
-            Some(d) => d,
-            None => return,
+        let Some(dest) = self.find_roll_point(entity_id, normal, false) else {
+            return;
         };
 
         // Append a Rolling order with the authoritative map destination.
@@ -1420,18 +1414,22 @@ impl EngineInner {
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) -> Vec<EntityId> {
-        let profile = profile_idx
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-            .cloned();
-        let profile = match profile {
-            Some(p) => p,
-            None => return Vec::new(),
+        // Actors without a hand-to-hand weapon have no multi-target footprint.
+        let Some(profile_idx) = profile_idx else {
+            return Vec::new();
         };
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| {
+                panic!("multi-target strike has missing weapon profile {profile_idx}")
+            })
+            .clone();
 
         let attacker_dir = self
-            .get_entity(attacker_id)
-            .map(|e| e.element_data().direction())
-            .unwrap_or(0);
+            .expect_entity(attacker_id, "multi-target strike attacker")
+            .element_data()
+            .direction();
 
         let thrust = &profile.thrusts[strike as usize];
         let min_dist = thrust.minimal_distance as f32;

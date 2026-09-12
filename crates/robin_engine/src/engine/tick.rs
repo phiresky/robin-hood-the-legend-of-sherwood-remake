@@ -12,7 +12,6 @@ use super::sequence_runtime::{
     NpcStateCommandContext, OwnerActionBarrier, PositionAssertionContext, StealthCommandContext,
     TurnCommandContext, WaitCommandContext,
 };
-use super::sequence_runtime::{required_canonical_door, required_canonical_door_mut};
 use super::*;
 use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
@@ -56,7 +55,7 @@ mod restored_pass_door_completion_tests {
     #[test]
     fn restored_crenel_exit_completes_without_active_door_pass() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(airborne_pc());
+        let owner = engine.add_test_entity(airborne_pc());
         engine.apply_door_pass_transition_completion_side_effects(
             &LevelAssets::new(),
             owner,
@@ -76,7 +75,7 @@ mod restored_pass_door_completion_tests {
             OrderType::TransitionClimbingLadderDownWaitingUprightAlerted,
         ] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(airborne_pc());
+            let owner = engine.add_test_entity(airborne_pc());
             engine
                 .get_entity_mut(owner)
                 .unwrap()
@@ -106,7 +105,7 @@ mod restored_pass_door_completion_tests {
     #[test]
     fn unrelated_transition_still_requires_active_door_pass() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(airborne_pc());
+        let owner = engine.add_test_entity(airborne_pc());
         engine.apply_door_pass_transition_completion_side_effects(
             &LevelAssets::new(),
             owner,
@@ -140,7 +139,7 @@ mod frozen_actor_entry_condolation_tests {
             },
             ..Default::default()
         };
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::ActorSoldier;
@@ -226,8 +225,8 @@ mod frozen_actor_entry_condolation_tests {
 
 #[cfg(test)]
 thread_local! {
-    static PROJECTILE_DERIVED_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, crate::element::ObjectType)>>> =
-        const { std::cell::RefCell::new(None) };
+    static PROJECTILE_DERIVED_TAIL_TRACE: super::test_support::Probe<(EntityId, crate::element::ObjectType)> =
+        const { super::test_support::Probe::new() };
 }
 
 pub(super) fn observe_projectile_derived_tail(
@@ -241,29 +240,14 @@ pub(super) fn observe_projectile_derived_tail(
         "projectile derived tail"
     );
     #[cfg(test)]
-    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((id, object_type));
-        }
-    });
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|probe| probe.record((id, object_type)));
 }
 
 #[cfg(test)]
 pub(super) fn capture_projectile_derived_tails<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, crate::element::ObjectType)>) {
-    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
-        assert!(trace.borrow().is_none(), "tail capture is not re-entrant");
-        *trace.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let tails = PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("tail capture must remain active")
-    });
-    (result, tails)
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -392,8 +376,8 @@ mod mobile_owner_boundary_tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(10.0, 5.0)));
-        let second = engine.add_entity(mobile_fx(0, MapPoint::new(20.0, 5.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(10.0, 5.0)));
+        let second = engine.add_test_entity(mobile_fx(0, MapPoint::new(20.0, 5.0)));
         engine
             .world
             .mobile_elements
@@ -455,11 +439,11 @@ mod mobile_owner_boundary_tests {
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
         if actor_before {
-            engine.add_entity(inactive_civilian(MapPoint::new(-10.0, 0.0)));
+            engine.add_test_entity(inactive_civilian(MapPoint::new(-10.0, 0.0)));
         }
-        let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
         if !actor_before {
-            engine.add_entity(inactive_civilian(MapPoint::new(10.0, 0.0)));
+            engine.add_test_entity(inactive_civilian(MapPoint::new(10.0, 0.0)));
         }
         engine.world.mobile_elements.push(mobile(vec![child]));
         let assets = LevelAssets {
@@ -496,7 +480,7 @@ mod mobile_owner_boundary_tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
-        let hole = engine.add_entity(Entity::Fx(ElementFx {
+        let hole = engine.add_test_entity(Entity::Fx(ElementFx {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Fx;
@@ -505,8 +489,8 @@ mod mobile_owner_boundary_tests {
             fx: FxData::default(),
         }));
         engine.remove_entity(hole);
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let second = engine.add_entity(mobile_fx(1, MapPoint::new(20.0, 0.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(20.0, 0.0)));
         engine.world.mobile_elements.push(mobile(vec![first]));
         engine.world.mobile_elements.push(mobile(vec![second]));
         let assets = LevelAssets {
@@ -525,7 +509,7 @@ mod mobile_owner_boundary_tests {
                 visited.borrow_mut().push(owner);
                 engine.tick_mobile_child_owner_boundary(&sim_context, &assets, owner);
                 if owner == first {
-                    let tail = engine.add_entity(Entity::Fx(ElementFx {
+                    let tail = engine.add_test_entity(Entity::Fx(ElementFx {
                         element: {
                             let mut initial_element = ElementData::default();
                             initial_element.kind = ElementKind::Fx;
@@ -549,8 +533,8 @@ mod mobile_owner_boundary_tests {
     fn mobile_boundary_precedes_static_dispatch_in_live_owner_walk() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let static_fx = engine.add_entity(Entity::Fx(ElementFx {
+        let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let static_fx = engine.add_test_entity(Entity::Fx(ElementFx {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Fx;
@@ -592,9 +576,9 @@ mod mobile_owner_boundary_tests {
     fn production_walk_uses_saved_original_creation_order_not_rust_slots() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let second = engine.add_entity(mobile_fx(1, MapPoint::new(10.0, 0.0)));
-        let third = engine.add_entity(mobile_fx(2, MapPoint::new(20.0, 0.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(10.0, 0.0)));
+        let third = engine.add_test_entity(mobile_fx(2, MapPoint::new(20.0, 0.0)));
         engine.world.install_original_creation_orders(
             [(first, 80), (second, 42), (third, 61)]
                 .into_iter()
@@ -620,7 +604,7 @@ mod mobile_owner_boundary_tests {
         crate::sim_rng::with_seed(17, |sim| {
             let mut engine = EngineInner::new();
             engine.set_actors_frozen(true);
-            let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+            let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
             let mut owner = mobile(vec![child]);
             owner.speed = 2.0;
             owner.goal = MapPoint::new(2.0, 0.0);
@@ -697,7 +681,7 @@ mod mobile_owner_boundary_tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
-        let child = engine.add_entity(mobile_fx(0, MapPoint::new(10.0, 0.0)));
+        let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(10.0, 0.0)));
         let mut owner = mobile(vec![child]);
         owner.position = MapPoint::new(20.0, 0.0);
         owner.old_position = MapPoint::new(0.0, 0.0);
@@ -751,8 +735,8 @@ mod mobile_owner_boundary_tests {
     fn first_child_boundary_rejects_a_later_child_with_the_wrong_mobile_index() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let second = engine.add_entity(mobile_fx(1, MapPoint::new(0.0, 0.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(0.0, 0.0)));
         engine
             .world
             .mobile_elements
@@ -854,7 +838,7 @@ mod generic_actor_line_crossing_tests {
         }
         element.set_direction_instantly(13);
         let stale_increment = element.sprite.position_iface.raw_increment_map();
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData {
                 action_state: ActionState::WaitingSword,
@@ -956,7 +940,7 @@ mod generic_actor_line_crossing_tests {
         // invalidates the cached increment before corpse placement commits.
         element.sprite.position_iface.set_map_goal(MapPoint::ZERO);
         element.set_position_map_delayed(destination);
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData::default(),
             human: HumanData {
@@ -1013,8 +997,8 @@ mod generic_actor_line_crossing_tests {
 
 #[cfg(test)]
 thread_local! {
-    static NPC_HOURGLASS_PHASE_TRACE: std::cell::RefCell<Option<Vec<NpcHourglassPhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static NPC_HOURGLASS_PHASE_TRACE: super::test_support::Probe<NpcHourglassPhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
@@ -1024,29 +1008,14 @@ fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
         "npc hourglass phase"
     );
     #[cfg(test)]
-    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(phase);
-        }
-    });
+    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
 pub(super) fn capture_npc_hourglass_phases<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<NpcHourglassPhase>) {
-    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
-        assert!(trace.borrow().is_none(), "phase capture is not re-entrant");
-        *trace.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let phases = NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("phase capture must remain active")
-    });
-    (result, phases)
+    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1060,8 +1029,8 @@ pub(super) enum ActorAnimationBoundaryPhase {
 
 #[cfg(test)]
 thread_local! {
-    static ACTOR_ANIMATION_BOUNDARY_TRACE: std::cell::RefCell<Option<Vec<ActorAnimationBoundaryPhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static ACTOR_ANIMATION_BOUNDARY_TRACE: super::test_support::Probe<ActorAnimationBoundaryPhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
@@ -1071,31 +1040,14 @@ fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
         "actor animation boundary"
     );
     #[cfg(test)]
-    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(phase);
-        }
-    });
+    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
 pub(super) fn capture_actor_animation_boundary<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<ActorAnimationBoundaryPhase>) {
-    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
-        assert!(
-            trace.borrow_mut().replace(Vec::new()).is_none(),
-            "actor animation boundary capture is not re-entrant"
-        );
-    });
-    let result = f();
-    let phases = ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("actor animation boundary capture must remain active")
-    });
-    (result, phases)
+    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1113,8 +1065,8 @@ pub(super) enum ActorOwnerEnvelopePhase {
 
 #[cfg(test)]
 thread_local! {
-    static ACTOR_OWNER_ENVELOPE_TRACE: std::cell::RefCell<Option<Vec<ActorOwnerEnvelopePhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static ACTOR_OWNER_ENVELOPE_TRACE: super::test_support::Probe<ActorOwnerEnvelopePhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
@@ -1124,31 +1076,14 @@ fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
         "actor owner envelope"
     );
     #[cfg(test)]
-    ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(phase);
-        }
-    });
+    ACTOR_OWNER_ENVELOPE_TRACE.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
 pub(super) fn capture_actor_owner_envelope<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<ActorOwnerEnvelopePhase>) {
-    ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
-        assert!(
-            trace.borrow_mut().replace(Vec::new()).is_none(),
-            "actor-owner envelope capture is not re-entrant"
-        );
-    });
-    let result = f();
-    let phases = ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("actor-owner envelope capture must remain active")
-    });
-    (result, phases)
+    ACTOR_OWNER_ENVELOPE_TRACE.with(|probe| probe.capture(f))
 }
 
 /// Exact base-Actor Execute identity selected at entry to one legacy slot.
@@ -2241,8 +2176,8 @@ fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
 
 #[cfg(test)]
 thread_local! {
-    static CAPTURED_HOURGLASS_PHASES: std::cell::RefCell<Option<Vec<HourglassPhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static CAPTURED_HOURGLASS_PHASES: super::test_support::Probe<HourglassPhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn trace_hourglass_phase(phase: HourglassPhase) {
@@ -2252,35 +2187,43 @@ fn trace_hourglass_phase(phase: HourglassPhase) {
         "perform_hourglass phase"
     );
     #[cfg(test)]
-    CAPTURED_HOURGLASS_PHASES.with(|captured| {
-        if let Some(phases) = captured.borrow_mut().as_mut() {
-            phases.push(phase);
-        }
-    });
+    CAPTURED_HOURGLASS_PHASES.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
-pub(super) fn begin_hourglass_phase_capture() {
-    CAPTURED_HOURGLASS_PHASES.with(|captured| {
-        let previous = captured.borrow_mut().replace(Vec::new());
-        assert!(previous.is_none(), "hourglass phase capture already active");
-    });
+pub(super) fn capture_hourglass_phases<T>(f: impl FnOnce() -> T) -> (T, Vec<HourglassPhase>) {
+    CAPTURED_HOURGLASS_PHASES.with(|probe| probe.capture(f))
 }
 
-#[cfg(test)]
-pub(super) fn end_hourglass_phase_capture() -> Vec<HourglassPhase> {
-    CAPTURED_HOURGLASS_PHASES.with(|captured| {
-        captured
-            .borrow_mut()
-            .take()
-            .expect("hourglass phase capture was not active")
-    })
+#[test]
+fn hourglass_observer_nested_captures_keep_their_own_order() {
+    trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+    let (value, outer) = capture_hourglass_phases(|| {
+        trace_hourglass_phase(HourglassPhase::DeferredEffectsStart);
+        let (nested_value, nested) = capture_hourglass_phases(|| {
+            trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+            17
+        });
+        assert_eq!(nested_value, 17);
+        assert_eq!(nested, [HourglassPhase::MissionAndMessages]);
+        trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+        23
+    });
+    assert_eq!(value, 23);
+    assert_eq!(
+        outer,
+        [
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages
+        ]
+    );
+    assert!(capture_hourglass_phases(|| ()).1.is_empty());
 }
 
 #[cfg(test)]
 thread_local! {
-    static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: std::cell::RefCell<Option<Vec<EntityId>>> =
-        const { std::cell::RefCell::new(None) };
+    static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: super::test_support::Probe<EntityId> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_ordered_gameplay_entity(entity_id: EntityId) {
@@ -2290,29 +2233,12 @@ fn observe_ordered_gameplay_entity(entity_id: EntityId) {
         "ordered gameplay slot"
     );
     #[cfg(test)]
-    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-        if let Some(entities) = captured.borrow_mut().as_mut() {
-            entities.push(entity_id);
-        }
-    });
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|probe| probe.record(entity_id));
 }
 
 #[cfg(test)]
 pub(super) fn capture_ordered_gameplay_entities<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
-    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-        assert!(
-            captured.borrow_mut().replace(Vec::new()).is_none(),
-            "ordered gameplay capture is not re-entrant"
-        );
-    });
-    let result = f();
-    let entities = CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-        captured
-            .borrow_mut()
-            .take()
-            .expect("ordered gameplay capture must remain active")
-    });
-    (result, entities)
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|probe| probe.capture(f))
 }
 
 /// Move exclamations whose decoded-duration deadline has arrived into
@@ -3097,7 +3023,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                let _ = self.finish_move_path(sim, request, waypoints);
+                self.finish_move_path(sim, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(
@@ -3557,999 +3483,15 @@ impl EngineInner {
                 let actor_enters_hourglass = entity.actor_data().is_some()
                     && !matches!(entity, Entity::Pc(pc) if pc.pc.fried_psykokwack);
                 if actor_enters_hourglass {
-                    'actor_hourglass: {
-                        // Detach work that predates this actor slot. Lazy Wait
-                        // initialization and completion callbacks below may drain
-                        // only work they synchronously create; they must not steal
-                        // a global/later-owner continuation.
-                        let preexisting_sequence_work = self
-                            .orders
-                            .sequence_manager
-                            .take_pending_synchronous_actions();
-
-                        // The actor update consumes one queued base
-                        // position update before it inspects the current
-                        // sequence/order.
-                        self.apply_delayed_actor_position(sim, assets, entity_id);
-                        self.debug_patrol_turn_lifecycle("actor_slot_before_prelude", entity_id);
-                        before_actor(self, entity_id);
-                        self.debug_patrol_turn_lifecycle("actor_slot_after_prelude", entity_id);
-                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
-
-                        let frozen_without_order = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .and_then(Entity::actor_data)
-                            .is_some_and(|actor| actor.execution_frozen)
-                            && self
-                                .orders
-                                .sequence_manager
-                                .current_order_for_actor(entity_id)
-                                .is_none();
-                        if frozen_without_order {
-                            // The actor update does not reach the
-                            // execution-freeze return until after it has
-                            // observed an orderless selected element and run
-                            // order advancement. A terminal transition recorded
-                            // in an earlier-created attacker's slot therefore
-                            // sends its selected-element condolence before the
-                            // Human/NPC tail (and its detection refresh), even
-                            // though this actor cannot execute an order now.
-                            self.dispatch_selected_condolations_for_actor_entry(
-                                sim, entity_id, assets,
-                            );
-                            self.drain_script_synchronous_actions(
-                                sim,
-                                assets,
-                                &mut Vec::new(),
-                            )
-                            .unwrap_or_else(|error| {
-                                panic!(
-                                    "frozen actor {entity_id:?} order-advancement boundary failed to drain synchronous sequence work: {error:?}"
-                                )
-                            });
-                            // The actor update refreshes the order after applying
-                            // the delayed position. With no selected order it
-                            // clears the pointer, then an execution freeze returns
-                            // before lazy Wait and the second movement snapshot.
-                            self.world
-                                .entities
-                                .get_mut(entity_id)
-                                .and_then(Entity::actor_data_mut)
-                                .expect("frozen actor disappeared before mpOrder clear")
-                                .installed_order = None;
-                            self.debug_refresh_view_lifecycle(
-                                "derived_tail_frozen_without_order",
-                                entity_id,
-                                Some(crate::order::OrderType::NonanimationEnd),
-                            );
-                            after_slot(self, entity_id, crate::order::OrderType::NonanimationEnd);
-                            let leaked_slot_work = self
-                                .orders
-                                .sequence_manager
-                                .take_pending_synchronous_actions();
-                            assert!(
-                                leaked_slot_work.is_empty(),
-                                "frozen actor {entity_id:?} leaked synchronous sequence work after its specialized update tail: {leaked_slot_work:?}"
-                            );
-                            self.orders
-                                .sequence_manager
-                                .restore_pending_synchronous_actions(preexisting_sequence_work);
-                            break 'actor_hourglass;
-                        }
-
-                        // The engine tick updates every element regardless of
-                        // whether it is active. The actor update
-                        // then installs Wait whenever its order is empty. Active
-                        // controls world presence/rendering, not sequence time.
-                        self.ensure_wait_element(entity_id);
-                        // The original game's wait-to-sequence-launch path then
-                        // Sequence launch through element dispatch to instruction is
-                        // synchronous. A command registered for later manager or
-                        // deferred processing cannot suppress this transient
-                        // Execute: Wait may publish its START sprite row before
-                        // that later command interrupts it in the same frame.
-                        // Preexisting Rust work is detached above, so this drain
-                        // consumes only the newly launched Wait.
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
-                            )
-                        });
-                        observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(
-                            entity_id,
-                        ));
-
-                        // The actor update starts a move after lazy Wait
-                        // installation and immediately before it samples the
-                        // current order ID and enters Execute. The delayed-position
-                        // branches begin an earlier movement step for their crossing
-                        // segment, then reach this second snapshot as well. Keep
-                        // PositionInterface's old-position latch frame-local;
-                        // movement and combat helpers query movement status later in
-                        // this same owner slot.
-                        self.world
-                            .entities
-                            .get_mut(entity_id)
-                            .expect("actor disappeared before new movement update")
-                            .position_iface_mut()
-                            .new_move();
-
-                        let selected_order = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
-                        let selected_order_type = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .map(|(_, _, order)| order.order_type);
-                        let selected_order_compute_direction = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .map(|(_, _, order)| order.compute_direction);
-                        // The actor update refreshes the order from the selected
-                        // element immediately before Execute. Preserve that
-                        // pointer publication independently of manager selection:
-                        // later order advancement or instruction updates the explicit
-                        // mirror at their own boundaries.
-                        let installed_at_entry = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                                order_id: order.order_id,
-                                order_type: order.order_type,
-                            });
-                        self.world
-                            .entities
-                            .get_mut(entity_id)
-                            .and_then(Entity::actor_data_mut)
-                            .expect("actor disappeared before installing its update order")
-                            .installed_order = installed_at_entry;
-                        let selected_owner_family = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(entity_id)
-                            .and_then(|(_, _, order)| {
-                                classify_live_actor_execute_arm(entity_id, order.order_type)
-                            });
-                        if let Some((_, _, order_id)) = selected_order {
-                            let actor = self
-                                .world
-                                .entities
-                                .get_mut(entity_id)
-                                .and_then(Entity::actor_data_mut)
-                                .unwrap_or_else(|| {
-                                    panic!("selected Execute owner {entity_id:?} lost actor data")
-                                });
-                            actor.select_execute_order(order_id);
-                        }
-                        self.debug_drop_owner_boundary(
-                            "execute_latch_published",
-                            entity_id,
-                            selected_order,
-                        );
-                        // Player action execution handles the carrying-corpse exit for an
-                        // ENTER_SWORDFIGHT before the default validity arm: on
-                        // the transition's first Execute it drops immediately
-                        // and returns TERMINATED. Translation still has to register the
-                        // transition, so key this to the entry-latched order
-                        // rather than consuming it during transition generation.
-                        let enter_swordfight_corpse_exit = selected_order_type
-                            == Some(
-                                crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
-                            )
-                            && self.world.entities.get(entity_id).is_some_and(|entity| {
-                                entity.is_pc()
-                                    && entity.actor_data().is_some_and(|actor| {
-                                        actor.execute_order_initialising && !actor.execution_frozen
-                                    })
-                            })
-                            && selected_order.is_some_and(|(seq_id, elem_idx, _)| {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(seq_id, elem_idx)
-                                    .is_some_and(|element| {
-                                        element.command == crate::element::Command::EnterSwordfight
-                                    })
-                            });
-                        // Human/PC validity belongs to the live Execute entry,
-                        // after the actor update has established the new-order flag for
-                        // this exact selected order. Earlier actor callbacks may
-                        // replace the selected order in the same owner walk, so
-                        // sampling in a global pre-pass would validate stale work.
-                        let validity_short_circuited = !enter_swordfight_corpse_exit
-                            && self.pre_tick_human_execute_validity_for(assets, entity_id);
-                        if !validity_short_circuited
-                            && !enter_swordfight_corpse_exit
-                            && selected_order_type
-                                == Some(
-                                    crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
-                                )
-                            && self
-                                .world
-                                .entities
-                                .get(entity_id)
-                                .and_then(Entity::actor_data)
-                                .is_some_and(|actor| actor.execute_order_initialising)
-                        {
-                            // Player-character execution owns this initialization,
-                            // not the DROP_CORPSE command builder. Posture
-                            // transitions inserted for another PC command enter
-                            // the same animation arm without an ActiveAbility.
-                            // The original game aligns the carried actor after validity and before
-                            // starting the action.
-                            let (carried, carried_direction) = {
-                                let carrier = self.world.entities.get(entity_id).unwrap_or_else(|| {
-                                    panic!(
-                                        "corpse-exit transition owner {entity_id:?} vanished before initialization"
-                                    )
-                                });
-                                let carried = carrier
-                                    .pc_data()
-                                    .unwrap_or_else(|| {
-                                        panic!(
-                                            "corpse-exit transition owner {entity_id:?} is not a PC"
-                                        )
-                                    })
-                                    .carried
-                                    .unwrap_or_else(|| {
-                                        panic!(
-                                            "corpse-exit transition owner {entity_id:?} has no carried body"
-                                        )
-                                    });
-                                (
-                                    carried,
-                                    carrier.element_data().direction().wrapping_sub(4) & 15,
-                                )
-                            };
-                            self.world
-                                .entities
-                                .get_mut(carried)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "corpse-exit transition target {carried:?} vanished before initialization"
-                                    )
-                                })
-                                .element_data_mut()
-                                .set_direction_instantly(carried_direction);
-                        }
-                        let movement_selection = (!validity_short_circuited)
-                            .then_some(selected_order)
-                            .flatten()
-                            .and_then(|(seq_id, elem_idx, order_id)| {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(seq_id, elem_idx)
-                                    .filter(|element| {
-                                        selected_owner_family == Some(ExecuteOwnerFamily::Movement)
-                                            && element.data.is_movement()
-                                            && !matches!(
-                                                element.command,
-                                                crate::element::Command::WaitTimer
-                                                    | crate::element::Command::WaitFreeLift
-                                            )
-                                    })
-                                    .map(|_| super::movement::MovementOwnerSelection {
-                                        seq_id,
-                                        elem_idx,
-                                        order_id,
-                                    })
-                            });
-                        let movement_entity_target_seek =
-                            movement_selection.is_some_and(|selection| {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(selection.seq_id, selection.elem_idx)
-                                    .is_some_and(|element| {
-                                        let crate::sequence::SequenceElementData::Movement {
-                                            element: target,
-                                            flags,
-                                            ..
-                                        } = &element.data
-                                        else {
-                                            return false;
-                                        };
-                                        // The seek wrapper is chosen per animation
-                                        // arm, not per element: wall and ladder
-                                        // orders keep the SEEK flag while their
-                                        // Execute arms drive the sprite directly
-                                        // and hand the raw START edge back.
-                                        flags.contains(crate::sequence::MoveFlags::SEEK)
-                                            && target.is_some()
-                                            && element.current_order().is_some_and(|order| {
-                                                super::movement::perform_seek_calls_per_execute(
-                                                    order.order_type,
-                                                ) > 0
-                                            })
-                                    })
-                            });
-                        let melee_selection = (!validity_short_circuited)
-                            .then_some(selected_order)
-                            .flatten()
-                            .and_then(|(seq_id, elem_idx, order_id)| {
-                                let order_type = self
-                                    .orders
-                                    .sequence_manager
-                                    .get_element(seq_id, elem_idx)
-                                    .and_then(|element| element.current_order())
-                                    .map(|order| order.order_type)?;
-                                (selected_owner_family == Some(ExecuteOwnerFamily::Melee)
-                                    && MELEE_ORDERS.contains(&order_type))
-                                .then_some(MeleeOwnerSelection {
-                                    seq_id,
-                                    elem_idx,
-                                    order_id,
-                                })
-                            });
-                        // Bow belongs to the same entry-latched Execute choice as
-                        // movement and melee. If its terminal callback exposes a
-                        // successor order, that successor must wait until the
-                        // actor's next update rather than entering generic
-                        // Execute later in this same slot.
-                        let bow_selection = (!validity_short_circuited
-                            && selected_owner_family == Some(ExecuteOwnerFamily::Bow))
-                        .then(|| self.selected_bow_order(entity_id))
-                        .flatten();
-                        let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
-                            !validity_short_circuited
-                                && selected_owner_family == Some(ExecuteOwnerFamily::Ability)
-                                && self
-                                    .world
-                                    .entities
-                                    .get(entity_id)
-                                    .and_then(Entity::actor_data)
-                                    .is_some_and(|actor| {
-                                        let Some(expected_type) = active_ability_order_type(actor)
-                                        else {
-                                            return false;
-                                        };
-                                        actor.active_ability.is_active()
-                                            && actor.active_ability.sequence_id == Some(*seq)
-                                            && actor.active_ability.element_index == *elem
-                                            && actor.active_ability.order_id == Some(*order_id)
-                                            && self
-                                                .orders
-                                                .sequence_manager
-                                                .get_element(*seq, *elem)
-                                                .and_then(|element| element.current_order())
-                                                .is_some_and(|order| {
-                                                    order.order_type == expected_type
-                                                })
-                                    })
-                        });
-                        let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
-                            if validity_short_circuited
-                                || selected_owner_family != Some(ExecuteOwnerFamily::Beggar)
-                            {
-                                return None;
-                            }
-                            self.orders
-                                .sequence_manager
-                                .get_element(seq, elem)
-                                .and_then(|element| element.current_order())
-                                .and_then(|order| {
-                                    (order.order_id == order_id
-                                        && order.order_type
-                                            == crate::order::OrderType::SimulatingBeggar)
-                                        .then_some(order_id)
-                                })
-                        });
-                        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(
-                            entity_id,
-                        ));
-                        self.debug_drop_owner_boundary(
-                            "tick_ability_entry",
-                            entity_id,
-                            selected_order,
-                        );
-                        if let Some(entity) = self.world.entities.get(entity_id) {
-                            super::animation::direction_provenance_snapshot(
-                                entity.position_iface(),
-                                entity_id,
-                                self.control.frame_counter,
-                                "owner_execute_entry",
-                            );
-                        }
-                        let explicit_execute = execute_owner_arm(
-                            self,
-                            entity_id,
-                            movement_selection,
-                            melee_selection,
-                            bow_selection,
-                            ability_selection,
-                            beggar_selection,
-                        )
-                        .into_explicit_execute_motion();
-                        let explicit_execute_motion = explicit_execute.initial;
-                        let post_completion_execute_override =
-                            explicit_execute.post_completion_override;
-                        if let Some(entity) = self.world.entities.get(entity_id) {
-                            super::animation::direction_provenance_snapshot(
-                                entity.position_iface(),
-                                entity_id,
-                                self.control.frame_counter,
-                                "owner_post_execute",
-                            );
-                        }
-                        let mut specialized_execute_motion =
-                            explicit_execute_motion.or_else(|| {
-                                (!validity_short_circuited)
-                                    .then_some(selected_owner_family)
-                                    .flatten()
-                                    .filter(|family| {
-                                        specialized_execute_uses_sprite_motion(*family)
-                                    })
-                                    .and_then(|_| {
-                                        specialized_execute_motion(
-                                            self.world.entities.get(entity_id).and_then(|entity| {
-                                                entity.element_data().sprite.last_motion_state
-                                            }),
-                                            beggar_selection.is_some(),
-                                            movement_entity_target_seek,
-                                        )
-                                    })
-                            });
-                        let mut specialized_wait_modifier_terminated = false;
-                        if let (Some(motion), Some((entry_seq_id, entry_elem_idx, _))) =
-                            (specialized_execute_motion.as_mut(), selected_order)
-                        {
-                            // The actor update applies WAIT_TIMER / WAIT_FREE_LIFT
-                            // after complete action execution. Specialized
-                            // movement, combat, ability, and beggar arms therefore
-                            // pass through the same base modifier as generic sprite
-                            // animation, exactly once.
-                            let motion_before_modifier = *motion;
-                            self.apply_actor_post_execute_wait_modifier_to_motion(
-                                entity_id,
-                                entry_seq_id,
-                                entry_elem_idx,
-                                motion,
-                            );
-                            specialized_wait_modifier_terminated = motion_before_modifier
-                                != crate::sprite::MotionState::Terminated
-                                && *motion == crate::sprite::MotionState::Terminated;
-                        }
-                        let explicit_execute_in_progress = matches!(
-                            explicit_execute_motion,
-                            Some(crate::sprite::MotionState::InProgress)
-                        );
-                        let explicit_execute_terminated = matches!(
-                            explicit_execute_motion,
-                            Some(crate::sprite::MotionState::Terminated)
-                        );
-                        if let Some(motion) = specialized_execute_motion {
-                            // Movement/combat/ability owners are derived Execute
-                            // arms just like the generic animation switch below.
-                            // Their sprite result is therefore the initial value
-                            // assigned to the actor's motion state before the update
-                            // applies completion and order-advancement handling.
-                            self.world
-                            .entities
-                            .get_mut(entity_id)
-                            .and_then(Entity::actor_data_mut)
-                            .expect(
-                                "specialized Execute owner disappeared before motion-state latch",
-                            )
-                            .continuation
-                            .motion_state = motion;
-                        }
-                        if !validity_short_circuited
-                            && explicit_execute_motion.is_none()
-                            // Generic animation owns its completion through
-                            // `tick_actor_animation_for` below.  In
-                            // particular TURNING deliberately ignores the
-                            // visual sprite's Done edge while `Turn()` still
-                            // reports that the body rotated this frame.  A
-                            // stale Done retained by the looping alerted-turn
-                            // sprite must therefore not complete the order
-                            // ahead of that authoritative Execute result.
-                            && selected_owner_family
-                                .is_some_and(specialized_execute_uses_sprite_motion)
-                            && self.world.entities.get(entity_id).is_some_and(|entity| {
-                                entity.element_data().sprite.last_motion_state
-                                    == Some(crate::sprite::MotionState::Done)
-                            })
-                        {
-                            let (entry_seq_id, entry_elem_idx, entry_order_id) =
-                            selected_order.unwrap_or_else(|| {
-                                panic!(
-                                    "specialized actor owner {entity_id:?} recorded Done without an entry-latched order"
-                                )
-                            });
-                            self.mark_entry_order_done(
-                                entity_id,
-                                entry_seq_id,
-                                entry_elem_idx,
-                                entry_order_id,
-                            );
-                        }
-
-                        observe_actor_animation_boundary(
-                            ActorAnimationBoundaryPhase::GenericExecute(entity_id),
-                        );
-                        let (combat_injury_terminated, mut outcomes, mut execute_result) =
-                            if validity_short_circuited
-                                || movement_selection.is_some()
-                                || melee_selection.is_some()
-                                || bow_selection.is_some()
-                                || ability_selection.is_some()
-                                || beggar_selection.is_some()
-                            {
-                                (Vec::new(), Default::default(), None)
-                            } else if enter_swordfight_corpse_exit {
-                                let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
-                                    panic!(
-                                        "ENTER_SWORDFIGHT corpse-exit Execute lost its entry order"
-                                    )
-                                });
-                                self.world
-                                    .entities
-                                    .get(entity_id)
-                                    .and_then(Entity::pc_data)
-                                    .and_then(|pc| pc.carried)
-                                    .unwrap_or_else(|| {
-                                        panic!(
-                                            "ENTER_SWORDFIGHT corpse-exit Execute owner {entity_id:?} has no carried body"
-                                        )
-                                    });
-                                self.force_drop_carried_corpse_instant(entity_id);
-                                (
-                                    Vec::new(),
-                                    Default::default(),
-                                    Some(super::animation::ActorExecuteResult {
-                                        order_type: crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
-                                        entry_seq_id: seq_id,
-                                        entry_elem_idx: elem_idx,
-                                        motion: crate::sprite::MotionState::Terminated,
-                                    }),
-                                )
-                            } else if selected_order_type == Some(crate::order::OrderType::Rolling)
-                            {
-                                self.tick_rolling_owner(sim, assets, entity_id)
-                            } else {
-                                self.tick_actor_animation_for(sim, assets, entity_id)
-                            };
-                        if specialized_wait_modifier_terminated {
-                            let (entry_seq_id, entry_elem_idx, entry_order_id) = selected_order
-                                .expect("specialized wait modifier lost its entry order");
-                            self.stage_actor_execute_completion(
-                                entity_id,
-                                Some(entry_order_id),
-                                super::animation::ActorExecuteResult {
-                                    order_type: selected_order_type.expect(
-                                        "specialized wait modifier lost its entry order type",
-                                    ),
-                                    entry_seq_id,
-                                    entry_elem_idx,
-                                    motion: crate::sprite::MotionState::Terminated,
-                                },
-                                &mut outcomes,
-                            );
-                        }
-                        if explicit_execute_terminated {
-                            let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
-                                panic!(
-                                    "actor {entity_id:?} returned explicit Terminated without an entry-latched order"
-                                )
-                            });
-                            outcomes.seq_advance.push((seq_id, elem_idx));
-                        }
-                        // Falling-hit/pushed/lift flight is part of this
-                        // actor's selected Execute arm in Original. Advance it
-                        // before the derived NPC tail so later creation slots
-                        // observe the committed flight position.
-                        let flight_motion = self.tick_push_flight_for_owner(sim, assets, entity_id);
-                        if let (Some(result), Some(motion)) =
-                            (execute_result.as_mut(), flight_motion)
-                        {
-                            // FallingLadderWall returns Terminated directly
-                            // from Execute when its countdown reaches zero.
-                            // The split flight tail owns that terminal edge,
-                            // so replace the earlier sprite Start result before
-                            // the actor update latches it.
-                            result.motion = motion;
-                        }
-                        if execute_result.as_ref().is_some_and(|result| {
-                            result.motion == crate::sprite::MotionState::Start
-                        }) && self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .is_some_and(Entity::is_pc)
-                        {
-                            // Player-character execution owns eventual strike /
-                            // execution remarks. Their 50% RNG draw and speech
-                            // side effects occur synchronously before the next
-                            // element's update slot.
-                            self.tick_pc_combat_anim_speech_for_owner(sim, assets, entity_id);
-                        }
-                        // The original game clears the sequence-started flag immediately
-                        // after Execute returns. It means "the selected element
-                        // has not had its first owner slot yet", not "this
-                        // element has ever started". In particular, a Move issued
-                        // while an already-running non-interruptable PassDoor is
-                        // postponed; only a PassDoor newly installed since the
-                        // actor's last slot rejects that Move as impossible.
-                        if let Some(actor) = self
-                            .world
-                            .entities
-                            .get_mut(entity_id)
-                            .and_then(Entity::actor_data_mut)
-                        {
-                            actor.sequence_element_started = false;
-                        }
-                        for injured_id in combat_injury_terminated.iter().copied() {
-                            self.dispatch_combat_injury_think_for_actor_hourglass(
-                                sim, injured_id, assets,
-                            );
-                        }
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "actor {entity_id:?} combat-injury Think at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
-                            )
-                        });
-                        for injured_id in combat_injury_terminated {
-                            observe_actor_animation_boundary(
-                                ActorAnimationBoundaryPhase::CombatInjuryThink(injured_id),
-                            );
-                        }
-
-                        // Human-actor execution performs this work inside
-                        // the sword-waiting arm, after action processing and before
-                        // returning its motion result to the actor update. Keep
-                        // launches and cross-actor mutations live so later slots
-                        // observe them and earlier slots do not.
-                        // This is part of human action execution's selected
-                        // WAITING_SWORD arm, not an animation-completion
-                        // callback.  In particular, the arm still runs when
-                        // the generic sprite helper has no completion record
-                        // for this slot. Key it to the actor update's
-                        // entry-latched order, as Original does, while keeping
-                        // the two Execute entry exits above intact.
-                        let execution_frozen = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .and_then(Entity::actor_data)
-                            .is_some_and(|actor| actor.execution_frozen);
-                        if waiting_sword_execute_reaches_evaluation(
-                            selected_order_type,
-                            validity_short_circuited,
-                            execution_frozen,
-                        ) {
-                            self.tick_waiting_sword_execute_for(sim, assets, entity_id);
-                        }
-
-                        // Human-actor execution decrements the parry hold
-                        // counter and queues a parry stop before this actor yields
-                        // its legacy slot. Preserve that ordering relative to
-                        // sword hits performed by later-created actors.
-                        if let Some(result) = execute_result.as_mut() {
-                            self.tick_parry_counter_for_execute(entity_id, result);
-                        }
-
-                        // The original actor update modifies the just-produced
-                        // Execute result for WAIT_TIMER / WAIT_FREE_LIFT before
-                        // completion or order advancement. Sampling the current element
-                        // here is intentional: WaitingSword callbacks above may
-                        // have synchronously replaced it.
-                        if let Some(result) = execute_result.as_mut() {
-                            self.apply_actor_post_execute_wait_modifier(entity_id, result);
-                        }
-                        // The base actor update calls line-crossing detection
-                        // after the complete execution chain and its wait
-                        // modifier, but before interpreting the motion result.
-                        // Movement owners and Rolling close this boundary in
-                        // their specialized executors; generic animation
-                        // (including death-place selection and flight) reaches it here.
-                        if selected_owner_family != Some(ExecuteOwnerFamily::Movement)
-                            && selected_order_type != Some(crate::order::OrderType::Rolling)
-                        {
-                            self.dispatch_actor_post_execute_line_crossing(
-                                sim,
-                                assets,
-                                entity_id,
-                                selected_order_compute_direction,
-                            );
-                        }
-                        if let Some(result) = execute_result.take() {
-                            // The actor update stores every execution
-                            // return in serialized `mmotionState` before it
-                            // handles Done/Terminated/Aborted. Keeping only the
-                            // transient Sprite result leaves the save-loaded
-                            // value frozen forever and makes the very first
-                            // post-load frame diverge whenever an animation
-                            // crosses a motion boundary.
-                            self.world
-                                .entities
-                                .get_mut(entity_id)
-                                .and_then(Entity::actor_data_mut)
-                                .expect("Execute owner disappeared before motion-state latch")
-                                .continuation
-                                .motion_state = result.motion;
-                            self.stage_actor_execute_completion(
-                                entity_id,
-                                selected_order.map(|(_, _, order_id)| order_id),
-                                result,
-                                &mut outcomes,
-                            );
-                        }
-
-                        // The original-game soldier update runs AI before returning
-                        // Terminated to the base actor update. Only after that
-                        // synchronous decision tick finishes may order advancement/completion
-                        // promote the actor's successor order.
-                        self.process_anim_completion_outcomes(sim, outcomes, assets);
-                        // Terminating a sequence element calls the
-                        // actor's removal notification and then readiness
-                        // synchronously inside this update slot. Close only
-                        // this owner's newly terminated stack before its derived
-                        // NPC tail runs; leaving it in the global queue delays
-                        // immediate successors such as UnlockAI until after
-                        // detection and changes observable AI state.
-                        self.dispatch_condolations_for_owner_boundary(sim, entity_id, assets);
-                        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
-                            )
-                        });
-                        let selected_element_state =
-                            selected_order.and_then(|(entry_seq, entry_idx, _)| {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(entry_seq, entry_idx)
-                                    .map(|element| element.state)
-                            });
-                        let selected_element_retired = selected_order.is_some()
-                            && selected_element_state.is_none_or(|state| {
-                                !matches!(
-                                    state,
-                                    crate::sequence::SequenceState::Todo
-                                        | crate::sequence::SequenceState::InProgress
-                                        | crate::sequence::SequenceState::Postponed
-                                )
-                            });
-                        let selected_element_interrupted = selected_element_state
-                            == Some(crate::sequence::SequenceState::Interrupted);
-                        let selected_element_impossible =
-                            selected_order.is_some_and(|(entry_seq, entry_idx, _)| {
-                                self.orders
-                                    .sequence_manager
-                                    .get_element(entry_seq, entry_idx)
-                                    .is_some_and(|element| {
-                                        element.state == crate::sequence::SequenceState::Impossible
-                                    })
-                            });
-                        let selected_order_rewritten_by_stop = specialized_execute_motion
-                            .zip(selected_order_type)
-                            .is_some_and(|(motion, entry_order_type)| {
-                                selected_order.is_some_and(
-                                    |(entry_seq, entry_idx, entry_order_id)| {
-                                        self.orders
-                                            .sequence_manager
-                                            .current_order_for_actor(entity_id)
-                                            .is_some_and(|(live_seq, live_idx, live_order)| {
-                                                live_seq == entry_seq
-                                                    && live_idx == entry_idx
-                                                    && live_order.order_id != entry_order_id
-                                                    && is_start_stop_movement_rewrite(
-                                                        entry_order_id,
-                                                        entry_order_type,
-                                                        live_order.order_id,
-                                                        live_order.order_type,
-                                                        motion,
-                                                    )
-                                            })
-                                    },
-                                )
-                            });
-                        let selected_entry_order_still_current =
-                            selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
-                                self.orders
-                                    .sequence_manager
-                                    .current_order_for_actor(entity_id)
-                                    .is_some_and(|(live_seq, live_idx, live_order)| {
-                                        live_seq == entry_seq
-                                            && live_idx == entry_idx
-                                            && live_order.order_id == entry_order
-                                    })
-                            });
-                        let selected_specialized_order_advanced = !explicit_execute_in_progress
-                            && specialized_order_advanced_after_execute(
-                                specialized_execute_motion,
-                                selected_order_rewritten_by_stop,
-                                selected_element_retired,
-                                selected_element_interrupted,
-                                selected_entry_order_still_current,
-                            );
-                        // Terminal sequence elements retain their allocated
-                        // orders for diagnostics/save parity. Do not mistake
-                        // that same retired entry order for a successor, while
-                        // still accepting a distinct order installed by a
-                        // synchronous condolence-card callback.
-                        // Order advancement changes the retained execution result to
-                        // IN_PROGRESS only when Proceed returns a non-null
-                        // actor order. Manager residency is not sufficient: queue
-                        // exhaustion can terminate the selected element while
-                        // leaving a fallback Wait discoverable in the manager,
-                        // yet the actor's order remains empty until its next
-                        // update entry. `installed_order` is the explicit
-                        // mirror updated by order advancement and accepted instruction.
-                        let installed_successor_exists = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .and_then(Entity::actor_data)
-                            .and_then(|actor| actor.installed_order)
-                            .is_some_and(|installed| {
-                                !selected_order.is_some_and(|(_, _, entry_order)| {
-                                    selected_element_retired && installed.order_id == entry_order
-                                })
-                            });
-                        let motion_latch_debug = motion_latch_debug_config().filter(|config| {
-                            config.frame == self.control.frame_counter
-                                && config.creation_order
-                                    == self.world.original_creation_order(entity_id)
-                        });
-                        let installed_order = motion_latch_debug.and_then(|_| {
-                            self.world
-                                .entities
-                                .get(entity_id)
-                                .and_then(Entity::actor_data)
-                                .and_then(|actor| actor.installed_order)
-                        });
-                        if let Some(actor) = self
-                            .world
-                            .entities
-                            .get_mut(entity_id)
-                            .and_then(Entity::actor_data_mut)
-                        {
-                            // Advancing to the next actor order overwrites a TERMINATED result
-                            // result with IN_PROGRESS when Proceed exposes another
-                            // order. Instruction handling does the same when terminating the
-                            // old element synchronously installs a successor.
-                            // Specialized owners retire their order internally,
-                            // so an entry-identity change is their equivalent of
-                            // the base update's TERMINATED branch even when the
-                            // last raw sprite edge was START/DONE/IN_PROGRESS.
-                            // ABORTED is tied to the sequence element captured
-                            // on actor-update entry. Its synchronous
-                            // Impossible condolence may install Wait and
-                            // overwrite the sprite's last edge, but it cannot
-                            // rewrite the Execute return already held by Actor.
-                            let motion_before_projection = actor.continuation.motion_state;
-                            actor.continuation.motion_state = project_post_completion_motion(
-                                motion_before_projection,
-                                selected_element_impossible && !explicit_execute_in_progress,
-                                installed_successor_exists,
-                                selected_specialized_order_advanced,
-                            );
-                            actor.continuation.motion_state =
-                                apply_post_completion_execute_override(
-                                    actor.continuation.motion_state,
-                                    post_completion_execute_override,
-                                    selected_element_interrupted,
-                                    installed_successor_exists,
-                                );
-                            if let Some(config) = motion_latch_debug {
-                                eprintln!(
-                                    "[MOTION_LATCH frame={} co={} owner={} entry_order={:?} entry_state={:?} specialized_motion={:?} explicit_in_progress={} retired={} interrupted={} impossible={} specialized_advanced={} installed_order={:?} installed_successor={} motion_before={:?} motion_after={:?}]",
-                                    config.frame,
-                                    config.creation_order,
-                                    entity_id.index(),
-                                    selected_order,
-                                    selected_element_state,
-                                    specialized_execute_motion,
-                                    explicit_execute_in_progress,
-                                    selected_element_retired,
-                                    selected_element_interrupted,
-                                    selected_element_impossible,
-                                    selected_specialized_order_advanced,
-                                    installed_order,
-                                    installed_successor_exists,
-                                    motion_before_projection,
-                                    actor.continuation.motion_state,
-                                );
-                            }
-                            tracing::trace!(
-                                target: "parity_motion_state",
-                                entity = ?entity_id,
-                                family = ?selected_owner_family,
-                                entry_order = ?selected_order,
-                                specialized_motion = ?specialized_execute_motion,
-                                element_retired = selected_element_retired,
-                                element_interrupted = selected_element_interrupted,
-                                specialized_advanced = selected_specialized_order_advanced,
-                                installed_successor = installed_successor_exists,
-                                motion_state = ?actor.continuation.motion_state,
-                                "actor motion-state latch",
-                            );
-                        }
-                        // Order advancement may synchronously expose a real postponed
-                        // successor through state changes and readiness. If it does not,
-                        // The original game leaves the actor order empty for the rest of this
-                        // actor update. The fallback Wait is created
-                        // only by the null-order guard at the start of the next
-                        // actor frame, so ActionChange observes NONANIMATION_END
-                        // on this completion frame.
-                        observe_actor_animation_boundary(
-                            ActorAnimationBoundaryPhase::CompletionEffects(entity_id),
-                        );
-
-                        // Release every animation/completion borrow before the VM:
-                        // ActionChange can synchronously replace this or a later
-                        // actor's order and the next slot must sample that live.
-                        observe_actor_animation_boundary(
-                            ActorAnimationBoundaryPhase::ActionChange(entity_id),
-                        );
-                        self.dispatch_actor_action_change_for(sim, assets, entity_id);
-                        // Do not derive the actor order from the manager at the tail. The
-                        // exact identity was published at update entry and is
-                        // subsequently changed only by order advancement, selected
-                        // element cleanup, or a synchronous accepted instruction.
-                        let installed_tail_order_type = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .and_then(Entity::actor_data)
-                            .and_then(|actor| actor.installed_order)
-                            .map(|order| order.order_type)
-                            .unwrap_or(crate::order::OrderType::NonanimationEnd);
-                        self.debug_refresh_view_lifecycle(
-                            "derived_tail_normal",
-                            entity_id,
-                            Some(installed_tail_order_type),
-                        );
-                        after_slot(self, entity_id, installed_tail_order_type);
-                        if let Some(entity) = self.world.entities.get(entity_id) {
-                            super::animation::direction_provenance_snapshot(
-                                entity.position_iface(),
-                                entity_id,
-                                self.control.frame_counter,
-                                "owner_tail_after_derived",
-                            );
-                        }
-
-                        if let Some(actor) = self
-                            .world
-                            .entities
-                            .get_mut(entity_id)
-                            .and_then(Entity::actor_data_mut)
-                        {
-                            actor.execute_order_initialising = false;
-                        }
-                        self.debug_drop_owner_boundary(
-                            "execute_latch_cleared",
-                            entity_id,
-                            selected_order,
-                        );
-
-                        // Human posture changes update intersecting-corpse state
-                        // synchronously in Original. Close the owner-local
-                        // boundary before the next creation slot samples this
-                        // actor for anti-collision.
-                        self.process_corpse_intersection_update_for(entity_id);
-
-                        let leaked_slot_work = self
-                            .orders
-                            .sequence_manager
-                            .take_pending_synchronous_actions();
-                        assert!(
-                            leaked_slot_work.is_empty(),
-                            "actor {entity_id:?} leaked synchronous sequence work after ActionChange at legacy slot {slot}: {leaked_slot_work:?}"
-                        );
-                        self.orders
-                            .sequence_manager
-                            .restore_pending_synchronous_actions(preexisting_sequence_work);
-                    }
+                    self.tick_one_actor_animation_action_change_slot(
+                        sim,
+                        assets,
+                        entity_id,
+                        slot,
+                        &mut before_actor,
+                        &mut execute_owner_arm,
+                        &mut after_slot,
+                    );
                 } else {
                     non_actor_slot(self, entity_id);
                 }
@@ -4588,6 +3530,965 @@ impl EngineInner {
         // arms use tick_actor_animation_for; selected movement, melee, bow,
         // ability, beggar, and WaitingSword work use their live owner arms;
         // the human/PC/NPC derived tail hook runs before the slot advances.
+    }
+
+    fn tick_one_actor_animation_action_change_slot<ExecuteMotion>(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        slot: usize,
+        before_actor: &mut impl FnMut(&mut Self, EntityId),
+        execute_owner_arm: &mut impl FnMut(
+            &mut Self,
+            EntityId,
+            Option<super::movement::MovementOwnerSelection>,
+            Option<MeleeOwnerSelection>,
+            Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
+            Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
+            Option<std::num::NonZeroU32>,
+        ) -> ExecuteMotion,
+        after_slot: &mut impl FnMut(&mut Self, EntityId, crate::order::OrderType),
+    ) where
+        ExecuteMotion: IntoExplicitExecuteMotion,
+    {
+        'actor_hourglass: {
+            // Detach work that predates this actor slot. Lazy Wait
+            // initialization and completion callbacks below may drain
+            // only work they synchronously create; they must not steal
+            // a global/later-owner continuation.
+            let preexisting_sequence_work = self
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+
+            // The actor update consumes one queued base
+            // position update before it inspects the current
+            // sequence/order.
+            self.apply_delayed_actor_position(sim, assets, entity_id);
+            self.debug_patrol_turn_lifecycle("actor_slot_before_prelude", entity_id);
+            before_actor(self, entity_id);
+            self.debug_patrol_turn_lifecycle("actor_slot_after_prelude", entity_id);
+            observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
+
+            let frozen_without_order = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::actor_data)
+                .is_some_and(|actor| actor.execution_frozen)
+                && self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id)
+                    .is_none();
+            if frozen_without_order {
+                // The actor update does not reach the
+                // execution-freeze return until after it has
+                // observed an orderless selected element and run
+                // order advancement. A terminal transition recorded
+                // in an earlier-created attacker's slot therefore
+                // sends its selected-element condolence before the
+                // Human/NPC tail (and its detection refresh), even
+                // though this actor cannot execute an order now.
+                self.dispatch_selected_condolations_for_actor_entry(sim, entity_id, assets);
+                self.drain_script_synchronous_actions(
+                sim,
+                assets,
+                &mut Vec::new(),
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "frozen actor {entity_id:?} order-advancement boundary failed to drain synchronous sequence work: {error:?}"
+                )
+            });
+                // The actor update refreshes the order after applying
+                // the delayed position. With no selected order it
+                // clears the pointer, then an execution freeze returns
+                // before lazy Wait and the second movement snapshot.
+                self.world
+                    .entities
+                    .get_mut(entity_id)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("frozen actor disappeared before mpOrder clear")
+                    .installed_order = None;
+                self.debug_refresh_view_lifecycle(
+                    "derived_tail_frozen_without_order",
+                    entity_id,
+                    Some(crate::order::OrderType::NonanimationEnd),
+                );
+                after_slot(self, entity_id, crate::order::OrderType::NonanimationEnd);
+                let leaked_slot_work = self
+                    .orders
+                    .sequence_manager
+                    .take_pending_synchronous_actions();
+                assert!(
+                    leaked_slot_work.is_empty(),
+                    "frozen actor {entity_id:?} leaked synchronous sequence work after its specialized update tail: {leaked_slot_work:?}"
+                );
+                self.orders
+                    .sequence_manager
+                    .restore_pending_synchronous_actions(preexisting_sequence_work);
+                break 'actor_hourglass;
+            }
+
+            // The engine tick updates every element regardless of
+            // whether it is active. The actor update
+            // then installs Wait whenever its order is empty. Active
+            // controls world presence/rendering, not sequence time.
+            self.ensure_wait_element(entity_id);
+            // The original game's wait-to-sequence-launch path then
+            // Sequence launch through element dispatch to instruction is
+            // synchronous. A command registered for later manager or
+            // deferred processing cannot suppress this transient
+            // Execute: Wait may publish its START sprite row before
+            // that later command interrupts it in the same frame.
+            // Preexisting Rust work is detached above, so this drain
+            // consumes only the newly launched Wait.
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+        .unwrap_or_else(|error| {
+            panic!(
+                "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
+            )
+        });
+            observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(entity_id));
+
+            // The actor update starts a move after lazy Wait
+            // installation and immediately before it samples the
+            // current order ID and enters Execute. The delayed-position
+            // branches begin an earlier movement step for their crossing
+            // segment, then reach this second snapshot as well. Keep
+            // PositionInterface's old-position latch frame-local;
+            // movement and combat helpers query movement status later in
+            // this same owner slot.
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .expect("actor disappeared before new movement update")
+                .position_iface_mut()
+                .new_move();
+
+            let selected_order = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+            let selected_order_type = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(_, _, order)| order.order_type);
+            let selected_order_compute_direction = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(_, _, order)| order.compute_direction);
+            // The actor update refreshes the order from the selected
+            // element immediately before Execute. Preserve that
+            // pointer publication independently of manager selection:
+            // later order advancement or instruction updates the explicit
+            // mirror at their own boundaries.
+            let installed_at_entry = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                    order_id: order.order_id,
+                    order_type: order.order_type,
+                });
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::actor_data_mut)
+                .expect("actor disappeared before installing its update order")
+                .installed_order = installed_at_entry;
+            let selected_owner_family = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .and_then(|(_, _, order)| {
+                    classify_live_actor_execute_arm(entity_id, order.order_type)
+                });
+            if let Some((_, _, order_id)) = selected_order {
+                let actor = self
+                    .world
+                    .entities
+                    .get_mut(entity_id)
+                    .and_then(Entity::actor_data_mut)
+                    .unwrap_or_else(|| {
+                        panic!("selected Execute owner {entity_id:?} lost actor data")
+                    });
+                actor.select_execute_order(order_id);
+            }
+            self.debug_drop_owner_boundary("execute_latch_published", entity_id, selected_order);
+            // Player action execution handles the carrying-corpse exit for an
+            // ENTER_SWORDFIGHT before the default validity arm: on
+            // the transition's first Execute it drops immediately
+            // and returns TERMINATED. Translation still has to register the
+            // transition, so key this to the entry-latched order
+            // rather than consuming it during transition generation.
+            let enter_swordfight_corpse_exit = selected_order_type
+                == Some(crate::order::OrderType::TransitionCarryingCorpseWaitingUpright)
+                && self.world.entities.get(entity_id).is_some_and(|entity| {
+                    entity.is_pc()
+                        && entity.actor_data().is_some_and(|actor| {
+                            actor.execute_order_initialising && !actor.execution_frozen
+                        })
+                })
+                && selected_order.is_some_and(|(seq_id, elem_idx, _)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .is_some_and(|element| {
+                            element.command == crate::element::Command::EnterSwordfight
+                        })
+                });
+            // Human/PC validity belongs to the live Execute entry,
+            // after the actor update has established the new-order flag for
+            // this exact selected order. Earlier actor callbacks may
+            // replace the selected order in the same owner walk, so
+            // sampling in a global pre-pass would validate stale work.
+            let validity_short_circuited = !enter_swordfight_corpse_exit
+                && self.pre_tick_human_execute_validity_for(assets, entity_id);
+            if !validity_short_circuited
+                && !enter_swordfight_corpse_exit
+                && selected_order_type
+                    == Some(crate::order::OrderType::TransitionCarryingCorpseWaitingUpright)
+                && self
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .and_then(Entity::actor_data)
+                    .is_some_and(|actor| actor.execute_order_initialising)
+            {
+                // Player-character execution owns this initialization,
+                // not the DROP_CORPSE command builder. Posture
+                // transitions inserted for another PC command enter
+                // the same animation arm without an ActiveAbility.
+                // The original game aligns the carried actor after validity and before
+                // starting the action.
+                let (carried, carried_direction) = {
+                    let carrier = self.world.entities.get(entity_id).unwrap_or_else(|| {
+                    panic!(
+                        "corpse-exit transition owner {entity_id:?} vanished before initialization"
+                    )
+                });
+                    let carried = carrier
+                        .pc_data()
+                        .unwrap_or_else(|| {
+                            panic!("corpse-exit transition owner {entity_id:?} is not a PC")
+                        })
+                        .carried
+                        .unwrap_or_else(|| {
+                            panic!("corpse-exit transition owner {entity_id:?} has no carried body")
+                        });
+                    (
+                        carried,
+                        carrier.element_data().direction().wrapping_sub(4) & 15,
+                    )
+                };
+                self.world
+                .entities
+                .get_mut(carried)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "corpse-exit transition target {carried:?} vanished before initialization"
+                    )
+                })
+                .element_data_mut()
+                .set_direction_instantly(carried_direction);
+            }
+            let movement_selection = (!validity_short_circuited)
+                .then_some(selected_order)
+                .flatten()
+                .and_then(|(seq_id, elem_idx, order_id)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .filter(|element| {
+                            selected_owner_family == Some(ExecuteOwnerFamily::Movement)
+                                && element.data.is_movement()
+                                && !matches!(
+                                    element.command,
+                                    crate::element::Command::WaitTimer
+                                        | crate::element::Command::WaitFreeLift
+                                )
+                        })
+                        .map(|_| super::movement::MovementOwnerSelection {
+                            seq_id,
+                            elem_idx,
+                            order_id,
+                        })
+                });
+            let movement_entity_target_seek = movement_selection.is_some_and(|selection| {
+                self.orders
+                    .sequence_manager
+                    .get_element(selection.seq_id, selection.elem_idx)
+                    .is_some_and(|element| {
+                        let crate::sequence::SequenceElementData::Movement {
+                            element: target,
+                            flags,
+                            ..
+                        } = &element.data
+                        else {
+                            return false;
+                        };
+                        // The seek wrapper is chosen per animation
+                        // arm, not per element: wall and ladder
+                        // orders keep the SEEK flag while their
+                        // Execute arms drive the sprite directly
+                        // and hand the raw START edge back.
+                        flags.contains(crate::sequence::MoveFlags::SEEK)
+                            && target.is_some()
+                            && element.current_order().is_some_and(|order| {
+                                super::movement::perform_seek_calls_per_execute(order.order_type)
+                                    > 0
+                            })
+                    })
+            });
+            let melee_selection = (!validity_short_circuited)
+                .then_some(selected_order)
+                .flatten()
+                .and_then(|(seq_id, elem_idx, order_id)| {
+                    let order_type = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .and_then(|element| element.current_order())
+                        .map(|order| order.order_type)?;
+                    (selected_owner_family == Some(ExecuteOwnerFamily::Melee)
+                        && MELEE_ORDERS.contains(&order_type))
+                    .then_some(MeleeOwnerSelection {
+                        seq_id,
+                        elem_idx,
+                        order_id,
+                    })
+                });
+            // Bow belongs to the same entry-latched Execute choice as
+            // movement and melee. If its terminal callback exposes a
+            // successor order, that successor must wait until the
+            // actor's next update rather than entering generic
+            // Execute later in this same slot.
+            let bow_selection = (!validity_short_circuited
+                && selected_owner_family == Some(ExecuteOwnerFamily::Bow))
+            .then(|| self.selected_bow_order(entity_id))
+            .flatten();
+            let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
+                !validity_short_circuited
+                    && selected_owner_family == Some(ExecuteOwnerFamily::Ability)
+                    && self
+                        .world
+                        .entities
+                        .get(entity_id)
+                        .and_then(Entity::actor_data)
+                        .is_some_and(|actor| {
+                            let Some(expected_type) = active_ability_order_type(actor) else {
+                                return false;
+                            };
+                            actor.active_ability.is_active()
+                                && actor.active_ability.sequence_id == Some(*seq)
+                                && actor.active_ability.element_index == *elem
+                                && actor.active_ability.order_id == Some(*order_id)
+                                && self
+                                    .orders
+                                    .sequence_manager
+                                    .get_element(*seq, *elem)
+                                    .and_then(|element| element.current_order())
+                                    .is_some_and(|order| order.order_type == expected_type)
+                        })
+            });
+            let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
+                if validity_short_circuited
+                    || selected_owner_family != Some(ExecuteOwnerFamily::Beggar)
+                {
+                    return None;
+                }
+                self.orders
+                    .sequence_manager
+                    .get_element(seq, elem)
+                    .and_then(|element| element.current_order())
+                    .and_then(|order| {
+                        (order.order_id == order_id
+                            && order.order_type == crate::order::OrderType::SimulatingBeggar)
+                            .then_some(order_id)
+                    })
+            });
+            observe_actor_owner_envelope(ActorOwnerEnvelopePhase::MovementExecute(entity_id));
+            self.debug_drop_owner_boundary("tick_ability_entry", entity_id, selected_order);
+            if let Some(entity) = self.world.entities.get(entity_id) {
+                super::animation::direction_provenance_snapshot(
+                    entity.position_iface(),
+                    entity_id,
+                    self.control.frame_counter,
+                    "owner_execute_entry",
+                );
+            }
+            let explicit_execute = execute_owner_arm(
+                self,
+                entity_id,
+                movement_selection,
+                melee_selection,
+                bow_selection,
+                ability_selection,
+                beggar_selection,
+            )
+            .into_explicit_execute_motion();
+            let explicit_execute_motion = explicit_execute.initial;
+            let post_completion_execute_override = explicit_execute.post_completion_override;
+            if let Some(entity) = self.world.entities.get(entity_id) {
+                super::animation::direction_provenance_snapshot(
+                    entity.position_iface(),
+                    entity_id,
+                    self.control.frame_counter,
+                    "owner_post_execute",
+                );
+            }
+            let mut specialized_execute_motion = explicit_execute_motion.or_else(|| {
+                (!validity_short_circuited)
+                    .then_some(selected_owner_family)
+                    .flatten()
+                    .filter(|family| specialized_execute_uses_sprite_motion(*family))
+                    .and_then(|_| {
+                        specialized_execute_motion(
+                            self.world
+                                .entities
+                                .get(entity_id)
+                                .and_then(|entity| entity.element_data().sprite.last_motion_state),
+                            beggar_selection.is_some(),
+                            movement_entity_target_seek,
+                        )
+                    })
+            });
+            let mut specialized_wait_modifier_terminated = false;
+            if let (Some(motion), Some((entry_seq_id, entry_elem_idx, _))) =
+                (specialized_execute_motion.as_mut(), selected_order)
+            {
+                // The actor update applies WAIT_TIMER / WAIT_FREE_LIFT
+                // after complete action execution. Specialized
+                // movement, combat, ability, and beggar arms therefore
+                // pass through the same base modifier as generic sprite
+                // animation, exactly once.
+                let motion_before_modifier = *motion;
+                self.apply_actor_post_execute_wait_modifier_to_motion(
+                    entity_id,
+                    entry_seq_id,
+                    entry_elem_idx,
+                    motion,
+                );
+                specialized_wait_modifier_terminated = motion_before_modifier
+                    != crate::sprite::MotionState::Terminated
+                    && *motion == crate::sprite::MotionState::Terminated;
+            }
+            let explicit_execute_in_progress = matches!(
+                explicit_execute_motion,
+                Some(crate::sprite::MotionState::InProgress)
+            );
+            let explicit_execute_terminated = matches!(
+                explicit_execute_motion,
+                Some(crate::sprite::MotionState::Terminated)
+            );
+            if let Some(motion) = specialized_execute_motion {
+                // Movement/combat/ability owners are derived Execute
+                // arms just like the generic animation switch below.
+                // Their sprite result is therefore the initial value
+                // assigned to the actor's motion state before the update
+                // applies completion and order-advancement handling.
+                self.world
+                    .entities
+                    .get_mut(entity_id)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("specialized Execute owner disappeared before motion-state latch")
+                    .continuation
+                    .motion_state = motion;
+            }
+            if !validity_short_circuited
+            && explicit_execute_motion.is_none()
+            // Generic animation owns its completion through
+            // `tick_actor_animation_for` below.  In
+            // particular TURNING deliberately ignores the
+            // visual sprite's Done edge while `Turn()` still
+            // reports that the body rotated this frame.  A
+            // stale Done retained by the looping alerted-turn
+            // sprite must therefore not complete the order
+            // ahead of that authoritative Execute result.
+            && selected_owner_family
+                .is_some_and(specialized_execute_uses_sprite_motion)
+            && self.world.entities.get(entity_id).is_some_and(|entity| {
+                entity.element_data().sprite.last_motion_state
+                    == Some(crate::sprite::MotionState::Done)
+            }) {
+                let (entry_seq_id, entry_elem_idx, entry_order_id) =
+            selected_order.unwrap_or_else(|| {
+                panic!(
+                    "specialized actor owner {entity_id:?} recorded Done without an entry-latched order"
+                )
+            });
+                self.mark_entry_order_done(entity_id, entry_seq_id, entry_elem_idx, entry_order_id);
+            }
+
+            observe_actor_animation_boundary(ActorAnimationBoundaryPhase::GenericExecute(
+                entity_id,
+            ));
+            let (combat_injury_terminated, mut outcomes, mut execute_result) =
+                if validity_short_circuited
+                    || movement_selection.is_some()
+                    || melee_selection.is_some()
+                    || bow_selection.is_some()
+                    || ability_selection.is_some()
+                    || beggar_selection.is_some()
+                {
+                    (Vec::new(), Default::default(), None)
+                } else if enter_swordfight_corpse_exit {
+                    let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
+                        panic!("ENTER_SWORDFIGHT corpse-exit Execute lost its entry order")
+                    });
+                    self.world
+                    .entities
+                    .get(entity_id)
+                    .and_then(Entity::pc_data)
+                    .and_then(|pc| pc.carried)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "ENTER_SWORDFIGHT corpse-exit Execute owner {entity_id:?} has no carried body"
+                        )
+                    });
+                    self.force_drop_carried_corpse_instant(entity_id);
+                    (
+                        Vec::new(),
+                        Default::default(),
+                        Some(super::animation::ActorExecuteResult {
+                            order_type:
+                                crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
+                            entry_seq_id: seq_id,
+                            entry_elem_idx: elem_idx,
+                            motion: crate::sprite::MotionState::Terminated,
+                        }),
+                    )
+                } else if selected_order_type == Some(crate::order::OrderType::Rolling) {
+                    self.tick_rolling_owner(sim, assets, entity_id)
+                } else {
+                    self.tick_actor_animation_for(sim, assets, entity_id)
+                };
+            if specialized_wait_modifier_terminated {
+                let (entry_seq_id, entry_elem_idx, entry_order_id) =
+                    selected_order.expect("specialized wait modifier lost its entry order");
+                self.stage_actor_execute_completion(
+                    entity_id,
+                    Some(entry_order_id),
+                    super::animation::ActorExecuteResult {
+                        order_type: selected_order_type
+                            .expect("specialized wait modifier lost its entry order type"),
+                        entry_seq_id,
+                        entry_elem_idx,
+                        motion: crate::sprite::MotionState::Terminated,
+                    },
+                    &mut outcomes,
+                );
+            }
+            if explicit_execute_terminated {
+                let (seq_id, elem_idx, _) = selected_order.unwrap_or_else(|| {
+                panic!(
+                    "actor {entity_id:?} returned explicit Terminated without an entry-latched order"
+                )
+            });
+                outcomes.seq_advance.push((seq_id, elem_idx));
+            }
+            // Falling-hit/pushed/lift flight is part of this
+            // actor's selected Execute arm in Original. Advance it
+            // before the derived NPC tail so later creation slots
+            // observe the committed flight position.
+            let flight_motion = self.tick_push_flight_for_owner(sim, assets, entity_id);
+            if let (Some(result), Some(motion)) = (execute_result.as_mut(), flight_motion) {
+                // FallingLadderWall returns Terminated directly
+                // from Execute when its countdown reaches zero.
+                // The split flight tail owns that terminal edge,
+                // so replace the earlier sprite Start result before
+                // the actor update latches it.
+                result.motion = motion;
+            }
+            if execute_result
+                .as_ref()
+                .is_some_and(|result| result.motion == crate::sprite::MotionState::Start)
+                && self
+                    .world
+                    .entities
+                    .get(entity_id)
+                    .is_some_and(Entity::is_pc)
+            {
+                // Player-character execution owns eventual strike /
+                // execution remarks. Their 50% RNG draw and speech
+                // side effects occur synchronously before the next
+                // element's update slot.
+                self.tick_pc_combat_anim_speech_for_owner(sim, assets, entity_id);
+            }
+            // The original game clears the sequence-started flag immediately
+            // after Execute returns. It means "the selected element
+            // has not had its first owner slot yet", not "this
+            // element has ever started". In particular, a Move issued
+            // while an already-running non-interruptable PassDoor is
+            // postponed; only a PassDoor newly installed since the
+            // actor's last slot rejects that Move as impossible.
+            if let Some(actor) = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::actor_data_mut)
+            {
+                actor.sequence_element_started = false;
+            }
+            for injured_id in combat_injury_terminated.iter().copied() {
+                self.dispatch_combat_injury_think_for_actor_hourglass(sim, injured_id, assets);
+            }
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+        .unwrap_or_else(|error| {
+            panic!(
+                "actor {entity_id:?} combat-injury Think at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
+            )
+        });
+            for injured_id in combat_injury_terminated {
+                observe_actor_animation_boundary(ActorAnimationBoundaryPhase::CombatInjuryThink(
+                    injured_id,
+                ));
+            }
+
+            // Human-actor execution performs this work inside
+            // the sword-waiting arm, after action processing and before
+            // returning its motion result to the actor update. Keep
+            // launches and cross-actor mutations live so later slots
+            // observe them and earlier slots do not.
+            // This is part of human action execution's selected
+            // WAITING_SWORD arm, not an animation-completion
+            // callback.  In particular, the arm still runs when
+            // the generic sprite helper has no completion record
+            // for this slot. Key it to the actor update's
+            // entry-latched order, as Original does, while keeping
+            // the two Execute entry exits above intact.
+            let execution_frozen = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::actor_data)
+                .is_some_and(|actor| actor.execution_frozen);
+            if waiting_sword_execute_reaches_evaluation(
+                selected_order_type,
+                validity_short_circuited,
+                execution_frozen,
+            ) {
+                self.tick_waiting_sword_execute_for(sim, assets, entity_id);
+            }
+
+            // Human-actor execution decrements the parry hold
+            // counter and queues a parry stop before this actor yields
+            // its legacy slot. Preserve that ordering relative to
+            // sword hits performed by later-created actors.
+            if let Some(result) = execute_result.as_mut() {
+                self.tick_parry_counter_for_execute(entity_id, result);
+            }
+
+            // The original actor update modifies the just-produced
+            // Execute result for WAIT_TIMER / WAIT_FREE_LIFT before
+            // completion or order advancement. Sampling the current element
+            // here is intentional: WaitingSword callbacks above may
+            // have synchronously replaced it.
+            if let Some(result) = execute_result.as_mut() {
+                self.apply_actor_post_execute_wait_modifier(entity_id, result);
+            }
+            // The base actor update calls line-crossing detection
+            // after the complete execution chain and its wait
+            // modifier, but before interpreting the motion result.
+            // Movement owners and Rolling close this boundary in
+            // their specialized executors; generic animation
+            // (including death-place selection and flight) reaches it here.
+            if selected_owner_family != Some(ExecuteOwnerFamily::Movement)
+                && selected_order_type != Some(crate::order::OrderType::Rolling)
+            {
+                self.dispatch_actor_post_execute_line_crossing(
+                    sim,
+                    assets,
+                    entity_id,
+                    selected_order_compute_direction,
+                );
+            }
+            if let Some(result) = execute_result.take() {
+                // The actor update stores every execution
+                // return in serialized `mmotionState` before it
+                // handles Done/Terminated/Aborted. Keeping only the
+                // transient Sprite result leaves the save-loaded
+                // value frozen forever and makes the very first
+                // post-load frame diverge whenever an animation
+                // crosses a motion boundary.
+                self.world
+                    .entities
+                    .get_mut(entity_id)
+                    .and_then(Entity::actor_data_mut)
+                    .expect("Execute owner disappeared before motion-state latch")
+                    .continuation
+                    .motion_state = result.motion;
+                self.stage_actor_execute_completion(
+                    entity_id,
+                    selected_order.map(|(_, _, order_id)| order_id),
+                    result,
+                    &mut outcomes,
+                );
+            }
+
+            // The original-game soldier update runs AI before returning
+            // Terminated to the base actor update. Only after that
+            // synchronous decision tick finishes may order advancement/completion
+            // promote the actor's successor order.
+            self.process_anim_completion_outcomes(sim, outcomes, assets);
+            // Terminating a sequence element calls the
+            // actor's removal notification and then readiness
+            // synchronously inside this update slot. Close only
+            // this owner's newly terminated stack before its derived
+            // NPC tail runs; leaving it in the global queue delays
+            // immediate successors such as UnlockAI until after
+            // detection and changes observable AI state.
+            self.dispatch_condolations_for_owner_boundary(sim, entity_id, assets);
+            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
+        .unwrap_or_else(|error| {
+            panic!(
+                "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
+            )
+        });
+            let selected_element_state = selected_order.and_then(|(entry_seq, entry_idx, _)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(entry_seq, entry_idx)
+                    .map(|element| element.state)
+            });
+            let selected_element_retired = selected_order.is_some()
+                && selected_element_state.is_none_or(|state| {
+                    !matches!(
+                        state,
+                        crate::sequence::SequenceState::Todo
+                            | crate::sequence::SequenceState::InProgress
+                            | crate::sequence::SequenceState::Postponed
+                    )
+                });
+            let selected_element_interrupted =
+                selected_element_state == Some(crate::sequence::SequenceState::Interrupted);
+            let selected_element_impossible =
+                selected_order.is_some_and(|(entry_seq, entry_idx, _)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(entry_seq, entry_idx)
+                        .is_some_and(|element| {
+                            element.state == crate::sequence::SequenceState::Impossible
+                        })
+                });
+            let selected_order_rewritten_by_stop = specialized_execute_motion
+                .zip(selected_order_type)
+                .is_some_and(|(motion, entry_order_type)| {
+                    selected_order.is_some_and(|(entry_seq, entry_idx, entry_order_id)| {
+                        self.orders
+                            .sequence_manager
+                            .current_order_for_actor(entity_id)
+                            .is_some_and(|(live_seq, live_idx, live_order)| {
+                                live_seq == entry_seq
+                                    && live_idx == entry_idx
+                                    && live_order.order_id != entry_order_id
+                                    && is_start_stop_movement_rewrite(
+                                        entry_order_id,
+                                        entry_order_type,
+                                        live_order.order_id,
+                                        live_order.order_type,
+                                        motion,
+                                    )
+                            })
+                    })
+                });
+            let selected_entry_order_still_current =
+                selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
+                    self.orders
+                        .sequence_manager
+                        .current_order_for_actor(entity_id)
+                        .is_some_and(|(live_seq, live_idx, live_order)| {
+                            live_seq == entry_seq
+                                && live_idx == entry_idx
+                                && live_order.order_id == entry_order
+                        })
+                });
+            let selected_specialized_order_advanced = !explicit_execute_in_progress
+                && specialized_order_advanced_after_execute(
+                    specialized_execute_motion,
+                    selected_order_rewritten_by_stop,
+                    selected_element_retired,
+                    selected_element_interrupted,
+                    selected_entry_order_still_current,
+                );
+            // Terminal sequence elements retain their allocated
+            // orders for diagnostics/save parity. Do not mistake
+            // that same retired entry order for a successor, while
+            // still accepting a distinct order installed by a
+            // synchronous condolence-card callback.
+            // Order advancement changes the retained execution result to
+            // IN_PROGRESS only when Proceed returns a non-null
+            // actor order. Manager residency is not sufficient: queue
+            // exhaustion can terminate the selected element while
+            // leaving a fallback Wait discoverable in the manager,
+            // yet the actor's order remains empty until its next
+            // update entry. `installed_order` is the explicit
+            // mirror updated by order advancement and accepted instruction.
+            let installed_successor_exists = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::actor_data)
+                .and_then(|actor| actor.installed_order)
+                .is_some_and(|installed| {
+                    !selected_order.is_some_and(|(_, _, entry_order)| {
+                        selected_element_retired && installed.order_id == entry_order
+                    })
+                });
+            let motion_latch_debug = motion_latch_debug_config().filter(|config| {
+                config.frame == self.control.frame_counter
+                    && config.creation_order == self.world.original_creation_order(entity_id)
+            });
+            let installed_order = motion_latch_debug.and_then(|_| {
+                self.world
+                    .entities
+                    .get(entity_id)
+                    .and_then(Entity::actor_data)
+                    .and_then(|actor| actor.installed_order)
+            });
+            if let Some(actor) = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::actor_data_mut)
+            {
+                // Advancing to the next actor order overwrites a TERMINATED result
+                // result with IN_PROGRESS when Proceed exposes another
+                // order. Instruction handling does the same when terminating the
+                // old element synchronously installs a successor.
+                // Specialized owners retire their order internally,
+                // so an entry-identity change is their equivalent of
+                // the base update's TERMINATED branch even when the
+                // last raw sprite edge was START/DONE/IN_PROGRESS.
+                // ABORTED is tied to the sequence element captured
+                // on actor-update entry. Its synchronous
+                // Impossible condolence may install Wait and
+                // overwrite the sprite's last edge, but it cannot
+                // rewrite the Execute return already held by Actor.
+                let motion_before_projection = actor.continuation.motion_state;
+                actor.continuation.motion_state = project_post_completion_motion(
+                    motion_before_projection,
+                    selected_element_impossible && !explicit_execute_in_progress,
+                    installed_successor_exists,
+                    selected_specialized_order_advanced,
+                );
+                actor.continuation.motion_state = apply_post_completion_execute_override(
+                    actor.continuation.motion_state,
+                    post_completion_execute_override,
+                    selected_element_interrupted,
+                    installed_successor_exists,
+                );
+                if let Some(config) = motion_latch_debug {
+                    eprintln!(
+                        "[MOTION_LATCH frame={} co={} owner={} entry_order={:?} entry_state={:?} specialized_motion={:?} explicit_in_progress={} retired={} interrupted={} impossible={} specialized_advanced={} installed_order={:?} installed_successor={} motion_before={:?} motion_after={:?}]",
+                        config.frame,
+                        config.creation_order,
+                        entity_id.index(),
+                        selected_order,
+                        selected_element_state,
+                        specialized_execute_motion,
+                        explicit_execute_in_progress,
+                        selected_element_retired,
+                        selected_element_interrupted,
+                        selected_element_impossible,
+                        selected_specialized_order_advanced,
+                        installed_order,
+                        installed_successor_exists,
+                        motion_before_projection,
+                        actor.continuation.motion_state,
+                    );
+                }
+                tracing::trace!(
+                    target: "parity_motion_state",
+                    entity = ?entity_id,
+                    family = ?selected_owner_family,
+                    entry_order = ?selected_order,
+                    specialized_motion = ?specialized_execute_motion,
+                    element_retired = selected_element_retired,
+                    element_interrupted = selected_element_interrupted,
+                    specialized_advanced = selected_specialized_order_advanced,
+                    installed_successor = installed_successor_exists,
+                    motion_state = ?actor.continuation.motion_state,
+                    "actor motion-state latch",
+                );
+            }
+            // Order advancement may synchronously expose a real postponed
+            // successor through state changes and readiness. If it does not,
+            // The original game leaves the actor order empty for the rest of this
+            // actor update. The fallback Wait is created
+            // only by the null-order guard at the start of the next
+            // actor frame, so ActionChange observes NONANIMATION_END
+            // on this completion frame.
+            observe_actor_animation_boundary(ActorAnimationBoundaryPhase::CompletionEffects(
+                entity_id,
+            ));
+
+            // Release every animation/completion borrow before the VM:
+            // ActionChange can synchronously replace this or a later
+            // actor's order and the next slot must sample that live.
+            observe_actor_animation_boundary(ActorAnimationBoundaryPhase::ActionChange(entity_id));
+            self.dispatch_actor_action_change_for(sim, assets, entity_id);
+            // Do not derive the actor order from the manager at the tail. The
+            // exact identity was published at update entry and is
+            // subsequently changed only by order advancement, selected
+            // element cleanup, or a synchronous accepted instruction.
+            let installed_tail_order_type = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::actor_data)
+                .and_then(|actor| actor.installed_order)
+                .map(|order| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd);
+            self.debug_refresh_view_lifecycle(
+                "derived_tail_normal",
+                entity_id,
+                Some(installed_tail_order_type),
+            );
+            after_slot(self, entity_id, installed_tail_order_type);
+            if let Some(entity) = self.world.entities.get(entity_id) {
+                super::animation::direction_provenance_snapshot(
+                    entity.position_iface(),
+                    entity_id,
+                    self.control.frame_counter,
+                    "owner_tail_after_derived",
+                );
+            }
+
+            if let Some(actor) = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .and_then(Entity::actor_data_mut)
+            {
+                actor.execute_order_initialising = false;
+            }
+            self.debug_drop_owner_boundary("execute_latch_cleared", entity_id, selected_order);
+
+            // Human posture changes update intersecting-corpse state
+            // synchronously in Original. Close the owner-local
+            // boundary before the next creation slot samples this
+            // actor for anti-collision.
+            self.process_corpse_intersection_update_for(entity_id);
+
+            let leaked_slot_work = self
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
+            assert!(
+                leaked_slot_work.is_empty(),
+                "actor {entity_id:?} leaked synchronous sequence work after ActionChange at legacy slot {slot}: {leaked_slot_work:?}"
+            );
+            self.orders
+                .sequence_manager
+                .restore_pending_synchronous_actions(preexisting_sequence_work);
+        }
     }
 
     /// Fuse the supported Actor → Human → PC/NPC update phases into one
@@ -5488,417 +5389,6 @@ impl EngineInner {
             )
     }
 
-    pub(super) fn apply_door_pass_transition_done_side_effects(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
-        use crate::coordinates::MapPoint;
-        use crate::element::{ActionState, Posture};
-        use crate::order::OrderType as OT;
-
-        let Some((door_index, action, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
-            entity.actor_data().and_then(|actor| {
-                actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|dp| (dp.door_index, dp.current_action, entity.is_pc()))
-            })
-        }) else {
-            return;
-        };
-
-        let door = required_canonical_door(
-            &self.script_domains.interactables.doors,
-            door_index,
-            "PassDoor transition side effects",
-        );
-        let (layer_in, layer_out, sector_in, sector_out, point_in, point_mid, point_out) = (
-            door.layer_in,
-            door.layer_out,
-            door.sector_in,
-            door.sector_out,
-            MapPoint {
-                x: door.point_in.x,
-                y: door.point_in.y,
-            },
-            MapPoint {
-                x: door.point_mid.x,
-                y: door.point_mid.y,
-            },
-            MapPoint {
-                x: door.point_out.x,
-                y: door.point_out.y,
-            },
-        );
-
-        let lift_direction = self
-            .grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector_in)))
-            .and_then(|sector| {
-                if sector.lift_type == Some(crate::sector::LiftType::Wall) {
-                    Some(sector.lift_direction)
-                } else {
-                    None
-                }
-            });
-
-        match action {
-            OT::TransitionWaitingUprightClimbingWallUp => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::OnWall);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Moving;
-                    }
-                }
-            }
-            OT::TransitionWaitingCrouchedClimbingWallDown => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::OnWall);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Moving;
-                    }
-                }
-                self.set_transition_position_map_and_compute_position_all(
-                    assets,
-                    entity_id,
-                    crate::coordinates::MapPoint {
-                        x: point_in.x,
-                        y: point_in.y,
-                    },
-                );
-            }
-            OT::TransitionWaitingCrouchedClimbingWallDownCrenel => {
-                let point_in = crate::coordinates::MapPoint::new(point_in.x, point_in.y);
-                // The crenel variant re-latches the old position across the
-                // teleport, so the wall-height jump to the door's entry point
-                // is not reported as this frame's movement. Only the map half
-                // of the latch sees the teleported point: the 3D position is
-                // still the pre-teleport one when the latch happens and is
-                // re-derived from the map afterwards.
-                let pre_teleport_position = self
-                    .get_entity(entity_id)
-                    .map(|entity| entity.position_iface().get_position());
-                self.finalize_special_move_position_using_projection_sector(
-                    assets,
-                    entity_id,
-                    super::special_motion::SpecialMovePosition::Map(point_in),
-                    layer_in,
-                    u16::from(sector_in),
-                    point_in,
-                    "crenel climb-down transition",
-                );
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    let pi = entity.position_iface_mut();
-                    pi.set_old_map_position(point_in);
-                    if let Some(position) = pre_teleport_position {
-                        pi.set_old_position(position);
-                    }
-                    entity.set_posture(Posture::OnWall);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Moving;
-                    }
-                    let elem = entity.element_data_mut();
-                    if let Some(dir) = lift_direction {
-                        super::animation::direction_provenance_snapshot(
-                            &elem.sprite.position_iface,
-                            entity_id,
-                            self.control.frame_counter,
-                            "writer:crenel_completion_instant:before",
-                        );
-                        elem.set_direction_instantly(dir);
-                        super::animation::direction_provenance_snapshot(
-                            &elem.sprite.position_iface,
-                            entity_id,
-                            self.control.frame_counter,
-                            "writer:crenel_completion_instant:after",
-                        );
-                    }
-                    // The teleported position is re-aimed at the map goal the
-                    // actor was already standing on; the direction is the one
-                    // just latched from the lift, so it is not recomputed.
-                    elem.sprite.position_iface.compute_increment_all(false);
-                }
-            }
-            OT::TransitionClimbingWallUpWaitingCrouched => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(if is_pc {
-                        Posture::Crouched
-                    } else {
-                        Posture::Upright
-                    });
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Waiting;
-                    }
-                }
-                self.set_transition_position_map_and_compute_position_all(
-                    assets,
-                    entity_id,
-                    crate::coordinates::MapPoint {
-                        x: point_mid.x,
-                        y: point_mid.y,
-                    },
-                );
-            }
-            OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
-                let point_out_probe = crate::coordinates::MapPoint::new(point_out.x, point_out.y);
-                let point_mid_map = crate::coordinates::MapPoint::new(point_mid.x, point_mid.y);
-                self.finalize_special_move_position_using_projection_sector(
-                    assets,
-                    entity_id,
-                    super::special_motion::SpecialMovePosition::Map(point_mid_map),
-                    layer_out,
-                    u16::from(sector_out),
-                    point_out_probe,
-                    "crenel climb-up transition",
-                );
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::Flying);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Moving;
-                    }
-                    {
-                        let pi = &mut entity.element_data_mut().sprite.position_iface;
-                        let point_out = crate::coordinates::MapPoint {
-                            x: point_out.x,
-                            y: point_out.y,
-                        };
-                        pi.set_old_map_position(point_out);
-                        pi.set_map_goal(point_out);
-                        pi.compute_increment_all(true);
-                    }
-                }
-            }
-            OT::TransitionClimbingWallDownWaitingUpright => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::Upright);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Waiting;
-                    }
-                }
-            }
-            OT::TransitionClimbingLadderUpWaitingCrouched
-            | OT::TransitionClimbingLadderUpWaitingUprightAlerted => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(if is_pc {
-                        Posture::Crouched
-                    } else {
-                        Posture::Upright
-                    });
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Waiting;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    pub(super) fn apply_door_pass_transition_start_side_effects(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
-        use crate::coordinates::MapPoint;
-        use crate::order::OrderType as OT;
-
-        let (door_index, action) = self
-            .get_entity(entity_id)
-            .and_then(|entity| entity.actor_data())
-            .and_then(|actor| {
-                actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|pass| (pass.door_index, pass.current_action))
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "queued PassDoor transition START effect for {entity_id:?} has no active pass"
-                )
-            });
-        assert!(
-            matches!(
-                action,
-                OT::TransitionClimbingLadderUpWaitingCrouched
-                    | OT::TransitionClimbingLadderUpWaitingUprightAlerted
-            ),
-            "queued PassDoor ladder START effect for {entity_id:?} has action {action:?}"
-        );
-
-        let door = required_canonical_door(
-            &self.script_domains.interactables.doors,
-            door_index,
-            "PassDoor transition START",
-        );
-        let midpoint = MapPoint::new(door.point_mid.x, door.point_mid.y);
-        // These two ladder-exit transition Execute arms align the actor to
-        // the gate midpoint on the initial motion tick. This is a positional
-        // alignment only: the later PassingDoor order remains responsible
-        // for changing sector/layer membership.
-        self.set_transition_position_map_and_compute_position_all(assets, entity_id, midpoint);
-    }
-
-    fn set_transition_position_map_and_compute_position_all(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        point: crate::coordinates::MapPoint,
-    ) {
-        self.finalize_special_move_position(
-            assets,
-            entity_id,
-            super::special_motion::SpecialMovePosition::Map(point),
-            None,
-            None,
-            None,
-            "door transition",
-        );
-    }
-
-    pub(super) fn apply_door_pass_transition_completion_side_effects(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        action: crate::order::OrderType,
-    ) {
-        use crate::coordinates::MapPoint;
-        use crate::element::{ActionState, Posture};
-        use crate::order::OrderType as OT;
-
-        // A restored Original save may already contain the complete
-        // translated PassDoor order chain without Rust's parallel
-        // ActiveDoorPass mirror. These exit transitions need no door
-        // geometry: their terminal Execute arms only publish actor state
-        // before order advancement selects door passing.
-        let restored_completion = self.get_entity(entity_id).and_then(|entity| {
-            let actor = entity.actor_data()?;
-            if actor.active_door_pass.is_some() {
-                return None;
-            }
-            match action {
-                OT::TransitionClimbingWallUpWaitingCrouchedCrenel if entity.is_pc() => {
-                    Some((Posture::Crouched, ActionState::Waiting))
-                }
-                OT::TransitionClimbingLadderDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUprightAlerted => {
-                    Some((Posture::Upright, ActionState::Waiting))
-                }
-                _ => None,
-            }
-        });
-        if let Some((posture, action_state)) = restored_completion {
-            let entity = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("restored transition completion owner disappeared");
-            entity.set_posture(posture);
-            entity
-                .actor_data_mut()
-                .expect("restored transition completion owner is not an actor")
-                .action_state = action_state;
-            return;
-        }
-
-        let Some((door_index, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
-            entity.actor_data().and_then(|actor| {
-                actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|dp| dp.door_index)
-                    .or_else(|| {
-                        // Original-game v48 saves serialize the translated door-passage
-                        // order chain and PositionInterface's live door, but
-                        // have no Rust-only ActiveDoorPass mirror.  Until the
-                        // first PassingDoor action consumes that pointer it is
-                        // the authoritative door for transition completion.
-                        entity.position_iface().get_door()
-                    })
-                    .map(|door_index| (door_index, entity.is_pc()))
-            })
-        }) else {
-            return;
-        };
-
-        let Some((snap_point, posture, action_state)) = (|| {
-            let door = required_canonical_door(
-                &self.script_domains.interactables.doors,
-                door_index,
-                "PassDoor transition completion",
-            );
-            let snap = match action {
-                OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
-                    x: door.point_mid.x,
-                    y: door.point_mid.y,
-                }),
-                OT::TransitionWaitingCrouchedClimbingLadderDown
-                | OT::TransitionWaitingUprightClimbingLadderDownAlerted => Some(MapPoint {
-                    x: door.point_in.x,
-                    y: door.point_in.y,
-                }),
-                OT::TransitionClimbingWallDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUprightAlerted
-                | OT::TransitionClimbingWallUpWaitingCrouchedCrenel => None,
-                _ => return None,
-            };
-            let (posture, action_state) = match action {
-                OT::TransitionWaitingUprightClimbingWallUp => {
-                    (Posture::OnWall, ActionState::Moving)
-                }
-                OT::TransitionWaitingCrouchedClimbingLadderDown
-                | OT::TransitionWaitingUprightClimbingLadderDownAlerted => {
-                    (Posture::OnLadder, ActionState::Moving)
-                }
-                OT::TransitionClimbingWallDownWaitingUpright => {
-                    (Posture::Upright, ActionState::Waiting)
-                }
-                OT::TransitionClimbingLadderDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUprightAlerted => {
-                    (Posture::Upright, ActionState::Waiting)
-                }
-                OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
-                    let posture = if is_pc {
-                        Posture::Crouched
-                    } else {
-                        Posture::Upright
-                    };
-                    (posture, ActionState::Waiting)
-                }
-                _ => return None,
-            };
-            Some((snap, posture, action_state))
-        })() else {
-            return;
-        };
-        tracing::trace!(
-            ?entity_id,
-            ?action,
-            ?snap_point,
-            ?posture,
-            "door transition completion side effects"
-        );
-        if let Some(snap_point) = snap_point {
-            self.set_transition_position_map_and_compute_position_all(
-                assets,
-                entity_id,
-                crate::coordinates::MapPoint {
-                    x: snap_point.x,
-                    y: snap_point.y,
-                },
-            );
-        }
-
-        let Some(entity) = self.world.entities.get_mut(entity_id) else {
-            return;
-        };
-        let elem = entity.element_data_mut();
-        elem.update_grid_cell();
-        entity.set_posture(posture);
-        if let Some(actor) = entity.actor_data_mut() {
-            actor.action_state = action_state;
-        }
-    }
-
     fn apply_helper_driven_shoulder_dismount(
         &mut self,
         dismount: super::animation::ShoulderHelperDismount,
@@ -6536,7 +6026,7 @@ mod bow_command_body_parity_tests {
     fn launch_bow_command_and_tick(command: Command, action_state: ActionState) -> EngineInner {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let pc_id = engine.add_entity(make_aiming_pc(action_state));
+        let pc_id = engine.add_test_entity(make_aiming_pc(action_state));
         engine.launch_element(SequenceElement::new(1, command, Some(pc_id)));
 
         let mut display = HostDisplayState::default();
@@ -6614,7 +6104,7 @@ mod bow_command_body_parity_tests {
     fn bow_lean_out_commands_keep_transition_order_live() {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let soldier_id = engine.add_entity(make_bow_soldier(
+        let soldier_id = engine.add_test_entity(make_bow_soldier(
             Posture::Upright,
             ActionState::AimingWithBow,
         ));
@@ -6667,7 +6157,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let pc_id = engine.add_entity(make_aiming_pc(ActionState::AimingWithBow));
+        let pc_id = engine.add_test_entity(make_aiming_pc(ActionState::AimingWithBow));
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new(1, Command::EquipBow, Some(pc_id)));
         let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
@@ -6693,7 +6183,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let pc_id = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let pc_id = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let mut sequence = Sequence::new();
         let mut expiring = SequenceElement::new_generic(1, Command::Timer, Some(pc_id));
         expiring.set_property(Field::Timer, FieldValue::Integer(1));
@@ -6767,7 +6257,8 @@ mod bow_command_body_parity_tests {
         use crate::sequence::{Field, FieldValue};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
         turn.set_property(Field::Direction, FieldValue::Integer(5));
         let seq_id = engine.orders.sequence_manager.launch_element(turn);
@@ -6815,7 +6306,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.set_property(Field::Timer, FieldValue::Integer(7));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -6960,7 +6451,7 @@ mod bow_command_body_parity_tests {
     #[test]
     fn ladder_fall_wait_owns_legacy_scalar_over_dormant_seek() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Moving));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Moving));
         let actor = engine
             .world
             .entities
@@ -6991,7 +6482,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.set_property(Field::Timer, FieldValue::Integer(0));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -7045,7 +6536,7 @@ mod bow_command_body_parity_tests {
             );
             owner_entity.actor_data_mut().unwrap().wait_time = wait_time;
             owner_entity.actor_data_mut().unwrap().seek_refresh_wait = wait_time;
-            let owner = engine.add_entity(owner_entity);
+            let owner = engine.add_test_entity(owner_entity);
 
             let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
             wait.priority = crate::sequence::SequencePriority::Normal;
@@ -7132,7 +6623,7 @@ mod bow_command_body_parity_tests {
         );
         owner_entity.element_data_mut().sprite.current_row = 1;
         owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingUpright;
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
         let parry_sequence =
             engine.launch_element(SequenceElement::new(1, Command::ParrySword, Some(owner)));
         assert_eq!(
@@ -7193,7 +6684,7 @@ mod bow_command_body_parity_tests {
     fn owner_local_stop_movement_new_id_preserves_execute_start() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Moving));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Moving));
         let mut movement = SequenceElement::new_movement(
             1,
             Command::MoveOk,
@@ -7264,7 +6755,7 @@ mod bow_command_body_parity_tests {
     fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::MovingFast));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::MovingFast));
         let mut movement = SequenceElement::new_movement(
             1,
             Command::MoveOk,
@@ -7344,7 +6835,8 @@ mod bow_command_body_parity_tests {
     #[test]
     fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7385,7 +6877,7 @@ mod bow_command_body_parity_tests {
             unreachable!();
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(soldier_entity);
+        let owner = engine.add_test_entity(soldier_entity);
         engine
             .world
             .entities
@@ -7423,7 +6915,7 @@ mod bow_command_body_parity_tests {
     fn stealth_context_crouches_and_preserves_terminated_order() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7467,7 +6959,7 @@ mod bow_command_body_parity_tests {
     fn wait_timer_context_rejects_missing_timer_contextually() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
@@ -7485,7 +6977,7 @@ mod bow_command_body_parity_tests {
     fn wait_context_rejects_stale_owner_contextually() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let wait = SequenceElement::new(1, Command::Wait, Some(owner));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
         engine.remove_entity(owner);
@@ -7505,7 +6997,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         // Crouch bodies now stay live until their transition animation
         // completes, so use LeaveSpy — the stealth context still snaps the
         // posture and terminates it synchronously inside its dispatch slot.
@@ -7544,7 +7036,7 @@ mod bow_command_body_parity_tests {
     fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7586,7 +7078,7 @@ mod bow_command_body_parity_tests {
     fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7614,7 +7106,7 @@ mod bow_command_body_parity_tests {
     fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7643,7 +7135,8 @@ mod bow_command_body_parity_tests {
     #[test]
     fn position_assertion_context_interrupts_at_tolerance_boundary() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let mut assertion = SequenceElement::new_movement(
             1,
             Command::AssertPosition,
@@ -7683,7 +7176,8 @@ mod bow_command_body_parity_tests {
     #[test]
     fn position_assertion_context_accepts_nan_distance_like_original() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         engine
             .world
             .entities
@@ -7731,7 +7225,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
@@ -7800,7 +7295,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         let door = crate::gate::Door {
@@ -7843,7 +7339,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_context_reserves_direction_before_terminating() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         let door = crate::gate::Door {
@@ -7914,7 +7411,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         {
@@ -8023,9 +7521,11 @@ mod bow_command_body_parity_tests {
     fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
         engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
         engine
             .script_domains
@@ -8217,8 +7717,8 @@ mod soldier_take_drink_parity_tests {
     ) -> (EngineInner, EntityId) {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let actor_id = engine.add_entity(actor);
-        let antagonist_id = engine.add_entity(antagonist);
+        let actor_id = engine.add_test_entity(actor);
+        let antagonist_id = engine.add_test_entity(antagonist);
         engine.launch_element(SequenceElement::new_interaction(
             1,
             command,
@@ -8298,9 +7798,9 @@ mod soldier_take_drink_parity_tests {
     fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        engine.add_entity(make_pc_at(100.0, 100.0));
+        engine.add_test_entity(make_pc_at(100.0, 100.0));
         let bonus_id =
-            engine.add_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
+            engine.add_test_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
 
         let mut dev = DevState::default();
         let mut display = HostDisplayState::default();
@@ -8417,7 +7917,7 @@ mod drop_ammo_merge_tests {
                 crate::coordinates::MapVec::new(5.0, 5.0),
             ));
 
-        let pc_id = engine.add_entity(crate::element::Entity::Pc(ActorPc {
+        let pc_id = engine.add_test_entity(crate::element::Entity::Pc(ActorPc {
             element,
             actor: Default::default(),
             human: Default::default(),

@@ -195,12 +195,12 @@ fn draw_status_bar(
     let h_body = (h_full - h_top).max(0);
 
     // Case 0: black background, full width, full height.
-    renderer.render_gpu_rect(sx, sy, w_full, h_full, 0, 0, 0, 255);
+    renderer.render_gpu_rect(sx, sy, w_full, h_full, [0, 0, 0, 255]);
     // Case 1 + 2: value-width bright top row + darker body.
     if w_val > 0 {
-        renderer.render_gpu_rect(sx, sy, w_val, h_top, r, g, b, 255);
+        renderer.render_gpu_rect(sx, sy, w_val, h_top, [r, g, b, 255]);
         if h_body > 0 {
-            renderer.render_gpu_rect(sx, sy + h_top, w_val, h_body, r >> 1, g >> 1, b >> 1, 255);
+            renderer.render_gpu_rect(sx, sy + h_top, w_val, h_body, [r >> 1, g >> 1, b >> 1, 255]);
         }
     }
 }
@@ -279,7 +279,7 @@ pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Rend
                 let sy = ((walk_map.y - view.y) * zoom) as i32;
 
                 if sx >= 0 && sy >= 0 && sx < screen_w && sy < screen_h {
-                    renderer.render_gpu_rect(sx, sy, 2, 2, cr, cg, cb, 255);
+                    renderer.render_gpu_rect(sx, sy, 2, 2, [cr, cg, cb, 255]);
                 }
 
                 dot_distance += TRAJECTORY_DOT_INTERVAL;

@@ -33,6 +33,42 @@ pub(super) fn target_interaction_assert_source_sector(
 }
 
 impl EngineInner {
+    /// Launch the authored interaction directly in range; otherwise retain it
+    /// as the seek continuation without changing its registration order.
+    fn launch_or_seek_then(
+        &mut self,
+        actor: EntityId,
+        target: EntityId,
+        action_style: crate::order::OrderType,
+        action_distance: f32,
+        dist: f32,
+        command_seq: Sequence,
+    ) {
+        if dist <= action_distance {
+            self.launch_sequence(command_seq);
+            return;
+        }
+
+        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
+        if let SequenceElementData::Movement {
+            element,
+            tolerance,
+            flags,
+            post_seek_sequence,
+            ..
+        } = &mut seek.data
+        {
+            *element = Some(target);
+            *tolerance = action_distance;
+            *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
+            *post_seek_sequence = Some(command_seq.into_post_seek());
+        }
+
+        let mut seq = Sequence::new();
+        seq.append_element(seek);
+        self.launch_sequence(seq);
+    }
+
     pub(super) fn actor_action_distance(
         &self,
         actor: EntityId,
@@ -245,7 +281,14 @@ impl EngineInner {
                 e.element_data().sector(),
                 e.element_data().posture(),
             ),
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?actor,
+                    ?target,
+                    "interaction actor disappeared before route construction"
+                );
+                return;
+            }
         };
         // When `b_use_action_point` is set, the gating distance check
         // uses the antagonist's action-point (sprite hotspot of the
@@ -290,7 +333,14 @@ impl EngineInner {
                     },
                 )
             }
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?actor,
+                    ?target,
+                    "interaction target disappeared before route construction"
+                );
+                return;
+            }
         };
         // Per-object Take tolerance is `radius + 15` — non-trivial
         // for Purse (22), Coin (18) and Net (25 crumpled / 55
@@ -304,18 +354,22 @@ impl EngineInner {
             // the fractional value and adds 10
             // for the pickup command.
             None if pc_in_coma_carry => {
-                match self.actor_action_distance(
+                let Some(distance) = self.actor_action_distance(
                     actor,
                     crate::order::OrderType::TransitionWaitingUprightCarryingCorpse,
-                ) {
-                    Some(distance) => distance + 10.0,
-                    None => return,
-                }
+                ) else {
+                    // No matching sprite action means this interaction is unavailable.
+                    return;
+                };
+                distance + 10.0
             }
-            None => match self.interaction_action_distance(actor, command) {
-                Some(distance) => distance,
-                None => return,
-            },
+            None => {
+                let Some(distance) = self.interaction_action_distance(actor, command) else {
+                    // No matching sprite action means this interaction is unavailable.
+                    return;
+                };
+                distance
+            }
         };
 
         let dx = pc_pos.x - tgt_pos.x;
@@ -582,25 +636,27 @@ impl EngineInner {
         );
         let interaction = SequenceElement::new_interaction(2, command, Some(actor), Some(target));
 
-        self.build_gate_movement_sequence(
+        self.launch_gate_movement_sequence(
             sim,
-            actor,
-            gate_source_sector,
-            gate_path,
-            GoalShape::Target {
-                point: target_pos,
-                target,
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: actor,
+                source_sector: gate_source_sector,
+                gate_path: gate_path,
+                goal: GoalShape::Target {
+                    point: target_pos,
+                    target,
+                    tolerance: 0.0,
+                },
+                goal_layer: target_layer,
+                base_action: action,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: vec![turn, interaction],
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            target_layer,
-            action,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            vec![turn, interaction],
-            false,
-            false,
         )
         .unwrap_or_else(|| {
             panic!("target interaction route for {actor:?} -> {target:?} was empty")
@@ -756,7 +812,10 @@ impl EngineInner {
 
         let (pc_pos, pc_posture) = match self.get_entity(actor) {
             Some(e) => (e.element_data().position_map(), e.element_data().posture()),
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "scroll interaction actor disappeared");
+                return;
+            }
         };
         let (npc_pos, attached_scroll, npc_ai_script_locked) = match self.get_entity(target) {
             Some(e) => {
@@ -768,7 +827,10 @@ impl EngineInner {
                 let locked = e.ai_controller().is_some_and(|ai| ai.ai_is_script_locked());
                 (e.element_data().position_map(), attached_scroll, locked)
             }
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "scroll interaction target disappeared");
+                return;
+            }
         };
         let Some(scroll_id) = attached_scroll else {
             tracing::warn!(
@@ -856,30 +918,14 @@ impl EngineInner {
             "apply_scroll_read_with_seek"
         );
 
-        if dist <= action_distance {
-            self.launch_sequence(command_seq);
-            return;
-        }
-
-        // Face-opponent on arrival → USE_POINT on the seek.
-        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
-        if let SequenceElementData::Movement {
-            element,
-            tolerance,
-            flags,
-            post_seek_sequence,
-            ..
-        } = &mut seek.data
-        {
-            *element = Some(target);
-            *tolerance = action_distance;
-            *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
-            *post_seek_sequence = Some(command_seq.into_post_seek());
-        }
-
-        let mut seq = Sequence::new();
-        seq.append_element(seek);
-        self.launch_sequence(seq);
+        self.launch_or_seek_then(
+            actor,
+            target,
+            action_style,
+            action_distance,
+            dist,
+            command_seq,
+        );
     }
 
     /// Build `[Seek(USE_POINT, tolerance=8) → (turn(L1) →
@@ -894,11 +940,17 @@ impl EngineInner {
     ) {
         let (pc_pos, pc_posture) = match self.get_entity(actor) {
             Some(e) => (e.element_data().position_map(), e.element_data().posture()),
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "shoulder interaction actor disappeared");
+                return;
+            }
         };
         let tgt_pos = match self.get_entity(target) {
             Some(e) => e.element_data().position_map(),
-            None => return,
+            None => {
+                tracing::warn!(?actor, ?target, "shoulder interaction target disappeared");
+                return;
+            }
         };
 
         // Player-character clicking authors this point seek with the
@@ -938,29 +990,14 @@ impl EngineInner {
             "apply_climb_on_shoulders_with_seek"
         );
 
-        if dist <= action_distance {
-            self.launch_sequence(command_seq);
-            return;
-        }
-
-        let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action_style);
-        if let SequenceElementData::Movement {
-            element,
-            tolerance,
-            flags,
-            post_seek_sequence,
-            ..
-        } = &mut seek.data
-        {
-            *element = Some(target);
-            *tolerance = action_distance;
-            *flags |= MoveFlags::SEEK | MoveFlags::USE_POINT;
-            *post_seek_sequence = Some(command_seq.into_post_seek());
-        }
-
-        let mut seq = Sequence::new();
-        seq.append_element(seek);
-        self.launch_sequence(seq);
+        self.launch_or_seek_then(
+            actor,
+            target,
+            action_style,
+            action_distance,
+            dist,
+            command_seq,
+        );
     }
 }
 

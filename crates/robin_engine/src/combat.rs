@@ -27,7 +27,7 @@ pub const CONCUSSION_WAKEUP_THRESHOLD: u16 = 30;
 pub const CONCUSSION_MAX: u16 = 300;
 
 /// Default max life points for PCs.
-pub const LIFEPOINTS_PC: i16 = 100;
+pub use crate::pc_status::LIFEPOINTS_PC;
 
 /// Experience gained for killing with sword.
 pub const SWORD_KILL_EXPERIENCE_POINTS: u32 = 20;
@@ -1032,7 +1032,7 @@ fn is_group_strike(strike: SwordStrike) -> bool {
 ///
 /// Original's trailing `+ 0.1` nudges the beginning edge just inside the
 /// sector so angle-to-sector conversion round-trips it to the same sector.
-fn sector_to_angle(sector: i16) -> f32 {
+pub(crate) fn sector_to_angle(sector: i16) -> f32 {
     // Original's unsuffixed literals promote the UBYTE sector and f32 PI
     // constant to double for the whole expression, then narrow on return.
     ((f64::from(sector) / 16.0) * 2.0 * f64::from(PI) + 0.1) as f32
@@ -1043,7 +1043,7 @@ fn sector_to_angle(sector: i16) -> f32 {
 /// Positive angles use the original game's truncating unsigned 32-bit conversion and modulo.
 /// Negative angles use its recursive mirror rule, including its asymmetric
 /// treatment of exact negative sector boundaries.
-fn angle_to_sector(angle: f32) -> u8 {
+pub(crate) fn angle_to_sector(angle: f32) -> u8 {
     if angle >= 0.0 {
         // As in Original, the unsuffixed constants keep this calculation in
         // double precision until truncation to an unsigned 32-bit value.
@@ -1054,7 +1054,7 @@ fn angle_to_sector(angle: f32) -> u8 {
 }
 
 /// Check if `sector` is between `begin` and `end` (inclusive, wrapping 0-15).
-fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
+pub(crate) fn is_sector_between(sector: u8, begin: u8, end: u8) -> bool {
     if begin <= end {
         sector >= begin && sector <= end
     } else {

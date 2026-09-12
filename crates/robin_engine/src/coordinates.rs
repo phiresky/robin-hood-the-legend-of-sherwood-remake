@@ -166,6 +166,60 @@ coord2!(
     move_box_half_diagonal
 );
 
+// Share the storage operations, not the coordinate domains. MoveBox retains
+// its distinct translation-to-MapBBox API below.
+macro_rules! bbox2 {
+    ($name:ident, $point:ident) => {
+        impl $name {
+            #[inline]
+            pub const fn new() -> Self {
+                Self(None)
+            }
+            #[inline]
+            pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
+                Self(bbox.0)
+            }
+            #[inline]
+            pub fn to_geo(self) -> geo2d::BBox2D {
+                geo2d::BBox2D(self.0)
+            }
+            #[inline]
+            pub fn from_corners(min: $point, max: $point) -> Self {
+                Self(Some(Rect::new(min.to_geo(), max.to_geo())))
+            }
+            #[inline]
+            pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+                Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
+            }
+            #[inline]
+            pub fn is_somewhere(&self) -> bool {
+                self.0.is_some()
+            }
+            #[inline]
+            pub fn x_min(&self) -> f32 {
+                self.to_geo().x_min()
+            }
+            #[inline]
+            pub fn y_min(&self) -> f32 {
+                self.to_geo().y_min()
+            }
+            #[inline]
+            pub fn x_max(&self) -> f32 {
+                self.to_geo().x_max()
+            }
+            #[inline]
+            pub fn y_max(&self) -> f32 {
+                self.to_geo().y_max()
+            }
+        }
+    };
+}
+
+bbox2!(ScreenBBox, ScreenPoint);
+bbox2!(MapBBox, MapPoint);
+bbox2!(GroundBBox, GroundPoint);
+bbox2!(MoveBox, MapVec);
+
 /// Screen-space axis-aligned bounding box.
 ///
 /// This is intentionally distinct from `geo2d::BBox2D`: widget, menu, HUD,
@@ -173,17 +227,18 @@ coord2!(
 /// ground coordinates. `None` is the same legacy "hyperspace" unset state as
 /// `BBox2D`.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
 )]
 pub struct ScreenBBox(pub Option<Rect<f32>>);
 
 crate::bitcode_adapters::impl_native_bitcode_rect!(ScreenBBox);
-
-impl Default for ScreenBBox {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Map-space axis-aligned bounding box.
 ///
@@ -191,17 +246,18 @@ impl Default for ScreenBBox {
 /// public point operations accept [`MapPoint`] so map-space stuck/blocked
 /// rectangles cannot be fed ground or screen points by accident.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
 )]
 pub struct MapBBox(pub Option<Rect<f32>>);
 
 crate::bitcode_adapters::impl_native_bitcode_rect!(MapBBox);
-
-impl Default for MapBBox {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Ground/world-XY axis-aligned bounding box.
 ///
@@ -209,17 +265,18 @@ impl Default for MapBBox {
 /// [`GroundPoint`] so ground obstacle checks cannot accidentally consume
 /// projected map points.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
 )]
 pub struct GroundBBox(pub Option<Rect<f32>>);
 
 crate::bitcode_adapters::impl_native_bitcode_rect!(GroundBBox);
-
-impl Default for GroundBBox {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Actor-local movement bounding box.
 ///
@@ -227,69 +284,20 @@ impl Default for GroundBBox {
 /// character-position coordinates. Translate it by a [`MapPoint`] to get the
 /// absolute map-space [`MapBBox`] stored as the movement map bounds.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
 )]
 pub struct MoveBox(pub Option<Rect<f32>>);
 
 crate::bitcode_adapters::impl_native_bitcode_rect!(MoveBox);
 
-impl Default for MoveBox {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MoveBox {
-    #[inline]
-    pub const fn new() -> Self {
-        Self(None)
-    }
-
-    #[inline]
-    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
-        Self(bbox.0)
-    }
-
-    #[inline]
-    pub fn to_geo(self) -> geo2d::BBox2D {
-        geo2d::BBox2D(self.0)
-    }
-
-    #[inline]
-    pub fn from_corners(min: MapVec, max: MapVec) -> Self {
-        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
-    }
-
-    #[inline]
-    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
-        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
-    }
-
-    #[inline]
-    pub fn is_somewhere(&self) -> bool {
-        self.0.is_some()
-    }
-
-    #[inline]
-    pub fn x_min(&self) -> f32 {
-        self.0.unwrap().min().x
-    }
-
-    #[inline]
-    pub fn y_min(&self) -> f32 {
-        self.0.unwrap().min().y
-    }
-
-    #[inline]
-    pub fn x_max(&self) -> f32 {
-        self.0.unwrap().max().x
-    }
-
-    #[inline]
-    pub fn y_max(&self) -> f32 {
-        self.0.unwrap().max().y
-    }
-
     #[inline]
     pub fn bottom_right(&self) -> MapVec {
         MapVec::from_geo(self.to_geo().bottom_right())
@@ -319,56 +327,6 @@ impl MoveBox {
 
 impl GroundBBox {
     #[inline]
-    pub const fn new() -> Self {
-        Self(None)
-    }
-
-    #[inline]
-    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
-        Self(bbox.0)
-    }
-
-    #[inline]
-    pub fn to_geo(self) -> geo2d::BBox2D {
-        geo2d::BBox2D(self.0)
-    }
-
-    #[inline]
-    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
-        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
-    }
-
-    #[inline]
-    pub fn from_corners(min: GroundPoint, max: GroundPoint) -> Self {
-        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
-    }
-
-    #[inline]
-    pub fn is_somewhere(&self) -> bool {
-        self.0.is_some()
-    }
-
-    #[inline]
-    pub fn x_min(&self) -> f32 {
-        self.0.unwrap().min().x
-    }
-
-    #[inline]
-    pub fn y_min(&self) -> f32 {
-        self.0.unwrap().min().y
-    }
-
-    #[inline]
-    pub fn x_max(&self) -> f32 {
-        self.0.unwrap().max().x
-    }
-
-    #[inline]
-    pub fn y_max(&self) -> f32 {
-        self.0.unwrap().max().y
-    }
-
-    #[inline]
     pub fn contains_point(&self, point: GroundPoint) -> bool {
         self.to_geo().contains_point(point.to_geo())
     }
@@ -393,62 +351,12 @@ impl GroundBBox {
 
 impl MapBBox {
     #[inline]
-    pub const fn new() -> Self {
-        Self(None)
-    }
-
-    #[inline]
-    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
-        Self(bbox.0)
-    }
-
-    #[inline]
-    pub fn to_geo(self) -> geo2d::BBox2D {
-        geo2d::BBox2D(self.0)
-    }
-
-    #[inline]
-    pub fn from_corners(min: MapPoint, max: MapPoint) -> Self {
-        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
-    }
-
-    #[inline]
-    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
-        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
-    }
-
-    #[inline]
     pub fn from_point_size(origin: MapPoint, width: f32, height: f32) -> Self {
         Self::from_geo(geo2d::BBox2D::from_point_size(
             origin.to_geo(),
             width,
             height,
         ))
-    }
-
-    #[inline]
-    pub fn is_somewhere(&self) -> bool {
-        self.0.is_some()
-    }
-
-    #[inline]
-    pub fn x_min(&self) -> f32 {
-        self.0.unwrap().min().x
-    }
-
-    #[inline]
-    pub fn y_min(&self) -> f32 {
-        self.0.unwrap().min().y
-    }
-
-    #[inline]
-    pub fn x_max(&self) -> f32 {
-        self.0.unwrap().max().x
-    }
-
-    #[inline]
-    pub fn y_max(&self) -> f32 {
-        self.0.unwrap().max().y
     }
 
     #[inline]
@@ -503,52 +411,12 @@ impl MapBBox {
 
 impl ScreenBBox {
     #[inline]
-    pub const fn new() -> Self {
-        Self(None)
-    }
-
-    #[inline]
-    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
-        Self(bbox.0)
-    }
-
-    #[inline]
-    pub fn to_geo(self) -> geo2d::BBox2D {
-        geo2d::BBox2D(self.0)
-    }
-
-    #[inline]
-    pub fn from_corners(min: ScreenPoint, max: ScreenPoint) -> Self {
-        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
-    }
-
-    #[inline]
-    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
-        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
-    }
-
-    #[inline]
     pub fn from_point_size(origin: ScreenPoint, width: f32, height: f32) -> Self {
         Self::from_geo(geo2d::BBox2D::from_point_size(
             origin.to_geo(),
             width,
             height,
         ))
-    }
-
-    #[inline]
-    pub fn is_somewhere(&self) -> bool {
-        self.0.is_some()
-    }
-
-    #[inline]
-    pub fn x_min(&self) -> f32 {
-        self.0.unwrap().min().x
-    }
-
-    #[inline]
-    pub fn y_max(&self) -> f32 {
-        self.0.unwrap().max().y
     }
 
     #[inline]
@@ -633,16 +501,15 @@ impl Default for WorldPoint3D {
 }
 
 impl WorldPoint3D {
+    #[inline]
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
     pub const ZERO: Self = Self {
         x: 0.0,
         y: 0.0,
         z: 0.0,
     };
-
-    #[inline]
-    pub const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
-    }
 
     /// Project to 2D map coordinates: `(x, y - z)`.
     #[inline]
@@ -743,16 +610,15 @@ impl Default for WorldVec3D {
 }
 
 impl WorldVec3D {
+    #[inline]
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
     pub const ZERO: Self = Self {
         x: 0.0,
         y: 0.0,
         z: 0.0,
     };
-
-    #[inline]
-    pub const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
-    }
 
     #[inline]
     pub fn norm(&self) -> f32 {
@@ -872,6 +738,14 @@ impl std::ops::Sub for MapVec {
             x: self.x - o.x,
             y: self.y - o.y,
         }
+    }
+}
+
+impl std::ops::Neg for MapVec {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Self::new(-self.x, -self.y)
     }
 }
 

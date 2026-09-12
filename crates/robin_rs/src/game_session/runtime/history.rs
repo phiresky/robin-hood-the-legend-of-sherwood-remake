@@ -3,7 +3,7 @@
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use robin_engine::engine::{Engine, SimulationFrameInput};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 
 pub(super) struct ReconstructionHistory {
     pub(super) buffer: RewindBuffer,
@@ -52,13 +52,10 @@ impl Serialize for ReconstructionHistory {
     }
 }
 
-impl<'de> Deserialize<'de> for ReconstructionHistory {
-    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "reconstruction history is live timeline authority, not a saved game",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    ReconstructionHistory,
+    "reconstruction history is live timeline authority, not a saved game"
+);
 
 #[cfg(test)]
 mod tests {

@@ -6,8 +6,13 @@
 //! existing [`EngineInner`] domains directly.
 
 mod immediate;
+mod instruct_commands;
+mod owner_dispatch;
+mod owner_preflight;
+use owner_preflight::PreparedOwnerInstruction;
 mod phase;
 mod script_sync;
+mod teleport;
 
 use super::movement::MovePathOutcome;
 use super::*;
@@ -732,9 +737,8 @@ impl BowTransitionContext<'_> {
         target_x: f32,
         target_y: f32,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, target_x, target_y, id);
-        order.compute_direction = false;
+        let order =
+            new_translation_order(self.next_order_id, order_type, (target_x, target_y), false);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 
@@ -1110,9 +1114,12 @@ impl TurnCommandContext<'_> {
         order_type: crate::order::OrderType,
         compute_direction: bool,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = compute_direction;
+        let order = new_translation_order(
+            self.next_order_id,
+            order_type,
+            (0.0, 0.0),
+            compute_direction,
+        );
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -1638,9 +1645,7 @@ impl NpcStateCommandContext<'_> {
         elem_idx: usize,
         order_type: crate::order::OrderType,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = false;
+        let order = new_translation_order(self.next_order_id, order_type, (0.0, 0.0), false);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -1792,9 +1797,7 @@ impl NpcAttentionCommandContext<'_> {
         elem_idx: usize,
         order_type: crate::order::OrderType,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = false;
+        let order = new_translation_order(self.next_order_id, order_type, (0.0, 0.0), false);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -2874,43 +2877,26 @@ mod sequence_phase_context_tests {
 
     fn shield_pc(action_state: crate::element::ActionState) -> Entity {
         Entity::Pc(crate::element::ActorPc {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
             actor: crate::element::ActorData {
                 action_state,
                 ..Default::default()
             },
-            human: crate::element::HumanData::default(),
             pc: crate::element::PcData {
                 life_points: crate::combat::LIFEPOINTS_PC,
                 ..Default::default()
             },
+            ..crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright)
         })
     }
 
     fn object_interaction_soldier(direction_goal: i16) -> Entity {
-        let mut element = {
-            let mut initial_element =
-                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
-            initial_element.kind = crate::element::ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
-        element.set_direction_goal(direction_goal);
-        Entity::Soldier(crate::element::ActorSoldier {
-            element,
-            actor: crate::element::ActorData::default(),
-            human: crate::element::HumanData::default(),
-            npc: crate::element::NpcData::default(),
-            soldier: crate::element::SoldierData::default(),
-        })
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
+        soldier
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
+        soldier.element.set_direction_goal(direction_goal);
+        Entity::Soldier(soldier)
     }
 
     fn unconscious_lying_soldier() -> Entity {
@@ -2936,7 +2922,7 @@ mod sequence_phase_context_tests {
             .actor_data_mut()
             .expect("test soldier is an actor")
             .execution_frozen = true;
-        let owner = engine.add_entity(soldier);
+        let owner = engine.add_test_entity(soldier);
         let sequence = engine
             .orders
             .sequence_manager
@@ -2977,7 +2963,7 @@ mod sequence_phase_context_tests {
 
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(unconscious_lying_soldier());
+        let owner = engine.add_test_entity(unconscious_lying_soldier());
         let sequence = engine
             .orders
             .sequence_manager
@@ -3034,7 +3020,7 @@ mod sequence_phase_context_tests {
     #[test]
     fn redundant_equip_bow_terminates_even_with_generated_transition_queued() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(crate::element::ActionState::AimingWithBow));
+        let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::AimingWithBow));
         let mut element = crate::sequence::SequenceElement::new(1, Command::EquipBow, Some(owner));
         element.orders.push_back(crate::order::Order::test_new(
             crate::order::OrderType::TransitionEquipBow,
@@ -3079,8 +3065,8 @@ mod sequence_phase_context_tests {
             ),
         ] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(object_interaction_soldier(13));
-            let antagonist = engine.add_entity(interaction_object(object_type));
+            let owner = engine.add_test_entity(object_interaction_soldier(13));
+            let antagonist = engine.add_test_entity(interaction_object(object_type));
             let seq_id = engine.orders.sequence_manager.launch_element(
                 crate::sequence::SequenceElement::new_interaction(
                     1,
@@ -3124,13 +3110,14 @@ mod sequence_phase_context_tests {
         // PC Take already preserved its direction; keep that control while
         // removing the NPC-only synthetic pre-set.
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(crate::element::ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         engine
             .get_entity_mut(owner)
             .expect("PC owner exists")
             .element_data_mut()
             .set_direction_goal(7);
-        let antagonist = engine.add_entity(interaction_object(crate::element::ObjectType::Coin));
+        let antagonist =
+            engine.add_test_entity(interaction_object(crate::element::ObjectType::Coin));
         let seq_id = engine.orders.sequence_manager.launch_element(
             crate::sequence::SequenceElement::new_interaction(
                 1,
@@ -3158,28 +3145,21 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn upright_dead_wait_keeps_base_upright_follow_up_after_emergency_fall() {
-        use crate::element::{ActionState, ActorSoldier, ElementData, ElementKind, Posture};
+        use crate::element::{ActionState, ActorSoldier, Posture};
         use crate::order::OrderType;
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-                initial_element.kind = ElementKind::ActorSoldier;
-                initial_element.active = true;
-                initial_element
-            },
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             actor: crate::element::ActorData {
                 action_state: ActionState::Moving,
                 ..Default::default()
             },
-            human: Default::default(),
             npc: crate::element::NpcData {
                 life_points: 0,
                 ..Default::default()
             },
-            soldier: Default::default(),
+            ..crate::engine::test_support::actors::unbound_soldier(Posture::Upright)
         }));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::Upright;
@@ -3218,7 +3198,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::Bored));
+        let owner = engine.add_test_entity(shield_pc(ActionState::Bored));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::Upright;
         wait.action_state_after_transition = ActionState::Bored;
@@ -3251,28 +3231,21 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn plain_dead_back_wait_retains_base_actor_direction_computation() {
-        use crate::element::{ActionState, ActorSoldier, ElementData, ElementKind, Posture};
+        use crate::element::{ActionState, ActorSoldier, Posture};
         use crate::order::OrderType;
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::DeadBack);
-                initial_element.kind = ElementKind::ActorSoldier;
-                initial_element.active = true;
-                initial_element
-            },
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             actor: crate::element::ActorData {
                 action_state: ActionState::Waiting,
                 ..Default::default()
             },
-            human: Default::default(),
             npc: crate::element::NpcData {
                 life_points: 0,
                 ..Default::default()
             },
-            soldier: Default::default(),
+            ..crate::engine::test_support::actors::unbound_soldier(Posture::DeadBack)
         }));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::DeadBack;
@@ -3484,7 +3457,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::{Field, FieldValue, SequenceElement};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(crate::element::ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(false));
@@ -3534,7 +3507,7 @@ mod sequence_phase_context_tests {
         pc.playable = false;
         pc.command_interface = crate::human_control::CommandInterface::None;
         pc.mission_role = crate::human_control::MissionRole::RescueTarget;
-        let owner = engine.add_entity(entity);
+        let owner = engine.add_test_entity(entity);
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(true));
@@ -3569,8 +3542,8 @@ mod sequence_phase_context_tests {
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::Waiting));
-        let target = engine.add_entity(shield_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
+        let target = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let seq_id =
             engine
                 .orders
@@ -3717,7 +3690,7 @@ mod sequence_phase_context_tests {
         // FallingHitUpright action, then LowerShield resumes after StandingUp
         // has restored the actor to Waiting. Original still translates the
         // authored lowering animation at that point.
-        let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -3780,7 +3753,7 @@ mod sequence_phase_context_tests {
 
         for command in [Command::StandUp, Command::Recover] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(shield_pc(ActionState::Waiting));
+            let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
             engine
                 .get_entity_mut(owner)
                 .expect("recovery owner exists")
@@ -3826,7 +3799,7 @@ mod sequence_phase_context_tests {
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::WaitingSword));
+        let owner = engine.add_test_entity(shield_pc(ActionState::WaitingSword));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -3879,8 +3852,8 @@ mod sequence_phase_context_tests {
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(shield_pc(ActionState::HoldingShield));
-        let protected = engine.add_entity(shield_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(shield_pc(ActionState::HoldingShield));
+        let protected = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let mut raise = SequenceElement::new_generic(1, Command::RaiseShield, Some(owner));
         raise.set_property(
             Field::ShieldDangerPoint,
@@ -3990,4 +3963,19 @@ mod canonical_door_invariant_tests {
         );
         required_unlock_door_id(Some(&element), crate::sequence::SequenceId(3), 0);
     }
+}
+
+/// Allocate at the translator's exact emission point. Direction policy is
+/// explicit: recovery orders intentionally retain Order's ordinary policy,
+/// whereas these posture-local translators generally disable recomputation.
+pub(in crate::engine) fn new_translation_order(
+    next_order_id: &mut u32,
+    order_type: crate::order::OrderType,
+    target: (f32, f32),
+    compute_direction: bool,
+) -> crate::order::Order {
+    let id = crate::order::alloc_order_id(next_order_id);
+    let mut order = crate::order::Order::new(order_type, target.0, target.1, id);
+    order.compute_direction = compute_direction;
+    order
 }

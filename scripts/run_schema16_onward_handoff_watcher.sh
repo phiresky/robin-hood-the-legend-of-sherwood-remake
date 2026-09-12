@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 if (( $# != 10 )); then
     printf 'usage: %s WORKSPACE EXISTING_SESSION EXISTING_AUDIT ONWARD_AUDIT HANDOFF_AUDIT RECORDER RECORDER_SHA RUNNER_BUNDLE BUNDLE_TRUST_SHA RUNNER_SHA\n' "$0" >&2
     exit 2
@@ -24,16 +27,6 @@ campaign_manifest=${PARITY_CAMPAIGN_MANIFEST:-$campaign_script_dir/parity-campai
 campaign_assignments=$(python3 "$campaign_script_dir/parity_campaign.py" "$campaign_manifest" --profile onward_handoff) || exit 2
 eval "$campaign_assignments"
 
-fail() { printf 'error: %s\n' "$*" >&2; exit 2; }
-sha256_file() { local value; value=$(sha256sum -- "$1") || return 1; printf '%s\n' "${value%% *}"; }
-write_atomic() {
-    local destination=$1 temporary
-    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
-    if ! cat >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
-        rm -f -- "$temporary"
-        return 1
-    fi
-}
 read_one() {
     local file=$1 key=$2
     local -a values=()

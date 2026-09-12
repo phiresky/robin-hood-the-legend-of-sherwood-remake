@@ -795,9 +795,9 @@ impl ConsoleOverlay {
         let panel_h = (sh * 6) / 10;
 
         // Dim background — semi-transparent black.
-        renderer.render_gpu_rect(0, 0, sw, panel_h, 0, 0, 0, 200);
+        renderer.render_gpu_rect(0, 0, sw, panel_h, [0, 0, 0, 200]);
         // Bottom border line for visual separation.
-        renderer.render_gpu_rect(0, panel_h - 2, sw, 2, 100, 180, 220, 255);
+        renderer.render_gpu_rect(0, panel_h - 2, sw, 2, [100, 180, 220, 255]);
 
         let Some(font) = font else { return };
         let font_h = font.height() as i32;
@@ -811,7 +811,7 @@ impl ConsoleOverlay {
         // Reserve the bottom line of the panel for the input field.
         let input_y = panel_h - pad_y - line_step;
         // Separator between scrollback and input field.
-        renderer.render_gpu_rect(pad_x, input_y - 4, sw - 2 * pad_x, 1, 100, 180, 220, 180);
+        renderer.render_gpu_rect(pad_x, input_y - 4, sw - 2 * pad_x, 1, [100, 180, 220, 180]);
 
         // ── Scrollback ──
         let avail_lines = ((input_y - pad_y) / line_step).max(0) as usize;
@@ -866,7 +866,7 @@ impl ConsoleOverlay {
             let byte_idx = self.cursor_byte_index();
             let before_cursor = &self.input[..byte_idx];
             let caret_x = pad_x + prompt_w + font.text_width(before_cursor) + 1;
-            renderer.render_gpu_rect(caret_x, input_y, 2, font_h, 230, 230, 230, 255);
+            renderer.render_gpu_rect(caret_x, input_y, 2, font_h, [230, 230, 230, 255]);
         }
     }
 }

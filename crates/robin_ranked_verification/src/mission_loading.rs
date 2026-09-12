@@ -435,7 +435,6 @@ mod resource_tests {
 
     #[test]
     fn concurrent_ranked_readers_and_sample_loaders_keep_independent_roots() {
-        use robin_engine::sbfile::SBFILE_NO_ERROR;
         use robin_util::asset_fs::AssetVfs;
 
         let before = std::env::current_dir().unwrap();
@@ -451,10 +450,7 @@ mod resource_tests {
             for (root, expected) in roots.iter().zip(expected) {
                 scope.spawn(move || {
                     let files = SbFileSystem::new(Arc::new(AssetVfs::new()));
-                    assert_eq!(
-                        files.lock_ranked_verifier_primary_path(root),
-                        SBFILE_NO_ERROR
-                    );
+                    files.lock_ranked_verifier_primary_path(root).unwrap();
                     for _ in 0..20 {
                         let bytes = files.read_all("src/lib.rs").unwrap();
                         assert_eq!(bytes, expected);
@@ -468,16 +464,15 @@ mod resource_tests {
 
     #[test]
     fn captured_ranked_resources_preserve_confined_reads_and_reject_late_ambient_assets() {
-        use robin_engine::sbfile::{SBFILE_NO_ERROR, SbFileSystem};
+        use robin_engine::sbfile::SbFileSystem;
         use robin_engine::sprite_script::{FrameKind, MissionResourceEnvironment, SpriteScriptor};
         use robin_util::asset_fs::{AssetVfs, Bundle};
 
         let vfs = Arc::new(AssetVfs::new());
         let files = SbFileSystem::new(vfs.clone());
-        assert_eq!(
-            files.lock_ranked_verifier_primary_path(Path::new(env!("CARGO_MANIFEST_DIR"))),
-            SBFILE_NO_ERROR,
-        );
+        files
+            .lock_ranked_verifier_primary_path(Path::new(env!("CARGO_MANIFEST_DIR")))
+            .unwrap();
         let prepared = files.snapshot();
         let resources = Arc::new(MissionResourceEnvironment::from_files(&prepared));
         vfs.mount_bundle_first(Arc::new(Bundle::from([(

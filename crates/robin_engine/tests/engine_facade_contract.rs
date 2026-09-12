@@ -6,18 +6,94 @@
 //! refactor accidentally adds mutable dereferencing, exposes the wrapped
 //! value, or gives host code owned or mutable `EngineInner` access.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use syn::visit::{self, Visit};
 use syn::{Fields, Item, ItemImpl, ReturnType, Type, UseTree, Visibility};
 
-fn parse_rust(relative_path: &str) -> syn::File {
+#[test]
+fn architecture_contracts_share_one_parsed_source_inventory() {
+    achievement_tracking_collections_are_owned_by_the_aggregate();
+    engine_has_one_private_inner_owner_and_no_ownership_escape();
+    engine_public_mutation_surface_is_an_exact_capability_allowlist();
+    parity_reconstruction_opener_requires_explicit_tooling_feature();
+    engine_inner_is_a_borrow_only_projection();
+    legacy_hourglass_adapters_are_test_only_and_use_explicit_input();
+    host_crate_targets_use_engine_facade_instead_of_engine_inner();
+    presentation_view_cannot_project_general_engine_authority();
+    production_entity_publication_has_no_fixture_behavior();
+}
+
+fn production_entity_publication_has_no_fixture_behavior() {
+    struct PublicationGuard {
+        methods: usize,
+    }
+    impl<'ast> Visit<'ast> for PublicationGuard {
+        fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+            if !matches!(
+                method.sig.ident.to_string().as_str(),
+                "add_entity" | "add_entity_with_reserved_creation_order"
+            ) {
+                return;
+            }
+            self.methods += 1;
+            struct NoFixtureBehavior;
+            impl<'ast> Visit<'ast> for NoFixtureBehavior {
+                fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+                    if attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr") {
+                        let cfg = attribute
+                            .meta
+                            .require_list()
+                            .expect("cfg arguments")
+                            .tokens
+                            .to_string();
+                        let selects_test_build = cfg
+                            .split(|character: char| {
+                                !character.is_ascii_alphanumeric()
+                                    && character != '_'
+                                    && character != '-'
+                            })
+                            .any(|word| matches!(word, "test" | "test-helpers"));
+                        assert!(
+                            !selects_test_build,
+                            "production publication must not vary in test builds: {cfg}"
+                        );
+                    }
+                    visit::visit_attribute(self, attribute);
+                }
+                fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+                    assert_ne!(
+                        call.method, "backfill_test_entity_identity",
+                        "fixture identity completion belongs to add_test_entity, not production publication"
+                    );
+                    visit::visit_expr_method_call(self, call);
+                }
+            }
+            NoFixtureBehavior.visit_impl_item_fn(method);
+        }
+    }
+    let mut guard = PublicationGuard { methods: 0 };
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_rust_files(&manifest.join("src/engine"), &mut files);
+    for path in files {
+        guard.visit_file(&parse_rust_path(&path));
+    }
+    assert_eq!(
+        guard.methods, 2,
+        "both production publication entry points must remain guarded"
+    );
+}
+
+fn parse_rust(relative_path: &str) -> Rc<syn::File> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
     parse_rust_path(&path)
 }
 
-#[test]
 fn achievement_tracking_collections_are_owned_by_the_aggregate() {
     let syntax = parse_rust("src/achievement.rs");
     let state = syntax
@@ -37,11 +113,22 @@ fn achievement_tracking_collections_are_owned_by_the_aggregate() {
     );
 }
 
-fn parse_rust_path(path: &Path) -> syn::File {
-    let source = fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    syn::parse_file(&source)
-        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
+fn parse_rust_path(path: &Path) -> Rc<syn::File> {
+    // syn nodes carry thread-local spans. Keep the cache in the single source
+    // inventory test rather than forcing them into a cross-thread global.
+    thread_local! {
+        static SOURCES: RefCell<HashMap<PathBuf, Rc<syn::File>>> = RefCell::new(HashMap::new());
+    }
+    SOURCES.with_borrow_mut(|sources| {
+        Rc::clone(sources.entry(path.to_path_buf()).or_insert_with(|| {
+            let source = fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            Rc::new(
+                syn::parse_file(&source)
+                    .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display())),
+            )
+        }))
+    })
 }
 
 fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
@@ -70,7 +157,6 @@ fn path_ends_with(ty: &Type, expected: &str) -> bool {
     )
 }
 
-#[test]
 fn engine_has_one_private_inner_owner_and_no_ownership_escape() {
     let syntax = parse_rust("src/engine/rollback_safe.rs");
     let engine = syntax
@@ -130,7 +216,6 @@ fn engine_has_one_private_inner_owner_and_no_ownership_escape() {
     );
 }
 
-#[test]
 fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut source_files = Vec::new();
@@ -182,7 +267,6 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
     );
 }
 
-#[test]
 fn parity_reconstruction_opener_requires_explicit_tooling_feature() {
     let syntax = parse_rust("src/engine/rollback_safe.rs");
     let opener = syntax
@@ -215,7 +299,6 @@ fn parity_reconstruction_opener_requires_explicit_tooling_feature() {
     );
 }
 
-#[test]
 fn engine_inner_is_a_borrow_only_projection() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut source_files = Vec::new();
@@ -575,7 +658,6 @@ fn engine_inner_guards_detect_mutation_and_ownership_escapes() {
     );
 }
 
-#[test]
 fn legacy_hourglass_adapters_are_test_only_and_use_explicit_input() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut source_files = Vec::new();
@@ -963,7 +1045,6 @@ fn host_guard_allows_only_shared_readonly_engine_inner_projections() {
     }
 }
 
-#[test]
 fn host_crate_targets_use_engine_facade_instead_of_engine_inner() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
@@ -998,7 +1079,6 @@ fn host_crate_targets_use_engine_facade_instead_of_engine_inner() {
     );
 }
 
-#[test]
 fn presentation_view_cannot_project_general_engine_authority() {
     let syntax = parse_rust("src/engine/presentation_view.rs");
     let mut methods = 0;

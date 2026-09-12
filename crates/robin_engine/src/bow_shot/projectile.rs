@@ -372,7 +372,6 @@ pub fn spawn_wasp(nest_id: EntityId, position: WorldPoint3D, layer: u16) -> Enti
 /// should look up `PositionInterface::get_forecasted_movement()` on
 /// the NPC so the shot leads the target's current motion; pass `None`
 /// for FX / static targets.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_apple(
     thrower: EntityId,
     throw_pos: WorldPoint3D,
@@ -383,17 +382,15 @@ pub fn spawn_apple(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     spawn_throwable(
-        thrower,
-        throw_pos,
-        target_pos,
-        target,
-        target_forecasted_movement,
-        layer,
-        MASS_APPLE,
-        APEX_APPLE,
-        0,
-        Action::Apple,
-        ObjectType::Apple,
+        ThrowRequest {
+            thrower,
+            throw_pos,
+            target_pos,
+            target,
+            target_forecasted_movement,
+            layer,
+        },
+        ThrowableKind::Apple,
         obstacle_check,
     )
 }
@@ -409,7 +406,6 @@ pub fn spawn_apple(
 ///
 /// `target_forecasted_movement`: see `spawn_apple` for how callers
 /// supply this.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_stone(
     thrower: EntityId,
     throw_pos: WorldPoint3D,
@@ -420,17 +416,15 @@ pub fn spawn_stone(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     spawn_throwable(
-        thrower,
-        throw_pos,
-        target_pos,
-        target,
-        target_forecasted_movement,
-        layer,
-        MASS_STONE,
-        APEX_STONE,
-        1,
-        Action::Stone,
-        ObjectType::Stone,
+        ThrowRequest {
+            thrower,
+            throw_pos,
+            target_pos,
+            target,
+            target_forecasted_movement,
+            layer,
+        },
+        ThrowableKind::Stone,
         obstacle_check,
     )
 }
@@ -442,21 +436,39 @@ pub fn spawn_stone(
 /// `flight_time` is forwarded to `compute_initial_throw_velocity`.
 /// Apple passes `0` (compute from apex), stone passes `1` (fast flat
 /// throw, apex unused).
-#[allow(clippy::too_many_arguments)]
-fn spawn_throwable(
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ThrowRequest {
     thrower: EntityId,
     throw_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
     target: Option<EntityId>,
     target_forecasted_movement: Option<WorldVec3D>,
     layer: u16,
-    mass: f32,
-    apex: f32,
-    flight_time: u16,
-    action: Action,
-    object_type: ObjectType,
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+enum ThrowableKind {
+    Apple,
+    Stone,
+}
+
+fn spawn_throwable(
+    request: ThrowRequest,
+    kind: ThrowableKind,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
+    let ThrowRequest {
+        thrower,
+        throw_pos,
+        target_pos,
+        target,
+        target_forecasted_movement,
+        layer,
+    } = request;
+    let (mass, apex, flight_time, action, object_type) = match kind {
+        ThrowableKind::Apple => (MASS_APPLE, APEX_APPLE, 0, Action::Apple, ObjectType::Apple),
+        ThrowableKind::Stone => (MASS_STONE, APEX_STONE, 1, Action::Stone, ObjectType::Stone),
+    };
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
@@ -1219,31 +1231,10 @@ pub fn tick_arrows(
         entities,
         sight_obstacles,
         None,
-        None,
-        false,
-        &[],
-        None,
-        None,
-    )
-}
-
-/// Advance every projectile except the ones listed in `skip_arrow_ids`.
-///
-/// Used for bow arrows released from the sequence-manager phase: the original
-/// game already advanced the arrow before insertion, and the global
-/// element hourglass pass for that frame has already finished.
-pub fn tick_arrows_excluding(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    skip_arrow_ids: &[EntityId],
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        None,
-        None,
-        false,
-        skip_arrow_ids,
+        ArrowTickOptions {
+            only_arrow_id: None,
+            primed_segment_already_advanced: false,
+        },
         None,
         None,
     )
@@ -1254,7 +1245,8 @@ pub fn tick_arrows_excluding(
 /// Used immediately after spawning a bow arrow to match the original game,
 /// which advances it before the
 /// arrow enters the engine element list.
-pub fn tick_arrow(
+#[cfg(test)]
+pub(crate) fn tick_arrow(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1264,9 +1256,10 @@ pub fn tick_arrow(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(arrow_id),
-        true,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(arrow_id),
+            primed_segment_already_advanced: true,
+        },
         None,
         None,
     )
@@ -1285,9 +1278,10 @@ pub(crate) fn tick_arrow_in_actor_order(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(arrow_id),
-        true,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(arrow_id),
+            primed_segment_already_advanced: true,
+        },
         Some(actor_order),
         None,
     )
@@ -1305,9 +1299,10 @@ pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(arrow_id),
-        true,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(arrow_id),
+            primed_segment_already_advanced: true,
+        },
         Some(actor_order),
         Some(diplomacy),
     )
@@ -1315,7 +1310,7 @@ pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
 
 /// Advance one projectile already present in the engine element array.
 ///
-/// Unlike [`tick_arrow`], this does not treat the projectile's spawn-time
+/// Unlike a spawn-time projectile tick, this does not treat the projectile's spawn-time
 /// priming step as its current-frame advancement. It is used by the engine's
 /// creation-ordered entity pass so projectile and PC hourglasses can retain
 /// their relative element-array order.
@@ -1329,9 +1324,10 @@ pub fn tick_existing_projectile(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(projectile_id),
-        false,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(projectile_id),
+            primed_segment_already_advanced: false,
+        },
         None,
         None,
     )
@@ -1351,24 +1347,33 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(projectile_id),
-        false,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(projectile_id),
+            primed_segment_already_advanced: false,
+        },
         Some(actor_order),
         Some(diplomacy),
     )
+}
+
+#[derive(Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ArrowTickOptions {
+    only_arrow_id: Option<EntityId>,
+    primed_segment_already_advanced: bool,
 }
 
 fn tick_arrows_matching(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    only_arrow_id: Option<EntityId>,
-    primed_segment_already_advanced: bool,
-    skip_arrow_ids: &[EntityId],
+    options: ArrowTickOptions,
     actor_order: Option<&[EntityId]>,
     diplomacy: Option<&crate::diplomacy::DiplomacyState>,
 ) -> Vec<ArrowTickResult> {
+    let ArrowTickOptions {
+        only_arrow_id,
+        primed_segment_already_advanced,
+    } = options;
     let mut results = Vec::new();
 
     // Snapshot living humans for line-segment hit detection.  Computes
@@ -1590,9 +1595,6 @@ fn tick_arrows_matching(
         if let Some(only_arrow_id) = only_arrow_id
             && only_arrow_id != arrow_id
         {
-            continue;
-        }
-        if skip_arrow_ids.contains(&arrow_id) {
             continue;
         }
         if !entity.element.active {
@@ -2242,7 +2244,7 @@ pub fn apply_arrow_hit(
 /// human.  Factored from [`apply_arrow_hit`] so stones can pass a
 /// distinct concussion (e.g. damage=10, concussion=100 for stones —
 /// much higher KO potential than arrows).
-pub fn apply_projectile_hit(
+fn apply_projectile_hit(
     entities: &mut Entities,
     victim_id: EntityId,
     shooter_id: EntityId,

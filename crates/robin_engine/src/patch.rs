@@ -16,53 +16,12 @@ use crate::coordinates::MapPoint;
 // PatchIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into the canonical interactable patch table. Wraps [`nonmax::NonMaxU32`] so
 /// `Option<PatchIndex>` is 4 bytes via niche optimization.  `u32::MAX`
 /// would be an absurd patch count, so forbidding it costs nothing.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct PatchIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(PatchIndex, u32);
-
-impl PatchIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<PatchIndex> for u32 {
-    #[inline]
-    fn from(i: PatchIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<PatchIndex> for usize {
-    #[inline]
-    fn from(i: PatchIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for PatchIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct PatchIndex(pub nonmax::NonMaxU32), u32
+);
 
 // ---------------------------------------------------------------------------
 // PatchAnimation
@@ -210,7 +169,15 @@ pub enum PatchEffect {
 ///
 /// Patch state and level-static references used by the script host and
 /// patch transition logic.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct Patch {
     // -- Serialized (save game state) --
     /// Whether the patch is currently active (can be interacted with).
@@ -227,11 +194,13 @@ pub struct Patch {
     /// its own cursor and selection presentation.
     #[state_hash(skip)]
     #[bitcode(skip)]
+    #[serde(skip)]
     pub display_doors: bool,
     /// Actors currently inside this patch's sector.
     pub occupants: Vec<OccupantId>,
     /// First target callback that applied this patch; repeated activation can
     /// replay the patch effect without repeating one-shot mission script logic.
+    #[serde(default)]
     pub repeat_activation: Option<(i32, String)>,
 
     // -- Level data --
@@ -310,186 +279,19 @@ pub struct Patch {
     pub apply_sector_index: Option<u32>,
 }
 
-impl serde::Serialize for Patch {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedPatch::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for Patch {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedPatch::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedPatch {
-    active: bool,
-
-    applied: bool,
-
-    in_transition: bool,
-
-    locked: bool,
-
-    occupants: Vec<OccupantId>,
-
-    #[serde(default)]
-    repeat_activation: Option<(i32, String)>,
-
-    definitive: bool,
-
-    initially_active: bool,
-
-    animated: bool,
-
-    door_triggered: bool,
-
-    triggers_door: bool,
-
-    integrate_in_background: bool,
-
-    animation_flags: AnimationFlags,
-
-    use_changing_obstacles: bool,
-
-    pathfinder_layer: u16,
-
-    pathfinder_sector: u16,
-
-    pathfinder_changing_obstacles: u32,
-
-    layer: u16,
-
-    sector: u16,
-
-    waypoint: MapPoint,
-
-    door_indices: Vec<u32>,
-
-    old_sight_obstacle_indices: Vec<crate::sight_obstacle::SightObstacleIndex>,
-
-    new_sight_obstacle_indices: Vec<crate::sight_obstacle::SightObstacleIndex>,
-
-    old_sector_indices: Vec<u32>,
-
-    new_sector_indices: Vec<u32>,
-
-    old_line_indices: Vec<crate::fast_find_grid::LineIndex>,
-
-    new_line_indices: Vec<crate::fast_find_grid::LineIndex>,
-
-    old_mask_indices: Vec<crate::mask::MaskIndex>,
-
-    new_mask_indices: Vec<crate::mask::MaskIndex>,
-
-    apply_sector_index: Option<u32>,
-}
+#[serde(transparent)]
+pub(crate) struct PersistedPatch(Patch);
 
 impl PersistedPatch {
     pub(crate) fn capture(value: &Patch) -> Self {
-        let Patch {
-            active: _,
-            applied: _,
-            in_transition: _,
-            locked: _,
-            display_doors: _,
-            occupants: _,
-            repeat_activation: _,
-            definitive: _,
-            initially_active: _,
-            animated: _,
-            door_triggered: _,
-            triggers_door: _,
-            integrate_in_background: _,
-            animation_flags: _,
-            use_changing_obstacles: _,
-            pathfinder_layer: _,
-            pathfinder_sector: _,
-            pathfinder_changing_obstacles: _,
-            layer: _,
-            sector: _,
-            waypoint: _,
-            door_indices: _,
-            old_sight_obstacle_indices: _,
-            new_sight_obstacle_indices: _,
-            old_sector_indices: _,
-            new_sector_indices: _,
-            old_line_indices: _,
-            new_line_indices: _,
-            old_mask_indices: _,
-            new_mask_indices: _,
-            apply_sector_index: _,
-        } = value;
-        Self {
-            active: value.active,
-            applied: value.applied,
-            in_transition: value.in_transition,
-            locked: value.locked,
-            occupants: value.occupants.clone(),
-            repeat_activation: value.repeat_activation.clone(),
-            definitive: value.definitive,
-            initially_active: value.initially_active,
-            animated: value.animated,
-            door_triggered: value.door_triggered,
-            triggers_door: value.triggers_door,
-            integrate_in_background: value.integrate_in_background,
-            animation_flags: value.animation_flags,
-            use_changing_obstacles: value.use_changing_obstacles,
-            pathfinder_layer: value.pathfinder_layer,
-            pathfinder_sector: value.pathfinder_sector,
-            pathfinder_changing_obstacles: value.pathfinder_changing_obstacles,
-            layer: value.layer,
-            sector: value.sector,
-            waypoint: value.waypoint,
-            door_indices: value.door_indices.clone(),
-            old_sight_obstacle_indices: value.old_sight_obstacle_indices.clone(),
-            new_sight_obstacle_indices: value.new_sight_obstacle_indices.clone(),
-            old_sector_indices: value.old_sector_indices.clone(),
-            new_sector_indices: value.new_sector_indices.clone(),
-            old_line_indices: value.old_line_indices.clone(),
-            new_line_indices: value.new_line_indices.clone(),
-            old_mask_indices: value.old_mask_indices.clone(),
-            new_mask_indices: value.new_mask_indices.clone(),
-            apply_sector_index: value.apply_sector_index,
-        }
+        let mut snapshot = value.clone();
+        snapshot.display_doors = false;
+        Self(snapshot)
     }
 
     pub(crate) fn into_runtime(self) -> Patch {
-        Patch {
-            active: self.active,
-            applied: self.applied,
-            in_transition: self.in_transition,
-            locked: self.locked,
-            display_doors: false,
-            occupants: self.occupants,
-            repeat_activation: self.repeat_activation,
-            definitive: self.definitive,
-            initially_active: self.initially_active,
-            animated: self.animated,
-            door_triggered: self.door_triggered,
-            triggers_door: self.triggers_door,
-            integrate_in_background: self.integrate_in_background,
-            animation_flags: self.animation_flags,
-            use_changing_obstacles: self.use_changing_obstacles,
-            pathfinder_layer: self.pathfinder_layer,
-            pathfinder_sector: self.pathfinder_sector,
-            pathfinder_changing_obstacles: self.pathfinder_changing_obstacles,
-            layer: self.layer,
-            sector: self.sector,
-            waypoint: self.waypoint,
-            door_indices: self.door_indices,
-            old_sight_obstacle_indices: self.old_sight_obstacle_indices,
-            new_sight_obstacle_indices: self.new_sight_obstacle_indices,
-            old_sector_indices: self.old_sector_indices,
-            new_sector_indices: self.new_sector_indices,
-            old_line_indices: self.old_line_indices,
-            new_line_indices: self.new_line_indices,
-            old_mask_indices: self.old_mask_indices,
-            new_mask_indices: self.new_mask_indices,
-            apply_sector_index: self.apply_sector_index,
-        }
+        self.0
     }
 }
 

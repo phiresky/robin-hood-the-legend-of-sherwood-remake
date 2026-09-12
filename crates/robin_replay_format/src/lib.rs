@@ -362,25 +362,7 @@ pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatErr
 /// Decode a trusted compact replay while still enforcing canonical bytes and
 /// the current replay schema. This lane does not apply public resource limits.
 pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
-    trusted_local::decode(text)
-}
-
-/// Trusted developer artifacts only. This decoder has no resource ceilings;
-/// public artifacts must enter through an externally contained worker.
-pub mod trusted_local {
-    use super::*;
-
-    pub fn decode(text: &str) -> Result<(String, ReplayData), FormatError> {
-        decode_compact_inner(text, None, None)
-    }
-}
-
-/// Typed admission entry points. Calling these functions does not create a
-/// sandbox: callers must already be inside the documented resource boundary.
-pub mod contained_worker {
-    pub use super::{
-        decode_compact_for_admission as admit, decode_compact_for_build as admit_for_build,
-    };
+    decode_compact_inner(text, None, None)
 }
 
 /// Decode under explicit limits. This must execute inside a resource-limited
@@ -393,6 +375,9 @@ pub fn decode_compact_bounded(
 }
 
 /// Decode the current build's production format under public limits.
+///
+/// This does not create a sandbox: callers must already run inside the
+/// documented resource-limited admission worker.
 ///
 /// The build hash is rejected before base64/zstd work. Server installations
 /// that route several approved build hashes should call
@@ -792,115 +777,6 @@ fn validate_file_for_admission(
     )
 }
 
-/// Minimal read-only campaign layer used by hostile replay admission.
-///
-/// This deliberately mirrors the campaign collections that have dedicated
-/// public limits. The generic serializer budget remains a second independent
-/// bound for every other field in the decoded object graph.
-trait CampaignLimitLayer {
-    fn missions(&self) -> &[robin_engine::mission::Mission];
-    fn characters(&self) -> &[robin_engine::campaign::PcDescription];
-    fn accessible_mission_indices(&self) -> &[usize];
-    fn pending_accessible_mission_indices(&self) -> &[usize];
-    fn gang_indices(&self) -> &[usize];
-    fn reservist_indices(&self) -> &[usize];
-    fn mission_team_indices(&self) -> &[usize];
-    fn peasant_names(&self) -> &[String];
-    fn collected_relics(&self) -> &[u32];
-    fn production_sectors(&self) -> &[robin_engine::sector_production::SectorProduction];
-}
-
-macro_rules! impl_campaign_limit_layer {
-    ($campaign:ty) => {
-        impl CampaignLimitLayer for $campaign {
-            fn missions(&self) -> &[robin_engine::mission::Mission] {
-                &self.missions
-            }
-
-            fn characters(&self) -> &[robin_engine::campaign::PcDescription] {
-                &self.characters
-            }
-
-            fn accessible_mission_indices(&self) -> &[usize] {
-                &self.accessible_mission_indices
-            }
-
-            fn pending_accessible_mission_indices(&self) -> &[usize] {
-                &self.pending_accessible_mission_indices
-            }
-
-            fn gang_indices(&self) -> &[usize] {
-                &self.gang_indices
-            }
-
-            fn reservist_indices(&self) -> &[usize] {
-                &self.reservist_indices
-            }
-
-            fn mission_team_indices(&self) -> &[usize] {
-                &self.mission_team_indices
-            }
-
-            fn peasant_names(&self) -> &[String] {
-                &self.peasant_names
-            }
-
-            fn collected_relics(&self) -> &[u32] {
-                &self.collected_relics
-            }
-
-            fn production_sectors(&self) -> &[robin_engine::sector_production::SectorProduction] {
-                &self.production_sectors
-            }
-        }
-    };
-}
-
-impl_campaign_limit_layer!(robin_engine::campaign::Campaign);
-impl_campaign_limit_layer!(robin_engine::campaign::CampaignSnapshot);
-
-impl CampaignLimitLayer for robin_engine::campaign::CampaignPracticeReturnView<'_> {
-    fn missions(&self) -> &[robin_engine::mission::Mission] {
-        self.missions
-    }
-
-    fn characters(&self) -> &[robin_engine::campaign::PcDescription] {
-        self.characters
-    }
-
-    fn accessible_mission_indices(&self) -> &[usize] {
-        self.accessible_mission_indices
-    }
-
-    fn pending_accessible_mission_indices(&self) -> &[usize] {
-        self.pending_accessible_mission_indices
-    }
-
-    fn gang_indices(&self) -> &[usize] {
-        self.gang_indices
-    }
-
-    fn reservist_indices(&self) -> &[usize] {
-        self.reservist_indices
-    }
-
-    fn mission_team_indices(&self) -> &[usize] {
-        self.mission_team_indices
-    }
-
-    fn peasant_names(&self) -> &[String] {
-        self.peasant_names
-    }
-
-    fn collected_relics(&self) -> &[u32] {
-        self.collected_relics
-    }
-
-    fn production_sectors(&self) -> &[robin_engine::sector_production::SectorProduction] {
-        self.production_sectors
-    }
-}
-
 struct CampaignLimitBudget<'a> {
     limits: &'a ReplayAdmissionLimits,
     missions: usize,
@@ -936,20 +812,23 @@ impl<'a> CampaignLimitBudget<'a> {
         check_limit(kind, *total, limit)
     }
 
-    fn visit(&mut self, layer: &impl CampaignLimitLayer) -> Result<(), FormatError> {
+    fn visit(
+        &mut self,
+        layer: &robin_engine::campaign::CampaignPracticeReturnView<'_>,
+    ) -> Result<(), FormatError> {
         Self::add(
             &mut self.missions,
-            layer.missions().len(),
+            layer.missions.len(),
             ReplayLimitKind::CampaignMissions,
             self.limits.max_campaign_missions,
         )?;
         Self::add(
             &mut self.characters,
-            layer.characters().len(),
+            layer.characters.len(),
             ReplayLimitKind::CampaignCharacters,
             self.limits.max_campaign_characters,
         )?;
-        for character in layer.characters() {
+        for character in layer.characters {
             check_limit(
                 ReplayLimitKind::CampaignStringBytes,
                 character.status.name.len(),
@@ -958,13 +837,13 @@ impl<'a> CampaignLimitBudget<'a> {
         }
 
         for entries in [
-            layer.accessible_mission_indices().len(),
-            layer.pending_accessible_mission_indices().len(),
-            layer.gang_indices().len(),
-            layer.reservist_indices().len(),
-            layer.mission_team_indices().len(),
-            layer.peasant_names().len(),
-            layer.collected_relics().len(),
+            layer.accessible_mission_indices.len(),
+            layer.pending_accessible_mission_indices.len(),
+            layer.gang_indices.len(),
+            layer.reservist_indices.len(),
+            layer.mission_team_indices.len(),
+            layer.peasant_names.len(),
+            layer.collected_relics.len(),
         ] {
             Self::add(
                 &mut self.collection_entries,
@@ -973,7 +852,7 @@ impl<'a> CampaignLimitBudget<'a> {
                 self.limits.max_campaign_collection_entries,
             )?;
         }
-        for name in layer.peasant_names() {
+        for name in layer.peasant_names {
             check_limit(
                 ReplayLimitKind::CampaignStringBytes,
                 name.len(),
@@ -981,7 +860,7 @@ impl<'a> CampaignLimitBudget<'a> {
             )?;
         }
 
-        for sector in layer.production_sectors() {
+        for sector in layer.production_sectors {
             Self::add(
                 &mut self.production_points,
                 sector.production_points.len(),
@@ -996,7 +875,7 @@ impl<'a> CampaignLimitBudget<'a> {
             )?;
         }
 
-        for mission in layer.missions() {
+        for mission in layer.missions {
             let attempts = mission.attempt_history().attempts();
             Self::add(
                 &mut self.history_attempts,
@@ -1034,7 +913,7 @@ fn validate_campaign_specific_limits(
     limits: &ReplayAdmissionLimits,
 ) -> Result<(), FormatError> {
     let mut budget = CampaignLimitBudget::new(limits);
-    budget.visit(campaign)?;
+    budget.visit(&campaign.validation_view())?;
 
     if let Some(snapshot) = campaign.pre_mission_snapshot.as_ref() {
         check_limit(
@@ -1042,7 +921,7 @@ fn validate_campaign_specific_limits(
             1,
             limits.max_campaign_snapshot_depth,
         )?;
-        budget.visit(snapshot)?;
+        budget.visit(&snapshot.validation_view())?;
         // A practice-return image is terminal rather than recursively typed,
         // but it is still separately serialized inside the restart image and
         // therefore consumes the same aggregate campaign budgets.

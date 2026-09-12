@@ -268,7 +268,7 @@ mod tests {
     use crate::element::{ActorPc, ElementData, ElementKind};
 
     fn selected_pc(engine: &mut EngineInner) -> EntityId {
-        let actor = engine.add_entity(Entity::Pc(ActorPc {
+        let actor = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::ActorPc;

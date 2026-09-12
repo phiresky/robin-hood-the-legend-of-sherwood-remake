@@ -101,19 +101,18 @@ fn crowded_fight_purge_side(
 }
 
 fn opponent_order_debug_matches(frame: u32, owner: EntityId) -> bool {
-    if std::env::var_os("PARITY_DEBUG_OPPONENT_ORDER").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for opponent-order diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_OPPONENT_ORDER_FRAME").is_none_or(|value| value == frame)
-        && parse_filter("PARITY_DEBUG_OPPONENT_ORDER_OWNER")
-            .is_none_or(|value| value == owner.index())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_OPPONENT_ORDER",
+            [
+                "PARITY_DEBUG_OPPONENT_ORDER_FRAME",
+                "PARITY_DEBUG_OPPONENT_ORDER_OWNER",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(owner.index())])
 }
 
 /// associated jump line — the paired jump line on the far
@@ -280,13 +279,12 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let this_sector_num = match self
-            .get_entity(entity_id)
-            .and_then(|e| e.element_data().sector())
-        {
-            Some(s) => i16::from(s),
-            None => return,
+        let owner = self.expect_entity(entity_id, "opponent jump-line refresh owner");
+        let Some(this_sector) = owner.element_data().sector() else {
+            // Actors outside a mapped sector have no table-fight relation.
+            return;
         };
+        let this_sector_num = i16::from(this_sector);
         let this_sector_idx = self
             .world
             .fast_grid
@@ -297,11 +295,12 @@ impl EngineInner {
 
         // Snapshot opponents + current jump-lines so we can mutate in a
         // second pass without holding a borrow on `self.world.entities`.
-        let opponents: Vec<(EntityId, Option<crate::jump_line::JumpLineIndex>)> =
-            match self.get_entity(entity_id).and_then(|e| e.human_data()) {
-                Some(h) => h.opponents.iter_with_jump_lines().collect(),
-                None => return,
-            };
+        let opponents: Vec<(EntityId, Option<crate::jump_line::JumpLineIndex>)> = owner
+            .human_data()
+            .expect("opponent jump-line refresh owner must be human")
+            .opponents
+            .iter_with_jump_lines()
+            .collect();
 
         // (slot_index, new_this_jl, opponent_id, new_opp_jl)
         let mut updates: Vec<(
@@ -1479,10 +1478,7 @@ impl EngineInner {
         entity_id: EntityId,
     ) {
         let (opponents, uber_range) = {
-            let entity = match self.world.entities.get(entity_id) {
-                Some(e) => e,
-                None => return,
-            };
+            let entity = self.expect_entity(entity_id, "swordfight opponent refresh owner");
             let range = get_hth_weapon_id_full(entity, &assets.profile_manager)
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
                 .map(|p| p.distance[3] as f32) // UBER range
@@ -1723,10 +1719,7 @@ impl EngineInner {
         damage: u16,
     ) -> bool {
         let (is_pc, life_points, is_vip, status_idx) = {
-            let entity = match self.get_entity(pc_id) {
-                Some(e) => e,
-                None => return false,
-            };
+            let entity = self.expect_entity(pc_id, "swordfight damage status owner");
             match entity {
                 Entity::Pc(pc) => {
                     let vip = assets

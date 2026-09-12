@@ -10,7 +10,7 @@ front. The new map can be both larger and more complex (more entities) than the 
 
 ## Maps in the game
 
-These renders come from full-map screenshots (`cargo run --example render_mission_maps`).
+These renders come from full-map screenshots (`cargo run --example render_mission_map`).
 Click one to open the full image (full-resolution but lossy, ask me if you need lossless).
 
 | Map | Day | Fog | Night |

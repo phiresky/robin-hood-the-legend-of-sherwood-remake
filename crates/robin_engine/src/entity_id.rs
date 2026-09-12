@@ -3,7 +3,6 @@
 //! get one identifier type is not justified.
 
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
 
 /// The concrete entity table class an [`EntityId`] points at.
 #[derive(
@@ -154,6 +153,9 @@ pub enum ObjectId {
 /// while still retaining the raw table index needed by script handles.
 #[derive(
     Debug,
+    PartialEq,
+    Eq,
+    Hash,
     Clone,
     Copy,
     Serialize,
@@ -173,14 +175,6 @@ pub enum EntityId {
     Projectile(ProjectileId),
     Net(NetId),
 }
-
-impl PartialEq for EntityId {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind() == other.kind() && self.index() == other.index()
-    }
-}
-
-impl Eq for EntityId {}
 
 macro_rules! entity_id_partial_eq {
     ($($id:ty),+ $(,)?) => {
@@ -227,13 +221,6 @@ impl Ord for EntityId {
         self.index()
             .cmp(&other.index())
             .then_with(|| self.kind().cmp(&other.kind()))
-    }
-}
-
-impl Hash for EntityId {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.kind().hash(state);
-        self.index().hash(state);
     }
 }
 
@@ -522,5 +509,49 @@ impl From<NetId> for EntityId {
 impl std::fmt::Display for EntityId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}({})", self.kind(), self.index())
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+    use std::hash::{Hash, Hasher};
+
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    struct HashBytes(Vec<u8>);
+
+    impl Hasher for HashBytes {
+        fn finish(&self) -> u64 {
+            0
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    #[test]
+    fn derived_entity_hash_retains_kind_then_index_stream() {
+        for index in [0, 1, u32::MAX] {
+            for id in [
+                EntityId::Pc(PcId(index)),
+                EntityId::Soldier(SoldierId(index)),
+                EntityId::Civilian(CivilianId(index)),
+                EntityId::Fx(FxId(index)),
+                EntityId::Target(TargetId(index)),
+                EntityId::Bonus(BonusId(index)),
+                EntityId::Scroll(ScrollId(index)),
+                EntityId::Projectile(ProjectileId(index)),
+                EntityId::Net(NetId(index)),
+            ] {
+                let mut legacy = HashBytes::default();
+                id.kind().hash(&mut legacy);
+                id.index().hash(&mut legacy);
+                let mut derived = HashBytes::default();
+                id.hash(&mut derived);
+                assert_eq!(derived.0, legacy.0, "{id:?}");
+            }
+        }
+        // Ordering intentionally stays index-first, unlike derived enum ordering.
+        assert!(EntityId::Soldier(SoldierId(0)) < EntityId::Pc(PcId(1)));
     }
 }

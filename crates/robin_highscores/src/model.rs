@@ -192,6 +192,12 @@ pub struct WorkerJob {
     pub attempts: u32,
 }
 
+/// Nonnegative Unix time for wire timestamps; never reinterpret a signed value.
+pub fn now_unix_ms() -> Result<u64, crate::error::ApiError> {
+    u64::try_from(now_epoch_ms().map_err(|_| crate::error::ApiError::Internal)?)
+        .map_err(|_| crate::error::ApiError::Internal)
+}
+
 pub fn now_epoch_ms() -> Result<i64, std::time::SystemTimeError> {
     let millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?

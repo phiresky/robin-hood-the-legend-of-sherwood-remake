@@ -9,6 +9,9 @@
 //! Wire order follows the original game's engine, minimap, ground-mark, and
 //! titbit serialization.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
+use super::read_helpers::read_count_u16;
+use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -23,25 +26,6 @@ const FINGERPRINT_MINIMAP: [u8; 16] = hex16("50f6249a4ee7522862f2c5f5442ae167");
 const FINGERPRINT_GROUND_MARK: [u8; 16] = hex16("b7ebd8adf1c9be532ca495049f430da9");
 const FINGERPRINT_TITBITS: [u8; 16] = hex16("0066cad32f8281aebfc9aba90a88aa34");
 
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyPostSimpleLimits {
     pub failed_path_requests: usize,
@@ -54,19 +38,18 @@ pub struct LegacyPostSimpleLimits {
 impl Default for LegacyPostSimpleLimits {
     fn default() -> Self {
         Self {
-            failed_path_requests: 65_535,
-            minimap_highlights: 65_535,
-            selected_elements: 65_535,
-            ground_marks: 65_535,
-            titbits: 65_535,
+            failed_path_requests: DEFAULT_BULK_LIMIT,
+            minimap_highlights: DEFAULT_BULK_LIMIT,
+            selected_elements: DEFAULT_BULK_LIMIT,
+            ground_marks: DEFAULT_BULK_LIMIT,
+            titbits: DEFAULT_BULK_LIMIT,
         }
     }
 }
 
 /// engine failed-path-request list.
 ///
-/// TODO(save-import): the current Rust snapshot does not retain every one of
-/// these retry parameters. Conversion must restore the authoritative queue
+/// [`super::adopt_paths`] must restore the authoritative queue
 /// rather than synthesize a new path request from only actor and destination.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LegacyFailedPathRequests {
@@ -103,7 +86,6 @@ impl LegacyFailedPathRequests {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("failed_path_requests", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             let count = read_count_u16(reader, "count", limits.failed_path_requests)?;
             let mut requests = Vec::new();
@@ -141,9 +123,8 @@ impl LegacyFailedPathRequests {
 
 /// Serializable state of the UI-owned minimap.
 ///
-/// TODO(save-import): loading must hand this state to the host UI layer. It
-/// must not be dropped merely because the simulation's `Engine` does not own
-/// the minimap widget.
+/// [`super::adopt_simple`] returns this state to the host UI layer; it must not
+/// be dropped merely because the simulation does not own the minimap widget.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LegacyMinimapState {
     pub abi_profile: LegacySaveAbiProfile,
@@ -172,7 +153,6 @@ impl LegacyMinimapState {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("minimap", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             reader.read_signature("fingerprint", FINGERPRINT_MINIMAP, "minimap fingerprint")?;
             let go_in = reader.read_bool("go_in")?;
@@ -235,7 +215,7 @@ pub struct LegacyElementSelection {
 impl LegacyElementSelection {
     pub fn read(
         reader: &mut LegacyReader<'_>,
-        field: impl Into<String>,
+        field: impl Into<std::borrow::Cow<'static, str>>,
         maximum: usize,
     ) -> LegacyResult<Self> {
         reader.scope(field, |reader| {
@@ -279,7 +259,7 @@ impl LegacyFollowViewRefs {
 
 /// Serializable destination markers owned by the ground mark.
 ///
-/// TODO(save-import): preserve the current sprite frame exactly. Recreating a
+/// [`super::adopt_simple`] preserves the current sprite frame exactly. Recreating a
 /// marker through the normal API starts its render lifetime at a different
 /// frame boundary and can cause a visible replay mismatch.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -304,7 +284,6 @@ impl LegacyGroundMarkState {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("ground_mark", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             reader.read_signature(
                 "fingerprint",
@@ -340,7 +319,7 @@ impl LegacyGroundMarkState {
 /// overwrites the first without checking equality. Preserving both makes
 /// malformed or historically divergent files diagnosable.
 ///
-/// TODO(save-import): rebuild the render-owned blinking/dotted counters using
+/// [`super::adopt_simple`] rebuilds the render-owned blinking/dotted counters using
 /// the Original's load reset values while retaining every authoritative item,
 /// ID, phase, and reference below.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -377,7 +356,6 @@ impl LegacyTitbitsState {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("titbits", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             reader.read_signature(
                 "fingerprint",
@@ -418,100 +396,13 @@ impl LegacyTitbitsState {
     }
 }
 
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
-        })
-    })
-}
-
-fn read_box2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyBoundingBox2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyBoundingBox2 {
-            top_left: read_point2(reader, "top_left")?,
-            bottom_right: read_point2(reader, "bottom_right")?,
-            bounds_are_set: reader.read_bool("bounds_are_set")?,
-        })
-    })
-}
-
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: impl std::fmt::Display,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
-fn read_count_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    let offset = reader.offset();
-    let count = usize::from(reader.read_u16(field)?);
-    if count > maximum {
-        return Err(reader.invalid_value(
-            offset,
-            field,
-            count,
-            "item count within the caller-supplied limit",
-        ));
-    }
-    Ok(count)
-}
-
-fn audit_abi(abi_profile: LegacySaveAbiProfile) {
-    debug_assert!(abi_profile.is_little_endian());
-    debug_assert_eq!(LegacySaveAbiProfile::BOOL_WIDTH, 1);
-    debug_assert_eq!(LegacySaveAbiProfile::WORD_WIDTH, 2);
-    debug_assert_eq!(LegacySaveAbiProfile::LONG_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::ENUM_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::FLOAT_WIDTH, 4);
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temporary = NamedTempFile::new().unwrap();
-        temporary.write_all(bytes).unwrap();
-        temporary.flush().unwrap();
-        let mut file = SbFile::open(temporary.path().to_str().unwrap()).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn u16_bytes(value: u16, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -738,6 +629,6 @@ mod tests {
         });
         assert_eq!(error.offset, bytes.len() as u64 - 2);
         assert_eq!(error.field, "titbits.items[0].position.z");
-        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile(_)));
     }
 }

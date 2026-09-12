@@ -22,6 +22,12 @@ Some new features are already added, some incomplete, some TODO or "maybe later.
 
 ## Building
 
+Developer scripts are indexed in [scripts/README.md](scripts/README.md).
+The ignored `binaries/` directory is a separately managed artifact checkout,
+not a source submodule or a prerequisite for ordinary Cargo builds. Corpus
+capture requires the exact recorder artifacts selected by its campaign;
+missing artifacts must be supplied explicitly, not replaced with a new build.
+
 Currently only tested on a Linux host. Bare builds use no optional client
 features. Use `--features desktop` for the normal native game (audio, OS
 data-directory lookup/dialogs, gamepads, and hardware reporting). Large

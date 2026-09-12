@@ -39,12 +39,14 @@ use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBoxHalfDiagonal};
 use crate::element::EntityId;
 use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d;
-use robin_util::static_arc::StaticArc;
+use crate::static_arc::StaticArc;
 
 // ─── Geometry helpers ────────────────────────────────────────────
 
 /// Ray-casting point-in-polygon test in projected map space.
 /// Returns `true` if `pt` is inside the polygon defined by `vertices`.
+// Keep Original's strict ray-crossing inequalities: the generic geo2d polygon
+// helper includes boundary points and is not a parity-equivalent replacement.
 fn point_in_polygon(pt: MapPoint, vertices: &[MapPoint]) -> bool {
     if vertices.len() < 3 {
         return false;
@@ -974,7 +976,7 @@ pub struct PathFinderRuntime {
 
     // ── Search state (reset per search) ──
     /// Sorted open node list (ascending by score).
-    open_nodes: Vec<NodeIdx>,
+    open_nodes: std::collections::VecDeque<NodeIdx>,
 
     /// Best f-score found so far for a complete path.
     shortest_distance_found: f32,
@@ -1364,7 +1366,7 @@ impl PathFinderRuntime {
             graph: PathGraph::new(),
             number_of_attempts: 1,
             search_nodes: Vec::new(),
-            open_nodes: Vec::new(),
+            open_nodes: std::collections::VecDeque::new(),
             shortest_distance_found: 2e10,
             current_layer: 0,
             current_half_diagonal_idx: 0,
@@ -1673,15 +1675,14 @@ impl PathFinderRuntime {
         let mut best_node: Option<NodeIdx> = None;
         let mut attempts_left = self.number_of_attempts;
 
-        while !self.open_nodes.is_empty() {
-            // Pop the node with the lowest score
-            let current_idx = self.open_nodes.remove(0);
+        // Pop the node with the lowest score, preserving Original insertion order.
+        while let Some(current_idx) = self.open_nodes.pop_front() {
             let current_pos = self.graph.nodes[current_idx.0 as usize].position;
             let node_config = self.graph.nodes[current_idx.0 as usize]
                 .configurations
                 .get(self.current_half_diagonal_idx as usize)
                 .copied()
-                .unwrap_or(0);
+                .expect("half-diagonal index outside docking configurations");
 
             // Check if the goal is directly reachable from this node
             let mut end_place: u8 = 0;
@@ -1791,7 +1792,7 @@ impl PathFinderRuntime {
         let score = self.search_nodes[node.0 as usize].score;
 
         if self.open_nodes.is_empty() {
-            self.open_nodes.push(node);
+            self.open_nodes.push_back(node);
             return;
         }
 
@@ -1867,7 +1868,11 @@ impl PathFinderRuntime {
             for node_i in 0..num_nodes {
                 let node_idx = self.graph.layers[layer][area][obs_idx][node_i];
                 let node = &self.graph.nodes[node_idx.0 as usize];
-                let node_config = node.configurations.get(hd_idx).copied().unwrap_or(0);
+                let node_config = node
+                    .configurations
+                    .get(hd_idx)
+                    .copied()
+                    .expect("half-diagonal index outside docking configurations");
 
                 if node_config == 0 {
                     continue;
@@ -2094,7 +2099,7 @@ impl PathFinderRuntime {
             .configurations
             .get(hd_idx)
             .copied()
-            .unwrap_or(0);
+            .expect("half-diagonal index outside docking configurations");
 
         let num_leave = number_of_places(leave_places);
 
@@ -2772,7 +2777,7 @@ mod tests {
                 .iter()
                 .map(NodeSearchState::capture)
                 .collect();
-            runtime.open_nodes = vec![NodeIdx(0), NodeIdx(1)];
+            runtime.open_nodes = [NodeIdx(0), NodeIdx(1)].into();
             runtime.number_of_attempts = attempts;
             runtime
         };

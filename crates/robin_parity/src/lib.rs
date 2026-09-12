@@ -9,6 +9,12 @@
 pub mod original_parity_replay;
 pub mod result;
 
+/// Canonical lowercase SHA-256 spelling shared by parity identities.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
 use robin_assets::picture::Picture;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::engine::LevelAssets;
@@ -22,7 +28,10 @@ pub use robin_assets::original_text::LANGUAGE_FOLDERS;
 pub fn register_language_data_paths() {
     let _ = SbFile::add_alternate_path(robin_assets::original_text::FALLBACK_LOCALE_FOLDER);
     for &folder in LANGUAGE_FOLDERS {
-        if SbFile::exists(folder) {
+        if robin_engine::sbfile::global_file_system()
+            .try_exists(folder)
+            .unwrap_or_else(|error| panic!("inspect parity language folder {folder}: {error}"))
+        {
             tracing::info!(folder, "detected parity replay language folder");
             let _ = SbFile::add_alternate_path(folder);
             return;
@@ -106,11 +115,7 @@ pub fn prepare_core_audio_timing(
         .map_err(|error| format!("core datadir {}: {error}", core.display()))?;
     let timing = robin_engine::audio_durations::AudioDurations::from_json(&bytes)
         .map_err(|error| format!("core datadir {}: {error}", core.display()))?;
-    use sha2::Digest as _;
-    let hash: String = sha2::Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let hash = sha256_hex(&bytes);
     tracing::info!(core_datadir = %core.display(), audio_durations_sha256 = %hash, "prepared parity core timing");
     Ok(timing)
 }

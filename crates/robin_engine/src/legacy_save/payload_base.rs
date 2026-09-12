@@ -5,6 +5,9 @@
 //! independently callable reader. Leaf readers must invoke it at the exact
 //! point where the original-game serializer handles shared state.
 
+use super::read_helpers::{DEFAULT_BULK_LIMIT, DEFAULT_LIST_LIMIT};
+use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
+use super::read_helpers::{read_array, read_count_u16 as read_bounded_u16};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -28,25 +31,6 @@ const FINGERPRINT_NPC: [u8; 16] = hex16("43960282833355d4ecb17f46320d0dae");
 const FINGERPRINT_PATH_STATUS: [u8; 16] = hex16("f2781c304bb147aa1defc89ab1033082");
 const FINGERPRINT_DETECTABLE: [u8; 16] = hex16("ef03cf4b42a0a6d23b96f2c434304c92");
 
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyPayloadLimits {
     pub sprite_animation_replacements: usize,
@@ -64,16 +48,16 @@ pub struct LegacyPayloadLimits {
 impl Default for LegacyPayloadLimits {
     fn default() -> Self {
         Self {
-            sprite_animation_replacements: 4096,
-            actor_bypass_points: 4096,
-            human_opponents: 4096,
-            human_sword_victims: 4096,
-            human_shoots: 4096,
-            npc_detectables_per_type: 65_535,
-            mobile_sprites: 4096,
-            mobile_vibrations: 65_535,
-            mobile_alerted_animals: 65_535,
-            path_history: 65_535,
+            sprite_animation_replacements: DEFAULT_LIST_LIMIT,
+            actor_bypass_points: DEFAULT_LIST_LIMIT,
+            human_opponents: DEFAULT_LIST_LIMIT,
+            human_sword_victims: DEFAULT_LIST_LIMIT,
+            human_shoots: DEFAULT_LIST_LIMIT,
+            npc_detectables_per_type: DEFAULT_BULK_LIMIT,
+            mobile_sprites: DEFAULT_LIST_LIMIT,
+            mobile_vibrations: DEFAULT_BULK_LIMIT,
+            mobile_alerted_animals: DEFAULT_BULK_LIMIT,
+            path_history: DEFAULT_BULK_LIMIT,
         }
     }
 }
@@ -262,13 +246,6 @@ impl LegacyElementPayloadBase {
                 "class id from the phase-one envelope",
             ));
         }
-        let delayed_map_position = read_point2(reader, "delayed_map_position")?;
-        let delayed_position = read_point3(reader, "delayed_position")?;
-        let in_honolulu = reader.read_bool("in_honolulu")?;
-        let index_in_elements_list = reader.read_u16("index_in_elements_list")?;
-        let blipped = reader.read_bool("blipped")?;
-        let unreachable = reader.read_bool("unreachable")?;
-        let sprite = reader.scope("sprite", |reader| LegacySpritePayload::read(reader, limits))?;
         Ok(Self {
             creation_order,
             outline_colors,
@@ -279,13 +256,13 @@ impl LegacyElementPayloadBase {
             position_map_delayed,
             position_delayed,
             class,
-            delayed_map_position,
-            delayed_position,
-            in_honolulu,
-            index_in_elements_list,
-            blipped,
-            unreachable,
-            sprite,
+            delayed_map_position: read_point2(reader, "delayed_map_position")?,
+            delayed_position: read_point3(reader, "delayed_position")?,
+            in_honolulu: reader.read_bool("in_honolulu")?,
+            index_in_elements_list: reader.read_u16("index_in_elements_list")?,
+            blipped: reader.read_bool("blipped")?,
+            unreachable: reader.read_bool("unreachable")?,
+            sprite: reader.scope("sprite", |reader| LegacySpritePayload::read(reader, limits))?,
         })
     }
 }
@@ -337,8 +314,7 @@ impl LegacySpritePayload {
         let last_sound_id = reader.read_u16("last_sound_id")?;
         let last_processed_order_id = reader.read_u32("last_processed_order_id")?;
         let bounding_box = read_box2(reader, "bounding_box")?;
-        let count = read_bounded_u32(
-            reader,
+        let count = reader.read_count_u32(
             "animation_replacements.count",
             limits.sprite_animation_replacements,
         )?;
@@ -437,61 +413,34 @@ impl LegacyPositionPayload {
             FINGERPRINT_POSITION,
             "position interface",
         )?;
-        let computed_position = reader.read_u32("computed_position")?;
-        let computed_increment = reader.read_u32("computed_increment")?;
-        let material = reader.read_u32("material")?;
-        let posture = reader.read_u32("posture")?;
-        let old_posture = reader.read_u32("old_posture")?;
-        let direction = reader.read_i16("direction")?;
-        let direction_goal = reader.read_i16("direction_goal")?;
-        let slow_turn_count = reader.read_u8("slow_turn_count")?;
-        let layer = reader.read_u16("layer")?;
-        let layer_goal = reader.read_u16("layer_goal")?;
-        let tolerance = reader.read_f32("tolerance")?;
-        let directional_tolerance = reader.read_bool("directional_tolerance")?;
-        let accumulate_movement_map = reader.read_bool("accumulate_movement_map")?;
-        let anti_collision_on = reader.read_bool("anti_collision_on")?;
-        let goal_next_valid = reader.read_bool("goal_next_valid")?;
-        let deviated = reader.read_bool("deviated")?;
-        let direction_count = reader.read_i8("direction_count")?;
-        let door_direction = reader.read_bool("door_direction")?;
-        let reversed_movement = reader.read_bool("reversed_movement")?;
-        let blocked_count = reader.read_u16("blocked_count")?;
-        let radius = reader.read_f32("radius")?;
-        let use_emergency_lying_box = reader.read_bool("use_emergency_lying_box")?;
-        let sector = read_sector_ref(reader, "sector")?;
-        let sector_goal = read_sector_ref(reader, "sector_goal")?;
-        let door = read_signed_ref(reader, "door")?;
-        let obstacle = read_signed_ref(reader, "obstacle")?;
-        let target_element = read_element_ref(reader, "target_element")?;
         Ok(Self {
-            computed_position,
-            computed_increment,
-            material,
-            posture,
-            old_posture,
-            direction,
-            direction_goal,
-            slow_turn_count,
-            layer,
-            layer_goal,
-            tolerance,
-            directional_tolerance,
-            accumulate_movement_map,
-            anti_collision_on,
-            goal_next_valid,
-            deviated,
-            direction_count,
-            door_direction,
-            reversed_movement,
-            blocked_count,
-            radius,
-            use_emergency_lying_box,
-            sector,
-            sector_goal,
-            door,
-            obstacle,
-            target_element,
+            computed_position: reader.read_u32("computed_position")?,
+            computed_increment: reader.read_u32("computed_increment")?,
+            material: reader.read_u32("material")?,
+            posture: reader.read_u32("posture")?,
+            old_posture: reader.read_u32("old_posture")?,
+            direction: reader.read_i16("direction")?,
+            direction_goal: reader.read_i16("direction_goal")?,
+            slow_turn_count: reader.read_u8("slow_turn_count")?,
+            layer: reader.read_u16("layer")?,
+            layer_goal: reader.read_u16("layer_goal")?,
+            tolerance: reader.read_f32("tolerance")?,
+            directional_tolerance: reader.read_bool("directional_tolerance")?,
+            accumulate_movement_map: reader.read_bool("accumulate_movement_map")?,
+            anti_collision_on: reader.read_bool("anti_collision_on")?,
+            goal_next_valid: reader.read_bool("goal_next_valid")?,
+            deviated: reader.read_bool("deviated")?,
+            direction_count: reader.read_i8("direction_count")?,
+            door_direction: reader.read_bool("door_direction")?,
+            reversed_movement: reader.read_bool("reversed_movement")?,
+            blocked_count: reader.read_u16("blocked_count")?,
+            radius: reader.read_f32("radius")?,
+            use_emergency_lying_box: reader.read_bool("use_emergency_lying_box")?,
+            sector: read_sector_ref(reader, "sector")?,
+            sector_goal: read_sector_ref(reader, "sector_goal")?,
+            door: read_signed_ref(reader, "door")?,
+            obstacle: read_signed_ref(reader, "obstacle")?,
+            target_element: read_element_ref(reader, "target_element")?,
             position: read_point3(reader, "position")?,
             map: read_point2(reader, "map")?,
             sprite: read_point2(reader, "sprite")?,
@@ -681,7 +630,7 @@ impl LegacyMobilePayload {
         }
         let stopped = reader.read_bool("stopped")?;
         let vibration_count =
-            read_bounded_u32(reader, "vibrations.count", limits.mobile_vibrations)?;
+            reader.read_count_u32("vibrations.count", limits.mobile_vibrations)?;
         let mut vibrations = Vec::new();
         reserve(reader, &mut vibrations, vibration_count, "vibrations")?;
         for index in 0..vibration_count {
@@ -711,11 +660,8 @@ impl LegacyMobilePayload {
         let adaptive_speed = reader.read_bool("adaptive_speed")?;
         let front = read_point2(reader, "front")?;
         let back = read_point2(reader, "back")?;
-        let animal_count = read_bounded_u32(
-            reader,
-            "alerted_animals.count",
-            limits.mobile_alerted_animals,
-        )?;
+        let animal_count =
+            reader.read_count_u32("alerted_animals.count", limits.mobile_alerted_animals)?;
         let mut alerted_animals = Vec::new();
         reserve(
             reader,
@@ -1191,7 +1137,7 @@ impl LegacyHumanPayload {
         for (index, value) in sword_strike_boredom.iter_mut().enumerate() {
             *value = reader.read_u16(format_args!("sword_strike_boredom[{index}]"))?;
         }
-        let shoot_count = read_bounded_u32(reader, "shoots.count", limits.human_shoots)?;
+        let shoot_count = reader.read_count_u32("shoots.count", limits.human_shoots)?;
         let mut shoots = Vec::new();
         reserve(reader, &mut shoots, shoot_count, "shoots")?;
         for index in 0..shoot_count {
@@ -1452,7 +1398,7 @@ impl LegacyNpcPayload {
                 format!("detectable_buckets[{bucket_index}]"),
                 |reader| {
                     let count =
-                        read_bounded_u32(reader, "entries.count", limits.npc_detectables_per_type)?;
+                        reader.read_count_u32("entries.count", limits.npc_detectables_per_type)?;
                     let mut entries = Vec::new();
                     reserve(reader, &mut entries, count, "entries")?;
                     for index in 0..count {
@@ -1533,16 +1479,7 @@ fn read_fingerprint(
     reader.read_signature(field, expected, description)
 }
 
-fn read_array<const N: usize>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<[u8; N]> {
-    let mut bytes = [0; N];
-    reader.read_bytes(field, &mut bytes)?;
-    Ok(bytes)
-}
-
-pub fn read_element_ref(
+pub(super) fn read_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyElementRef> {
@@ -1550,7 +1487,7 @@ pub fn read_element_ref(
     Ok(LegacyElementRef((raw != NULL_U32).then_some(raw)))
 }
 
-pub fn read_ai_element_ref(
+pub(super) fn read_ai_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyAiElementRef> {
@@ -1559,21 +1496,21 @@ pub fn read_ai_element_ref(
     Ok(LegacyAiElementRef((raw != NULL_AI_ELEMENT).then_some(raw)))
 }
 
-pub fn read_sequence_element_ref(
+pub(super) fn read_sequence_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySequenceElementRef> {
     read_nonzero_u32_ref(reader, field).map(LegacySequenceElementRef)
 }
 
-pub fn read_sequence_ref(
+pub(super) fn read_sequence_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySequenceRef> {
     read_nullable_u32_ref(reader, field).map(LegacySequenceRef)
 }
 
-pub fn read_order_ref(
+pub(super) fn read_order_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyOrderRef> {
@@ -1607,7 +1544,7 @@ fn read_nonzero_u32_ref(
     }
 }
 
-pub fn read_sector_ref(
+pub(super) fn read_sector_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySectorRef> {
@@ -1615,7 +1552,7 @@ pub fn read_sector_ref(
     Ok(LegacySectorRef((raw != u16::MAX).then_some(raw)))
 }
 
-pub fn read_signed_ref(
+pub(super) fn read_signed_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySignedIndexRef> {
@@ -1623,7 +1560,7 @@ pub fn read_signed_ref(
     Ok(LegacySignedIndexRef((raw != -1).then_some(raw)))
 }
 
-pub fn read_line_ref(
+pub(super) fn read_line_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyLineRef> {
@@ -1633,44 +1570,6 @@ pub fn read_line_ref(
     Ok(LegacyLineRef {
         layer: (layer != u16::MAX).then_some(layer),
         index: (index != -1).then_some(index),
-    })
-}
-
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
-        })
-    })
-}
-
-fn read_box2(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyBoundingBox2> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyBoundingBox2 {
-            top_left: read_point2(reader, "top_left")?,
-            bottom_right: read_point2(reader, "bottom_right")?,
-            bounds_are_set: reader.read_bool("bounds_are_set")?,
-        })
     })
 }
 
@@ -1710,62 +1609,12 @@ fn read_plane3(
     })
 }
 
-fn read_bounded_u32(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    reader.read_count_u32(field, maximum)
-}
-
-fn read_bounded_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    let offset = reader.offset();
-    let raw = reader.read_u16(field)?;
-    let count = usize::from(raw);
-    if count > maximum {
-        return Err(reader.invalid_value(
-            offset,
-            field,
-            count,
-            "item count within the caller-supplied limit",
-        ));
-    }
-    Ok(count)
-}
-
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: &'static str,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     #[test]
     fn reference_codecs_preserve_distinct_wire_id_spaces() {

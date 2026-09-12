@@ -506,7 +506,10 @@ fn format_lua_value(v: &mlua::Value) -> String {
         mlua::Value::Boolean(b) => b.to_string(),
         mlua::Value::Integer(i) => i.to_string(),
         mlua::Value::Number(n) => n.to_string(),
-        mlua::Value::String(s) => s.to_str().map(|s| s.to_string()).unwrap_or_default(),
+        mlua::Value::String(s) => s
+            .to_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|_| "<invalid utf8>".to_owned()),
         other => format!("<{}>", other.type_name()),
     }
 }
@@ -516,6 +519,13 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn debug_string_reports_invalid_utf8_instead_of_empty_data() {
+        let lua = mlua::Lua::new();
+        let value = mlua::Value::String(lua.create_string([0xff]).unwrap());
+        assert_eq!(format_lua_value(&value), "<invalid utf8>");
+    }
 
     fn make_state() -> (MissionLuaState, TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");

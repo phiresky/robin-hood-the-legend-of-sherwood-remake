@@ -8,26 +8,43 @@ use super::*;
 impl EnemyAi {
     pub(super) fn think_expected_attacking_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::AttackingReactiontimeTurning => {
                 self.attacking_reactiontime_turning(stimulus_type, ctx)
             }
 
-            Substate::AttackingReactiontime => {
-                self.attacking_reactiontime(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingReactiontime => self.attacking_reactiontime(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::AttackingReactiontimeRunning => {
-                self.attacking_reactiontime_running(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingReactiontimeRunning => self.attacking_reactiontime_running(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingRunningToEnemy
             | Substate::AttackingWalkingToEnemy
@@ -37,9 +54,16 @@ impl EnemyAi {
 
             Substate::AttackingOverviewLookLeft => self.attacking_overview_look_left(stimulus_type),
 
-            Substate::AttackingOverviewLookRight => {
-                self.attacking_overview_look_right(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingOverviewLookRight => self.attacking_overview_look_right(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingRiderChargingApproaching
                 if stimulus_type == StimulusType::EventGaloppLoopEnd =>
@@ -63,17 +87,31 @@ impl EnemyAi {
                 self.attacking_rider_charging_getting_distance(stimulus_type, ctx)
             }
 
-            Substate::AttackingRiderChargingReturning => {
-                self.attacking_rider_charging_returning(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingRiderChargingReturning => self.attacking_rider_charging_returning(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingRiderChargingApproachingBlindly => {
                 self.attacking_rider_charging_approaching_blindly(stimulus_type, ctx)
             }
 
-            Substate::AttackingSwordfight => {
-                self.attacking_swordfight(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingSwordfight => self.attacking_swordfight(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingSwordfightSpecialStrike => {
                 self.attacking_swordfight_special_strike(stimulus_type, ctx)
@@ -87,9 +125,16 @@ impl EnemyAi {
                 self.attacking_approaching_new_enemy(stimulus_type, ctx, tick)
             }
 
-            Substate::AttackingMovingAroundOldEnemy => {
-                self.attacking_moving_around_old_enemy(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingMovingAroundOldEnemy => self.attacking_moving_around_old_enemy(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingQuittingSwordfight => {
                 self.attacking_quitting_swordfight(stimulus_type, ctx, tick)
@@ -97,21 +142,42 @@ impl EnemyAi {
 
             Substate::AttackingReserve => self.attacking_reserve(stimulus_type, ctx, tick),
 
-            Substate::AttackingLastReserve => {
-                self.attacking_last_reserve(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingLastReserve => self.attacking_last_reserve(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingApproachToObserve => {
                 self.attacking_approach_to_observe(stimulus_type, ctx)
             }
 
-            Substate::AttackingObserve => {
-                self.attacking_observe(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingObserve => self.attacking_observe(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::AttackingObserveAndMove => {
-                self.attacking_observe_and_move(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingObserveAndMove => self.attacking_observe_and_move(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingTooProudToAttack => {
                 self.attacking_too_proud_to_attack(sim, stimulus_type, ctx, tick)
@@ -125,13 +191,27 @@ impl EnemyAi {
                 self.attacking_tower_guard_observe(stimulus_type, ctx, tick)
             }
 
-            Substate::AttackingBowShooting => {
-                self.attacking_bow_shooting(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingBowShooting => self.attacking_bow_shooting(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::AttackingBowAiming => {
-                self.attacking_bow_aiming(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingBowAiming => self.attacking_bow_aiming(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingBowLoading => self.attacking_bow_loading(stimulus_type, ctx),
 
@@ -139,18 +219,27 @@ impl EnemyAi {
                 self.attacking_bow_observing_loading(stimulus_type, ctx)
             }
 
-            Substate::AttackingBowObserving => {
-                self.attacking_bow_observing(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingBowObserving => self.attacking_bow_observing(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingBowRunningBehindShieldBearer => self
                 .attacking_bow_running_behind_shield_bearer(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::AttackingDoorFightDelay => {
@@ -177,17 +266,37 @@ impl EnemyAi {
                 self.attacking_advancing_with_shield(stimulus_type, ctx, tick, grid)
             }
 
-            Substate::AttackingRunningToPhalanx => {
-                self.attacking_running_to_phalanx(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingRunningToPhalanx => self.attacking_running_to_phalanx(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::AttackingPhalanx => {
-                self.attacking_phalanx(sim, stimulus_type, ctx, tick, grid)
-            }
+            Substate::AttackingPhalanx => self.attacking_phalanx(
+                stimulus_type,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::AttackingReserveOverview => {
-                self.attacking_reserve_overview(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingReserveOverview => self.attacking_reserve_overview(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingApproachingSleepingEnemy => {
                 self.attacking_approaching_sleeping_enemy(sim, stimulus_type, ctx, tick)
@@ -203,12 +312,14 @@ impl EnemyAi {
 
             Substate::AttackingArcherRetireFromCombatTurn => self
                 .attacking_archer_retire_from_combat_turn(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::AttackingOfficerGivingOrders => {
@@ -217,22 +328,26 @@ impl EnemyAi {
 
             Substate::AttackingOfficerGivingOrdersWaiting => self
                 .attacking_officer_giving_orders_waiting(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::AttackingTooProudToAttackOverview => self
                 .attacking_too_proud_to_attack_overview(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::AttackingTooProudToAttackRetire => {
@@ -241,22 +356,26 @@ impl EnemyAi {
 
             Substate::AttackingTooProudToAttackRetireTurn => self
                 .attacking_too_proud_to_attack_retire_turn(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::AttackingTooProudToAttackApproach => self
                 .attacking_too_proud_to_attack_approach(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::AttackingArcherRunOnShootingPath => {
@@ -269,17 +388,26 @@ impl EnemyAi {
 
             Substate::AttackingArcherRunOnShootingPathTurn => self
                 .attacking_archer_run_on_shooting_path_turn(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
-            Substate::AttackingReactiontimeBending => {
-                self.attacking_reactiontime_bending(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::AttackingReactiontimeBending => self.attacking_reactiontime_bending(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::AttackingArcherWaitOnArcheryPath
             | Substate::AttackingArcherWaitOnArcheryPathBending => {
@@ -381,13 +509,16 @@ impl EnemyAi {
 
     fn attacking_reactiontime(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         tracing::trace!(
             me = self.base.me,
             frame = ctx.frame,
@@ -419,13 +550,16 @@ impl EnemyAi {
 
     fn attacking_reactiontime_running(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         let debug_decision_path = super::super::decision_path_debug_enabled()
             && super::super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
@@ -501,13 +635,16 @@ impl EnemyAi {
 
     fn attacking_overview_look_right(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         match stimulus_type {
             // Look-sidewards finished — short delay before deciding.
             StimulusType::EventDone => {
@@ -606,13 +743,16 @@ impl EnemyAi {
 
     fn attacking_rider_charging_returning(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             self.rider_reattack(sim, global, ctx, tick, grid);
         }
@@ -630,8 +770,7 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
             // Enter wondering state
-            self.set_state(AiState::Wondering, Substate::WonderingLooking1);
-            self.base.launch_timer(30, ctx.frame);
+            self.set_state_with_timer(AiState::Wondering, Substate::WonderingLooking1, 30, ctx);
         }
         false
     }
@@ -648,13 +787,16 @@ impl EnemyAi {
 
     fn attacking_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if matches!(
             stimulus_type,
             StimulusType::EventTimer | StimulusType::EventDone | StimulusType::EventReachPoint
@@ -728,8 +870,7 @@ impl EnemyAi {
                     .launch_commands
                     .push(crate::element::Command::StopParrySword);
             }
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
         }
         false
     }
@@ -785,8 +926,12 @@ impl EnemyAi {
             );
 
             if close_enough {
-                self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                self.base.launch_timer(20, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingSwordfight,
+                    20,
+                    ctx,
+                );
                 self.base.outbox.actor.set_principal = Some(target_handle);
             } else {
                 // Re-approach
@@ -794,8 +939,12 @@ impl EnemyAi {
                     .go_near(target.position, sword_range as i32, GotoFlags::RUN, ctx);
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
-                    self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                    self.base.launch_timer(20, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingSwordfight,
+                        20,
+                        ctx,
+                    );
                     self.base.outbox.actor.set_principal = Some(target_handle);
                 }
             }
@@ -807,16 +956,18 @@ impl EnemyAi {
 
     fn attacking_moving_around_old_enemy(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventReachPoint {
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
             self.reconsider_swordfight(sim, false, global, ctx, tick, grid);
         }
         false
@@ -895,14 +1046,22 @@ impl EnemyAi {
                 // Fall through to CallCoordinate arm.
                 self.reinitialize_them_list(ctx, tick);
                 self.base.set_emoticon(EmoticonType::None);
-                self.set_state(AiState::Attacking, Substate::AttackingReserveOverview);
-                self.base.launch_timer(20, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingReserveOverview,
+                    20,
+                    ctx,
+                );
             }
             StimulusType::CallCoordinate => {
                 self.reinitialize_them_list(ctx, tick);
                 self.base.set_emoticon(EmoticonType::None);
-                self.set_state(AiState::Attacking, Substate::AttackingReserveOverview);
-                self.base.launch_timer(20, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingReserveOverview,
+                    20,
+                    ctx,
+                );
             }
             _ => {}
         }
@@ -914,13 +1073,16 @@ impl EnemyAi {
 
     fn attacking_last_reserve(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             self.battle_decisions(sim, global, ctx, tick, grid);
         }
@@ -956,13 +1118,16 @@ impl EnemyAi {
 
     fn attacking_observe(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             self.reconsider_swordfight_observation(sim, global, ctx, tick, grid);
         }
@@ -974,13 +1139,16 @@ impl EnemyAi {
 
     fn attacking_observe_and_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventReachPoint {
             self.reconsider_swordfight_observation(sim, global, ctx, tick, grid);
         }
@@ -1062,13 +1230,16 @@ impl EnemyAi {
 
     fn attacking_bow_shooting(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         match stimulus_type {
             StimulusType::EventDone => {
                 self.reinitialize_them_list(ctx, tick);
@@ -1090,13 +1261,16 @@ impl EnemyAi {
 
     fn attacking_bow_aiming(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             self.base.set_emoticon(EmoticonType::None);
             let safe_to_shoot = self.tower_guard
@@ -1148,8 +1322,7 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            self.set_state(AiState::Attacking, Substate::AttackingBowObserving);
-            self.base.launch_timer(50, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingBowObserving, 50, ctx);
         }
         false
     }
@@ -1160,13 +1333,16 @@ impl EnemyAi {
 
     fn attacking_bow_observing(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             if ctx.posture == crate::element::Posture::LeaningOut {
                 self.reinitialize_them_list(ctx, tick);
@@ -1182,13 +1358,16 @@ impl EnemyAi {
 
     fn attacking_bow_running_behind_shield_bearer(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         match stimulus_type {
             StimulusType::EventReachPoint => {
                 // Arrived behind shield bearer — turn to face target.
@@ -1261,8 +1440,12 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
             if self.base.primary_target.is_none() {
-                self.set_state(AiState::Attacking, Substate::AttackingDoorFightWaiting);
-                self.base.launch_timer(150, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingDoorFightWaiting,
+                    150,
+                    ctx,
+                );
             } else {
                 self.begin_swordfight(ctx, tick);
             }
@@ -1469,13 +1652,16 @@ impl EnemyAi {
 
     fn attacking_running_to_phalanx(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         // Run to phalanx slot, then raise shield
         match stimulus_type {
             StimulusType::EventReachPoint => {
@@ -1522,12 +1708,15 @@ impl EnemyAi {
 
     pub(super) fn attacking_phalanx(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         // Stand in formation, reconsider periodically
         match stimulus_type {
             StimulusType::EventTimer => {
@@ -1631,9 +1820,9 @@ impl EnemyAi {
                         .find_fighter(archer_behind_me, tick)
                         .map(|f| {
                             let s = f.current_substate;
-                            s == Substate::AttackingBowShooting as u32
-                                || s == Substate::AttackingBowLoading as u32
-                                || s == Substate::AttackingBowAiming as u32
+                            s == Substate::AttackingBowShooting
+                                || s == Substate::AttackingBowLoading
+                                || s == Substate::AttackingBowAiming
                         })
                         .unwrap_or_else(|| {
                             panic!(
@@ -1668,13 +1857,16 @@ impl EnemyAi {
 
     fn attacking_reserve_overview(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             self.battle_decisions(sim, global, ctx, tick, grid);
         }
@@ -1757,7 +1949,7 @@ impl EnemyAi {
                     self.base.launch_timer(20, ctx.frame);
                 } else if target_is_pc && target_in_coma && target_guard.is_some() {
                     // PC already menaced by another guard — go home.
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 } else if let Some(p) = target_pos {
                     if tick.primary_target_snapshot_handle != self.base.primary_target {
                         panic!(
@@ -1879,13 +2071,16 @@ impl EnemyAi {
 
     fn attacking_archer_retire_from_combat_turn(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             // If the primary target is detected within 180 degrees, make
             // battle decisions; otherwise evaluate the battle overview.
@@ -1934,13 +2129,16 @@ impl EnemyAi {
 
     fn attacking_officer_giving_orders_waiting(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             self.reinitialize_them_list(ctx, tick);
             if !self.list_them.is_empty() {
@@ -1967,13 +2165,16 @@ impl EnemyAi {
 
     fn attacking_too_proud_to_attack_overview(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         match stimulus_type {
             StimulusType::EventDone => {
                 if self.base.primary_target.is_some() {
@@ -2046,13 +2247,16 @@ impl EnemyAi {
 
     fn attacking_too_proud_to_attack_retire_turn(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             if self
                 .base
@@ -2072,13 +2276,16 @@ impl EnemyAi {
 
     fn attacking_too_proud_to_attack_approach(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventReachPoint {
             if self
                 .base
@@ -2235,13 +2442,16 @@ impl EnemyAi {
 
     fn attacking_archer_run_on_shooting_path_turn(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             // If my elevation >= enemy's + 50 then set
             // enemy_seen_below and battle decisions; else
@@ -2262,13 +2472,16 @@ impl EnemyAi {
 
     fn attacking_reactiontime_bending(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             self.i_am_in_trouble(
                 self.required_primary_target("finishing an archer bend reaction")
@@ -2290,7 +2503,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -2306,7 +2519,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -2330,8 +2543,7 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
         }
         false
     }
@@ -2366,8 +2578,12 @@ impl EnemyAi {
                     self.base.face_entity(self.base.primary_target, ctx);
                     self.base.outbox.actor.set_focus(self.base.primary_target);
                 }
-                self.set_state(AiState::Attacking, Substate::AttackingWaitingAtLadder);
-                self.base.launch_timer(1, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingWaitingAtLadder,
+                    1,
+                    ctx,
+                );
             }
             StimulusType::EventTimer => {
                 self.reconsider_enemy_approach(false, ctx, tick, grid);
@@ -2431,8 +2647,12 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventReachPoint {
             self.base
                 .face_position_3d_with_ctx(self.base.seek_position, ctx);
-            self.set_state(AiState::Attacking, Substate::AttackingWaitForAvengerOnRoof);
-            self.base.launch_timer(100, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingWaitForAvengerOnRoof,
+                100,
+                ctx,
+            );
         }
         false
     }

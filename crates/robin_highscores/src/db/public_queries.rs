@@ -45,20 +45,6 @@ impl Database {
         accepted_sequence_watermark: u64,
         allowed_rulesets: &[robin_run_protocol::Digest32],
     ) -> Result<Vec<BoardRow>, DbError> {
-        if matches!(
-            filter.subject,
-            robin_run_protocol::LeaderboardSubjectV1::FullCampaign
-        ) {
-            return self
-                .full_campaign_leaderboard_rows(
-                    filter,
-                    cursor,
-                    limit,
-                    accepted_sequence_watermark,
-                    allowed_rulesets,
-                )
-                .await;
-        }
         let metric = match filter.metric {
             robin_run_protocol::BoardMetricV1::OriginalScore => "original_score",
             robin_run_protocol::BoardMetricV1::FastestSuccess => "fastest_success",
@@ -75,7 +61,17 @@ impl Database {
                     robin_run_protocol::BoardCategoryV1::Campaign => "campaign",
                 },
             ),
-            robin_run_protocol::LeaderboardSubjectV1::FullCampaign => unreachable!(),
+            robin_run_protocol::LeaderboardSubjectV1::FullCampaign => {
+                return self
+                    .full_campaign_leaderboard_rows(
+                        filter,
+                        cursor,
+                        limit,
+                        accepted_sequence_watermark,
+                        allowed_rulesets,
+                    )
+                    .await;
+            }
         };
         let mut query = QueryBuilder::<Sqlite>::new(
             "SELECT r.id, s.replay_sha256, m.value, r.max_concurrent_players, \
@@ -126,14 +122,12 @@ impl Database {
             .push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| {
                 DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned())
             })?);
-        query.push(" AND r.ruleset_id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for ruleset in allowed_rulesets {
-                separated.push_bind(ruleset.into_bytes().to_vec());
-            }
-        }
-        query.push(")");
+        query.push(" AND ");
+        push_ruleset_filter(
+            &mut query,
+            "r.ruleset_id",
+            allowed_rulesets.iter().map(|digest| digest.into_bytes()),
+        );
         match &filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -224,26 +218,26 @@ impl Database {
                     replay_sha256: fixed_32(row.try_get("replay_sha256")?)?,
                 },
                 metric_value,
-                max_concurrent_players: u16::try_from(
-                    row.try_get::<i64, _>("max_concurrent_players")?,
-                )
-                .map_err(|_| DbError::Corrupt("player count out of range".to_owned()))?,
-                participant_instance_count: u32::try_from(
-                    row.try_get::<i64, _>("participant_instance_count")?,
-                )
-                .map_err(|_| {
-                    DbError::Corrupt("participant instance count out of range".to_owned())
-                })?,
-                named_participant_instance_count: u32::try_from(
-                    row.try_get::<i64, _>("named_participant_instance_count")?,
-                )
-                .map_err(|_| DbError::Corrupt("named participant count out of range".to_owned()))?,
-                anonymous_participant_instance_count: u32::try_from(
-                    row.try_get::<i64, _>("anonymous_participant_instance_count")?,
-                )
-                .map_err(|_| {
-                    DbError::Corrupt("anonymous participant count out of range".to_owned())
-                })?,
+                max_concurrent_players: checked_count(
+                    &row,
+                    "max_concurrent_players",
+                    "player count out of range",
+                )?,
+                participant_instance_count: checked_count(
+                    &row,
+                    "participant_instance_count",
+                    "participant instance count out of range",
+                )?,
+                named_participant_instance_count: checked_count(
+                    &row,
+                    "named_participant_instance_count",
+                    "named participant count out of range",
+                )?,
+                anonymous_participant_instance_count: checked_count(
+                    &row,
+                    "anonymous_participant_instance_count",
+                    "anonymous participant count out of range",
+                )?,
                 accepted_sequence: nonnegative_u64(
                     row.try_get("accepted_sequence")?,
                     "accepted_sequence",
@@ -317,14 +311,12 @@ impl Database {
                    WHERE fcs.full_campaign_run_id = fc.id \
                      AND s.tombstoned_at_ms IS NOT NULL)",
             );
-        query.push(" AND fc.ruleset_id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for ruleset in allowed_rulesets {
-                separated.push_bind(ruleset.into_bytes().to_vec());
-            }
-        }
-        query.push(")");
+        query.push(" AND ");
+        push_ruleset_filter(
+            &mut query,
+            "fc.ruleset_id",
+            allowed_rulesets.iter().map(|digest| digest.into_bytes()),
+        );
         match &filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -416,26 +408,26 @@ impl Database {
                     ordered_session_run_ids: session_map.remove(&run_id).unwrap_or_default(),
                 },
                 metric_value,
-                max_concurrent_players: u16::try_from(
-                    row.try_get::<i64, _>("max_concurrent_players")?,
-                )
-                .map_err(|_| DbError::Corrupt("player count out of range".to_owned()))?,
-                participant_instance_count: u32::try_from(
-                    row.try_get::<i64, _>("participant_instance_count")?,
-                )
-                .map_err(|_| {
-                    DbError::Corrupt("participant instance count out of range".to_owned())
-                })?,
-                named_participant_instance_count: u32::try_from(
-                    row.try_get::<i64, _>("named_participant_instance_count")?,
-                )
-                .map_err(|_| DbError::Corrupt("named participant count out of range".to_owned()))?,
-                anonymous_participant_instance_count: u32::try_from(
-                    row.try_get::<i64, _>("anonymous_participant_instance_count")?,
-                )
-                .map_err(|_| {
-                    DbError::Corrupt("anonymous participant count out of range".to_owned())
-                })?,
+                max_concurrent_players: checked_count(
+                    &row,
+                    "max_concurrent_players",
+                    "player count out of range",
+                )?,
+                participant_instance_count: checked_count(
+                    &row,
+                    "participant_instance_count",
+                    "participant instance count out of range",
+                )?,
+                named_participant_instance_count: checked_count(
+                    &row,
+                    "named_participant_instance_count",
+                    "named participant count out of range",
+                )?,
+                anonymous_participant_instance_count: checked_count(
+                    &row,
+                    "anonymous_participant_instance_count",
+                    "anonymous participant count out of range",
+                )?,
                 accepted_sequence: nonnegative_u64(
                     row.try_get("accepted_sequence")?,
                     "accepted_sequence",
@@ -536,14 +528,12 @@ impl Database {
             .push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| {
                 DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned())
             })?);
-        query.push(" AND run.ruleset_id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for ruleset in allowed_rulesets {
-                separated.push_bind(ruleset.into_bytes().to_vec());
-            }
-        }
-        query.push(")");
+        query.push(" AND ");
+        push_ruleset_filter(
+            &mut query,
+            "run.ruleset_id",
+            allowed_rulesets.iter().map(|digest| digest.into_bytes()),
+        );
         match filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -617,14 +607,12 @@ impl Database {
             .push(" AND (").push_bind(filter.ruleset_manifest_sha256.map(|digest| digest.into_bytes().to_vec())).push(" IS NULL OR run.ruleset_id = ").push_bind(filter.ruleset_manifest_sha256.map(|digest| digest.into_bytes().to_vec())).push(")")
             .push(" AND run.accepted_sequence <= ").push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned()))?)
             .push(" AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id WHERE session.full_campaign_run_id = run.id AND submission.tombstoned_at_ms IS NOT NULL)");
-        query.push(" AND run.ruleset_id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for ruleset in allowed_rulesets {
-                separated.push_bind(ruleset.into_bytes().to_vec());
-            }
-        }
-        query.push(")");
+        query.push(" AND ");
+        push_ruleset_filter(
+            &mut query,
+            "run.ruleset_id",
+            allowed_rulesets.iter().map(|digest| digest.into_bytes()),
+        );
         match filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -680,61 +668,56 @@ impl Database {
             .transpose()
             .map_err(|_| DbError::ResultInvariant("history cursor exceeds i64".to_owned()))?;
         let cursor_id = cursor.map(|(_, id)| id);
-        let mission_ruleset = active_ruleset_predicate("run.ruleset_id", active_ruleset_ids);
-        let aggregate_ruleset =
-            active_ruleset_predicate("aggregate.ruleset_id", active_ruleset_ids);
-        let statement = format!(
-            "WITH history AS ( \
-                 SELECT 'mission' AS composition_kind, run.id, run.mission_id, run.scope_kind, \
-                        submission.replay_sha256, run.original_score_delta, \
-                        run.active_simulation_ticks, run.ransom_collected, \
-                        run.content_manifest_id, run.config_id, run.ruleset_id, \
-                        run.competition_manifest_id, run.max_concurrent_players, \
-                        run.participant_instance_count, run.accepted_sequence, run.verified_at_ms \
-                 FROM verified_runs run \
-                 JOIN submissions submission ON submission.id = run.submission_id \
-                 WHERE submission.status = 'accepted' AND submission.tombstoned_at_ms IS NULL \
-                   AND {mission_ruleset} \
-                   AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') \
-                   AND EXISTS (SELECT 1 FROM submission_participants participant \
-                       WHERE participant.submission_id = submission.id \
-                         AND participant.public_disclosure = 'named_profile' \
-                         AND participant.public_key = ?) \
-                 UNION ALL \
-                 SELECT 'full_campaign', aggregate.id, NULL, 'campaign', NULL, \
-                        aggregate.final_campaign_score - aggregate.starting_campaign_score, \
-                        aggregate.active_simulation_ticks, aggregate.ransom_collected, \
-                        aggregate.campaign_content_manifest_id AS content_manifest_id, aggregate.config_id, aggregate.ruleset_id, \
-                        aggregate.competition_manifest_id, aggregate.max_concurrent_players, \
-                        aggregate.participant_instance_count, aggregate.accepted_sequence, \
-                        aggregate.verified_at_ms \
-                 FROM full_campaign_runs aggregate \
-                 WHERE aggregate.tombstoned_at_ms IS NULL AND {aggregate_ruleset} \
-                   AND EXISTS (SELECT 1 FROM full_campaign_participants participant \
-                       WHERE participant.full_campaign_run_id = aggregate.id \
-                         AND participant.public_key = ?) \
-                   AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session \
-                       JOIN verified_runs child ON child.id = session.run_id \
-                       JOIN submissions submission ON submission.id = child.submission_id \
-                       WHERE session.full_campaign_run_id = aggregate.id \
-                         AND submission.tombstoned_at_ms IS NOT NULL) \
-             ) SELECT * FROM history WHERE accepted_sequence <= ? \
-                 AND (? IS NULL OR accepted_sequence < ? \
-                      OR (accepted_sequence = ? AND id > ?)) \
-             ORDER BY accepted_sequence DESC, id LIMIT ?"
+        let mut query = QueryBuilder::<Sqlite>::new("");
+        query.push("WITH history AS ( SELECT 'mission' AS composition_kind, run.id, run.mission_id, run.scope_kind, \
+            submission.replay_sha256, run.original_score_delta, run.active_simulation_ticks, \
+            run.ransom_collected, run.content_manifest_id, run.config_id, run.ruleset_id, \
+            run.competition_manifest_id, run.max_concurrent_players, run.participant_instance_count, \
+            run.accepted_sequence, run.verified_at_ms FROM verified_runs run JOIN submissions submission ON \
+            submission.id = run.submission_id WHERE submission.status = 'accepted' AND \
+            submission.tombstoned_at_ms IS NULL AND ");
+        push_ruleset_filter(
+            &mut query,
+            "run.ruleset_id",
+            active_ruleset_ids.iter().copied(),
         );
-        // SQL contains only fixed column names and hex-encoded ruleset digests; values are bound.
-        let rows = sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
-            .bind(public_key.as_slice())
-            .bind(public_key.as_slice())
-            .bind(watermark)
-            .bind(cursor_sequence)
-            .bind(cursor_sequence)
-            .bind(cursor_sequence)
-            .bind(cursor_id)
-            .bind(i64::from(limit))
-            .fetch_all(&self.pool)
-            .await?;
+        query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') AND \
+            EXISTS (SELECT 1 FROM submission_participants participant WHERE participant.submission_id = \
+            submission.id AND participant.public_disclosure = 'named_profile' AND participant.public_key = ");
+        query.push_bind(public_key.as_slice());
+        query.push(") UNION ALL SELECT 'full_campaign', aggregate.id, NULL, 'campaign', NULL, \
+            aggregate.final_campaign_score - aggregate.starting_campaign_score, \
+            aggregate.active_simulation_ticks, aggregate.ransom_collected, \
+            aggregate.campaign_content_manifest_id AS content_manifest_id, aggregate.config_id, \
+            aggregate.ruleset_id, aggregate.competition_manifest_id, aggregate.max_concurrent_players, \
+            aggregate.participant_instance_count, aggregate.accepted_sequence, aggregate.verified_at_ms \
+            FROM full_campaign_runs aggregate WHERE aggregate.tombstoned_at_ms IS NULL AND ");
+        push_ruleset_filter(
+            &mut query,
+            "aggregate.ruleset_id",
+            active_ruleset_ids.iter().copied(),
+        );
+        query.push(
+            " AND EXISTS (SELECT 1 FROM full_campaign_participants participant WHERE \
+            participant.full_campaign_run_id = aggregate.id AND participant.public_key = ",
+        );
+        query.push_bind(public_key.as_slice());
+        query.push(") AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON \
+            child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id \
+            WHERE session.full_campaign_run_id = aggregate.id AND submission.tombstoned_at_ms IS NOT NULL) \
+            ) SELECT * FROM history WHERE accepted_sequence <= ");
+        query.push_bind(watermark);
+        query.push(" AND (");
+        query.push_bind(cursor_sequence);
+        query.push(" IS NULL OR accepted_sequence < ");
+        query.push_bind(cursor_sequence);
+        query.push(" OR (accepted_sequence = ");
+        query.push_bind(cursor_sequence);
+        query.push(" AND id > ");
+        query.push_bind(cursor_id);
+        query.push(")) ORDER BY accepted_sequence DESC, id LIMIT ");
+        query.push_bind(i64::from(limit));
+        let rows = query.build().fetch_all(&self.pool).await?;
         let mission_ids = rows
             .iter()
             .filter(|row| row.get::<String, _>("composition_kind") == "mission")
@@ -801,14 +784,16 @@ impl Database {
                         .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                         .map(fixed_32)
                         .transpose()?,
-                    max_concurrent_players: u16::try_from(
-                        row.try_get::<i64, _>("max_concurrent_players")?,
-                    )
-                    .map_err(|_| DbError::Corrupt("player count exceeds u16".to_owned()))?,
-                    participant_instance_count: u32::try_from(
-                        row.try_get::<i64, _>("participant_instance_count")?,
-                    )
-                    .map_err(|_| DbError::Corrupt("participant count exceeds u32".to_owned()))?,
+                    max_concurrent_players: checked_count(
+                        &row,
+                        "max_concurrent_players",
+                        "player count exceeds u16",
+                    )?,
+                    participant_instance_count: checked_count(
+                        &row,
+                        "participant_instance_count",
+                        "participant count exceeds u32",
+                    )?,
                     accepted_sequence: nonnegative_u64(
                         row.try_get("accepted_sequence")?,
                         "accepted_sequence",
@@ -832,62 +817,53 @@ impl Database {
     ) -> Result<Vec<PlayerBestRecord>, DbError> {
         let watermark = i64::try_from(accepted_sequence_watermark)
             .map_err(|_| DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned()))?;
-        let mission_ruleset = active_ruleset_predicate("run.ruleset_id", active_ruleset_ids);
-        let aggregate_ruleset =
-            active_ruleset_predicate("aggregate.ruleset_id", active_ruleset_ids);
-        let statement = format!(
-            "WITH candidates AS ( \
-                 SELECT 'mission' AS subject_kind, run.id, run.mission_id, run.scope_kind, \
-                        metric.metric, metric.value, run.content_manifest_id, run.config_id, \
-                        run.ruleset_id, run.competition_manifest_id, run.max_concurrent_players, \
-                        run.accepted_sequence \
-                 FROM verified_runs run \
-                 JOIN submissions submission ON submission.id = run.submission_id \
-                 JOIN verified_run_metrics metric ON metric.run_id = run.id \
-                 WHERE submission.status = 'accepted' AND submission.tombstoned_at_ms IS NULL \
-                   AND {mission_ruleset} \
-                   AND run.accepted_sequence <= ? \
-                   AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') \
-                   AND EXISTS (SELECT 1 FROM submission_participants participant \
-                       WHERE participant.submission_id = submission.id \
-                         AND participant.public_disclosure = 'named_profile' \
-                         AND participant.public_key = ?) \
-                 UNION ALL \
-                 SELECT 'full_campaign', aggregate.id, NULL, 'campaign', metric.metric, metric.value, \
-                        aggregate.campaign_content_manifest_id AS content_manifest_id, aggregate.config_id, aggregate.ruleset_id, \
-                        aggregate.competition_manifest_id, aggregate.max_concurrent_players, \
-                        aggregate.accepted_sequence \
-                 FROM full_campaign_runs aggregate \
-                 JOIN full_campaign_metrics metric ON metric.full_campaign_run_id = aggregate.id \
-                 WHERE aggregate.tombstoned_at_ms IS NULL AND aggregate.accepted_sequence <= ? \
-                   AND {aggregate_ruleset} \
-                   AND EXISTS (SELECT 1 FROM full_campaign_participants participant \
-                       WHERE participant.full_campaign_run_id = aggregate.id \
-                         AND participant.public_key = ?) \
-                   AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session \
-                       JOIN verified_runs child ON child.id = session.run_id \
-                       JOIN submissions submission ON submission.id = child.submission_id \
-                       WHERE session.full_campaign_run_id = aggregate.id \
-                         AND submission.tombstoned_at_ms IS NOT NULL) \
-             ), ranked AS ( \
-                 SELECT *, ROW_NUMBER() OVER (PARTITION BY subject_kind, mission_id, scope_kind, \
-                     metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, \
-                     max_concurrent_players ORDER BY \
-                     CASE WHEN metric = 'original_score' THEN value END DESC, \
-                     CASE WHEN metric = 'fastest_success' THEN value END ASC, \
-                     accepted_sequence, id) AS position FROM candidates \
-             ) SELECT * FROM ranked WHERE position = 1 ORDER BY subject_kind, mission_id, \
-                 scope_kind, metric, content_manifest_id, config_id, ruleset_id, \
-                 competition_manifest_id, max_concurrent_players LIMIT 512"
+        let mut query = QueryBuilder::<Sqlite>::new("");
+        query.push("WITH candidates AS ( SELECT 'mission' AS subject_kind, run.id, run.mission_id, run.scope_kind, \
+            metric.metric, metric.value, run.content_manifest_id, run.config_id, run.ruleset_id, \
+            run.competition_manifest_id, run.max_concurrent_players, run.accepted_sequence FROM \
+            verified_runs run JOIN submissions submission ON submission.id = run.submission_id JOIN \
+            verified_run_metrics metric ON metric.run_id = run.id WHERE submission.status = 'accepted' AND \
+            submission.tombstoned_at_ms IS NULL AND ");
+        push_ruleset_filter(
+            &mut query,
+            "run.ruleset_id",
+            active_ruleset_ids.iter().copied(),
         );
-        // SQL contains only fixed column names and hex-encoded ruleset digests; values are bound.
-        let rows = sqlx::query(sqlx::AssertSqlSafe(statement.as_str()))
-            .bind(watermark)
-            .bind(public_key.as_slice())
-            .bind(watermark)
-            .bind(public_key.as_slice())
-            .fetch_all(&self.pool)
-            .await?;
+        query.push(" AND run.accepted_sequence <= ");
+        query.push_bind(watermark);
+        query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') AND \
+            EXISTS (SELECT 1 FROM submission_participants participant WHERE participant.submission_id = \
+            submission.id AND participant.public_disclosure = 'named_profile' AND participant.public_key = ");
+        query.push_bind(public_key.as_slice());
+        query.push(") UNION ALL SELECT 'full_campaign', aggregate.id, NULL, 'campaign', metric.metric, \
+            metric.value, aggregate.campaign_content_manifest_id AS content_manifest_id, \
+            aggregate.config_id, aggregate.ruleset_id, aggregate.competition_manifest_id, \
+            aggregate.max_concurrent_players, aggregate.accepted_sequence FROM full_campaign_runs aggregate \
+            JOIN full_campaign_metrics metric ON metric.full_campaign_run_id = aggregate.id WHERE \
+            aggregate.tombstoned_at_ms IS NULL AND aggregate.accepted_sequence <= ");
+        query.push_bind(watermark);
+        query.push(" AND ");
+        push_ruleset_filter(
+            &mut query,
+            "aggregate.ruleset_id",
+            active_ruleset_ids.iter().copied(),
+        );
+        query.push(
+            " AND EXISTS (SELECT 1 FROM full_campaign_participants participant WHERE \
+            participant.full_campaign_run_id = aggregate.id AND participant.public_key = ",
+        );
+        query.push_bind(public_key.as_slice());
+        query.push(") AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON \
+            child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id \
+            WHERE session.full_campaign_run_id = aggregate.id AND submission.tombstoned_at_ms IS NOT NULL) \
+            ), ranked AS ( SELECT *, ROW_NUMBER() OVER (PARTITION BY subject_kind, mission_id, scope_kind, \
+            metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, \
+            max_concurrent_players ORDER BY CASE WHEN metric = 'original_score' THEN value END DESC, CASE \
+            WHEN metric = 'fastest_success' THEN value END ASC, accepted_sequence, id) AS position FROM \
+            candidates ) SELECT * FROM ranked WHERE position = 1 ORDER BY subject_kind, mission_id, \
+            scope_kind, metric, content_manifest_id, config_id, ruleset_id, competition_manifest_id, \
+            max_concurrent_players LIMIT 512");
+        let rows = query.build().fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 Ok(PlayerBestRecord {
@@ -903,10 +879,11 @@ impl Database {
                         .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                         .map(fixed_32)
                         .transpose()?,
-                    max_concurrent_players: u16::try_from(
-                        row.try_get::<i64, _>("max_concurrent_players")?,
-                    )
-                    .map_err(|_| DbError::Corrupt("player count exceeds u16".to_owned()))?,
+                    max_concurrent_players: checked_count(
+                        &row,
+                        "max_concurrent_players",
+                        "player count exceeds u16",
+                    )?,
                 })
             })
             .collect()
@@ -1024,20 +1001,26 @@ impl Database {
             campaign_session_kind: row.try_get("campaign_session_kind")?,
             campaign_session_ordinal: optional_u32(&row, "campaign_session_ordinal")?,
             campaign_hq_sequence: optional_u32(&row, "campaign_hq_sequence")?,
-            max_concurrent_players: u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("player count out of range".to_owned()))?,
-            participant_instance_count: u32::try_from(
-                row.try_get::<i64, _>("participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("participant instance count out of range".to_owned()))?,
-            named_participant_instance_count: u32::try_from(
-                row.try_get::<i64, _>("named_participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("named participant count out of range".to_owned()))?,
-            anonymous_participant_instance_count: u32::try_from(
-                row.try_get::<i64, _>("anonymous_participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("anonymous participant count out of range".to_owned()))?,
+            max_concurrent_players: checked_count(
+                &row,
+                "max_concurrent_players",
+                "player count out of range",
+            )?,
+            participant_instance_count: checked_count(
+                &row,
+                "participant_instance_count",
+                "participant instance count out of range",
+            )?,
+            named_participant_instance_count: checked_count(
+                &row,
+                "named_participant_instance_count",
+                "named participant count out of range",
+            )?,
+            anonymous_participant_instance_count: checked_count(
+                &row,
+                "anonymous_participant_instance_count",
+                "anonymous participant count out of range",
+            )?,
             verified_at_ms: nonnegative_u64(row.try_get("verified_at_ms")?, "verified_at_ms")?,
             public_metadata_json: row.try_get("public_metadata_json")?,
             named_participants: self.public_participants_for_run(run_id).await?,
@@ -1186,20 +1169,26 @@ impl Database {
                 row.try_get("ransom_collected")?,
                 "ransom_collected",
             )?,
-            max_concurrent_players: u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("max concurrent players exceeds u16".to_owned()))?,
-            participant_instance_count: u32::try_from(
-                row.try_get::<i64, _>("participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("participant count exceeds u32".to_owned()))?,
-            named_participant_instance_count: u32::try_from(
-                row.try_get::<i64, _>("named_participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("named participant count exceeds u32".to_owned()))?,
-            anonymous_participant_instance_count: u32::try_from(
-                row.try_get::<i64, _>("anonymous_participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("anonymous participant count exceeds u32".to_owned()))?,
+            max_concurrent_players: checked_count(
+                &row,
+                "max_concurrent_players",
+                "max concurrent players exceeds u16",
+            )?,
+            participant_instance_count: checked_count(
+                &row,
+                "participant_instance_count",
+                "participant count exceeds u32",
+            )?,
+            named_participant_instance_count: checked_count(
+                &row,
+                "named_participant_instance_count",
+                "named participant count exceeds u32",
+            )?,
+            anonymous_participant_instance_count: checked_count(
+                &row,
+                "anonymous_participant_instance_count",
+                "anonymous participant count exceeds u32",
+            )?,
             verified_at_ms: nonnegative_u64(row.try_get("verified_at_ms")?, "verified_at_ms")?,
             named_participants: self.public_participants_for_full_campaign(run_id).await?,
             ordered_session_run_ids,
@@ -1476,9 +1465,11 @@ impl Database {
         run_id: &str,
         role: &str,
     ) -> Result<(ArtifactRefV1, [u8; 32]), DbError> {
-        if !matches!(role, "starting" | "final") {
-            return Err(DbError::NotFound);
-        }
+        let starting = match role {
+            "starting" => true,
+            "final" => false,
+            _ => return Err(DbError::NotFound),
+        };
         let rows = sqlx::query(
             "SELECT 'mission' AS source_kind, object.sha256, object.byte_length, run.ruleset_id \
              FROM verified_runs run \
@@ -1544,10 +1535,10 @@ impl Database {
                         "campaign object ruleset differs from its run".to_owned(),
                     ));
                 }
-                match role {
-                    "starting" => run.verification_proof.starting_campaign,
-                    "final" => run.verification_proof.final_campaign,
-                    _ => unreachable!(),
+                if starting {
+                    run.verification_proof.starting_campaign
+                } else {
+                    run.verification_proof.final_campaign
                 }
             }
             "aggregate" => {
@@ -1557,10 +1548,10 @@ impl Database {
                         "campaign object ruleset differs from its aggregate".to_owned(),
                     ));
                 }
-                match role {
-                    "starting" => aggregate.aggregate_proof.canonical_genesis_campaign,
-                    "final" => aggregate.aggregate_proof.final_campaign,
-                    _ => unreachable!(),
+                if starting {
+                    aggregate.aggregate_proof.canonical_genesis_campaign
+                } else {
+                    aggregate.aggregate_proof.final_campaign
                 }
             }
             _ => {
@@ -1586,9 +1577,11 @@ impl Database {
         ordinal: u32,
         role: &str,
     ) -> Result<(ArtifactRefV1, [u8; 32]), DbError> {
-        if !matches!(role, "starting" | "final") {
-            return Err(DbError::NotFound);
-        }
+        let starting = match role {
+            "starting" => true,
+            "final" => false,
+            _ => return Err(DbError::NotFound),
+        };
         let row = sqlx::query(
             "SELECT object.sha256, object.byte_length, run.ruleset_id \
              FROM full_campaign_runs aggregate \
@@ -1632,10 +1625,10 @@ impl Database {
                 "session campaign object ruleset differs from its aggregate".to_owned(),
             ));
         }
-        let expected = match role {
-            "starting" => session.verification_proof.starting_campaign,
-            "final" => session.verification_proof.final_campaign,
-            _ => unreachable!(),
+        let expected = if starting {
+            session.verification_proof.starting_campaign
+        } else {
+            session.verification_proof.final_campaign
         };
         if artifact != expected {
             return Err(DbError::Corrupt(

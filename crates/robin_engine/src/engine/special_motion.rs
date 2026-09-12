@@ -29,6 +29,17 @@ impl SpecialMovePosition {
     }
 }
 
+/// Independent destination-topology and projection-plane choices. Keeping
+/// these named avoids swapping optional sector/probe flags at call boundaries.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct SpecialMoveFinalize {
+    layer: Option<u16>,
+    sector: Option<u16>,
+    projection_topology: Option<(u16, u16)>,
+    obstacle_probe: Option<MapPoint>,
+    clear_projection_when_missing: bool,
+}
+
 impl EngineInner {
     /// Finalize a nonstandard movement step through the same position stack.
     ///
@@ -51,11 +62,12 @@ impl EngineInner {
             assets,
             entity_id,
             position,
-            layer,
-            sector,
-            None,
-            obstacle_probe,
-            false,
+            SpecialMoveFinalize {
+                layer,
+                sector,
+                obstacle_probe,
+                ..Default::default()
+            },
             context,
         );
     }
@@ -79,11 +91,13 @@ impl EngineInner {
             assets,
             entity_id,
             position,
-            layer,
-            sector,
-            None,
-            Some(obstacle_probe),
-            true,
+            SpecialMoveFinalize {
+                layer,
+                sector,
+                obstacle_probe: Some(obstacle_probe),
+                clear_projection_when_missing: true,
+                ..Default::default()
+            },
             context,
         );
     }
@@ -107,28 +121,30 @@ impl EngineInner {
             assets,
             entity_id,
             position,
-            None,
-            None,
-            Some((projection_layer, projection_sector)),
-            Some(obstacle_probe),
-            false,
+            SpecialMoveFinalize {
+                projection_topology: Some((projection_layer, projection_sector)),
+                obstacle_probe: Some(obstacle_probe),
+                ..Default::default()
+            },
             context,
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn finalize_special_move_position_inner(
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
         position: SpecialMovePosition,
-        layer: Option<u16>,
-        sector: Option<u16>,
-        projection_topology: Option<(u16, u16)>,
-        obstacle_probe: Option<MapPoint>,
-        clear_projection_when_missing: bool,
+        request: SpecialMoveFinalize,
         context: &'static str,
     ) {
+        let SpecialMoveFinalize {
+            layer,
+            sector,
+            projection_topology,
+            obstacle_probe,
+            clear_projection_when_missing,
+        } = request;
         let Some((target_layer, current_sector)) = self.get_entity(entity_id).map(|entity| {
             (
                 layer.unwrap_or_else(|| entity.element_data().layer()),

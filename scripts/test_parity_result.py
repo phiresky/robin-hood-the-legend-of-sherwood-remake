@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Protocol regressions independent of proprietary game data and Rust builds."""
 import json
+import re
 import unittest
 import subprocess
 import tempfile
 from pathlib import Path
-from parity_result import PREFIX, LEGACY_EOF_MARKER, exact_eof, read_result
-from parity_campaign import load
+from parity_result import PREFIX, RESULT_VERSION, LEGACY_EOF_MARKER, exact_eof, read_result
+from parity_campaign import DEPENDENCIES, load
 from run_parity_fixture_gate import snapshot_runner, digest
 
 
@@ -23,6 +24,16 @@ def result_log(**changes):
 
 
 class ResultTests(unittest.TestCase):
+    def test_python_protocol_matches_rust_constants(self):
+        rust = (Path(__file__).resolve().parents[1] / "crates/robin_parity/src/result.rs").read_text()
+        for name, value in (("RESULT_PREFIX", PREFIX), ("LEGACY_EOF_MARKER", LEGACY_EOF_MARKER)):
+            match = re.search(rf'pub const {name}: &str = ("[^"\n]*");', rust)
+            self.assertIsNotNone(match, name)
+            self.assertEqual(json.loads(match[1]), value)
+        match = re.search(r'pub const RESULT_VERSION: u32 = (\d+);', rust)
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match[1]), RESULT_VERSION)
+
     def test_fixture_gate_pins_executable_across_rebuilds(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "build-output"
@@ -81,7 +92,7 @@ class ResultTests(unittest.TestCase):
     def test_campaign_binds_reusable_validator_dependency(self):
         scripts = Path(__file__).parent
         manifest = load(scripts / "parity-campaigns/schema16-20260824.json")
-        manifest["script_dependencies"] = {"parity_campaign.py": "0"*64, "parity_result.py": "1"*64}
+        manifest["script_dependencies"] = {name: "0" * 64 for name in DEPENDENCIES}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "campaign.json"
             path.write_text(json.dumps(manifest))
@@ -90,6 +101,21 @@ class ResultTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("campaign dependency hash mismatch", result.stderr)
+
+    def test_shared_shell_helpers_use_bounded_decimal_and_preserve_hash_failures(self):
+        helper = Path(__file__).parent / "lib/parity_common.sh"
+        result = subprocess.run(["bash", "-c", r'''
+            set -euo pipefail
+            source "$1"
+            [[ $(normalize_bounded_uint 0008 0008) == 8 ]]
+            [[ $(normalize_bounded_uint 000 8) == 0 ]]
+            ! normalize_bounded_uint 9 8
+            ! normalize_bounded_uint 18446744073709551616 9223372036854775807
+            ! normalize_bounded_uint '-1' 8
+            ! normalize_bounded_uint '1+1' 8
+            ! sha256_file /nonexistent-parity-fixture
+        ''', "parity-common-test", str(helper)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
 result_validator="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/parity_result.py"
 
 # Claim and attest independent replay records against one SQLite authority.
@@ -129,7 +132,6 @@ local_audit="$scratch/audit"
 [[ "$mode" == local ]] || local_audit=$remote_audit
 mkdir -p -- "$scratch/work" "$local_audit/results" "$local_audit/attempts"
 
-sha256_file() { local value; value=$(sha256sum -- "$1"); printf '%s\n' "${value%% *}"; }
 
 remote_exec() {
     if [[ "$mode" == remote ]]; then

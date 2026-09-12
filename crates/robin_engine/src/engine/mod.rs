@@ -22,7 +22,7 @@ mod combat;
 mod commands;
 mod console_dispatch;
 mod corpse_intersection;
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod display_state;
 mod tactical_control;
 pub use display_state::DrawOrder;
@@ -39,12 +39,14 @@ pub mod melee;
 mod mission_runtime;
 mod movement;
 mod nets;
+mod order_arbitration;
 mod patch_effects;
 pub mod peripherals;
 mod posture_transitions;
 mod presentation_view;
 pub use presentation_view::PresentationView;
 mod purse;
+mod queries;
 mod refresh_seek;
 mod reinforcement;
 mod rollback_safe;
@@ -72,6 +74,8 @@ pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;
 mod teleport;
+#[cfg(test)]
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 mod tick;
@@ -966,9 +970,7 @@ impl EngineInner {
         }
 
         let profiles = &assets.profile_manager;
-        let campaign = self
-            .mission_domain
-            .required_campaign_mut("quit-mission updates");
+        let campaign = self.mission_domain.campaign_mut();
         if campaign.current_mission_idx.is_some() {
             campaign.set_mission_done(won, None, profiles);
         }
@@ -977,13 +979,7 @@ impl EngineInner {
 
         self.reset_all_pc_comas(assets);
 
-        if won
-            && self
-                .mission_domain
-                .required_campaign("quit-mission updates")
-                .current_mission_idx
-                .is_some()
-        {
+        if won && self.mission_domain.campaign().current_mission_idx.is_some() {
             // The LIVING/DEAD/SCORE value additions are gated on
             // `mission_won` — a lost mission must NOT accumulate these
             // totals onto the campaign.
@@ -1047,8 +1043,7 @@ impl EngineInner {
             feedback,
             ..
         } = self;
-        let (campaign, mission_stat) =
-            mission_domain.required_campaign_and_stat("quit-mission updates");
+        let (campaign, mission_stat) = mission_domain.campaign_and_stat_mut();
         QuitMissionContext {
             campaign,
             mission_stat,
@@ -1127,9 +1122,7 @@ impl EngineInner {
     /// (amulet death-save).
     pub(crate) fn reset_all_pc_comas(&mut self, assets: &LevelAssets) {
         let coma_pc_ids: Vec<EntityId> = {
-            let campaign = self
-                .mission_domain
-                .required_campaign("quit-mission updates");
+            let campaign = self.mission_domain.campaign();
             self.world
                 .pc_ids
                 .iter()
@@ -1277,7 +1270,14 @@ impl EngineInner {
         self.initialize_entity_for_publication(id, &mut entity);
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
-        #[cfg(any(test, feature = "test-helpers"))]
+        id
+    }
+
+    /// Publish a fixture and explicitly complete identities normally supplied
+    /// by level loading. Gameplay publication never changes under `cfg(test)`.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub(crate) fn add_test_entity(&mut self, entity: Entity) -> EntityId {
+        let id = self.add_entity(entity);
         self.backfill_test_entity_identity(id);
         id
     }
@@ -1294,8 +1294,6 @@ impl EngineInner {
         self.world.entities.push(Some(entity));
         self.world
             .assign_reserved_original_creation_order(id, creation_order);
-        #[cfg(any(test, feature = "test-helpers"))]
-        self.backfill_test_entity_identity(id);
         id
     }
 
@@ -1376,8 +1374,8 @@ impl EngineInner {
     /// Give a directly-constructed test actor the identity fields that level
     /// loading writes in production.
     ///
-    /// Unit-test fixtures build `Entity` values from `Default` and hand them
-    /// straight to [`Self::add_entity`], so two required identities are never
+    /// Unit-test fixtures build `Entity` values from `Default` and publish them
+    /// explicitly through [`Self::add_test_entity`], so two required identities are never
     /// filled in: a PC's stable campaign description
     /// identity behind coma/guard/ammo lookups) and an NPC brain's own actor
     /// handle. Both are backfilled here so individual fixtures don't have to
@@ -2659,7 +2657,11 @@ impl EngineInner {
             // failed-path retry entry leak past the freeze, and the
             // 100-frame retry queue can fire `element_impossible` /
             // hero-speech on an actor that has been frozen / killed.
-            self.stop_owner_active_mechanics(owner);
+            crate::engine::order_arbitration::stop_owner_active_mechanics(
+                &mut self.world,
+                &mut self.orders,
+                owner,
+            );
             self.orders.sequence_manager.element_interrupted(
                 cur_seq,
                 cur_idx,
@@ -2812,1135 +2814,6 @@ impl EngineInner {
                 },
             );
         }
-    }
-
-    /// Arbitrate a new sequence-element dispatch against the actor's
-    /// currently-executing element.
-    ///
-    /// Called synchronously from [`Self::launch_element_for_owner`] (the
-    /// default launch path for owned elements) so arbitration fires
-    /// inline with the launch.  Also called idempotently from the
-    /// hourglass pre-pass as a safety net for any owned element that
-    /// might slip through an un-refactored code path.
-    /// The four outcomes:
-    ///
-    /// - [`PriorityDecision::Abandon`]: the new element becomes
-    ///   `Impossible`.  Caller skips the dispatch entirely.
-    /// - [`PriorityDecision::Postpone`]: the new element waits behind
-    ///   the current one (state → `Postponed`, linked via
-    ///   `cross_postponed`).  Caller skips the dispatch.
-    /// - [`PriorityDecision::PostponeCurrent`]: the current element
-    ///   gets postponed behind the new one, and the new one proceeds.
-    /// - [`PriorityDecision::InterruptCurrent`]: the current element is
-    ///   marked `Interrupted` (cascades via `set_element_state`), and
-    ///   the new one proceeds.
-    ///
-    /// Returns `true` if the caller should proceed to dispatch the new
-    /// element; `false` if it was abandoned or postponed.
-    pub(crate) fn arbitrate_instruct(
-        &mut self,
-        new_seq: crate::sequence::SequenceId,
-        new_idx: usize,
-    ) -> bool {
-        self.arbitrate_instruct_mode(new_seq, new_idx, false)
-    }
-
-    /// Apply the human actor's specialized admission guard. It runs before
-    /// base actor instruction, so a rejected
-    /// command must not stamp transition state or allocate transition orders.
-    pub(in crate::engine) fn human_instruct_rejects_command(
-        &self,
-        owner: EntityId,
-        command: crate::element::Command,
-    ) -> bool {
-        let Some(entity) = self.get_entity(owner) else {
-            return false;
-        };
-        if !entity.is_human() {
-            return false;
-        }
-
-        let is_dead = entity.is_dead();
-        let is_unconscious = entity.human_data().is_some_and(|human| human.unconscious);
-        let stuck_counter = entity
-            .human_data()
-            .map(|human| human.stuck_under_nets_counter)
-            .unwrap_or(0);
-        if !is_dead && !is_unconscious && stuck_counter == 0 {
-            return false;
-        }
-
-        let allowed = matches!(
-            command,
-            crate::element::Command::ReceiveHitDamage
-                | crate::element::Command::ReceiveSwordDamage
-                | crate::element::Command::ReceiveArrowDamage
-                | crate::element::Command::ReceiveDamage
-                | crate::element::Command::ReceiveMobileDamage
-                | crate::element::Command::Wait
-                | crate::element::Command::GetKilledAtBottom
-        ) || (command == crate::element::Command::ReceiveNet
-            && !is_dead
-            && !is_unconscious
-            && stuck_counter == 1);
-        !allowed
-    }
-
-    /// Run actor-instruction arbitration while preserving original-game
-    /// re-admission of a terminated pointer retained by Human's shoot list.
-    /// The ordinary manager path must continue rejecting terminal elements.
-    pub(in crate::engine) fn arbitrate_held_shoot_instruct(
-        &mut self,
-        new_seq: crate::sequence::SequenceId,
-        new_idx: usize,
-    ) -> bool {
-        self.arbitrate_instruct_mode(new_seq, new_idx, true)
-    }
-
-    fn arbitrate_instruct_mode(
-        &mut self,
-        new_seq: crate::sequence::SequenceId,
-        new_idx: usize,
-        allow_terminated_shoot: bool,
-    ) -> bool {
-        use crate::element::Command;
-        use crate::sequence::{PriorityDecision, SequenceState};
-
-        let Some(new_elem) = self.orders.sequence_manager.get_element(new_seq, new_idx) else {
-            return false;
-        };
-        let Some(owner) = new_elem.owner else {
-            // No owner: nothing to arbitrate against, let it through.
-            return true;
-        };
-        self.trace_attentive_owner_handoff(
-            "instruct_entry",
-            owner,
-            Some((new_seq, new_idx)),
-            format_args!("before admission and priority arbitration"),
-        );
-        // Idempotency guard.  Owned launches now arbitrate
-        // synchronously inside `launch_element_for_owner`, but legacy
-        // callsites that explicitly arbitrate after an owned launch still hit
-        // `arbitrate_instruct` explicitly after `launch_element`.  The
-        // second call must be a safe no-op: if the first call already
-        // resolved the element, return the matching bool without
-        // repeating the decision (which would double-postpone / double-
-        // interrupt on cascading priorities).
-        match new_elem.state {
-            SequenceState::Todo => { /* fall through — normal case */ }
-            SequenceState::Terminated if allow_terminated_shoot => {
-                // The actor instruction's terminal-state check is an
-                // assert only. Retail saves can retain such a pointer in
-                // the human actor's shoot list, and the shipped game proceeds without
-                // rewriting its state before transition/arbitration.
-            }
-            SequenceState::InProgress => {
-                // Element is already the actor's current (e.g.
-                // `launch_single_order_sequence_stamped` promoted it
-                // after arbitration). Accept it without comparing the
-                // element against itself: a postponed element can retain its
-                // original manager registration and gain a second one when
-                // its blocker releases it, so duplicate InstructOwner
-                // actions are possible in the same drain.
-                if self.current_sequence_element_for_actor(owner) == Some((new_seq, new_idx)) {
-                    return true;
-                }
-            }
-            SequenceState::Impossible
-            | SequenceState::Postponed
-            | SequenceState::Interrupted
-            | SequenceState::Terminated
-            | SequenceState::Done => {
-                tracing::trace!(
-                    ?owner,
-                    ?new_seq,
-                    new_idx,
-                    command = ?new_elem.command,
-                    state = ?new_elem.state,
-                    "arbitrate_instruct skipped a non-pending element"
-                );
-                return false;
-            }
-        }
-        let new_priority = new_elem.priority;
-        let new_command = new_elem.command;
-
-        // Every recipient of an instruction is unconditionally unfrozen
-        // before the arbitration / dispatch logic runs.  Without this
-        // clear, a freeze imposed via paths other than `DropDone`
-        // (which clears it synchronously) would persist past the next instruction.
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.execution_frozen = false;
-        }
-
-        // The posture / action-state stamp now runs at *launch* time
-        // via `launch_element_for_owner` and the stamped
-        // single-order-sequence wrapper, synchronous with the
-        // launch → instruction flow. By the time arbitration runs, the
-        // stamp is already on the element.
-
-        // ── Actor-specific instruction rules ─────────────────────────
-        //
-        // Civilian instruction handling refuses everything except RECEIVE_PURSE /
-        // BEGGAR_SHOW_FACE / WAIT when the civilian is a beggar.
-        if self.beggar_rejects_command(owner, new_command) {
-            self.orders
-                .sequence_manager
-                .element_impossible(new_seq, new_idx);
-            return false;
-        }
-
-        // Some direct callers enter arbitration without the ordinary
-        // base-Actor admission wrapper. Preserve the PC derived-class early
-        // return for those paths as well.
-        if self.pc_instruct_early_completion(owner, new_seq, new_idx) {
-            return false;
-        }
-
-        // PC instruction handling intercepts the remaining commands before falling
-        // through to the Human path.
-        if let Some(entity) = self.get_entity(owner)
-            && entity.is_pc()
-        {
-            match new_command {
-                // CROUCH_UP / CROUCH_DOWN: reject when swordfighting.
-                // When the PC is doing a non-movement sequence element,
-                // first Stop(PREFERENCE) so the posture change can take
-                // over cleanly.
-                Command::CrouchUp | Command::CrouchDown => {
-                    let swordfighting =
-                        entity.human_data().is_some_and(|h| !h.opponents.is_empty());
-                    if swordfighting {
-                        // Forward `MSG_STATURE_CHANGE_END` so the
-                        // stature-HUD latch (focus standing-up /
-                        // crouching-down) clears even though the command
-                        // is being rejected.  Without this the stature
-                        // arrow stays visually pressed until some other
-                        // actor's stature changes.
-                        self.orders.messenger.send(crate::messenger::Message::new(
-                            crate::messenger::MessageType::Simple(
-                                crate::messenger::SimpleMessage::StatureChangeEnd,
-                            ),
-                        ));
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(new_seq, new_idx);
-                        return false;
-                    }
-                    // `is_part_of_movement` covers
-                    // Move/MoveOk/Seek/PassDoor/Jump/AssertPosition;
-                    // use it instead of `data.is_movement()` (which only
-                    // covers the `Movement` data variant —
-                    // Move/MoveOk/Seek/PassDoor) so a mid-Jump or
-                    // mid-AssertPosition crouch toggle doesn't trigger
-                    // a spurious `Stop(PREFERENCE)`.
-                    let cur_is_movement = self
-                        .current_sequence_element_for_actor(owner)
-                        .and_then(|(s, i)| self.orders.sequence_manager.get_element(s, i))
-                        .map(|e| e.command.is_part_of_movement())
-                        .unwrap_or(true);
-                    if !cur_is_movement {
-                        self.stop_owner(owner, crate::sequence::SequencePriority::Preference);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if self.human_instruct_rejects_command(owner, new_command) {
-            self.orders
-                .sequence_manager
-                .element_impossible(new_seq, new_idx);
-            return false;
-        }
-
-        let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner) else {
-            // Idle actor — new element takes over unconditionally.
-            return true;
-        };
-
-        let cur_priority = self
-            .orders
-            .sequence_manager
-            .get_element(cur_seq, cur_idx)
-            .map(|e| e.priority)
-            .unwrap_or(crate::sequence::SequencePriority::None);
-
-        let decision = crate::sequence::decide_priorities(cur_priority, new_priority);
-
-        self.trace_attentive_owner_handoff(
-            "instruct_decision",
-            owner,
-            Some((new_seq, new_idx)),
-            format_args!(
-                "current={cur_seq:?}/{cur_idx} current_priority={cur_priority:?} incoming_command={new_command:?} incoming_priority={new_priority:?} decision={decision:?}"
-            ),
-        );
-
-        tracing::trace!(
-            ?owner,
-            ?cur_seq,
-            cur_idx,
-            ?cur_priority,
-            ?new_seq,
-            new_idx,
-            ?new_priority,
-            ?decision,
-            "arbitrate_instruct"
-        );
-
-        match decision {
-            PriorityDecision::Abandon => {
-                // Hand the new element's postponed successor (if any)
-                // over to the current element before marking new
-                // Impossible, so the successor doesn't get orphaned.
-                self.orders
-                    .sequence_manager
-                    .take_over_postponed(cur_seq, cur_idx, new_seq, new_idx);
-                self.orders
-                    .sequence_manager
-                    .element_impossible(new_seq, new_idx);
-                false
-            }
-            PriorityDecision::Postpone => {
-                // `new.Postpone(current)` — may recurse when the target
-                // already has a postponed chain.
-                self.engine_postpone(cur_seq, cur_idx, new_seq, new_idx);
-                false
-            }
-            PriorityDecision::PostponeCurrent => {
-                assert!(
-                    self.orders
-                        .sequence_manager
-                        .can_interrupt_now(cur_seq, cur_idx),
-                    "interruption eligibility is unconditional"
-                );
-                // `current.Postpone(new)` — postpone current behind new.
-                // Current is in-progress, so we first tear down its
-                // active machinery before flipping it to Postponed.
-                self.preserve_selected_movement_goal_for_replacement(
-                    owner,
-                    cur_seq,
-                    cur_idx,
-                    new_seq,
-                    new_idx,
-                    new_command,
-                );
-                // human action execution's WAITING_SWORD branch and base actor execution's
-                // bored upright-waiting arms always return an in-progress result
-                // after driving their nested work. If that work
-                // synchronously installs an injury while WAIT_FREE_LIFT owns
-                // one of those orders, a transient sprite-cycle Done must not
-                // trigger engine_postpone's usual done-order shortcut. The
-                // blocked lift waiter itself is what Original postpones.
-                // Keep the exception at this exact arbitration seam so every
-                // other done-order race, including WAIT_TIMER, is unchanged.
-                let preserve_nonterminating_lift_wait = self
-                    .orders
-                    .sequence_manager
-                    .get_element(cur_seq, cur_idx)
-                    .is_some_and(|element| {
-                        element.command == crate::element::Command::WaitFreeLift
-                            && element.state == crate::sequence::SequenceState::InProgress
-                            && element.orders.back().is_some_and(|order| {
-                                matches!(
-                                    order.order_type,
-                                    crate::order::OrderType::WaitingSword
-                                        | crate::order::OrderType::WaitingUprightBored
-                                        | crate::order::OrderType::WaitingUprightBoredRandom
-                                ) && order.done
-                            })
-                    });
-                self.stop_owner_active_mechanics(owner);
-                if preserve_nonterminating_lift_wait
-                    && let Some(order) = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(cur_seq, cur_idx)
-                        .and_then(|element| element.orders.back_mut())
-                {
-                    order.done = false;
-                }
-                // The original game assigns the incoming element as the selected sequence element
-                // before postponing the outgoing one, so every condolence
-                // card raised from inside that postpone — including the
-                // immediate termination of an outgoing element whose last
-                // order is already done — observes that it is no longer the
-                // actor's selected element and leaves the sprite's
-                // map goal intact. Mirrors the equivalent
-                // `element_interrupted_after_replacement_selected` handling
-                // in the InterruptCurrent arm below.
-                self.orders
-                    .sequence_manager
-                    .begin_instruct_callback(owner, new_seq, new_idx);
-                self.engine_postpone(new_seq, new_idx, cur_seq, cur_idx);
-                self.orders
-                    .sequence_manager
-                    .end_instruct_callback(owner, new_seq, new_idx);
-                true
-            }
-            PriorityDecision::InterruptCurrent => {
-                assert!(
-                    self.orders
-                        .sequence_manager
-                        .can_interrupt_now(cur_seq, cur_idx),
-                    "interruption eligibility is unconditional"
-                );
-                // In the original game, instruction handling installs the incoming element as
-                // selected sequence element before interrupting the outgoing
-                // movement. Its synchronous condolence therefore sees
-                // that it is no longer selected and leaves the sprite's
-                // movement goal intact. Rust clears active mechanics
-                // before the incoming element begins executing. Carry that
-                // selected-owner fact on every replacement element: its
-                // generated movement-to-waiting transition is the same live
-                // transition that Original still drives from the rewritten
-                // outgoing order, regardless of the incoming command.
-                self.preserve_selected_movement_goal_for_replacement(
-                    owner,
-                    cur_seq,
-                    cur_idx,
-                    new_seq,
-                    new_idx,
-                    new_command,
-                );
-                // New takes over current's postponed chain, current
-                // becomes Interrupted.
-                self.orders
-                    .sequence_manager
-                    .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
-                self.stop_owner_active_mechanics(owner);
-                // The original game selects the new sequence element
-                // before interrupting the outgoing element. The outgoing
-                // state-change cascade can synchronously register/postpone nested
-                // work before its deferred condolence card is drained; that
-                // work must already see the incoming element as selected.
-                // The outer sequence-phase callback scope below covers the
-                // deferred card itself, while this inner scope closes the gap
-                // during the state transition which produces that card.
-                self.orders
-                    .sequence_manager
-                    .begin_instruct_callback(owner, new_seq, new_idx);
-                self.orders
-                    .sequence_manager
-                    .element_interrupted_after_replacement_selected(
-                        cur_seq,
-                        cur_idx,
-                        crate::sequence::CascadeFlags::NEXT_LEVEL,
-                    );
-                self.orders
-                    .sequence_manager
-                    .end_instruct_callback(owner, new_seq, new_idx)
-            }
-        }
-    }
-
-    /// Walk every actor whose sprite reported `MotionState::Done` this
-    /// tick and flip `done = true` on the actor's currently-dispatched
-    /// order, then clear `last_motion_state` on every sprite so the
-    /// field is fresh for the next tick.
-    ///
-    /// Sprite advancement is split across the live owner coordinator and
-    /// the remaining specialized arms (`tick_actor_animation_for`, active
-    /// jumps, melee, bow, and abilities); each one funnels through
-    /// [`Sprite::record_motion_state`](crate::sprite::Sprite), which
-    /// stashes the result in [`Sprite::last_motion_state`].  This pass
-    /// runs once per frame after every per-system tick has completed,
-    /// recovering the "single Done observer" semantics without forcing
-    /// each per-system tick to know about the order-completion flag.
-    ///
-    /// The corresponding read site is the postpone-race guard in
-    /// [`Self::engine_postpone`]: when a postpone target's last order
-    /// is already `done`, the postpone short-circuits to TERMINATED
-    /// instead of installing the cross-element link.
-    pub(super) fn propagate_done_to_current_orders(&mut self) {
-        let done_actors: Vec<(crate::element::EntityId, u32)> = self
-            .world
-            .entities
-            .actors()
-            .filter_map(|(entity_id, entity)| {
-                matches!(
-                    entity.element_data().sprite.last_motion_state,
-                    Some(crate::sprite::MotionState::Done)
-                )
-                .then_some((
-                    entity_id.into(),
-                    entity.element_data().sprite.last_processed_order_id,
-                ))
-            })
-            .collect();
-
-        for (entity_id, processed_order_id) in done_actors {
-            let Some((seq_id, elem_idx)) = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(entity_id)
-            else {
-                continue;
-            };
-            if let Some(elem) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-                && let Some(order) = elem.orders.front_mut()
-                && order.order_id.get() == processed_order_id
-            {
-                order.done = true;
-            }
-        }
-
-        // Reset every sprite's transient last_motion_state so the next
-        // tick starts clean, regardless of whether the slot was an
-        // actor or had an order to mark.
-        for (_, entity) in self.world.entities.occupied_mut() {
-            entity.element_data_mut().sprite.last_motion_state = None;
-        }
-    }
-
-    /// Postpone element `waiter` behind element `blocker` on the same
-    /// actor.  When the blocker already has a postponed successor,
-    /// arbitrate between the existing successor and the new waiter —
-    /// may recurse, swap, or interrupt deeper in the chain.
-    fn engine_postpone(
-        &mut self,
-        blocker_seq: crate::sequence::SequenceId,
-        blocker_idx: usize,
-        waiter_seq: crate::sequence::SequenceId,
-        waiter_idx: usize,
-    ) {
-        self.engine_postpone_with_debug_depth(blocker_seq, blocker_idx, waiter_seq, waiter_idx, 0);
-    }
-
-    fn engine_postpone_with_debug_depth(
-        &mut self,
-        blocker_seq: crate::sequence::SequenceId,
-        blocker_idx: usize,
-        waiter_seq: crate::sequence::SequenceId,
-        waiter_idx: usize,
-        depth: usize,
-    ) {
-        use crate::sequence::PriorityDecision;
-
-        let mut blocker_seq = blocker_seq;
-        let mut blocker_idx = blocker_idx;
-        let mut depth = depth;
-        let append_root = (blocker_seq, blocker_idx);
-        let waiter_priority = self
-            .orders
-            .sequence_manager
-            .get_element(waiter_seq, waiter_idx)
-            .map(|element| element.priority)
-            .unwrap_or_else(|| panic!("postpone waiter {waiter_seq:?}/{waiter_idx} is missing"));
-        let (append_point, skipped_hops, cacheable_append) = self
-            .orders
-            .sequence_manager
-            .postpone_append_point(append_root, waiter_priority);
-        blocker_seq = append_point.0;
-        blocker_idx = append_point.1;
-        depth += skipped_hops;
-
-        // A single actor can legitimately retain thousands of equal-priority
-        // postponed elements. Original walks that chain recursively, but a
-        // Rust frame for this dispatcher is substantially larger and can
-        // exhaust the process stack first. The `Postpone` arm is a pure tail
-        // call, so walk that arm iteratively while retaining recursion for the
-        // non-tail `PostponeCurrent` topology rewrite.
-        loop {
-            assert_ne!(
-                (blocker_seq, blocker_idx),
-                (waiter_seq, waiter_idx),
-                "engine_postpone cannot postpone a sequence element behind itself"
-            );
-
-            tracing::trace!(
-                target: "parity_launch",
-                depth,
-                blocker = ?(blocker_seq, blocker_idx),
-                waiter = ?(waiter_seq, waiter_idx),
-                "engine_postpone enter"
-            );
-
-            if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
-                let sequence_graph = |seq_id| {
-                    self.orders
-                        .sequence_manager
-                        .get_sequence(seq_id)
-                        .map(|sequence| {
-                            sequence
-                                .elements
-                                .iter()
-                                .enumerate()
-                                .map(|(index, element)| {
-                                    (
-                                        index,
-                                        element.owner,
-                                        element.command,
-                                        element.command_level,
-                                        element.state,
-                                        element.priority,
-                                        element
-                                            .orders
-                                            .iter()
-                                            .map(|order| {
-                                                (order.order_type, order.order_id, order.done)
-                                            })
-                                            .collect::<Vec<_>>(),
-                                        element.postponed_element_index,
-                                        element.cross_postponed,
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                };
-                let waiter_last_order = self
-                    .orders
-                    .sequence_manager
-                    .get_element(waiter_seq, waiter_idx)
-                    .and_then(|element| {
-                        element
-                            .orders
-                            .back()
-                            .map(|order| (order.order_type, order.order_id, order.done))
-                    });
-                let blocker_graph = sequence_graph(blocker_seq);
-                let waiter_graph = sequence_graph(waiter_seq);
-                tracing::trace!(
-                    target: "parity_owner_handoff",
-                    frame = self.control.frame_counter,
-                    depth,
-                    blocker = ?(blocker_seq, blocker_idx),
-                    waiter = ?(waiter_seq, waiter_idx),
-                    ?waiter_last_order,
-                    ?blocker_graph,
-                    ?waiter_graph,
-                    "engine_postpone before topology arbitration"
-                );
-            }
-
-            // If blocker already has a postponed successor, arbitrate
-            // between that existing successor and the new waiter.
-            let existing_postponed = self
-                .orders
-                .sequence_manager
-                .get_element(blocker_seq, blocker_idx)
-                .and_then(|e| e.cross_postponed);
-            if let Some((existing_seq, existing_idx)) = existing_postponed {
-                tracing::trace!(
-                    target: "parity_launch",
-                    depth,
-                    blocker = ?(blocker_seq, blocker_idx),
-                    existing = ?(existing_seq, existing_idx),
-                    "engine_postpone existing"
-                );
-                let existing_priority = self
-                    .orders
-                    .sequence_manager
-                    .get_element(existing_seq, existing_idx)
-                    .map(|e| e.priority)
-                    .unwrap_or(crate::sequence::SequencePriority::None);
-                let waiter_priority = self
-                    .orders
-                    .sequence_manager
-                    .get_element(waiter_seq, waiter_idx)
-                    .map(|e| e.priority)
-                    .unwrap_or(crate::sequence::SequencePriority::None);
-
-                let decision =
-                    crate::sequence::decide_priorities(existing_priority, waiter_priority);
-                tracing::trace!(
-                    target: "parity_owner_handoff",
-                    frame = self.control.frame_counter,
-                    depth,
-                    blocker = ?(blocker_seq, blocker_idx),
-                    existing = ?(existing_seq, existing_idx),
-                    waiter = ?(waiter_seq, waiter_idx),
-                    ?existing_priority,
-                    ?waiter_priority,
-                    ?decision,
-                    "engine_postpone existing-successor branch"
-                );
-                match decision {
-                    PriorityDecision::Abandon => {
-                        // existing wins — take over waiter's postponed
-                        // chain and abandon waiter.
-                        self.orders.sequence_manager.take_over_postponed(
-                            existing_seq,
-                            existing_idx,
-                            waiter_seq,
-                            waiter_idx,
-                        );
-                        self.orders
-                            .sequence_manager
-                            .element_impossible(waiter_seq, waiter_idx);
-                        return;
-                    }
-                    PriorityDecision::Postpone => {
-                        // Waiter queues behind existing. This is a tail call;
-                        // continue iteratively so a long legitimate postponed
-                        // chain cannot overflow Rust's larger dispatcher stack.
-                        blocker_seq = existing_seq;
-                        blocker_idx = existing_idx;
-                        depth += 1;
-                        continue;
-                    }
-                    PriorityDecision::PostponeCurrent => {
-                        // existing becomes postponed behind waiter.  Keep
-                        // blocker→waiter link (set below after the fall-
-                        // through) and install existing behind waiter.
-                        // First detach existing from blocker's slot so we
-                        // don't leave a dangling link while recursing.
-                        self.orders
-                            .sequence_manager
-                            .set_cross_postponed_link((blocker_seq, blocker_idx), None);
-                        self.engine_postpone_with_debug_depth(
-                            waiter_seq,
-                            waiter_idx,
-                            existing_seq,
-                            existing_idx,
-                            depth + 1,
-                        );
-                        // Fall through to install waiter in blocker's slot.
-                    }
-                    PriorityDecision::InterruptCurrent => {
-                        // waiter inherits existing's postponed chain;
-                        // existing becomes interrupted. The original game's state change calls
-                        // removal notification synchronously before the outer
-                        // Instruction handling resumes and installs waiter in blocker's slot.
-                        self.orders.sequence_manager.take_over_postponed(
-                            waiter_seq,
-                            waiter_idx,
-                            existing_seq,
-                            existing_idx,
-                        );
-                        self.orders
-                            .sequence_manager
-                            .set_cross_postponed_link((blocker_seq, blocker_idx), None);
-                        self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
-                        self.orders.sequence_manager.element_interrupted(
-                            existing_seq,
-                            existing_idx,
-                            crate::sequence::CascadeFlags::NEXT_LEVEL,
-                        );
-                        self.orders
-                            .sequence_manager
-                            .install_cross_postponed_after_condolation(
-                                (existing_seq, existing_idx),
-                                (blocker_seq, blocker_idx),
-                                (waiter_seq, waiter_idx),
-                            );
-                        return;
-                    }
-                }
-            }
-
-            // When the waiter already has orders and its last order is
-            // done, just terminate it instead of postponing.  Otherwise
-            // install it in the blocker's postponed slot.
-            let should_terminate_instead = self
-                .orders
-                .sequence_manager
-                .get_element(waiter_seq, waiter_idx)
-                .map(|e| {
-                    e.command != crate::element::Command::MoveOk
-                        && e.orders.back().is_some_and(|o| o.done)
-                })
-                .unwrap_or(false);
-
-            tracing::trace!(
-                target: "parity_owner_handoff",
-                frame = self.control.frame_counter,
-                depth,
-                blocker = ?(blocker_seq, blocker_idx),
-                waiter = ?(waiter_seq, waiter_idx),
-                should_terminate_instead,
-                branch = if should_terminate_instead {
-                    "terminate_done_waiter"
-                } else {
-                    "install_postponed_waiter"
-                },
-                "engine_postpone final branch"
-            );
-
-            if should_terminate_instead {
-                if let Some(e) = self
-                    .orders
-                    .sequence_manager
-                    .get_element_mut(waiter_seq, waiter_idx)
-                {
-                    e.orders.clear();
-                }
-                self.orders
-                    .sequence_manager
-                    .element_terminated(waiter_seq, waiter_idx);
-                return;
-            }
-
-            if cacheable_append {
-                self.orders.sequence_manager.install_cached_postpone_append(
-                    append_root,
-                    waiter_priority,
-                    (blocker_seq, blocker_idx),
-                    (waiter_seq, waiter_idx),
-                    skipped_hops,
-                );
-            } else {
-                self.orders.sequence_manager.set_cross_postponed_link(
-                    (blocker_seq, blocker_idx),
-                    Some((waiter_seq, waiter_idx)),
-                );
-            }
-            self.prepare_cross_postponed_waiter(waiter_seq, waiter_idx);
-            tracing::trace!(
-                target: "parity_launch",
-                depth,
-                blocker = ?(blocker_seq, blocker_idx),
-                waiter = ?(waiter_seq, waiter_idx),
-                "engine_postpone exit"
-            );
-            return;
-        }
-    }
-
-    fn prepare_cross_postponed_waiter(
-        &mut self,
-        waiter_seq: crate::sequence::SequenceId,
-        waiter_idx: usize,
-    ) {
-        // Postponing a movement element restores a
-        // translated movement element to its untranslated command before the
-        // common sequence-state transition runs. A resumed element is sent
-        // through instruction/translation again, so retaining MoveWaiting or MoveOk
-        // here would either strand the old pathfinder state or bypass path
-        // translation entirely.
-        //
-        // Preserve the original game's postponed-movement behavior.
-        let postponed_movement = self
-            .orders
-            .sequence_manager
-            .get_element(waiter_seq, waiter_idx)
-            .and_then(|element| {
-                matches!(
-                    element.command,
-                    crate::element::Command::MoveWaiting | crate::element::Command::MoveOk
-                )
-                .then_some((element.owner, element.command))
-            });
-        if let Some((owner, command)) = postponed_movement {
-            if command == crate::element::Command::MoveWaiting {
-                let owner = owner.unwrap_or_else(|| {
-                    panic!(
-                        "MoveWaiting element {waiter_seq:?}[{waiter_idx}] has no actor owner while being postponed"
-                    )
-                });
-                self.world.pathfinder.cancel_requests_for(owner);
-                self.orders.pending_path_requests.cancel_for_owner(owner);
-                self.orders
-                    .failed_path_requests
-                    .retain(|request| request.owner != owner);
-            }
-            self.orders
-                .sequence_manager
-                .get_element_mut(waiter_seq, waiter_idx)
-                .expect("postponed movement element disappeared")
-                .command = crate::element::Command::Move;
-        }
-
-        if let Some(w) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(waiter_seq, waiter_idx)
-        {
-            w.orders.clear();
-            // The cached movement goal only bridges Rust's staged handoff
-            // from an outgoing movement straight into its replacement. Once
-            // this element is queued behind a blocker instead of taking the
-            // actor, the blocker owns the sprite goal and will publish or
-            // clear it before the waiter is ever instructed. The original game's turn
-            // simply observes whatever goal it finds, so reviving this
-            // snapshot afterwards would resurrect a destination the blocker's
-            // own condolence card legitimately erased.
-            w.retained_movement_goal = None;
-            w.remove_property(crate::sequence::Field::RetainedMovementGoal);
-        }
-        self.orders
-            .sequence_manager
-            .postpone_element(waiter_seq, waiter_idx);
-    }
-
-    /// Cancel any active pathfinder request / active-movement / active-
-    /// melee on `owner`, used when arbitration interrupts or postpones
-    /// the actor's current element. Subset of movement stopping /
-    /// path-request cancellation cleanup we need before a state
-    /// transition.
-    fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
-        let selected_element = self.current_sequence_element_for_actor(owner);
-        self.world.pathfinder.cancel_requests_for(owner);
-        self.orders.pending_path_requests.cancel_for_owner(owner);
-        // Path-request cancellation fires from both
-        // interrupted *and* postponed state changes, and
-        // drops stale retry entries for the actor.  Mirror that here so
-        // cross-postpone (higher-priority blocker) also evicts pending
-        // failed-path retries — otherwise the entry would stay in the
-        // queue until the element resumes or times out.
-        self.orders
-            .failed_path_requests
-            .retain(|r| r.owner != owner);
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.active_movement.clear();
-            // `active_ability` is a Rust-only mirror of the selected original-game
-            // element/order. Postpone deletes the outgoing element's orders,
-            // and the original game rebuilds them by translating again when the
-            // element resumes. Drop only the mirror belonging to that exact
-            // selected element so the resumed Translate can install its fresh
-            // order identity without being rejected as a concurrent ability.
-            if selected_element.is_some_and(|(seq_id, elem_idx)| {
-                actor.active_ability.sequence_id == Some(seq_id)
-                    && actor.active_ability.element_index == elem_idx
-            }) {
-                let kind = actor.active_ability.kind;
-                actor.active_ability.clear();
-                if kind == Some(crate::movement::AbilityKind::Listen) {
-                    actor.listen_phase = crate::element::ListenPhase::Inactive;
-                    actor.listen_wait_time = 0;
-                } else if kind == Some(crate::movement::AbilityKind::ReceivePurse) {
-                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-                }
-            }
-            // Original's lateral/circle victim list and angles are
-            // human-owned members, not sequence-owned state. They survive an
-            // interrupted strike and are cleared only when a sweep genuinely
-            // terminates or a later action-done point reinitializes them.
-            // Push sword-strike execution stores its victims in the same
-            // human-owned sword-strike victim list used by lateral/circle
-            // strikes. Interrupting the push does not clear that list; a
-            // later sweep can consume the retained victims before its own
-            // action-done point.
-            // Order-chain cleanup happens implicitly: interrupted
-            // elements drop their `orders` in `Sequence::set_element_state`,
-            // which invalidates `current_order_for_actor`.  Non-
-            // interruptable elements (dying / corpse idle / rolling)
-            // keep running — arbitration prevents the interrupt
-            // dispatch from reaching them.
-        }
-    }
-
-    /// Stop all active / pending sequence elements owned by `owner`,
-    /// rewriting any in-progress movement element's current order to
-    /// the matching waiting-transition animation (shortened to ~10
-    /// units) and cancelling pending pathfinder requests.
-    ///
-    /// This is the full `Stop()` path — combining the actor stop, the
-    /// sequence-manager not-yet-launched stop, the movement-element
-    /// movement stopping, and conditional path cancellation. Callers that
-    /// previously invoked `self.orders.sequence_manager.stop_owner(...)`
-    /// directly should use this wrapper so the actor's movement doesn't
-    /// keep running on a stale path.
-    pub(crate) fn stop_owner(
-        &mut self,
-        owner: EntityId,
-        stop_priority: crate::sequence::SequencePriority,
-    ) {
-        self.stop_owner_phase(owner, stop_priority, true);
-    }
-
-    /// Run the actor-selected half of actor stopping, leaving the
-    /// not-yet-launched queue untouched until the caller has closed the
-    /// selected element's synchronous condolence callback.
-    fn stop_owner_current(
-        &mut self,
-        owner: EntityId,
-        stop_priority: crate::sequence::SequencePriority,
-    ) {
-        self.stop_owner_phase(owner, stop_priority, false);
-    }
-
-    /// Finish actor stopping after the selected element's synchronous
-    /// condolence callback. Original snapshots the pending-list length, then
-    /// each stopped entry sends its own card before the scan advances.
-    fn stop_owner_pending_after_callback(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stop_priority: crate::sequence::SequencePriority,
-    ) {
-        let pending = self
-            .orders
-            .sequence_manager
-            .pending_elements_for_owner(owner);
-        for (sequence_id, element_index) in pending {
-            if !self
-                .orders
-                .sequence_manager
-                .is_registered_to_go(sequence_id, element_index)
-            {
-                continue;
-            }
-            {
-                let resolver = Self::priority_resolver(&self.world.entities);
-                self.orders.sequence_manager.stop_pending_element_from_root(
-                    owner,
-                    (sequence_id, element_index),
-                    stop_priority,
-                    &resolver,
-                );
-            }
-            self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
-        }
-        self.orders
-            .sequence_manager
-            .compact_terminal_elements_to_go();
-    }
-
-    fn stop_owner_phase(
-        &mut self,
-        owner: EntityId,
-        stop_priority: crate::sequence::SequencePriority,
-        include_pending: bool,
-    ) {
-        tracing::trace!(
-            target: "parity_stop",
-            ?owner,
-            ?stop_priority,
-            "engine stop_owner enter"
-        );
-        let owner_pos = self
-            .get_entity(owner)
-            .map(|e| e.element_data().position_map())
-            .unwrap_or_default();
-        if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
-            let selected = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner);
-            let selected_state = selected.and_then(|(seq_id, elem_idx)| {
-                self.orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .map(|element| {
-                        (
-                            element.command,
-                            element.state,
-                            element.priority,
-                            element
-                                .orders
-                                .front()
-                                .map(|order| (order.order_type, order.order_id)),
-                        )
-                    })
-            });
-            let (active_movement, goal) = self
-                .get_entity(owner)
-                .map(|entity| {
-                    let active_movement = entity.actor_data().map(|actor| {
-                        (
-                            actor.active_movement.sequence_id,
-                            actor.active_movement.element_index,
-                        )
-                    });
-                    (active_movement, entity.position_iface().map_goal())
-                })
-                .unwrap_or_default();
-            tracing::trace!(
-                target: "parity_owner_handoff",
-                frame = self.control.frame_counter,
-                ?owner,
-                ?stop_priority,
-                ?selected,
-                ?selected_state,
-                ?active_movement,
-                ?goal,
-                "stop_owner before movement and sequence stop"
-            );
-        }
-        let pathfinder = &mut self.world.pathfinder;
-        let next_order_id = &mut self.orders.next_order_id;
-        let resolver = Self::priority_resolver(&self.world.entities);
-        let selected_movement_before_stop = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(owner)
-            .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
-        tracing::trace!(target: "parity_stop", ?owner, "before stop_movement_for_owner");
-        self.orders.sequence_manager.stop_movement_for_owner(
-            owner,
-            owner_pos,
-            stop_priority,
-            &resolver,
-            next_order_id,
-            &mut |id| {
-                pathfinder.cancel_requests_for(id);
-            },
-        );
-        let rewritten_selected_order = if let Some((before_seq, before_idx, before_id)) =
-            selected_movement_before_stop
-            && let Some((after_seq, after_idx, after_order)) =
-                self.orders.sequence_manager.current_order_for_actor(owner)
-            && after_seq == before_seq
-            && after_idx == before_idx
-            && after_order.order_id != before_id
-        {
-            // Stopping movement mutates the first
-            // the order's action and assigns a new ID in place. The actor order still points
-            // at that same object, so update Rust's explicit pointer mirror
-            // only when the selected element survived with a rewritten ID.
-            Some(crate::element::InstalledActorOrder {
-                order_id: after_order.order_id,
-                order_type: after_order.order_type,
-            })
-        } else {
-            None
-        };
-        tracing::trace!(target: "parity_stop", ?owner, "after stop_movement_for_owner");
-        // Path-request cleanup pairs cancellation with
-        // failed-path-retry removal whenever a movement element
-        // transitions out of MOVE_WAITING.  Mirror that here so a
-        // `stop_owner` tear-down also evicts any stale retry entries
-        // for this actor — otherwise the 100-frame timeout would fire
-        // `element_impossible` / hero-speech on a sequence that no
-        // longer cares.
-        self.orders
-            .failed_path_requests
-            .retain(|r| r.owner != owner);
-        self.orders.pending_path_requests.cancel_for_owner(owner);
-        tracing::trace!(target: "parity_stop", ?owner, "before sequence stop_owner");
-        if include_pending {
-            self.orders
-                .sequence_manager
-                .stop_owner(owner, stop_priority, &resolver);
-        } else {
-            let root = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner);
-            self.orders.sequence_manager.stop_owner_current_from_root(
-                owner,
-                root,
-                stop_priority,
-                &resolver,
-            );
-        }
-        drop(resolver);
-        if let Some(installed_order) = rewritten_selected_order {
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .expect("rewritten movement-stop owner lost actor data")
-                .installed_order = Some(installed_order);
-        }
-        tracing::trace!(target: "parity_stop", ?owner, "after sequence stop_owner");
-        tracing::trace!(
-            target: "parity_stop",
-            ?owner,
-            ?stop_priority,
-            "engine stop_owner exit"
-        );
     }
 
     /// Returns `true` when the actor's posture is one of
@@ -4215,41 +3088,6 @@ impl EngineInner {
 
     // ─── Read-only accessors for host renderer / input ───────────
 
-    /// Iterate over all live entities (skipping `None` slots).
-    pub fn entities_iter(&self) -> impl Iterator<Item = &Entity> + '_ {
-        self.world.entities.occupied().map(|(_, entity)| entity)
-    }
-
-    /// Iterate over all live entities together with their typed table IDs.
-    ///
-    /// Diagnostic tools that compare two independently-built simulations use
-    /// this to construct an isomorphism between entity tables; callers must
-    /// not assume that the returned IDs have meaning outside this engine.
-    pub fn entities_with_ids_iter(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.world.entities.occupied()
-    }
-
-    /// Active entity positions for debug overlays.
-    pub fn active_entity_positions(
-        &self,
-    ) -> impl Iterator<Item = (EntityId, crate::coordinates::MapPoint)> + '_ {
-        self.world.entities.occupied().filter_map(|(id, entity)| {
-            entity
-                .is_active()
-                .then_some((id, entity.element_data().position_map()))
-        })
-    }
-
-    /// All player characters (portrait order).
-    pub fn pc_ids(&self) -> &[EntityId] {
-        &self.world.pc_ids
-    }
-
-    /// All NPCs (soldiers + civilians).
-    pub fn npc_ids(&self) -> Vec<EntityId> {
-        self.world.entities.npc_ids().collect()
-    }
-
     /// Restore an original-game parity-session boundary field that the v48 save
     /// serializer omits. This is intentionally a replay-only seam: normal
     /// simulation updates the value during detection refresh.
@@ -4317,72 +3155,6 @@ impl EngineInner {
         true
     }
 
-    /// Currently selected PC ids for the [`PlayerId::HOST`] seat.
-    ///
-    /// Single-player host code (HUD, renderer, input translation)
-    /// always reads this accessor — there's only one seat in
-    /// single-player and it's the host.  Multi-seat callers should use
-    /// [`Self::hero_selection`] with their own
-    /// [`crate::player_command::PlayerId`].
-    pub fn selected_hero_ids(&self) -> &[EntityId] {
-        &self.players.seats[0].selection
-    }
-
-    /// Selection for a specific seat, or `&[]` if the seat hasn't
-    /// joined yet.  Multi-seat read path.
-    pub fn hero_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {
-        self.players
-            .seats
-            .get(player_id.0 as usize)
-            .map(|s| s.selection.as_slice())
-            .unwrap_or(&[])
-    }
-
-    /// Logical selection across both command surfaces. The two slices remain
-    /// physically separate for save/replay compatibility, but gameplay which
-    /// applies to every player-commandable actor should consume this view.
-    pub fn controlled_selection(
-        &self,
-        player_id: crate::player_command::PlayerId,
-    ) -> impl Iterator<Item = &EntityId> {
-        self.hero_selection(player_id)
-            .iter()
-            .chain(self.tactical_selection(player_id))
-    }
-
-    /// Look up [`SeatState`] for a `PlayerId`.  `None` when the seat
-    /// hasn't materialised — happens before the seat's first
-    /// `ConnectSeat` (or, for non-host seats, before its first
-    /// command of any kind).
-    pub fn seat(&self, player_id: crate::player_command::PlayerId) -> Option<&SeatState> {
-        self.players.seats.get(player_id.0 as usize)
-    }
-
-    /// All currently-existing seats (connected or disconnected) in
-    /// `PlayerId` order.  Renderer uses this to walk every seat for
-    /// the portrait "controlled by" overlay; transport uses it to
-    /// drive seat-list UI.
-    pub fn seats(&self) -> &[SeatState] {
-        &self.players.seats
-    }
-
-    /// Iterate over `(PlayerId, &SeatState)` pairs for every seat
-    /// that's currently active — i.e. the host seat (always) plus
-    /// any peer seat with `connected = true`.  Disconnected peers
-    /// are filtered out so the renderer doesn't draw stale
-    /// "controlled by" labels.
-    pub fn active_seats(
-        &self,
-    ) -> impl Iterator<Item = (crate::player_command::PlayerId, &SeatState)> {
-        self.players.seats.iter().enumerate().filter_map(|(i, s)| {
-            if s.is_active(i) {
-                Some((crate::player_command::PlayerId(i as u8), s))
-            } else {
-                None
-            }
-        })
-    }
-
     /// Ensure a seat exists for `player_id`, growing `self.players.seats` with
     /// default [`SeatState`]s as needed, and return its index.
     ///
@@ -4398,113 +3170,6 @@ impl EngineInner {
             self.players.seats.resize_with(idx + 1, SeatState::default);
         }
         idx
-    }
-
-    /// `true` if at least one selected PC currently has its rotating
-    /// selection circle drawn this frame — i.e. the per-PC posture /
-    /// in-building filter lets at least one PC through.
-    ///
-    /// Used host-side to gate `SelectionMark::tick` so the ping-pong
-    /// animation freezes whenever no circle would be drawn — the
-    /// frame counter advances only during drawing, so
-    /// non-drawing periods naturally paused the animation.
-    pub fn any_selected_pc_drawing_selection_mark(&self) -> bool {
-        for &pc_id in &self.players.seats[0].selection {
-            if self.pc_draws_selection_mark(pc_id) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// `true` when any player-commandable selection for this
-    /// seat has at least one entity eligible for the persistent ground ring.
-    pub fn any_selection_drawing_selection_mark(
-        &self,
-        seat: crate::player_command::PlayerId,
-    ) -> bool {
-        self.controlled_selection(seat)
-            .copied()
-            .any(|id| self.pc_draws_selection_mark(id))
-    }
-
-    /// Check whether the entity's cached sector (set during door-pass
-    /// transitions) is a building sector.
-    ///
-    /// Takes the entity's exact `element.sector` identity and returns the same
-    /// handle when that sector has the BUILDING flag, so callers can also
-    /// compare "same building". The original game's building lookup
-    /// checks the actor's sector reference directly; the public-number lookup is
-    /// retained only for identity-less compatibility positions.
-    pub(crate) fn entity_building_sector(
-        &self,
-        sector: Option<crate::position_interface::SectorHandle>,
-    ) -> Option<crate::position_interface::SectorHandle> {
-        let sector = sector?;
-        let grid_sector =
-            movement::grid_sector_for_position_handle(&self.world.fast_grid.level, sector)?;
-        let public_number = crate::sector::SectorNumber::new(i16::from(sector));
-        assert_eq!(
-            grid_sector.sector_number, public_number,
-            "exact sector arena identity disagrees with its public number"
-        );
-        grid_sector.sector_type.is_building().then_some(sector)
-    }
-
-    /// `true` when the rotating ground selection circle should be drawn
-    /// for an actor. Despite the legacy name, the posture/building checks
-    /// apply equally to PCs and directly controlled allied soldiers.
-    pub fn pc_draws_selection_mark(&self, pc_id: EntityId) -> bool {
-        let Some(entity) = self.get_entity(pc_id) else {
-            return false;
-        };
-        if !entity.is_active() {
-            return false;
-        }
-
-        let elem = entity.element_data();
-        if elem.posture() == crate::element::Posture::Flying
-            || elem.hidden_in_building
-            || elem.is_in_door_transit()
-        {
-            return false;
-        }
-
-        self.entity_building_sector(elem.sector()).is_none()
-    }
-
-    /// `true` if `pc_id` has any queued `Command::ShootBow` sequence
-    /// element.  Used by the right-click `Bow` arm to decide whether to
-    /// drain the shoot-list (queue non-empty) or cancel the Bow action
-    /// (queue empty).
-    pub fn pc_has_pending_shoot_bow(&self, pc_id: EntityId) -> bool {
-        self.get_entity(pc_id)
-            .and_then(|entity| entity.human_data())
-            .is_some_and(|human| !human.pending_shoots.is_empty())
-            || self
-                .orders
-                .sequence_manager
-                .queued_element_exists(pc_id, crate::element::Command::ShootBow)
-    }
-
-    pub(in crate::engine) fn pc_should_hold_shoot_bow(
-        &self,
-        owner: EntityId,
-        command: crate::element::Command,
-    ) -> bool {
-        use crate::order::OrderType;
-        command == crate::element::Command::ShootBow
-            && self.get_entity(owner).is_some_and(|entity| entity.is_pc())
-            && self.get_entity(owner).is_some_and(|entity| {
-                matches!(
-                    entity.sprite().last_action,
-                    OrderType::ShootingWithBow
-                        | OrderType::ShootingWithBowUp
-                        | OrderType::TransitionLoadingBow
-                        | OrderType::TransitionRaisingBow
-                        | OrderType::TransitionEquipBow
-                )
-            })
     }
 
     pub(in crate::engine) fn queue_pc_shoot_bow(
@@ -4583,26 +3248,6 @@ impl EngineInner {
         }
     }
 
-    /// Background animation entity ids in occupied-entity order, without a snapshot allocation.
-    pub fn bg_animation_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.world
-            .entities
-            .occupied()
-            .filter_map(|(id, entity)| entity.is_background_animation().then_some(id))
-    }
-
-    /// Quick-select group `idx` (0 = group 1, 8 = group 9).
-    pub fn quick_select_group(&self, idx: usize) -> &[EntityId] {
-        &self.players.seats[0].quick_select_groups[idx]
-    }
-
-    /// Floating indicator manager (titbits: stars, emoticons, smoke, splashes).
-    /// The host reads it every frame to drive the titbit renderer; scripts
-    /// and input handlers add new titbits through [`EngineInner::titbit_manager_mut`].
-    pub fn titbit_manager(&self) -> &crate::titbit::TitbitManager {
-        &self.feedback.titbit_manager
-    }
-
     /// Install the titbit renderer's per-row frame counts.  Called at
     /// level load and whenever the ambience shadow colour changes (the
     /// titbit atlas is rebuilt host-side and hands fresh counts back).
@@ -4610,26 +3255,6 @@ impl EngineInner {
     /// level renderer metadata and not part of the rollback hash.
     pub(crate) fn set_titbit_row_frame_counts(&mut self, counts: Vec<u16>) {
         self.feedback.titbit_manager.set_row_frame_counts(counts);
-    }
-
-    /// Current dotted-chain animation phase, advanced by the engine
-    /// tick.  Host renderers read this to chain dotted line segments
-    /// within a frame; they do not write it back — next frame's
-    /// `perform_hourglass` re-advances it via
-    /// `TitbitManager::prepare_refresh`.
-    pub fn titbit_dotted_start(&self) -> f32 {
-        self.feedback.titbit_manager.dotted_start()
-    }
-
-    /// Global AI state (alert levels, seek points, …). Read-only.
-    pub fn ai_global(&self) -> &AiGlobalState {
-        &self.ai.global
-    }
-
-    /// Read-only access to the per-PC quick-action macro store.  Host
-    /// renderers use this to iterate slots for the portrait strip.
-    pub fn macro_store(&self) -> &crate::macro_store::MacroStore {
-        &self.players.macro_store
     }
 
     /// Remove all titbits owned by `pc` at QA slot `slot`.  Resolves
@@ -4647,15 +3272,6 @@ impl EngineInner {
         self.feedback
             .titbit_manager
             .remove_quick_action_titbits_by_id(titbit_id)
-    }
-
-    /// Does `pc` have a recorded macro in `slot`?
-    pub fn has_quick_action(&self, pc: EntityId, slot: u8) -> bool {
-        self.players
-            .macro_store
-            .get(pc)
-            .map(|s| s.has_macro(slot as usize))
-            .unwrap_or(false)
     }
 
     /// Abort the macro at `(pc, slot)`: drop the slot's titbit and clear
@@ -4729,93 +3345,10 @@ impl EngineInner {
             }));
     }
 
-    pub(crate) fn macro_slot_lengths(&self) -> Vec<MacroSlotLengths> {
-        self.world
-            .pc_ids
-            .iter()
-            .filter_map(|&pc_id| {
-                let state = self.players.macro_store.get(pc_id)?;
-                let lengths = std::array::from_fn(|slot| {
-                    state
-                        .slot(slot)
-                        .map(crate::macro_store::QuickActionSlot::len)
-                        .unwrap_or(0)
-                        .try_into()
-                        .unwrap_or_else(|_| {
-                            panic!("macro slot {slot} has more than u16::MAX steps")
-                        })
-                });
-                Some(MacroSlotLengths { pc_id, lengths })
-            })
-            .collect()
-    }
-
     /// Enable or disable the `--goldeneye` cheat (NPCs can't see the player).
     /// Set once at startup from CLI args.
     pub(crate) fn set_golden_eye_mode(&mut self, on: bool) {
         self.ai.global.golden_eye_mode = on;
-    }
-
-    /// Whether the `--goldeneye` cheat is active.  Used by the PC
-    /// refresh path to render every PC sprite at 50% alpha.
-    pub fn get_golden_eye_mode(&self) -> bool {
-        self.ai.global.golden_eye_mode
-    }
-
-    /// Weather / ambiance state (night colour, rain, fog, …).
-    pub fn weather(&self) -> &WeatherState {
-        &self.world.weather
-    }
-
-    /// Shield protection state (for the "Immortality" cheat).
-    pub fn shield(&self) -> &ShieldState {
-        &self.world.shield
-    }
-
-    /// Spatial acceleration grid (sectors, masks, jump lines, doors).
-    pub fn fast_grid(&self) -> &FastFindGrid {
-        &self.world.fast_grid
-    }
-
-    /// Canonical door selected by the same click-polygon fallback used by
-    /// group movement when no fast-grid sector polygon contains the point.
-    pub fn group_move_door_at(&self, point: crate::coordinates::MapPoint) -> Option<u32> {
-        movement::door_click_polygon_at(&self.script_domains.interactables.doors, point)
-    }
-
-    /// A* waypoint pathfinder.
-    pub fn pathfinder(&self) -> &PathFinder {
-        &self.world.pathfinder
-    }
-
-    /// Committed path waypoints for an actor's active movement, if any.
-    ///
-    /// Returns the `(target_x, target_y)` of each remaining (non-`done`)
-    /// order on the actor's currently-executing sequence element, in
-    /// execution order.  Used by the surface debug overlay to draw the
-    /// path the character will follow.  Returns `None` when the actor
-    /// has no active movement element.
-    pub fn actor_path_waypoints(
-        &self,
-        actor: EntityId,
-    ) -> Option<Vec<crate::coordinates::MapPoint>> {
-        let entity = self.get_entity(actor)?;
-        let actor_data = entity.actor_data()?;
-        let seq_id = actor_data.active_movement.sequence_id?;
-        let elem_idx = actor_data.active_movement.element_index;
-        let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
-        Some(
-            elem.orders
-                .iter()
-                .filter(|o| !o.done)
-                .map(|o| crate::coordinates::MapPoint::new(o.target_x, o.target_y))
-                .collect(),
-        )
-    }
-
-    /// Destination markers drawn on the ground.
-    pub fn ground_mark(&self) -> &GroundMark {
-        &self.feedback.ground_mark
     }
 
     /// Populate ground-mark sprite data at resource-load time (host-side
@@ -4862,46 +3395,6 @@ impl EngineInner {
         }
     }
 
-    /// Short mission briefing entries (read-only, drained by host UI).
-    pub fn short_briefings(&self) -> &ShortBriefings {
-        &self.mission_domain.short_briefings
-    }
-
-    /// Read the accumulated mission statistics (money, score, kills,
-    /// recruitment, …).  Written by script natives during the tick and
-    /// rolled up at mission end by [`EngineInner::apply_quit_mission_updates`].
-    pub fn mission_stat(&self) -> &MissionStat {
-        &self.mission_domain.mission_stat
-    }
-
-    /// Live deterministic achievement evidence for debriefing/tracker UI.
-    pub fn mission_achievement_state(&self) -> &crate::achievement::MissionAchievementState {
-        &self.mission_domain.achievements
-    }
-
-    /// Frozen successful-run results, if the mission crossed its successful
-    /// terminal update boundary.
-    pub fn mission_achievement_results(
-        &self,
-    ) -> Option<&crate::achievement::MissionAchievementResults> {
-        self.mission_domain.achievements.finalized_results()
-    }
-
-    /// Whether the camera is locked to follow an entity.
-    pub fn locker_active(&self) -> bool {
-        self.players.seats[0].locker_active
-    }
-
-    /// Original messenger view-lock, distinct from camera-follow locker mode.
-    pub fn view_locked(&self) -> bool {
-        self.players.view_locked
-    }
-
-    /// Whether the player has the engine "user-locked" (alt-lock UI).
-    pub fn user_locked(&self) -> bool {
-        self.players.user_locked
-    }
-
     /// Enqueue a `SimpleMessage` onto the engine's messenger.
     ///
     /// Host-side producers of messenger events (console overlay,
@@ -4913,11 +3406,6 @@ impl EngineInner {
         self.orders.messenger.send(crate::messenger::Message::new(
             crate::messenger::MessageType::Simple(msg),
         ));
-    }
-
-    /// Whether `pc` is part of the currently-armed recording set.
-    pub fn is_qa_recording_for(&self, pc: EntityId) -> bool {
-        self.players.qa_recording_for.contains(&pc)
     }
 
     /// Stop the in-progress quick-action macro recording (host-side
@@ -5741,7 +4229,7 @@ impl EngineInner {
     /// begins ticking.
     pub(crate) fn register_peasant_name(&mut self, name: String) {
         self.mission_domain
-            .required_campaign_mut("registering a mission peasant name")
+            .campaign_mut()
             .register_peasant_name(name);
     }
 
@@ -6143,9 +4631,9 @@ mod campaign_lifecycle_tests {
         let mut engine = EngineInner::new_with_campaign(campaign);
         engine.mission_domain.mission_stat.living_soldier_count = 2;
         engine.mission_domain.mission_stat.total_soldier_count = 9;
-        engine.add_entity(lacklandist_soldier(100));
-        engine.add_entity(lacklandist_soldier(50));
-        engine.add_entity(lacklandist_soldier(0));
+        engine.add_test_entity(lacklandist_soldier(100));
+        engine.add_test_entity(lacklandist_soldier(50));
+        engine.add_test_entity(lacklandist_soldier(0));
 
         engine.apply_quit_mission_updates(
             sim,

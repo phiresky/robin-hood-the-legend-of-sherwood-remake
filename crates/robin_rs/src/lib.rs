@@ -23,7 +23,7 @@ use std::sync::{Mutex, OnceLock};
 ))]
 pub mod auto_update;
 pub mod gameplay_settings;
-pub mod leaderboard_signing;
+pub(crate) use leaderboard::signing as leaderboard_signing;
 pub mod localization;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_game_identity;
@@ -191,20 +191,12 @@ pub mod corner_hud;
 pub mod cursor;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod datadir_locator;
-pub mod debug_stub;
 pub mod distributed_mod;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod distributed_mod_admission;
-#[cfg(target_arch = "wasm32")]
-#[path = "distributed_mod_admission_wasm.rs"]
-pub mod distributed_mod_admission;
-pub mod distributed_mod_admission_common;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod distributed_mod_cache;
-#[cfg(target_arch = "wasm32")]
-#[path = "distributed_mod_cache_wasm.rs"]
-pub mod distributed_mod_cache;
-pub mod distributed_mod_policy;
+pub use distributed_mod::admission::workflow as distributed_mod_admission_common;
+pub use distributed_mod::{
+    admission as distributed_mod_admission, cache as distributed_mod_cache,
+    policy as distributed_mod_policy,
+};
 pub mod draw_manager;
 pub mod focus_manager;
 pub mod font;
@@ -230,10 +222,6 @@ pub mod mission_asset_restore;
 pub mod mission_descriptors;
 pub mod mission_replays;
 pub mod profile_domain;
-pub mod rpc_diagnostics;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod rpc_query;
-pub mod rpc_screenshot;
 pub mod session_achievement;
 pub mod shader_preset;
 pub mod shipping_mission;
@@ -258,23 +246,17 @@ pub mod input;
 pub mod input_translator;
 pub mod key_config;
 pub mod key_config_store;
-pub mod leaderboard_account;
-pub mod leaderboard_browse;
-pub mod leaderboard_chains;
-pub mod leaderboard_http;
-pub mod leaderboard_mission_end;
-pub mod leaderboard_preferences;
-pub mod leaderboard_ranked_session;
-pub mod leaderboard_receipt_watcher;
-pub mod leaderboard_service;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod leaderboard_storage;
+pub(crate) mod leaderboard;
+pub(crate) use leaderboard::browse as leaderboard_browse;
+pub(crate) use leaderboard::chains as leaderboard_chains;
+pub(crate) use leaderboard::http as leaderboard_http;
+pub(crate) use leaderboard::mission_end as leaderboard_mission_end;
+pub(crate) use leaderboard::preferences as leaderboard_preferences;
+pub(crate) use leaderboard::ranked_session as leaderboard_ranked_session;
+pub(crate) use leaderboard::receipt_watcher as leaderboard_receipt_watcher;
+pub(crate) use leaderboard::service as leaderboard_service;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
-#[cfg(all(not(target_arch = "wasm32"), feature = "lua"))]
-pub mod lua_session;
-#[cfg(any(target_arch = "wasm32", not(feature = "lua")))]
-#[path = "lua_session_wasm.rs"]
 pub mod lua_session;
 pub mod main_entry;
 pub mod main_menu;
@@ -304,7 +286,6 @@ pub mod replay_service;
 pub mod rewind;
 pub mod rollback_checker;
 pub mod save_file;
-pub mod save_operation;
 pub mod save_recovery;
 pub mod savegame;
 pub mod scroll_view;

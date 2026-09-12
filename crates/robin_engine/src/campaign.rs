@@ -259,6 +259,7 @@ pub struct CampaignPracticeReturn {
 /// collections or exposing mutation of progression state.
 #[derive(Clone, Copy)]
 pub struct CampaignPracticeReturnView<'a> {
+    pub history_replay_mission_idx: Option<usize>,
     pub ares: i8,
     pub missions: &'a [Mission],
     pub accessible_mission_indices: &'a [usize],
@@ -305,6 +306,7 @@ impl CampaignPracticeReturn {
             production_sectors,
         } = self;
         CampaignPracticeReturnView {
+            history_replay_mission_idx: None,
             ares: *ares,
             missions,
             accessible_mission_indices,
@@ -514,6 +516,30 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
 pub type CampaignSnapshot = Campaign<()>;
 
 impl<S: robin_util::state_hash::StateHash> Campaign<S> {
+    /// Borrow admission-relevant state without cloning campaign collections.
+    pub fn validation_view(&self) -> CampaignPracticeReturnView<'_> {
+        CampaignPracticeReturnView {
+            history_replay_mission_idx: self.history_replay_mission_idx,
+            ares: self.ares,
+            missions: &self.missions,
+            accessible_mission_indices: &self.accessible_mission_indices,
+            pending_accessible_mission_indices: &self.pending_accessible_mission_indices,
+            last_mission_idx: self.last_mission_idx,
+            current_mission_idx: self.current_mission_idx,
+            next_mission_idx: self.next_mission_idx,
+            blazon_mission_idx: self.blazon_mission_idx,
+            mission_attempt_sequence: self.mission_attempt_sequence,
+            campaign_history_run_id: self.campaign_history_run_id,
+            characters: &self.characters,
+            gang_indices: &self.gang_indices,
+            reservist_indices: &self.reservist_indices,
+            mission_team_indices: &self.mission_team_indices,
+            peasant_names: &self.peasant_names,
+            collected_relics: &self.collected_relics,
+            production_sectors: &self.production_sectors,
+        }
+    }
+
     pub(crate) fn replace_snapshot<T: robin_util::state_hash::StateHash>(
         self,
         pre_mission_snapshot: T,
@@ -1381,8 +1407,8 @@ impl Campaign {
             };
             let is_vip = profiles
                 .get_character(cpi)
-                .map(|cp| cp.vip)
-                .unwrap_or(false);
+                .expect("campaign character references missing profile")
+                .vip;
             if is_vip {
                 continue;
             }
@@ -1582,8 +1608,8 @@ impl Campaign {
         // Skip VIPs already in the gang.
         let is_vip = profiles
             .get_character(profile_idx)
-            .map(|cp| cp.vip)
-            .unwrap_or(false);
+            .expect("campaign character references missing profile")
+            .vip;
         if is_vip && self.is_in_gang(profile_idx) {
             return true;
         }
@@ -1908,8 +1934,8 @@ impl Campaign {
             let fulfilled = team_profile_ids.iter().any(|&pid| {
                 profiles
                     .get_character(pid)
-                    .map(|cp| cp.has_action(action))
-                    .unwrap_or(false)
+                    .expect("campaign team member references missing profile")
+                    .has_action(action)
             });
             if !fulfilled {
                 return false;
@@ -2676,12 +2702,13 @@ impl Campaign {
         profiles: &ProfileManager,
         difficulty: DifficultyLevel,
     ) {
-        self.create_gang_from_pcs_with_file_exists(
-            pcs,
-            profiles,
-            difficulty,
-            crate::sbfile::SbFile::exists,
-        );
+        self.create_gang_from_pcs_with_file_exists(pcs, profiles, difficulty, |path| {
+            crate::sbfile::global_file_system()
+                .try_exists(path)
+                .unwrap_or_else(|error| {
+                    panic!("cannot inspect campaign resource {path:?}: {error:?}")
+                })
+        });
     }
 
     pub(crate) fn create_gang_from_pcs_with_file_exists(

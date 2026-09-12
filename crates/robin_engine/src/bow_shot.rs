@@ -60,9 +60,32 @@ mod collision;
 mod projectile;
 mod trajectory;
 
-pub use collision::*;
-pub use projectile::*;
-pub use trajectory::*;
+#[cfg(test)]
+use collision::shield_params_for_soldier;
+pub use collision::{ShieldParams, compute_shield_obstacle, shield_params_for_pc};
+pub(crate) use collision::{
+    refresh_retained_shield_obstacle, shield_obstacle_from_serialized_state,
+};
+pub use projectile::{
+    APEX_BEGGAR_COIN, APEX_COIN, ArrowTickResult, BOUNCE_COIN, COIN_SCATTER_ATTEMPTS,
+    COIN_SCATTER_MIN, COIN_SCATTER_RANGE, MASS_COIN, NUMBER_OF_COINS_IN_PURSE, NUMBER_OF_WASPS,
+    SpawnArrowParams, apply_arrow_hit, spawn_apple, spawn_arrow, spawn_coin, spawn_net,
+    spawn_purse, spawn_stone, spawn_wasp, spawn_wasp_nest, tick_arrows, tick_existing_projectile,
+};
+pub(crate) use projectile::{
+    make_arrow_falling_down, projectile_shield_holder, refresh_arrow_after_previous_hourglass,
+    tick_arrow_in_actor_order_with_diplomacy, tick_existing_projectile_in_actor_order,
+};
+#[cfg(test)]
+use projectile::{tick_arrow, tick_arrow_in_actor_order};
+use trajectory::compute_trajectory_ballistic_bounce;
+pub use trajectory::{
+    TrajectoryObstacleCheck, apply_projectile_landing_resolution, bind_trajectory_obstacle,
+    compute_bow_point, compute_initial_throw_velocity, compute_shot_velocity_params,
+    compute_trajectory_ballistic, compute_trajectory_ballistic_with_terminal_impact,
+    compute_trajectory_ballistic_with_terminal_obstacle, roll_hit_and_compute_bias,
+    terminal_obstacle_plane, will_hit_target,
+};
 
 #[cfg(test)]
 use projectile::preserve_falling_hole_disappearance;
@@ -761,24 +784,6 @@ pub struct BowTickEvents {
     pub pc_equip_actions: Vec<EntityId>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static CROSS_ACTOR_SHOT_REPLACEMENT: std::cell::Cell<Option<(EntityId, ActiveShot)>> =
-        const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-fn apply_cross_actor_shot_replacement(entities: &mut Entities) {
-    let Some((actor_id, replacement)) = CROSS_ACTOR_SHOT_REPLACEMENT.take() else {
-        return;
-    };
-    entities
-        .get_mut(actor_id)
-        .and_then(Entity::actor_data_mut)
-        .expect("cross-actor replacement target must remain an actor")
-        .active_shot = replacement;
-}
-
 /// Advance the shoot animation for every actor with an [`ActiveShot`].
 ///
 /// Returns a list of results for actors whose shoot animation reached
@@ -828,9 +833,6 @@ fn tick_bow_shots_matching(
         target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
         target_map_positions[entity_id] = Some(entity.element_data().position_map());
     }
-
-    #[cfg(test)]
-    apply_cross_actor_shot_replacement(entities);
 
     for (actor_id, entity) in entities.actors_mut() {
         let shooter_id: EntityId = actor_id.into();

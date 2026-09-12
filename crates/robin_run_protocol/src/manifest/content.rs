@@ -206,24 +206,6 @@ pub enum OfficialProjectionSourceFormatV1 {
     ShippingDatadirV10,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfficialProjectionExporterIdentityV1 {
-    pub exporter_version: u32,
-    pub source_format: OfficialProjectionSourceFormatV1,
-}
-
-impl Validate for OfficialProjectionExporterIdentityV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.exporter_version == 0 {
-            return Err(ValidationError::Zero {
-                field: "official_projection.exporter_version",
-            });
-        }
-        Ok(())
-    }
-}
-
 /// One exact physical file in a private approved source datadir. Zero-byte
 /// files are legitimate source inventory entries, so this does not reuse the
 /// nonempty downloadable-artifact contract.
@@ -238,46 +220,7 @@ pub struct OfficialSourceFileV1 {
 impl Validate for OfficialSourceFileV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::canonical_relative_path("official_source_file.path", &self.path)?;
-        if self.sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "official_source_file.sha256",
-            });
-        }
-        Ok(())
-    }
-}
-
-/// Private digest inventory for the exact raw mount from which an exporter
-/// prepared simulation inputs. It must never become a public FULL download.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfficialSourceTreeManifestV1 {
-    pub schema_version: u32,
-    pub edition: OfficialContentEditionV1,
-    pub source_format: OfficialProjectionSourceFormatV1,
-    pub files: Vec<OfficialSourceFileV1>,
-}
-
-impl Validate for OfficialSourceTreeManifestV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("OfficialSourceTreeManifestV1", self.schema_version)?;
-        if self.files.is_empty() || self.files.len() > 1_000_000 {
-            return Err(ValidationError::CountOutOfRange {
-                field: "official_source_tree.files",
-            });
-        }
-        for file in &self.files {
-            file.validate()?;
-        }
-        if !self
-            .files
-            .windows(2)
-            .all(|pair| pair[0].path < pair[1].path)
-        {
-            return Err(ValidationError::NotCanonicalOrder {
-                field: "official_source_tree.files",
-            });
-        }
+        crate::validation::nonzero("official_source_file.sha256", &self.sha256)?;
         Ok(())
     }
 }
@@ -286,60 +229,6 @@ impl Validate for OfficialSourceTreeManifestV1 {
 #[serde(deny_unknown_fields)]
 pub struct OfficialProjectionSubjectReceiptV1 {
     pub content_manifest: ContentManifestV1,
-}
-
-/// Canonical proof that one supported exporter prepared the exact official
-/// edition matrix from one inventoried raw mount. Native and shipping receipts
-/// differ in source identity but must contain identical content manifests.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfficialSimulationProjectionReceiptV1 {
-    pub schema_version: u32,
-    pub exporter: OfficialProjectionExporterIdentityV1,
-    pub edition: OfficialContentEditionV1,
-    pub source_tree_manifest_sha256: Digest32,
-    pub source_file_count: u32,
-    pub subjects: Vec<OfficialProjectionSubjectReceiptV1>,
-}
-
-impl Validate for OfficialSimulationProjectionReceiptV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("OfficialSimulationProjectionReceiptV1", self.schema_version)?;
-        self.exporter.validate()?;
-        if self.source_tree_manifest_sha256.is_zero() || self.source_file_count == 0 {
-            return Err(ValidationError::Zero {
-                field: "official_projection_receipt.source_tree",
-            });
-        }
-        let subjects = self
-            .subjects
-            .iter()
-            .map(|subject| subject.content_manifest.subject.clone())
-            .collect::<Vec<_>>();
-        validate_official_content_subjects_v1(self.edition, &subjects)?;
-        for subject in &self.subjects {
-            subject.content_manifest.validate()?;
-            if subject.content_manifest.edition != self.edition
-                || subject.content_manifest.projection_schema_version
-                    != OFFICIAL_SIMULATION_CONTENT_PROJECTION_SCHEMA_VERSION_V1
-                || subject.content_manifest.name
-                    != official_content_manifest_name_v1(
-                        self.edition,
-                        &subject.content_manifest.subject,
-                    )
-                || !matches!(
-                    subject.content_manifest.speech_timing,
-                    SimulationSpeechTimingSourceV1::BaseInstallation
-                        | SimulationSpeechTimingSourceV1::CoreAudioDurationsV1
-                )
-            {
-                return Err(ValidationError::ClaimMismatch {
-                    field: "official_projection_receipt.content_manifest",
-                });
-            }
-        }
-        Ok(())
-    }
 }
 
 pub const OFFICIAL_PROJECTION_RECEIPT_SCHEMA_VERSION_V2: u32 = 2;
@@ -396,11 +285,10 @@ impl Validate for OfficialProjectionExporterIdentityV2 {
                 field: "official_projection_v2.exporter_schema_policy",
             });
         }
-        if self.projection_authority_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "official_projection_v2.projection_authority_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "official_projection_v2.projection_authority_manifest_sha256",
+            &self.projection_authority_manifest_sha256,
+        )?;
         self.exporter_artifact.validate()?;
         if self.exporter_artifact.media_type != OFFICIAL_PROJECTION_EXPORTER_MEDIA_TYPE_V2 {
             return Err(ValidationError::ClaimMismatch {
@@ -1073,11 +961,7 @@ pub fn simulation_content_component_relative_path_v1(
     subject.validate()?;
     let directory = match subject {
         OfficialContentSubjectV1::FieldMission { mission_id } => {
-            let mut encoded = String::with_capacity(mission_id.len() * 2);
-            for byte in mission_id.as_bytes() {
-                use std::fmt::Write as _;
-                write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
-            }
+            let encoded = hex::encode(mission_id);
             format!("field-missions/{encoded}")
         }
         OfficialContentSubjectV1::Headquarters { .. } => "headquarters".into(),
@@ -1394,11 +1278,10 @@ pub struct CampaignContentEntryV1 {
 impl Validate for CampaignContentEntryV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.subject.validate()?;
-        if self.content_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "campaign_content.content_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "campaign_content.content_manifest_sha256",
+            &self.content_manifest_sha256,
+        )?;
         Ok(())
     }
 }

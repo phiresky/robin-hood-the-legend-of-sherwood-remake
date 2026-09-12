@@ -32,10 +32,10 @@ const MAX_AUTHORITY_RELATIVE_PATH_BYTES: usize = 4_096;
 const MAX_AUTHORITY_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_AUTHORITY_AGGREGATE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAX_AUTHENTICATED_SEMANTIC_BYTES: u64 = 512 * 1024 * 1024;
-const STATE_ROOT: &str = "/home/robinhood/.local/share/robin-highscores";
-const RELEASES_ROOT: &str = "/home/robinhood/.local/opt/robin-highscores/releases";
-const DEMO_RAW_ROOT: &str = "/home/robinhood/.local/share/robin-highscores/raw-content/demo";
-const FULL_RAW_ROOT: &str = "/home/robinhood/.local/share/robin-highscores/raw-content/full";
+use crate::deployment::paths::{
+    DEMO_RAW_CONTENT_ROOT as DEMO_RAW_ROOT, FULL_RAW_CONTENT_ROOT as FULL_RAW_ROOT,
+    INSTALLED_RELEASE_ROOT as RELEASES_ROOT, STATE_ROOT,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -940,7 +940,7 @@ fn validate_runtime_verifier_binding(
     Ok(())
 }
 
-fn validate_catalog_covers_server(
+pub fn validate_catalog_covers_server(
     catalog: &VerifierJobConfigCatalogV1,
     server: &ServerConfig,
 ) -> anyhow::Result<()> {
@@ -1617,14 +1617,14 @@ fn hash_file_bounded(
 fn open_candidate_file(root: &Dir, relative: &Path) -> anyhow::Result<File> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
-        let descriptor = openat2(
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             root.as_fd(),
             relative,
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )?;
         let file = File::from(descriptor);
         anyhow::ensure!(
@@ -1640,14 +1640,14 @@ fn open_candidate_file(root: &Dir, relative: &Path) -> anyhow::Result<File> {
 fn open_candidate_directory(root: &Dir, relative: &Path) -> anyhow::Result<Dir> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
-        let descriptor = openat2(
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             root.as_fd(),
             relative,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )?;
         let file = File::from(descriptor);
         anyhow::ensure!(
@@ -1752,16 +1752,16 @@ fn is_candidate_semantic_path(path: &str) -> bool {
 fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<u8>> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         let parent = path.parent().context("secret has no parent")?;
         let name = path.file_name().context("secret has no filename")?;
-        let parent_fd = openat2(
+        let parent_fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             parent,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         let parent_file = File::from(parent_fd);
         let parent_metadata = parent_file.metadata()?;
@@ -1771,12 +1771,12 @@ fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<
                 && parent_metadata.permissions().mode() & 0o7777 == 0o700,
             "secret parent must be effective-user-owned mode 0700"
         );
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             &parent_file,
             name,
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )?;
         let mut file = File::from(fd);
         let metadata = file.metadata()?;
@@ -1803,16 +1803,16 @@ fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<
 fn validate_secret_absent(path: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, openat2, statat};
+        use rustix::fs::{AtFlags, Mode, OFlags, statat};
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         let parent = path.parent().context("secret has no parent")?;
         let name = path.file_name().context("secret has no filename")?;
-        let parent_fd = openat2(
+        let parent_fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             parent,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         let parent_metadata = File::from(parent_fd.try_clone()?).metadata()?;
         anyhow::ensure!(
@@ -1834,13 +1834,13 @@ fn validate_secret_absent(path: &Path) -> anyhow::Result<()> {
 fn open_ambient_directory(path: &Path) -> anyhow::Result<File> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-        let fd = openat2(
+        use rustix::fs::{Mode, OFlags};
+        let fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         Ok(File::from(fd))
     }

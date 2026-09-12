@@ -18,13 +18,8 @@ use robin_engine::engine as engine_api;
 #[cfg(test)]
 use robin_engine::player_command::PlayerCommand;
 
-use crate::hud_sprite::screen_rect_to_sprite_bbox;
 use crate::ingame_menu::layout::button_sprite_state;
-#[cfg(test)]
-use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED};
-use crate::native_font::Font;
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use robin_assets::resource_manager::ResourceManager;
+use crate::renderer::Renderer;
 use robin_engine::resource_ids::{RHID_ZOOM_DOWN, RHID_ZOOM_UP};
 
 /// Logical zoom button id.
@@ -105,10 +100,10 @@ impl ZoomHudLayout {
         let zoom_down_y = 46;
 
         let (up_w, up_h) = sprites
-            .zoom_up_size()
+            .size(ZoomButton::ZoomUp)
             .unwrap_or((FALLBACK_W as u16, FALLBACK_H as u16));
         let (down_w, down_h) = sprites
-            .zoom_down_size()
+            .size(ZoomButton::ZoomDown)
             .unwrap_or((FALLBACK_W as u16, FALLBACK_H as u16));
 
         Self {
@@ -148,148 +143,22 @@ impl ZoomHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-use crate::hud_sprite::{SpriteBank, load_bank};
+pub type ZoomButtonSprites = crate::hud_sprite::ButtonSprites<ZoomButton, 2>;
+pub type ZoomHoverState = crate::hud_sprite::HoverState<ZoomButton>;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
-    let mut sprites = ZoomButtonSprites::default();
-    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
-    let handle = upload.handle();
-    sprites.zoom_up[BTN_STATE_NORMAL] = Some((upload, 1, 1));
-    assert_eq!(
-        sprites
-            .frame(ZoomButton::ZoomUp, BTN_STATE_HOVER)
-            .unwrap()
-            .0,
-        handle
-    );
-    renderer.draw_surface(handle, None, None, 0).unwrap();
-    sprites.retire(renderer);
-    sprites.retire(renderer);
-    assert!(
-        sprites
-            .frame(ZoomButton::ZoomUp, BTN_STATE_NORMAL)
-            .is_none()
-    );
-    assert!(renderer.surface_dimensions(handle).is_err());
-    assert_eq!(
-        &renderer.try_capture_frame_rgba().unwrap().2[..4],
-        &[248, 252, 248, 255]
-    );
-}
-
-#[test]
-fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
-    let mut sprites = ZoomButtonSprites::default();
-    sprites.zoom_up[BTN_STATE_NORMAL] = Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
-    sprites.zoom_up[BTN_STATE_PRESSED] =
-        Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
-    assert_eq!(
-        sprites
-            .frame(ZoomButton::ZoomUp, BTN_STATE_HOVER)
-            .unwrap()
-            .1,
-        7
-    );
-    assert_eq!(
-        sprites
-            .frame(ZoomButton::ZoomUp, BTN_STATE_PRESSED)
-            .unwrap()
-            .1,
-        8
-    );
-    let restored: ZoomButtonSprites =
-        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
-    assert!(
-        restored
-            .frame(ZoomButton::ZoomUp, BTN_STATE_NORMAL)
-            .is_none()
-    );
-    sprites.zoom_up[BTN_STATE_NORMAL] = None;
-    assert!(sprites.frame(ZoomButton::ZoomUp, BTN_STATE_HOVER).is_none());
-    assert_eq!(
-        sprites
-            .frame(ZoomButton::ZoomUp, BTN_STATE_PRESSED)
-            .unwrap()
-            .1,
-        8
-    );
-}
-
-/// Cached sprite surface ids for the two zoom HUD buttons.
-///
-/// Each button owns up to four sub-ids matching the
-/// `BTN_STATE_DISABLED / NORMAL / HOVER / PRESSED` indices.  Missing
-/// sub-ids fall back to the normal frame at draw time; if even normal
-/// is absent `draw_with_sprites` skips the button entirely (no
-/// fallback rect — see the note in `draw_with_sprites`).
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct ZoomButtonSprites {
-    #[serde(skip)]
-    zoom_up: SpriteBank,
-    #[serde(skip)]
-    zoom_down: SpriteBank,
-}
-
-impl ZoomButtonSprites {
-    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
-        let banks = [&mut self.zoom_up, &mut self.zoom_down];
-        crate::hud_sprite::retire(renderer, banks);
+impl crate::hud_sprite::HudButton<2> for ZoomButton {
+    const ALL: [Self; 2] = [Self::ZoomUp, Self::ZoomDown];
+    fn index(self) -> usize {
+        self as usize
     }
-
-    /// Load button sprites from the attached DEFAULT.RES.  Walks
-    /// sub-ids 0..=3 per resource; a missing sub-id is stored as
-    /// `None` and recovered via [`ZoomButtonSprites::frame`].
-    pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        Self {
-            zoom_up: load_bank(res, renderer, RHID_ZOOM_UP, "ZoomUp"),
-            zoom_down: load_bank(res, renderer, RHID_ZOOM_DOWN, "ZoomDown"),
+    fn resource(self) -> (i32, &'static str) {
+        match self {
+            Self::ZoomUp => (RHID_ZOOM_UP, "ZoomUp"),
+            Self::ZoomDown => (RHID_ZOOM_DOWN, "ZoomDown"),
         }
     }
-
-    fn frames(&self, btn: ZoomButton) -> &SpriteBank {
-        match btn {
-            ZoomButton::ZoomUp => &self.zoom_up,
-            ZoomButton::ZoomDown => &self.zoom_down,
-        }
-    }
-
-    /// The sprite actually rendered for a given interaction state,
-    /// with a fallback to the normal frame if the requested state
-    /// frame is absent.
-    fn frame(
-        &self,
-        btn: ZoomButton,
-        state: usize,
-    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
-        let frames = self.frames(btn);
-        crate::hud_sprite::frame(frames, state)
-    }
-
-    /// Native size of the zoom-up button's normal frame, used to size
-    /// the hit rect.
-    pub fn zoom_up_size(&self) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(&self.zoom_up)
-    }
-
-    /// Companion to [`Self::zoom_up_size`].
-    pub fn zoom_down_size(&self) -> Option<(u16, u16)> {
-        crate::hud_sprite::size(&self.zoom_down)
-    }
 }
 
-/// Transient per-frame input snapshot consumed by the draw routine —
-/// which button is under the cursor, whether the left button is held.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ZoomHoverState {
-    pub hovered: Option<ZoomButton>,
-    pub mouse_pressed: bool,
-}
-
-/// Draw the zoom HUD buttons with state-aware sprite selection.  When
-/// the resource pack is missing a frame entirely the button is simply
-/// skipped — see the inline note below for why there's no fallback
-/// rect.
 pub fn draw_with_sprites(
     renderer: &mut Renderer,
     layout: &ZoomHudLayout,
@@ -311,47 +180,11 @@ pub fn draw_with_sprites(
         let pressed = selected || (hovered && hover.mouse_pressed && enabled);
         let state = button_sprite_state(enabled, hovered || selected, pressed);
 
-        if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
-            let dst = screen_rect_to_sprite_bbox(*rect);
-            // The original game's zoom widgets use bitmap rendering, not the shadow
-            // renderer, so shadow-key pixels are treated by the normal
-            // transparent blit path.
-            renderer
-                .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
-                .expect("live HUD upload");
-        }
-        // No placeholder-rect fallback — if a zoom sprite is missing
-        // from DEFAULT.RES we simply don't draw the button.  The old
-        // fallback painted a dark rectangle with a "Z+" / "Z-" label
-        // that surfaced as a visible "black box" in release builds.
+        sprites.draw(renderer, btn, *rect, state, 0);
     }
 }
 
-/// Hover tracker for the zoom button tooltips.  Thin wrapper around the
-/// shared hover tracker keyed directly on `ZoomButton`. See
-/// `RequirementsTooltipTracker` docs
-/// for the delay semantics.
-#[derive(Default, Clone)]
-pub struct ZoomTooltipTracker {
-    inner: crate::ui_panel::HoverTooltipTracker<ZoomButton>,
-}
-
-impl ZoomTooltipTracker {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn update(&mut self, hovered: Option<ZoomButton>) {
-        self.inner.update(hovered);
-    }
-
-    /// Returns the zoom button whose tooltip is currently ready to
-    /// paint, or `None` when the hover hasn't crossed the idle
-    /// threshold yet.
-    pub fn ready_button(&self) -> Option<ZoomButton> {
-        self.inner.ready_slot()
-    }
-}
+pub type ZoomTooltipTracker = crate::hud_sprite::ButtonTooltipTracker<ZoomButton>;
 
 /// Menu-text id for the tooltip attached to the given zoom button.
 pub fn zoom_button_tooltip_mt_id(btn: ZoomButton) -> usize {
@@ -362,36 +195,7 @@ pub fn zoom_button_tooltip_mt_id(btn: ZoomButton) -> usize {
     }
 }
 
-/// Draw the hover tooltip for the zoom HUD buttons.  Does nothing when
-/// no tooltip is ready.  Uses the shared HUD tooltip font + the
-/// anchor pipeline via `ui_panel::draw_screen_tooltip`.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_tooltip(
-    renderer: &mut Renderer,
-    tracker: &ZoomTooltipTracker,
-    tooltip_text: impl Fn(ZoomButton) -> String,
-    font: &Font,
-    shadow: Option<&Font>,
-    mouse_x: i32,
-    mouse_y: i32,
-    cursor_size: (i32, i32),
-) {
-    if let Some(btn) = tracker.ready_button() {
-        let text = tooltip_text(btn);
-        if text.is_empty() {
-            return;
-        }
-        crate::ui_panel::draw_screen_tooltip(
-            renderer,
-            font,
-            shadow,
-            &text,
-            mouse_x,
-            mouse_y,
-            cursor_size,
-        );
-    }
-}
+pub use crate::hud_sprite::{TooltipPlacement, draw_tooltip};
 
 #[cfg(test)]
 mod tests {

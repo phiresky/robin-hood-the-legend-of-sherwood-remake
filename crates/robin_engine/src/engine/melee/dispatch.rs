@@ -24,14 +24,7 @@ fn thrust_admission_debug_config() -> Option<&'static ThrustAdmissionDebugConfig
     CONFIG
         .get_or_init(|| {
             std::env::var_os("PARITY_DEBUG_THRUST_A_ADMISSION")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when thrust-A admission debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for thrust-A admission diagnostic: {error}")
-                })
-            };
+            let parse = crate::engine::diagnostics::required_u32_env;
             Some(ThrustAdmissionDebugConfig {
                 frame: parse("PARITY_DEBUG_THRUST_A_ADMISSION_FRAME"),
                 owner: parse("PARITY_DEBUG_THRUST_A_ADMISSION_OWNER"),
@@ -46,14 +39,7 @@ fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> 
     CONFIG
         .get_or_init(|| {
             std::env::var_os("PARITY_DEBUG_OPPONENT_CALLER")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when opponent-caller debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for opponent-caller diagnostic: {error}")
-                })
-            };
+            let parse = crate::engine::diagnostics::required_u32_env;
             Some(OpponentCallerDebugConfig {
                 frame: parse("PARITY_DEBUG_OPPONENT_CALLER_FRAME"),
                 participant: parse("PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT"),
@@ -517,10 +503,15 @@ impl EngineInner {
             let mb = *e.position_iface().get_move_box();
             (i16::from(sector), pos, layer, mb)
         };
-        let opp_sector = match self.get_entity(opp).and_then(|e| e.element_data().sector()) {
-            Some(s) => i16::from(s),
-            None => return TableFightMove::Ok,
+        let Some(opp_sector) = self
+            .expect_entity(opp, "table swordfight opponent")
+            .element_data()
+            .sector()
+        else {
+            // No mapped opponent sector means no table transition is needed.
+            return TableFightMove::Ok;
         };
+        let opp_sector = i16::from(opp_sector);
         // Same-sector fights skip the positioning entirely.
         if owner_sector == opp_sector {
             return TableFightMove::Ok;
@@ -546,7 +537,10 @@ impl EngineInner {
 
         let jump_line = match self.world.fast_grid.level.jump_lines.get(jl_idx as usize) {
             Some(jl) => jl.clone(),
-            None => return TableFightMove::Abort,
+            None => {
+                tracing::warn!(jl_idx, "table swordfight references a missing jump line");
+                return TableFightMove::Abort;
+            }
         };
 
         let Some(new_pos) = find_position_for_table_swordfight(
@@ -1138,14 +1132,17 @@ impl<'a> ShieldCommandContext<'a> {
         elem_idx: usize,
         order_type: crate::order::OrderType,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
         // All four Original shield translators explicitly disable direction
         // recomputation. These are
         // posture-local animations: facing is controlled by Focus/the shield
         // danger point before translation, and selecting the new order must
         // not derive a fresh goal from its zero-valued destination.
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = false;
+        let order = crate::engine::sequence_runtime::new_translation_order(
+            self.next_order_id,
+            order_type,
+            (0.0, 0.0),
+            false,
+        );
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -1212,9 +1209,9 @@ impl EngineInner {
         elem_idx: usize,
     ) -> OwnerActionBarrier {
         // Read damage data from the sequence element
-        let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
-            Some(e) => e,
-            None => return OwnerActionBarrier::Skip,
+        let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
+            // Dispatch may invalidate a queued element before its turn.
+            return OwnerActionBarrier::Skip;
         };
         let command = elem.command;
 

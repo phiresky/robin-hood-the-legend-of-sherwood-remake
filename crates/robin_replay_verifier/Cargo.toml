@@ -12,26 +12,26 @@ name = "robin-replay-verifier"
 path = "src/bin/robin-replay-verifier.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 anyhow.workspace = true
 bitcode.workspace = true
-ed25519-dalek = "3.0.0"
-nix = { version = "0.31", features = ["fs", "resource"] }
-robin_engine = { path = "../robin_engine" }
+ed25519-dalek.workspace = true
+nix = { workspace = true, features = ["fs", "resource"] }
+robin_engine.workspace = true
 robin_util.workspace = true
 robin_replay_format.workspace = true
 robin_ranked_verification.workspace = true
-robin_run_protocol = { path = "../robin_run_protocol" }
+robin_run_protocol = { workspace = true, features = ["authentication"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sha2 = "0.11"
-tempfile.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 walkdir = "2"
 
 [dev-dependencies]
-rand = "0.10"
+tempfile.workspace = true
+rand.workspace = true
 
 [lints]
 workspace = true

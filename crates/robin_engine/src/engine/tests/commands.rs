@@ -33,7 +33,7 @@ fn opened_scroll_status_forces_bonus_three_sprite() {
     );
     scroll.element.sprite.current_frame = 7;
     scroll.element.sprite.frame_count = 9;
-    let scroll_id = engine.add_entity(crate::element::Entity::Scroll(scroll));
+    let scroll_id = engine.add_test_entity(crate::element::Entity::Scroll(scroll));
 
     engine.set_scroll_status(scroll_id, ScrollStatus::Opened);
 
@@ -356,7 +356,7 @@ fn mission_stat_resets_on_new_mission() {
     engine.mission_domain.mission_stat.add_collected_money(500);
     engine.mission_domain.short_briefings.add(42, true);
 
-    let loaded = crate::level_data::LoadedLevel::empty_for_test();
+    let loaded = crate::level_data::LoadedLevel::empty();
     let _ = engine.initialize_from_mission(
         sim,
         &mut assets,
@@ -637,7 +637,7 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut sequence = Sequence::new();
     sequence.append_element(SequenceElement::new_generic(1, Command::Wait, Some(owner)));
     sequence.append_element(SequenceElement::new_generic(
@@ -810,7 +810,7 @@ fn sort_for_minimap_priority_order() {
         initial_element
     };
     soldier_elem.set_position_map(MapPoint::new(20.0, 20.0));
-    let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let soldier_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: soldier_elem,
         actor: Default::default(),
         human: Default::default(),
@@ -824,7 +824,7 @@ fn sort_for_minimap_priority_order() {
         initial_element
     };
     pc_elem.set_position_map(MapPoint::new(30.0, 30.0));
-    let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+    let pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
         element: pc_elem,
         actor: Default::default(),
         human: Default::default(),
@@ -837,7 +837,7 @@ fn sort_for_minimap_priority_order() {
         initial_element
     };
     bonus_elem.set_position_map(MapPoint::new(40.0, 40.0));
-    let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
+    let object_id = engine.add_test_entity(Entity::Bonus(ElementBonus {
         element: bonus_elem,
         object: Default::default(),
     }));
@@ -888,8 +888,8 @@ fn swordfight_los_ignores_crossing_motion_line() {
             soldier: Default::default(),
         })
     };
-    let left_id = engine.add_entity(make_fighter(100.0));
-    let right_id = engine.add_entity(make_fighter(130.0));
+    let left_id = engine.add_test_entity(make_fighter(100.0));
+    let right_id = engine.add_test_entity(make_fighter(130.0));
 
     for (fighter_id, opponent_id) in [(left_id, right_id), (right_id, left_id)] {
         let fighter = engine.world.entities.get_mut(fighter_id).unwrap();
@@ -955,7 +955,7 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
             pc: Default::default(),
         })
     };
-    let owner = engine.add_entity(make_fighter(
+    let owner = engine.add_test_entity(make_fighter(
         WorldPoint3D {
             x: 100.0,
             y: 100.0,
@@ -963,7 +963,7 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
         },
         1,
     ));
-    let opponent = engine.add_entity(make_fighter(
+    let opponent = engine.add_test_entity(make_fighter(
         WorldPoint3D {
             x: 110.0,
             y: 100.0,
@@ -1032,7 +1032,7 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
             pc: Default::default(),
         })
     };
-    let departing = engine.add_entity(make_fighter(
+    let departing = engine.add_test_entity(make_fighter(
         WorldPoint3D {
             x: 100.0,
             y: 100.0,
@@ -1040,7 +1040,7 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
         },
         1,
     ));
-    let survivor = engine.add_entity(make_fighter(
+    let survivor = engine.add_test_entity(make_fighter(
         WorldPoint3D {
             x: 110.0,
             y: 100.0,
@@ -1048,7 +1048,7 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
         },
         2,
     ));
-    let principal = engine.add_entity(make_fighter(
+    let principal = engine.add_test_entity(make_fighter(
         WorldPoint3D {
             x: 120.0,
             y: 100.0,
@@ -1130,7 +1130,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         z: 0.0,
     });
     attacker_element.set_sector(crate::position_interface::SectorHandle::new(0));
-    let attacker_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let attacker_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: attacker_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1149,7 +1149,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         z: 0.0,
     });
     defender_element.set_sector(crate::position_interface::SectorHandle::new(0));
-    let defender_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let defender_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: defender_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1272,8 +1272,8 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
                 soldier: Default::default(),
             })
         };
-        let attacker = engine.add_entity(make_fighter(100.0));
-        let defender = engine.add_entity(make_fighter(130.0));
+        let attacker = engine.add_test_entity(make_fighter(100.0));
+        let defender = engine.add_test_entity(make_fighter(130.0));
         for (fighter, opponent) in [(attacker, defender), (defender, attacker)] {
             let entity = engine.get_entity_mut(fighter).expect("fighter exists");
             entity
@@ -1444,12 +1444,12 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
             soldier: Default::default(),
         })
     };
-    let attacker = engine.add_entity(make_fighter(WorldPoint3D {
+    let attacker = engine.add_test_entity(make_fighter(WorldPoint3D {
         x: 100.0,
         y: 100.0,
         z: 0.0,
     }));
-    let defender = engine.add_entity(make_fighter(WorldPoint3D {
+    let defender = engine.add_test_entity(make_fighter(WorldPoint3D {
         x: 160.0,
         y: 100.0,
         z: 40.0,
@@ -1519,8 +1519,8 @@ fn waiting_sword_requires_real_combat_profiles_contextually() {
             soldier: Default::default(),
         })
     };
-    let owner = engine.add_entity(make_fighter());
-    let opponent = engine.add_entity(make_fighter());
+    let owner = engine.add_test_entity(make_fighter());
+    let opponent = engine.add_test_entity(make_fighter());
     for (fighter, other) in [(owner, opponent), (opponent, owner)] {
         let entity = engine
             .get_entity_mut(fighter)
@@ -1566,7 +1566,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         y: 100.0,
         z: 0.0,
     });
-    let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+    let pc_id = engine.add_test_entity(Entity::Pc(ActorPc {
         element: pc_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1583,7 +1583,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         y: 100.0,
         z: 0.0,
     });
-    let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let soldier_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: soldier_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1628,7 +1628,7 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
     use crate::element::{ActorSoldier, ElementData, ElementKind, Entity, SmalltalkHint};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorSoldier;
@@ -1639,7 +1639,7 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
         npc: Default::default(),
         soldier: Default::default(),
     }));
-    let stale = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let stale = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorSoldier;
@@ -1688,7 +1688,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         y: 100.0,
         z: 0.0,
     });
-    let hinted_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let hinted_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: hinted_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1706,7 +1706,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         y: 100.0,
         z: 0.0,
     });
-    let hinted_opponent_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let hinted_opponent_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: hinted_opponent_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1725,7 +1725,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         z: 0.0,
     });
     free_attacker_element.set_sector(crate::position_interface::SectorHandle::new(0));
-    let free_attacker_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let free_attacker_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: free_attacker_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1744,7 +1744,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         z: 0.0,
     });
     free_defender_element.set_sector(crate::position_interface::SectorHandle::new(0));
-    let free_defender_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let free_defender_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: free_defender_element,
         actor: Default::default(),
         human: Default::default(),
@@ -1839,7 +1839,7 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
 
     let mut engine = EngineInner::new();
 
-    let attacker_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let attacker_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorSoldier;
@@ -1850,7 +1850,7 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         npc: Default::default(),
         soldier: Default::default(),
     }));
-    let defender_id = engine.add_entity(Entity::Soldier(ActorSoldier {
+    let defender_id = engine.add_test_entity(Entity::Soldier(ActorSoldier {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorSoldier;
@@ -1916,12 +1916,12 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
         })
     };
 
-    let late_high_y = engine.add_entity(mk(100.0));
-    let early_low_y = engine.add_entity(mk(10.0));
-    let mid_mid_y = engine.add_entity(mk(50.0));
+    let late_high_y = engine.add_test_entity(mk(100.0));
+    let early_low_y = engine.add_test_entity(mk(10.0));
+    let mid_mid_y = engine.add_test_entity(mk(50.0));
     // Two entities share a y value — EntityId (insertion order) breaks the tie.
-    let first_tie = engine.add_entity(mk(10.0));
-    let second_tie = engine.add_entity(mk(10.0));
+    let first_tie = engine.add_test_entity(mk(10.0));
+    let second_tie = engine.add_test_entity(mk(10.0));
 
     let sorted = engine.sort_for_minimap();
 
@@ -2028,7 +2028,7 @@ fn dead_pc_triggers_failure() {
         human: Default::default(),
         pc: Default::default(),
     });
-    let id = engine.add_entity(entity);
+    let id = engine.add_test_entity(entity);
     engine.mission_domain.dead_pc = Some(id);
     // The portrait refresh reads every registered PC's character profile and
     // campaign description each frame, dead or not.
@@ -2063,7 +2063,7 @@ fn non_playable_pc_does_not_prevent_default_loss() {
             ..Default::default()
         },
     });
-    engine.add_entity(entity);
+    engine.add_test_entity(entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
@@ -2084,7 +2084,7 @@ fn playable_rescue_pc_prevents_default_loss_after_player_party_defeat() {
         (crate::human_control::MissionRole::PlayerParty, false),
         (crate::human_control::MissionRole::RescueTarget, true),
     ] {
-        engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -2120,7 +2120,7 @@ fn all_enemy_ai_hero_battle_does_not_trigger_default_loss() {
     let mut engine = EngineInner::new();
 
     for _ in 0..2 {
-        engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -2294,7 +2294,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
         },
         ..Default::default()
     });
-    let scroll_id = engine.add_entity(scroll);
+    let scroll_id = engine.add_test_entity(scroll);
 
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
@@ -2327,7 +2327,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
         // No script_class — no script instance is present.
         ..Default::default()
     });
-    let scroll_id = engine.add_entity(scroll);
+    let scroll_id = engine.add_test_entity(scroll);
     // A PC to pass as the taker.  Its handle value is irrelevant
     // here since no script is bound; the non-instanciated branch
     // doesn't look at the PC pointer.
@@ -2341,7 +2341,7 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
         human: Default::default(),
         pc: Default::default(),
     });
-    let pc_id = engine.add_entity(pc);
+    let pc_id = engine.add_test_entity(pc);
 
     let assets = crate::engine::LevelAssets::new();
     let accepted = engine.scroll_is_taken(sim, &assets, scroll_id, pc_id);

@@ -345,21 +345,8 @@ fn validate_leaf(label: &str, value: &str) -> Result<(), MissionAssetDescriptorE
 
 fn validate_relative_path(label: &str, value: &str) -> Result<(), MissionAssetDescriptorError> {
     validate_text(label, value)?;
-    if value.starts_with('/') || value.ends_with('/') || value.contains('\\') || value.contains(':')
-    {
-        return Err(invalid(format!(
-            "{label} is not a normalized relative path"
-        )));
-    }
-    if value
-        .split('/')
-        .any(|component| component.is_empty() || component == "." || component == "..")
-    {
-        return Err(invalid(format!(
-            "{label} contains an empty, current-directory, or parent-directory component"
-        )));
-    }
-    Ok(())
+    robin_util::asset_fs::validate_canonical_relative_path(value)
+        .map_err(|error| invalid(format!("{label}: {error}")))
 }
 
 fn validate_text(label: &str, value: &str) -> Result<(), MissionAssetDescriptorError> {
@@ -374,24 +361,13 @@ fn validate_text(label: &str, value: &str) -> Result<(), MissionAssetDescriptorE
     }
     if value
         .chars()
-        .any(|character| character.is_control() || is_invisible_or_bidi_control(character))
+        .any(robin_util::display_text::is_unsafe_display_character)
     {
         return Err(invalid(format!(
             "{label} contains a control, invisible, or bidirectional formatting character"
         )));
     }
     Ok(())
-}
-
-fn is_invisible_or_bidi_control(character: char) -> bool {
-    matches!(
-        character,
-        '\u{061c}'
-            | '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{206f}'
-            | '\u{feff}'
-    )
 }
 
 fn split_leaf_extension(path: &str) -> Option<(&str, &str)> {

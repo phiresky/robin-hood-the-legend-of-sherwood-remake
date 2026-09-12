@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Deterministic operator tooling for verified-run release manifests.
 //!
 //! Ranked content identities are engine-owned simulation projections, not
@@ -7,6 +8,10 @@
 //! materialized only below the private verifier-bundle tree; only DEMO
 //! component objects are copied into the public static tree.
 
+mod fs_util;
+#[cfg(test)]
+mod test_fixtures;
+use fs_util::{read_regular_file_bounded, validate_regular_file};
 pub mod campaign_template_v1;
 pub mod plan_v3;
 pub mod publication_v3;
@@ -14,11 +19,12 @@ pub mod release_admission_v1;
 pub mod sandbox_v3;
 pub mod typed_js_authority;
 pub mod verifier_catalog_v1;
+#[cfg(target_os = "linux")]
 pub mod vps_release_v2;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read as _, Write as _};
+use std::io::{BufReader, BufWriter, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -27,24 +33,20 @@ use robin_run_protocol::{
     ArtifactRefV1, BrowserIdentitySignerBuildIdentityV2, BrowserIdentitySignerBuildRecipeV2,
     BrowserIdentitySignerDeploymentPolicyV2, BrowserPagesArtifactV2,
     BrowserPagesShellBuildIdentityV2, BrowserPagesShellBuildRecipeV2, BrowserViewerBuildIdentityV2,
-    BrowserViewerEngineBuildIdentityV2, BrowserViewerEngineBuildRecipeV2, BuildManifestV1,
-    BuildManifestV2, BuildToolAuthorityDocumentV1, BuildToolAuthorityV1,
-    CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1, CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1,
-    CampaignContentEntryV1, CampaignContentManifestV1, CanonicalDocument as _, CanonicalValue,
-    CompetitionManifestV1, ContentManifestV1, Digest32, ImmutablePolicyManifestV1,
-    InputProvenanceEligibilityV1, NamedArtifactV1, NativeBuildPlatformV2, NativeLinkageV2,
+    BrowserViewerEngineBuildIdentityV2, BrowserViewerEngineBuildRecipeV2, BuildManifestV2,
+    BuildToolAuthorityDocumentV1, BuildToolAuthorityV1, CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
+    CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1, CampaignContentManifestV1, CanonicalDocument as _,
+    CanonicalValue, CompetitionManifestV1, ContentManifestV1, Digest32, ImmutablePolicyManifestV1,
+    NamedArtifactV1, NativeBuildPlatformV2, NativeLinkageV2,
     OfficialBuiltInOverlaySourceManifestV2, OfficialContentEditionV1, OfficialContentSubjectV1,
     OfficialProjectionAuthorityManifestV2, OfficialProjectionExecutionPolicyV1,
     OfficialProjectionExporterBuildIdentityV2, OfficialProjectionExporterPlatformV2,
-    OfficialSimulationProjectionReceiptV1, OfficialSimulationProjectionReceiptV2,
-    OfficialSourceTreeManifestV1, OfficialSourceTreeManifestV2, OfficialViewerBuildReportV2,
-    PublishedRulesetV1, RulesConfigIdentityV1, RulesetBoardScopeV1, RulesetManifestV1,
-    RunContentIdentityV1, SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1,
-    SimulationContentComponentDocumentV1, SimulationContentComponentKindV1,
-    SimulationContentComponentV1, Validate as _, ValidationError, VerifierBuildIdentityV2,
-    ViewerArtifactRoleV1, build_artifact_object_path_v1, canonical_json_bytes,
-    demo_content_object_path_v1, official_achievement_policies_v1, official_content_subjects_v1,
-    simulation_content_component_relative_path_v1,
+    OfficialSimulationProjectionReceiptV2, OfficialSourceTreeManifestV2,
+    OfficialViewerBuildReportV2, PublishedRulesetV1, RulesConfigIdentityV1, RulesetManifestV1,
+    SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1, SimulationContentComponentDocumentV1,
+    SimulationContentComponentKindV1, SimulationContentComponentV1, Validate as _, ValidationError,
+    VerifierBuildIdentityV2, ViewerArtifactRoleV1, canonical_json_bytes,
+    official_content_subjects_v1,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -56,62 +58,12 @@ use crate::typed_js_authority::{
 /// Shared fail-closed selector and exact materializer used by both the
 /// projection exporter and operator verification tooling.
 pub use robin_official_content as official_content_source;
-
-const PLAN_SCHEMA_VERSION: u32 = 1;
-const PROJECTION_PLAN_SCHEMA_VERSION: u32 = 2;
-const RELEASE_LOCK_SCHEMA_VERSION: u32 = 2;
 const MAX_DOCUMENT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PROJECTION_EXPORTER_BYTES: u64 = 512 * 1024 * 1024;
 const OFFICIAL_DEMO_RESOURCE_LOCALE_ROOT_V1: &str = "1033";
 const OFFICIAL_FULL_RESOURCE_LOCALE_ROOT_V1: &str = "2047";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OfficialProjectionPlanV1 {
-    pub schema_version: u32,
-    pub demo: EditionProjectionPlanV1,
-    pub full: EditionProjectionPlanV1,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EditionProjectionPlanV1 {
-    pub edition: OfficialContentEditionV1,
-    /// Exact supervisor-approved raw source mount. It is inventoried but never
-    /// copied into an operator release.
-    pub native_source_root: PathBuf,
-    pub native_source_tree_manifest: PathBuf,
-    pub native_projection_receipt: PathBuf,
-    /// Engine-exported loose/native projection mount.
-    pub native_projection_root: PathBuf,
-    pub shipping_source_root: PathBuf,
-    pub shipping_source_tree_manifest: PathBuf,
-    pub shipping_projection_receipt: PathBuf,
-    /// Engine-exported RHDDNA10/browser shipping projection mount.
-    pub shipping_projection_root: PathBuf,
-}
-
-pub use robin_run_protocol::{
-    OfficialProjectionExporterIdentityV1 as ProjectionExporterIdentityV1,
-    OfficialProjectionSourceFormatV1 as ProjectionSourceFormatV1,
-};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BuildDraftV1 {
-    pub schema_version: u32,
-    pub source_commit: String,
-    pub cargo_lock: PathBuf,
-    pub target_triple: String,
-    pub cargo_profile: String,
-    #[serde(default)]
-    pub cargo_features: Vec<String>,
-    pub replay_schema_version: u32,
-    pub save_schema_version: u32,
-    pub network_protocol_version: u32,
-    pub verifier: BuildArtifactSourceV1,
-    pub viewer_artifacts: Vec<ViewerArtifactSourceV1>,
-}
+pub use robin_run_protocol::OfficialProjectionSourceFormatV1 as ProjectionSourceFormatV1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,41 +113,11 @@ pub struct BrowserArtifactSourceV2 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BuildArtifactSourceV1 {
-    pub source: PathBuf,
-    pub media_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ViewerArtifactSourceV1 {
     pub source: PathBuf,
     pub published_path: String,
     pub role: ViewerArtifactRoleV1,
     pub media_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OperatorReleasePlanV1 {
-    pub schema_version: u32,
-    pub official_projection_plan: PathBuf,
-    pub builds: Vec<ReleaseBuildV1>,
-    pub rules_configs: Vec<PathBuf>,
-    pub policies: Vec<PathBuf>,
-    /// Canonical `PublishedRulesetV1` documents. The embedded immutable
-    /// manifest and mutable publication status are emitted separately.
-    pub published_rulesets: Vec<PathBuf>,
-    #[serde(default)]
-    pub competitions: Vec<PathBuf>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseBuildV1 {
-    pub draft: PathBuf,
-    /// Pinned canonical manifest which must equal fresh artifact authoring.
-    pub expected_manifest: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,18 +128,6 @@ pub struct OfficialContentDigestsV1 {
     pub full_content_manifest_sha256: Vec<Digest32>,
     pub demo_campaign_content_manifest_sha256: Digest32,
     pub full_campaign_content_manifest_sha256: Digest32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VerifierSourceBindingV1 {
-    pub schema_version: u32,
-    pub content_manifest_sha256: Digest32,
-    pub official_projection_plan_sha256: Digest32,
-    pub edition: OfficialContentEditionV1,
-    pub subject: OfficialContentSubjectV1,
-    pub native_projection_receipt_sha256: Digest32,
-    pub native_source_tree_manifest_sha256: Digest32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -234,24 +144,6 @@ pub struct ReleaseFileV1 {
     pub path: String,
     pub artifact: ArtifactRefV1,
     pub exposure: ReleaseFileExposureV1,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OperatorReleaseLockV1 {
-    pub schema_version: u32,
-    pub source_plan_sha256: Digest32,
-    pub official_projection_plan_sha256: Digest32,
-    pub official_content: OfficialContentDigestsV1,
-    pub projection_receipt_sha256: Vec<Digest32>,
-    pub source_tree_manifest_sha256: Vec<Digest32>,
-    pub build_manifest_sha256: Vec<Digest32>,
-    pub rules_config_sha256: Vec<Digest32>,
-    pub policy_manifest_sha256: Vec<Digest32>,
-    pub ruleset_manifest_sha256: Vec<Digest32>,
-    pub competition_manifest_sha256: Vec<Digest32>,
-    /// Complete file inventory excluding this lock and its digest sidecar.
-    pub files: Vec<ReleaseFileV1>,
 }
 
 impl robin_run_protocol::Validate for OfficialContentDigestsV1 {
@@ -276,58 +168,6 @@ impl robin_run_protocol::Validate for OfficialContentDigestsV1 {
     }
 }
 
-impl robin_run_protocol::Validate for VerifierSourceBindingV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.schema_version != 1
-            || self.content_manifest_sha256.is_zero()
-            || self.official_projection_plan_sha256.is_zero()
-            || self.native_projection_receipt_sha256.is_zero()
-            || self.native_source_tree_manifest_sha256.is_zero()
-        {
-            return Err(ValidationError::Zero {
-                field: "verifier_source_binding",
-            });
-        }
-        self.subject.validate()
-    }
-}
-
-impl robin_run_protocol::Validate for OperatorReleaseLockV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.schema_version != RELEASE_LOCK_SCHEMA_VERSION
-            || self.source_plan_sha256.is_zero()
-            || self.official_projection_plan_sha256.is_zero()
-            || !strict_nonzero_digests(&self.projection_receipt_sha256)
-            || !strict_nonzero_digests(&self.source_tree_manifest_sha256)
-            || !strict_nonzero_digests(&self.build_manifest_sha256)
-            || !strict_nonzero_digests(&self.rules_config_sha256)
-            || !strict_nonzero_digests(&self.policy_manifest_sha256)
-            || !strict_nonzero_digests(&self.ruleset_manifest_sha256)
-            || (!self.competition_manifest_sha256.is_empty()
-                && !strict_nonzero_digests(&self.competition_manifest_sha256))
-            || self.files.is_empty()
-            || !self
-                .files
-                .windows(2)
-                .all(|pair| pair[0].path < pair[1].path)
-            || self.files.iter().any(|file| {
-                file.path.is_empty()
-                    || file.path.starts_with('/')
-                    || file
-                        .path
-                        .split('/')
-                        .any(|part| part.is_empty() || part == "." || part == "..")
-                    || file.artifact.validate().is_err()
-            })
-        {
-            return Err(ValidationError::ClaimMismatch {
-                field: "operator_release_lock",
-            });
-        }
-        self.official_content.validate()
-    }
-}
-
 fn strict_nonzero_digests(values: &[Digest32]) -> bool {
     !values.is_empty()
         && values.iter().all(|digest| !digest.is_zero())
@@ -340,271 +180,44 @@ pub struct AuthoredDocument {
     pub canonical_bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
 pub enum DocumentKind {
-    Build,
+    #[value(name = "build-v2")]
     BuildV2,
     BuildToolAuthority,
     JavascriptBuildToolAuthority,
+    #[value(name = "viewer-build-report-v2")]
     ViewerBuildReportV2,
+    #[value(name = "projection-authority-v2")]
     ProjectionAuthorityV2,
     Content,
     CampaignContent,
     SimulationComponent,
-    SourceTreeManifest,
+    #[value(name = "source-tree-manifest-v2")]
     SourceTreeManifestV2,
-    ProjectionReceipt,
+    #[value(name = "projection-receipt-v2")]
     ProjectionReceiptV2,
+    #[value(name = "built-in-overlay-source-manifest-v2")]
     BuiltInOverlaySourceManifestV2,
     ProjectionExecutionPolicy,
-    VerifierSourceBinding,
+    #[value(name = "verifier-source-binding-v2")]
     VerifierSourceBindingV2,
+    #[value(name = "projection-execution-record-v3")]
     ProjectionExecutionRecordV3,
+    #[value(name = "projection-authority-matrix-v3")]
     ProjectionAuthorityMatrixV3,
     RulesConfig,
     RulesetManifest,
     PublishedRuleset,
     Competition,
     Policy,
-    ReleaseLock,
-}
-
-impl std::str::FromStr for DocumentKind {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value {
-            "build" => Ok(Self::Build),
-            "build-v2" => Ok(Self::BuildV2),
-            "build-tool-authority" => Ok(Self::BuildToolAuthority),
-            "javascript-build-tool-authority" => Ok(Self::JavascriptBuildToolAuthority),
-            "viewer-build-report-v2" => Ok(Self::ViewerBuildReportV2),
-            "projection-authority-v2" => Ok(Self::ProjectionAuthorityV2),
-            "content" => Ok(Self::Content),
-            "campaign-content" => Ok(Self::CampaignContent),
-            "simulation-component" => Ok(Self::SimulationComponent),
-            "source-tree-manifest" => Ok(Self::SourceTreeManifest),
-            "source-tree-manifest-v2" => Ok(Self::SourceTreeManifestV2),
-            "projection-receipt" => Ok(Self::ProjectionReceipt),
-            "projection-receipt-v2" => Ok(Self::ProjectionReceiptV2),
-            "built-in-overlay-source-manifest-v2" => Ok(Self::BuiltInOverlaySourceManifestV2),
-            "projection-execution-policy" => Ok(Self::ProjectionExecutionPolicy),
-            "verifier-source-binding" => Ok(Self::VerifierSourceBinding),
-            "verifier-source-binding-v2" => Ok(Self::VerifierSourceBindingV2),
-            "projection-execution-record-v3" => Ok(Self::ProjectionExecutionRecordV3),
-            "projection-authority-matrix-v3" => Ok(Self::ProjectionAuthorityMatrixV3),
-            "rules-config" => Ok(Self::RulesConfig),
-            "ruleset-manifest" => Ok(Self::RulesetManifest),
-            "published-ruleset" => Ok(Self::PublishedRuleset),
-            "competition" => Ok(Self::Competition),
-            "policy" => Ok(Self::Policy),
-            "release-lock" => Ok(Self::ReleaseLock),
-            _ => bail!("unknown document kind {value:?}"),
-        }
-    }
 }
 
 #[derive(Debug)]
 struct AuthoredContent {
     manifest: ContentManifestV1,
     components: BTreeMap<SimulationContentComponentKindV1, Vec<u8>>,
-}
-
-#[derive(Debug)]
-struct AuthoredEdition {
-    edition: OfficialContentEditionV1,
-    content: BTreeMap<Digest32, AuthoredContent>,
-    campaign: CampaignContentManifestV1,
-    native_source: ValidatedProjectionSource,
-    shipping_source: ValidatedProjectionSource,
-}
-
-#[derive(Debug)]
-struct ValidatedProjectionSource {
-    source_tree_manifest: OfficialSourceTreeManifestV1,
-    source_tree_manifest_sha256: Digest32,
-    receipt: OfficialSimulationProjectionReceiptV1,
-    receipt_sha256: Digest32,
-}
-
-#[derive(Debug)]
-struct LoadedBuild {
-    manifest: BuildManifestV1,
-    draft: BuildDraftV1,
-}
-
-#[derive(Debug)]
-struct LoadedRelease {
-    source_plan_sha256: Digest32,
-    official_projection_plan_sha256: Digest32,
-    editions: [AuthoredEdition; 2],
-    builds: BTreeMap<Digest32, LoadedBuild>,
-    rules_configs: BTreeMap<Digest32, RulesConfigIdentityV1>,
-    policies: BTreeMap<Digest32, ImmutablePolicyManifestV1>,
-    ruleset_manifests: BTreeMap<Digest32, RulesetManifestV1>,
-    published_rulesets: BTreeMap<Digest32, PublishedRulesetV1>,
-    competitions: BTreeMap<Digest32, CompetitionManifestV1>,
-}
-
-#[cfg(test)]
-fn required_component_kinds() -> [SimulationContentComponentKindV1; 8] {
-    [
-        SimulationContentComponentKindV1::Profiles,
-        SimulationContentComponentKindV1::LoadedLevel,
-        SimulationContentComponentKindV1::MissionScripts,
-        SimulationContentComponentKindV1::SpriteSimulationMetadata,
-        SimulationContentComponentKindV1::MapGeometryMetadata,
-        SimulationContentComponentKindV1::LocalizedDeterministicText,
-        SimulationContentComponentKindV1::SoundDurationTables,
-        SimulationContentComponentKindV1::InterfaceSimulationMetadata,
-    ]
-}
-
-impl OfficialProjectionPlanV1 {
-    pub fn load(path: &Path) -> Result<Self> {
-        let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-        let mut plan: Self = strict_json_from_slice(&bytes)
-            .with_context(|| format!("parse projection plan {}", path.display()))?;
-        ensure!(
-            plan.schema_version == PROJECTION_PLAN_SCHEMA_VERSION,
-            "unsupported projection-plan schema {}",
-            plan.schema_version
-        );
-        let base = config_parent(path)?;
-        plan.demo.resolve_roots(base);
-        plan.full.resolve_roots(base);
-        plan.validate()?;
-        Ok(plan)
-    }
-
-    fn validate(&self) -> Result<()> {
-        ensure!(
-            self.demo.edition == OfficialContentEditionV1::Demo,
-            "demo plan is not typed as DEMO"
-        );
-        ensure!(
-            self.full.edition == OfficialContentEditionV1::Full,
-            "full plan is not typed as FULL"
-        );
-        self.demo.validate()?;
-        self.full.validate()?;
-        let canonical_roots = [
-            &self.demo.native_source_root,
-            &self.demo.native_projection_root,
-            &self.demo.shipping_source_root,
-            &self.demo.shipping_projection_root,
-            &self.full.native_source_root,
-            &self.full.native_projection_root,
-            &self.full.shipping_source_root,
-            &self.full.shipping_projection_root,
-        ]
-        .into_iter()
-        .map(fs::canonicalize)
-        .collect::<std::io::Result<Vec<_>>>()?;
-        ensure!(
-            canonical_roots.iter().collect::<BTreeSet<_>>().len() == 8
-                && canonical_roots
-                    .iter()
-                    .enumerate()
-                    .all(|(left_index, left)| {
-                        canonical_roots
-                            .iter()
-                            .enumerate()
-                            .all(|(right_index, right)| {
-                                left_index == right_index
-                                    || (!left.starts_with(right) && !right.starts_with(left))
-                            })
-                    }),
-            "raw and exported DEMO/FULL native/RHDDNA10 sources must be eight distinct mounts"
-        );
-        Ok(())
-    }
-}
-
-impl EditionProjectionPlanV1 {
-    fn resolve_roots(&mut self, base: &Path) {
-        resolve_path(base, &mut self.native_source_root);
-        resolve_path(base, &mut self.native_source_tree_manifest);
-        resolve_path(base, &mut self.native_projection_receipt);
-        resolve_path(base, &mut self.native_projection_root);
-        resolve_path(base, &mut self.shipping_source_root);
-        resolve_path(base, &mut self.shipping_source_tree_manifest);
-        resolve_path(base, &mut self.shipping_projection_receipt);
-        resolve_path(base, &mut self.shipping_projection_root);
-    }
-
-    fn validate(&self) -> Result<()> {
-        validate_mount_root(&self.native_projection_root)
-            .with_context(|| format!("validate {:?} native projection root", self.edition))?;
-        validate_mount_root(&self.shipping_projection_root)
-            .with_context(|| format!("validate {:?} shipping projection root", self.edition))?;
-        ensure!(
-            self.native_projection_root != self.shipping_projection_root,
-            "{:?} native and shipping sources must be independently mounted",
-            self.edition
-        );
-        validate_mount_root(&self.native_source_root)
-            .with_context(|| format!("validate {:?} native raw source mount", self.edition))?;
-        validate_mount_root(&self.shipping_source_root)
-            .with_context(|| format!("validate {:?} shipping raw source mount", self.edition))?;
-        Ok(())
-    }
-}
-
-impl BuildDraftV1 {
-    pub fn load(path: &Path) -> Result<Self> {
-        let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-        let mut draft: Self = strict_json_from_slice(&bytes)
-            .with_context(|| format!("parse build draft {}", path.display()))?;
-        ensure!(
-            draft.schema_version == PLAN_SCHEMA_VERSION,
-            "unsupported build-draft schema {}",
-            draft.schema_version
-        );
-        let base = config_parent(path)?;
-        resolve_path(base, &mut draft.cargo_lock);
-        resolve_path(base, &mut draft.verifier.source);
-        for artifact in &mut draft.viewer_artifacts {
-            resolve_path(base, &mut artifact.source);
-        }
-        Ok(draft)
-    }
-
-    pub fn author(&self) -> Result<BuildManifestV1> {
-        let mut cargo_features = self.cargo_features.clone();
-        cargo_features.sort();
-        ensure!(
-            cargo_features.windows(2).all(|pair| pair[0] != pair[1]),
-            "build draft repeats a Cargo feature"
-        );
-        let mut viewer_artifacts = self
-            .viewer_artifacts
-            .iter()
-            .map(|source| {
-                Ok(NamedArtifactV1 {
-                    path: source.published_path.clone(),
-                    role: source.role.clone(),
-                    artifact: artifact_from_file(&source.source, &source.media_type)?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        viewer_artifacts.sort_by(|left, right| left.path.cmp(&right.path));
-        let manifest = BuildManifestV1 {
-            schema_version: 1,
-            source_commit: self.source_commit.clone(),
-            cargo_lock_sha256: hash_regular_file(&self.cargo_lock)?,
-            target_triple: self.target_triple.clone(),
-            cargo_profile: self.cargo_profile.clone(),
-            cargo_features,
-            replay_schema_version: self.replay_schema_version,
-            save_schema_version: self.save_schema_version,
-            network_protocol_version: self.network_protocol_version,
-            verifier: artifact_from_file(&self.verifier.source, &self.verifier.media_type)?,
-            viewer_artifacts,
-        };
-        manifest.validate()?;
-        Ok(manifest)
-    }
 }
 
 impl BuildDraftV2 {
@@ -876,45 +489,6 @@ fn canonical_authority_presentation(bytes: &[u8], canonical: &[u8]) -> bool {
             .is_some_and(|without_newline| without_newline == canonical)
 }
 
-impl OperatorReleasePlanV1 {
-    pub fn load(path: &Path) -> Result<Self> {
-        let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-        let mut plan: Self = strict_json_from_slice(&bytes)
-            .with_context(|| format!("parse release plan {}", path.display()))?;
-        ensure!(
-            plan.schema_version == PLAN_SCHEMA_VERSION,
-            "unsupported release-plan schema {}",
-            plan.schema_version
-        );
-        let base = config_parent(path)?;
-        resolve_path(base, &mut plan.official_projection_plan);
-        for build in &mut plan.builds {
-            resolve_path(base, &mut build.draft);
-            resolve_path(base, &mut build.expected_manifest);
-        }
-        for path in plan
-            .rules_configs
-            .iter_mut()
-            .chain(&mut plan.policies)
-            .chain(&mut plan.published_rulesets)
-            .chain(&mut plan.competitions)
-        {
-            resolve_path(base, path);
-        }
-        ensure!(!plan.builds.is_empty(), "release has no build manifests");
-        ensure!(
-            !plan.rules_configs.is_empty(),
-            "release has no rules configs"
-        );
-        ensure!(!plan.policies.is_empty(), "release has no policy documents");
-        ensure!(
-            !plan.published_rulesets.is_empty(),
-            "release has no published rulesets"
-        );
-        Ok(plan)
-    }
-}
-
 pub fn hash_file(path: &Path) -> Result<ArtifactRefV1> {
     artifact_from_file(path, "application/octet-stream")
 }
@@ -1140,10 +714,6 @@ fn validate_static_ranked_executable(
     Ok(())
 }
 
-pub fn author_build(draft_path: &Path, output: &Path) -> Result<AuthoredDocument> {
-    write_authored_document(output, &BuildDraftV1::load(draft_path)?.author()?)
-}
-
 pub fn author_build_v2(draft_path: &Path, output: &Path) -> Result<AuthoredDocument> {
     write_authored_document(output, &BuildDraftV2::load(draft_path)?.author()?)
 }
@@ -1174,7 +744,6 @@ pub fn canonicalize_document(
     output: &Path,
 ) -> Result<AuthoredDocument> {
     match kind {
-        DocumentKind::Build => canonicalize_typed::<BuildManifestV1>(input, output),
         DocumentKind::BuildV2 => canonicalize_typed::<BuildManifestV2>(input, output),
         DocumentKind::BuildToolAuthority => {
             canonicalize_typed::<BuildToolAuthorityDocumentV1>(input, output)
@@ -1204,14 +773,8 @@ pub fn canonicalize_document(
                 canonical_bytes,
             })
         }
-        DocumentKind::SourceTreeManifest => {
-            canonicalize_typed::<OfficialSourceTreeManifestV1>(input, output)
-        }
         DocumentKind::SourceTreeManifestV2 => {
             canonicalize_typed::<OfficialSourceTreeManifestV2>(input, output)
-        }
-        DocumentKind::ProjectionReceipt => {
-            canonicalize_typed::<OfficialSimulationProjectionReceiptV1>(input, output)
         }
         DocumentKind::ProjectionReceiptV2 => {
             canonicalize_typed::<OfficialSimulationProjectionReceiptV2>(input, output)
@@ -1221,9 +784,6 @@ pub fn canonicalize_document(
         }
         DocumentKind::ProjectionExecutionPolicy => {
             canonicalize_typed::<OfficialProjectionExecutionPolicyV1>(input, output)
-        }
-        DocumentKind::VerifierSourceBinding => {
-            canonicalize_typed::<VerifierSourceBindingV1>(input, output)
         }
         DocumentKind::VerifierSourceBindingV2 => {
             canonicalize_typed::<plan_v3::VerifierSourceBindingV2>(input, output)
@@ -1239,13 +799,11 @@ pub fn canonicalize_document(
         DocumentKind::PublishedRuleset => canonicalize_typed::<PublishedRulesetV1>(input, output),
         DocumentKind::Competition => canonicalize_typed::<CompetitionManifestV1>(input, output),
         DocumentKind::Policy => canonicalize_typed::<ImmutablePolicyManifestV1>(input, output),
-        DocumentKind::ReleaseLock => canonicalize_typed::<OperatorReleaseLockV1>(input, output),
     }
 }
 
 pub fn validate_document(kind: DocumentKind, input: &Path) -> Result<Digest32> {
     match kind {
-        DocumentKind::Build => validate_typed::<BuildManifestV1>(input),
         DocumentKind::BuildV2 => validate_typed::<BuildManifestV2>(input),
         DocumentKind::BuildToolAuthority => {
             Ok(load_build_tool_authority(input)?.canonical_digest()?)
@@ -1265,11 +823,7 @@ pub fn validate_document(kind: DocumentKind, input: &Path) -> Result<Digest32> {
             SimulationContentComponentDocumentV1::from_bitcode(&bytes)?;
             Ok(Digest32::digest_bytes(bytes))
         }
-        DocumentKind::SourceTreeManifest => validate_typed::<OfficialSourceTreeManifestV1>(input),
         DocumentKind::SourceTreeManifestV2 => validate_typed::<OfficialSourceTreeManifestV2>(input),
-        DocumentKind::ProjectionReceipt => {
-            validate_typed::<OfficialSimulationProjectionReceiptV1>(input)
-        }
         DocumentKind::ProjectionReceiptV2 => {
             validate_typed::<OfficialSimulationProjectionReceiptV2>(input)
         }
@@ -1279,7 +833,6 @@ pub fn validate_document(kind: DocumentKind, input: &Path) -> Result<Digest32> {
         DocumentKind::ProjectionExecutionPolicy => {
             validate_typed::<OfficialProjectionExecutionPolicyV1>(input)
         }
-        DocumentKind::VerifierSourceBinding => validate_typed::<VerifierSourceBindingV1>(input),
         DocumentKind::VerifierSourceBindingV2 => {
             validate_typed::<plan_v3::VerifierSourceBindingV2>(input)
         }
@@ -1294,177 +847,7 @@ pub fn validate_document(kind: DocumentKind, input: &Path) -> Result<Digest32> {
         DocumentKind::PublishedRuleset => validate_typed::<PublishedRulesetV1>(input),
         DocumentKind::Competition => validate_typed::<CompetitionManifestV1>(input),
         DocumentKind::Policy => validate_typed::<ImmutablePolicyManifestV1>(input),
-        DocumentKind::ReleaseLock => validate_typed::<OperatorReleaseLockV1>(input),
     }
-}
-
-pub fn author_official_content(
-    plan_path: &Path,
-    output_directory: &Path,
-) -> Result<OfficialContentDigestsV1> {
-    ensure_absent_output(output_directory)?;
-    let plan = OfficialProjectionPlanV1::load(plan_path)?;
-    let editions = author_editions(&plan)?;
-    let digests = official_content_digests(&editions)?;
-    let projection_plan_sha256 = canonical_config_digest::<OfficialProjectionPlanV1>(plan_path)?;
-    let staging = staging_directory(output_directory)?;
-    materialize_content(staging.path(), &editions, projection_plan_sha256)?;
-    write_canonical(
-        &staging.path().join("official-content-digests.json"),
-        &digests,
-    )?;
-    write_bytes(
-        &staging.path().join("projection-plan.sha256"),
-        projection_plan_sha256.to_string().as_bytes(),
-    )?;
-    make_verifier_bundles_read_only(&staging.path().join("verifier-bundles"))?;
-    validate_verifier_bundle_layout(staging.path(), &editions)?;
-    persist_staging(staging, output_directory)?;
-    Ok(digests)
-}
-
-fn author_editions(plan: &OfficialProjectionPlanV1) -> Result<[AuthoredEdition; 2]> {
-    Ok([
-        author_edition(&plan.demo).context("author exact DEMO projections")?,
-        author_edition(&plan.full).context("author exact FULL projections")?,
-    ])
-}
-
-fn author_edition(plan: &EditionProjectionPlanV1) -> Result<AuthoredEdition> {
-    let native_exporter = ProjectionExporterIdentityV1 {
-        exporter_version: 1,
-        source_format: ProjectionSourceFormatV1::LooseNativeV1,
-    };
-    let shipping_exporter = ProjectionExporterIdentityV1 {
-        exporter_version: 1,
-        source_format: ProjectionSourceFormatV1::ShippingDatadirV10,
-    };
-    let native_source = validate_projection_source(
-        plan.edition,
-        &plan.native_source_root,
-        &plan.native_source_tree_manifest,
-        &plan.native_projection_receipt,
-        native_exporter,
-    )
-    .context("validate loose/native source receipt")?;
-    let shipping_source = validate_projection_source(
-        plan.edition,
-        &plan.shipping_source_root,
-        &plan.shipping_source_tree_manifest,
-        &plan.shipping_projection_receipt,
-        shipping_exporter,
-    )
-    .context("validate RHDDNA10 source receipt")?;
-    ensure!(
-        native_source.receipt.subjects == shipping_source.receipt.subjects,
-        "native and RHDDNA10 receipts do not bind identical content manifests"
-    );
-    validate_projection_catalog_root(&plan.native_projection_root, &native_source.receipt)?;
-    validate_projection_catalog_root(&plan.shipping_projection_root, &shipping_source.receipt)?;
-    let mut content = BTreeMap::new();
-    let mut entries = Vec::with_capacity(native_source.receipt.subjects.len());
-    for subject in &native_source.receipt.subjects {
-        let authored = author_subject(plan, &subject.content_manifest).with_context(|| {
-            format!(
-                "author projection for {:?}",
-                subject.content_manifest.subject
-            )
-        })?;
-        ensure!(
-            authored.manifest == subject.content_manifest,
-            "authored projection differs from its source-bound content manifest"
-        );
-        let digest = authored.manifest.canonical_digest()?;
-        entries.push(CampaignContentEntryV1 {
-            subject: authored.manifest.subject.clone(),
-            content_manifest_sha256: digest,
-        });
-        ensure!(
-            content.insert(digest, authored).is_none(),
-            "two {:?} subjects produced one ambiguous content identity",
-            plan.edition
-        );
-    }
-    let campaign = CampaignContentManifestV1 {
-        schema_version: 1,
-        edition: plan.edition,
-        entries,
-    };
-    campaign.validate()?;
-    Ok(AuthoredEdition {
-        edition: plan.edition,
-        content,
-        campaign,
-        native_source,
-        shipping_source,
-    })
-}
-
-fn validate_projection_catalog_root(
-    root: &Path,
-    receipt: &OfficialSimulationProjectionReceiptV1,
-) -> Result<()> {
-    let expected = receipt
-        .subjects
-        .iter()
-        .flat_map(|subject| {
-            subject.content_manifest.components.iter().map(|component| {
-                simulation_content_component_relative_path_v1(
-                    &subject.content_manifest.subject,
-                    component.kind,
-                )
-                .map(PathBuf::from)
-            })
-        })
-        .collect::<std::result::Result<BTreeSet<_>, _>>()?;
-    let actual = walk_regular_files(root)?
-        .into_iter()
-        .map(|(relative, _)| relative)
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        actual == expected,
-        "projection catalog contains a missing, extra, or misnamed component file"
-    );
-    Ok(())
-}
-
-fn validate_projection_source(
-    edition: OfficialContentEditionV1,
-    source_root: &Path,
-    source_tree_manifest_path: &Path,
-    receipt_path: &Path,
-    expected_exporter: ProjectionExporterIdentityV1,
-) -> Result<ValidatedProjectionSource> {
-    let source_tree_manifest: OfficialSourceTreeManifestV1 =
-        load_canonical_document(source_tree_manifest_path)?;
-    ensure!(
-        source_tree_manifest.edition == edition
-            && source_tree_manifest.source_format == expected_exporter.source_format,
-        "source-tree manifest edition/lane differs from the projection plan"
-    );
-    validate_raw_source_tree(source_root, &source_tree_manifest)?;
-    let source_tree_manifest_sha256 = source_tree_manifest.canonical_digest()?;
-
-    let receipt: OfficialSimulationProjectionReceiptV1 = load_canonical_document(receipt_path)?;
-    ensure!(
-        receipt.edition == edition
-            && receipt.exporter == expected_exporter
-            && receipt.source_tree_manifest_sha256 == source_tree_manifest_sha256
-            && usize::try_from(receipt.source_file_count).ok()
-                == Some(source_tree_manifest.files.len()),
-        "projection receipt does not bind the exact exporter and raw source inventory"
-    );
-    validate_official_resource_locale_root(edition, &receipt)?;
-    if expected_exporter.source_format == ProjectionSourceFormatV1::LooseNativeV1 {
-        validate_native_resource_locale_inventory(edition, &source_tree_manifest)?;
-    }
-    let receipt_sha256 = receipt.canonical_digest()?;
-    Ok(ValidatedProjectionSource {
-        source_tree_manifest,
-        source_tree_manifest_sha256,
-        receipt,
-        receipt_sha256,
-    })
 }
 
 fn official_resource_locale_root(edition: OfficialContentEditionV1) -> &'static str {
@@ -1472,142 +855,6 @@ fn official_resource_locale_root(edition: OfficialContentEditionV1) -> &'static 
         OfficialContentEditionV1::Demo => OFFICIAL_DEMO_RESOURCE_LOCALE_ROOT_V1,
         OfficialContentEditionV1::Full => OFFICIAL_FULL_RESOURCE_LOCALE_ROOT_V1,
     }
-}
-
-fn validate_official_resource_locale_root(
-    edition: OfficialContentEditionV1,
-    receipt: &OfficialSimulationProjectionReceiptV1,
-) -> Result<()> {
-    let expected = official_resource_locale_root(edition);
-    ensure!(
-        receipt
-            .subjects
-            .iter()
-            .all(|subject| { subject.content_manifest.resource_locale_root.as_str() == expected }),
-        "official {edition:?} projection must bind exact resource locale root {expected}"
-    );
-    Ok(())
-}
-
-fn validate_native_resource_locale_inventory(
-    edition: OfficialContentEditionV1,
-    source: &OfficialSourceTreeManifestV1,
-) -> Result<()> {
-    let expected = official_resource_locale_root(edition);
-    let numeric_roots = source
-        .files
-        .iter()
-        .filter_map(|file| file.path.split('/').next())
-        .filter(|component| {
-            !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
-        })
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        numeric_roots == BTreeSet::from([expected]),
-        "approved loose/native {edition:?} inventory must contain only exact resource locale root {expected}"
-    );
-    let expected_level_resource = format!("{expected}/data/text/level.res");
-    let matching_level_resources = source
-        .files
-        .iter()
-        .filter(|file| file.path.eq_ignore_ascii_case(&expected_level_resource))
-        .count();
-    ensure!(
-        matching_level_resources == 1,
-        "approved loose/native {edition:?} inventory must contain exactly one {expected}/Data/Text/Level.res locale authority"
-    );
-    Ok(())
-}
-
-fn validate_raw_source_tree(
-    source_root: &Path,
-    expected: &OfficialSourceTreeManifestV1,
-) -> Result<()> {
-    validate_mount_root(source_root)?;
-    let actual = walk_regular_files(source_root)?
-        .into_iter()
-        .map(|(relative, absolute)| {
-            let (sha256, byte_length) = hash_stable_source_file(&absolute)?;
-            Ok(robin_run_protocol::OfficialSourceFileV1 {
-                path: path_to_manifest(&relative)?,
-                sha256,
-                byte_length,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    ensure!(
-        actual == expected.files,
-        "approved raw source mount inventory differs from its canonical manifest"
-    );
-    Ok(())
-}
-
-fn hash_stable_source_file(path: &Path) -> Result<(Digest32, u64)> {
-    validate_regular_file(path)?;
-    let mut file = File::open(path)?;
-    let before = file.metadata()?;
-    ensure!(before.is_file(), "source inventory entry is not a file");
-    let sha256 = Digest32::digest_reader(&mut file)?;
-    let after = file.metadata()?;
-    ensure!(
-        before.len() == after.len()
-            && match (before.modified(), after.modified()) {
-                (Ok(before), Ok(after)) => before == after,
-                _ => true,
-            },
-        "source file changed while it was hashed: {}",
-        path.display()
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        let current = fs::symlink_metadata(path)?;
-        ensure!(
-            !current.file_type().is_symlink()
-                && current.dev() == after.dev()
-                && current.ino() == after.ino(),
-            "source file was replaced while it was hashed: {}",
-            path.display()
-        );
-    }
-    Ok((sha256, after.len()))
-}
-
-fn author_subject(
-    edition: &EditionProjectionPlanV1,
-    manifest: &ContentManifestV1,
-) -> Result<AuthoredContent> {
-    let mut components = BTreeMap::new();
-    for component in &manifest.components {
-        let relative =
-            simulation_content_component_relative_path_v1(&manifest.subject, component.kind)?;
-        let native_bytes = read_mounted_projection(
-            &edition.native_projection_root,
-            Path::new(&relative),
-            component,
-            "native",
-        )?;
-        let shipping_bytes = read_mounted_projection(
-            &edition.shipping_projection_root,
-            Path::new(&relative),
-            component,
-            "RHDDNA10 shipping",
-        )?;
-        ensure!(
-            native_bytes == shipping_bytes,
-            "native and RHDDNA10 shipping projections differ for {:?}; browser/native ranked reconstruction is not equivalent",
-            component.kind
-        );
-        ensure!(
-            components.insert(component.kind, native_bytes).is_none(),
-            "duplicate component kind"
-        );
-    }
-    manifest.validate()?;
-    Ok(AuthoredContent {
-        manifest: manifest.clone(),
-        components,
-    })
 }
 
 fn read_mounted_projection(
@@ -1642,708 +889,13 @@ fn read_mounted_projection(
     Ok(bytes)
 }
 
-fn official_content_digests(editions: &[AuthoredEdition; 2]) -> Result<OfficialContentDigestsV1> {
-    ensure!(
-        editions[0].edition == OfficialContentEditionV1::Demo
-            && editions[1].edition == OfficialContentEditionV1::Full,
-        "internal edition order is not DEMO then FULL"
-    );
-    let demo_catalog = editions[0].campaign.canonical_digest()?;
-    let full_catalog = editions[1].campaign.canonical_digest()?;
-    ensure!(
-        demo_catalog != full_catalog,
-        "DEMO and FULL catalogs collide"
-    );
-    Ok(OfficialContentDigestsV1 {
-        schema_version: 1,
-        demo_content_manifest_sha256: editions[0].content.keys().copied().collect(),
-        full_content_manifest_sha256: editions[1].content.keys().copied().collect(),
-        demo_campaign_content_manifest_sha256: demo_catalog,
-        full_campaign_content_manifest_sha256: full_catalog,
-    })
-}
-
-fn materialize_content(
-    root: &Path,
-    editions: &[AuthoredEdition; 2],
-    official_projection_plan_sha256: Digest32,
-) -> Result<()> {
-    for edition in editions {
-        for source in [&edition.native_source, &edition.shipping_source] {
-            write_digest_document(
-                root,
-                "private/source-tree-manifests",
-                source.source_tree_manifest_sha256,
-                &source.source_tree_manifest,
-            )?;
-            write_digest_document(
-                root,
-                "private/projection-receipts",
-                source.receipt_sha256,
-                &source.receipt,
-            )?;
-        }
-        let campaign_digest = edition.campaign.canonical_digest()?;
-        write_digest_document(
-            root,
-            "manifests/campaign-content-manifests",
-            campaign_digest,
-            &edition.campaign,
-        )?;
-        // Catalogs and static manifest refs contain no retail payload and are
-        // safe for clients that reconstruct FULL from user-local content.
-        write_digest_document(
-            &root.join("public"),
-            "manifests/campaign-content-manifests",
-            campaign_digest,
-            &edition.campaign,
-        )?;
-        for (content_digest, authored) in &edition.content {
-            let binding = VerifierSourceBindingV1 {
-                schema_version: 1,
-                content_manifest_sha256: *content_digest,
-                official_projection_plan_sha256,
-                edition: authored.manifest.edition,
-                subject: authored.manifest.subject.clone(),
-                native_projection_receipt_sha256: edition.native_source.receipt_sha256,
-                native_source_tree_manifest_sha256: edition
-                    .native_source
-                    .source_tree_manifest_sha256,
-            };
-            write_canonical(
-                &root
-                    .join("private/verifier-source-bindings")
-                    .join(format!("{content_digest}.json")),
-                &binding,
-            )?;
-            write_digest_document(
-                root,
-                "manifests/content-manifests",
-                *content_digest,
-                &authored.manifest,
-            )?;
-            write_digest_document(
-                &root.join("public"),
-                "manifests/content-manifests",
-                *content_digest,
-                &authored.manifest,
-            )?;
-            let bundle = root
-                .join("verifier-bundles")
-                .join(content_digest.to_string());
-            write_canonical(&bundle.join("manifest.json"), &authored.manifest)?;
-            for component in &authored.manifest.components {
-                let bytes = authored.components.get(&component.kind).ok_or_else(|| {
-                    anyhow::anyhow!("missing authored component {:?}", component.kind)
-                })?;
-                ensure!(
-                    Digest32::digest_bytes(bytes) == component.artifact.sha256
-                        && u64::try_from(bytes.len()).ok() == Some(component.artifact.byte_length),
-                    "component bytes changed after authoring"
-                );
-                let relative = simulation_content_component_relative_path_v1(
-                    &authored.manifest.subject,
-                    component.kind,
-                )?;
-                write_bytes(&bundle.join("catalog").join(relative), bytes)?;
-                if edition.edition == OfficialContentEditionV1::Demo {
-                    let relative = demo_content_object_path_v1(*content_digest, component)?;
-                    write_shared_bytes(&root.join("public").join(relative), bytes)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn assemble_release(plan_path: &Path, output_directory: &Path) -> Result<Digest32> {
-    ensure_absent_output(output_directory)?;
-    let loaded = load_release(plan_path)?;
-    validate_release_closure(&loaded)?;
-    let staging = staging_directory(output_directory)?;
-    materialize_release(staging.path(), &loaded)?;
-    let lock = release_lock(staging.path(), &loaded)?;
-    let lock_bytes = lock.canonical_bytes()?;
-    let lock_digest = Digest32::digest_bytes(&lock_bytes);
-    write_bytes(&staging.path().join("release-lock.json"), &lock_bytes)?;
-    write_bytes(
-        &staging.path().join("release-lock.sha256"),
-        lock_digest.to_string().as_bytes(),
-    )?;
-    make_verifier_bundles_read_only(&staging.path().join("verifier-bundles"))?;
-    validate_verifier_bundle_layout(staging.path(), &loaded.editions)?;
-    persist_staging(staging, output_directory)?;
-    Ok(lock_digest)
-}
-
-pub fn validate_release(plan_path: &Path, release_directory: &Path) -> Result<Digest32> {
-    validate_mount_root(release_directory).context("validate release directory")?;
-    let loaded = load_release(plan_path)?;
-    validate_release_closure(&loaded)?;
-    let expected = tempfile::Builder::new()
-        .prefix("robin-manifestctl-validate-")
-        .tempdir()
-        .context("create validation tree")?;
-    materialize_release(expected.path(), &loaded)?;
-    let lock = release_lock(expected.path(), &loaded)?;
-    let lock_bytes = lock.canonical_bytes()?;
-    let digest = Digest32::digest_bytes(&lock_bytes);
-    write_bytes(&expected.path().join("release-lock.json"), &lock_bytes)?;
-    write_bytes(
-        &expected.path().join("release-lock.sha256"),
-        digest.to_string().as_bytes(),
-    )?;
-    compare_trees(expected.path(), release_directory)?;
-    validate_verifier_bundle_layout(release_directory, &loaded.editions)?;
-    Ok(digest)
-}
-
-fn validate_verifier_bundle_layout(root: &Path, editions: &[AuthoredEdition; 2]) -> Result<()> {
-    for edition in editions {
-        for (content_digest, authored) in &edition.content {
-            let bundle = root
-                .join("verifier-bundles")
-                .join(content_digest.to_string());
-            let root_entries = fs::read_dir(&bundle)?.collect::<std::io::Result<Vec<_>>>()?;
-            let root_names = root_entries
-                .iter()
-                .map(|entry| {
-                    entry
-                        .file_name()
-                        .into_string()
-                        .map_err(|_| anyhow::anyhow!("verifier bundle filename is not UTF-8"))
-                })
-                .collect::<Result<BTreeSet<_>>>()?;
-            ensure!(
-                root_names == BTreeSet::from(["catalog".to_owned(), "manifest.json".to_owned()]),
-                "verifier bundle must contain only manifest.json and catalog/"
-            );
-            let manifest: ContentManifestV1 =
-                load_canonical_document(&bundle.join("manifest.json"))?;
-            ensure!(
-                manifest == authored.manifest && manifest.canonical_digest()? == *content_digest,
-                "verifier bundle manifest does not match its content address"
-            );
-            let expected_paths = authored
-                .manifest
-                .components
-                .iter()
-                .map(|component| {
-                    simulation_content_component_relative_path_v1(
-                        &authored.manifest.subject,
-                        component.kind,
-                    )
-                })
-                .collect::<std::result::Result<BTreeSet<_>, _>>()?;
-            let actual_paths = walk_regular_files(&bundle.join("catalog"))?
-                .into_iter()
-                .map(|(relative, _)| path_to_manifest(&relative))
-                .collect::<Result<BTreeSet<_>>>()?;
-            ensure!(
-                actual_paths == expected_paths,
-                "verifier catalog must contain exactly the eight canonical component paths"
-            );
-            for component in &authored.manifest.components {
-                let relative = simulation_content_component_relative_path_v1(
-                    &authored.manifest.subject,
-                    component.kind,
-                )?;
-                let path = bundle.join("catalog").join(relative);
-                ensure!(
-                    artifact_from_file(&path, SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1)?
-                        == component.artifact,
-                    "verifier component bytes do not match manifest"
-                );
-                let document = SimulationContentComponentDocumentV1::from_bitcode(
-                    &read_regular_file_bounded(&path, MAX_DOCUMENT_BYTES)?,
-                )?;
-                ensure!(
-                    document.kind == component.kind
-                        && document.component_schema_version == component.component_schema_version,
-                    "verifier component document does not match its typed reference"
-                );
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt as _;
-                ensure!(
-                    fs::metadata(&bundle)?.permissions().mode() & 0o222 == 0
-                        && walk_regular_files(&bundle)?.iter().all(|(_, file)| {
-                            fs::metadata(file)
-                                .is_ok_and(|metadata| metadata.permissions().mode() & 0o222 == 0)
-                        }),
-                    "verifier bundle is not read-only"
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn load_release(plan_path: &Path) -> Result<LoadedRelease> {
-    let source_plan_sha256 = canonical_config_digest::<OperatorReleasePlanV1>(plan_path)?;
-    let plan = OperatorReleasePlanV1::load(plan_path)?;
-    let official_projection_plan_sha256 =
-        canonical_config_digest::<OfficialProjectionPlanV1>(&plan.official_projection_plan)?;
-    let projections = OfficialProjectionPlanV1::load(&plan.official_projection_plan)?;
-    let editions = author_editions(&projections)?;
-
-    let mut builds = BTreeMap::new();
-    for source in &plan.builds {
-        let draft = BuildDraftV1::load(&source.draft)?;
-        let authored = draft.author()?;
-        let expected: BuildManifestV1 = load_canonical_document(&source.expected_manifest)?;
-        ensure!(
-            authored == expected,
-            "fresh build/artifact identity does not match pinned manifest {}",
-            source.expected_manifest.display()
-        );
-        let digest = expected.canonical_digest()?;
-        ensure!(
-            builds
-                .insert(
-                    digest,
-                    LoadedBuild {
-                        manifest: expected,
-                        draft,
-                    },
-                )
-                .is_none(),
-            "duplicate build manifest {digest}"
-        );
-    }
-    let rules_configs = load_canonical_documents(&plan.rules_configs, |document| {
-        let document: RulesConfigIdentityV1 = document;
-        Ok((document.canonical_digest()?, document))
-    })?;
-    let policies = load_canonical_documents(&plan.policies, |document| {
-        let document: ImmutablePolicyManifestV1 = document;
-        Ok((document.canonical_digest()?, document))
-    })?;
-    let published_rulesets = load_canonical_documents(&plan.published_rulesets, |document| {
-        let document: PublishedRulesetV1 = document;
-        Ok((document.ruleset_manifest_sha256, document))
-    })?;
-    let ruleset_manifests = published_rulesets
-        .iter()
-        .map(|(digest, published)| (*digest, published.manifest.clone()))
-        .collect();
-    let competitions = load_canonical_documents(&plan.competitions, |document| {
-        let document: CompetitionManifestV1 = document;
-        Ok((document.canonical_digest()?, document))
-    })?;
-    Ok(LoadedRelease {
-        source_plan_sha256,
-        official_projection_plan_sha256,
-        editions,
-        builds,
-        rules_configs,
-        policies,
-        ruleset_manifests,
-        published_rulesets,
-        competitions,
-    })
-}
-
-fn validate_release_closure(loaded: &LoadedRelease) -> Result<()> {
-    let content = loaded
-        .editions
-        .iter()
-        .flat_map(|edition| {
-            edition
-                .content
-                .iter()
-                .map(|(digest, content)| (*digest, &content.manifest))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let catalogs = loaded
-        .editions
-        .iter()
-        .map(|edition| Ok((edition.campaign.canonical_digest()?, &edition.campaign)))
-        .collect::<Result<BTreeMap<_, _>>>()?;
-
-    for (digest, published) in &loaded.published_rulesets {
-        published.validate()?;
-        ensure!(
-            published.manifest.canonical_digest()? == *digest,
-            "published ruleset does not cross-bind its immutable manifest"
-        );
-        let ruleset = &published.manifest;
-        validate_official_ranked_input_provenance(
-            ruleset.input_provenance_eligibility,
-            &ruleset.replay_schema_versions,
-        )
-        .with_context(|| format!("ruleset {digest} uses a historical input provenance lane"))?;
-        ensure!(
-            ruleset.achievement_policies == official_achievement_policies_v1(),
-            "official ruleset {digest} does not pin the exact four Required achievement policies"
-        );
-        ensure!(
-            loaded
-                .rules_configs
-                .contains_key(&ruleset.rules_config_sha256),
-            "ruleset {digest} references an absent rules config"
-        );
-        ensure!(
-            ruleset
-                .allowed_build_manifest_sha256
-                .iter()
-                .all(|candidate| loaded.builds.contains_key(candidate)),
-            "ruleset {digest} references an absent build"
-        );
-        ensure!(
-            ruleset
-                .allowed_content_manifest_sha256
-                .iter()
-                .all(|candidate| content.contains_key(candidate)),
-            "ruleset {digest} references an absent official content manifest"
-        );
-        let allowed_editions = ruleset
-            .allowed_content_manifest_sha256
-            .iter()
-            .map(|candidate| content[candidate].edition)
-            .collect::<BTreeSet<_>>();
-        ensure!(
-            allowed_editions.len() == 1,
-            "ruleset {digest} must target exactly one official edition"
-        );
-        let edition = *allowed_editions.iter().next().expect("one edition checked");
-        let authored_edition = loaded
-            .editions
-            .iter()
-            .find(|authored| authored.edition == edition)
-            .expect("both official editions are always authored");
-        ensure!(
-            ruleset.allowed_content_manifest_sha256
-                == authored_edition.content.keys().copied().collect::<Vec<_>>(),
-            "ruleset {digest} must allow the complete exact {:?} content matrix",
-            edition
-        );
-        ensure!(
-            ruleset
-                .allowed_campaign_content_manifest_sha256
-                .iter()
-                .all(|candidate| catalogs.contains_key(candidate)),
-            "ruleset {digest} references an absent official campaign catalog"
-        );
-        let advertises_full_campaign = ruleset
-            .board_scopes
-            .binary_search(&RulesetBoardScopeV1::FullCampaign)
-            .is_ok();
-        match edition {
-            OfficialContentEditionV1::Demo => ensure!(
-                !advertises_full_campaign
-                    && ruleset.allowed_campaign_content_manifest_sha256.is_empty(),
-                "DEMO ruleset {digest} must not advertise FullCampaign or import FULL HQ content"
-            ),
-            OfficialContentEditionV1::Full if advertises_full_campaign => ensure!(
-                ruleset.allowed_campaign_content_manifest_sha256
-                    == vec![authored_edition.campaign.canonical_digest()?],
-                "FULL ruleset {digest} must bind the exact official campaign catalog"
-            ),
-            OfficialContentEditionV1::Full => ensure!(
-                ruleset.allowed_campaign_content_manifest_sha256.is_empty(),
-                "non-FullCampaign ruleset {digest} has a campaign catalog"
-            ),
-        }
-        for identity in [
-            &ruleset.input_provenance_policy,
-            &ruleset.command_admission_policy,
-            &ruleset.submission_admission_policy,
-            &ruleset.verifier_policy,
-        ] {
-            let policy = loaded
-                .policies
-                .get(&identity.manifest_sha256)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "ruleset {digest} references absent policy {:?}",
-                        identity.kind
-                    )
-                })?;
-            ensure!(
-                policy.kind == identity.kind && policy.version == identity.version,
-                "ruleset {digest} policy identity does not match policy document"
-            );
-        }
-        for build_digest in &ruleset.allowed_build_manifest_sha256 {
-            let build = &loaded
-                .builds
-                .get(build_digest)
-                .expect("membership checked")
-                .manifest;
-            let config = loaded
-                .rules_configs
-                .get(&ruleset.rules_config_sha256)
-                .expect("membership checked");
-            ensure!(
-                ruleset
-                    .replay_schema_versions
-                    .binary_search(&build.replay_schema_version)
-                    .is_ok()
-                    && ruleset
-                        .network_protocol_versions
-                        .binary_search(&build.network_protocol_version)
-                        .is_ok()
-                    && config.replay_schema_version == build.replay_schema_version
-                    && build.replay_schema_version == CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-                "ruleset {digest} build/config schema closure is inconsistent"
-            );
-        }
-        for catalog_digest in &ruleset.allowed_campaign_content_manifest_sha256 {
-            let catalog = catalogs.get(catalog_digest).expect("membership checked");
-            for entry in &catalog.entries {
-                let manifest = content
-                    .get(&entry.content_manifest_sha256)
-                    .ok_or_else(|| anyhow::anyhow!("catalog constituent is absent"))?;
-                ensure!(
-                    manifest.edition == catalog.edition && manifest.subject == entry.subject,
-                    "campaign catalog edition/subject does not match constituent manifest"
-                );
-            }
-        }
-    }
-
-    for (digest, competition) in &loaded.competitions {
-        competition.validate()?;
-        let ruleset = loaded
-            .ruleset_manifests
-            .get(&competition.ruleset_manifest_sha256)
-            .ok_or_else(|| anyhow::anyhow!("competition {digest} references absent ruleset"))?;
-        ensure!(
-            competition.rules_config_sha256 == ruleset.rules_config_sha256,
-            "competition {digest} rules config differs from ruleset"
-        );
-        let content_exists = match competition.content {
-            RunContentIdentityV1::Mission {
-                content_manifest_sha256,
-            } => {
-                content.contains_key(&content_manifest_sha256)
-                    && ruleset
-                        .allowed_content_manifest_sha256
-                        .binary_search(&content_manifest_sha256)
-                        .is_ok()
-            }
-            RunContentIdentityV1::FullCampaign {
-                campaign_content_manifest_sha256,
-            } => {
-                catalogs.contains_key(&campaign_content_manifest_sha256)
-                    && ruleset
-                        .allowed_campaign_content_manifest_sha256
-                        .binary_search(&campaign_content_manifest_sha256)
-                        .is_ok()
-                    && ruleset
-                        .board_scopes
-                        .binary_search(&RulesetBoardScopeV1::FullCampaign)
-                        .is_ok()
-            }
-        };
-        ensure!(
-            content_exists,
-            "competition {digest} content tuple is not allowed"
-        );
-    }
-    Ok(())
-}
-
-fn validate_official_ranked_input_provenance(
-    eligibility: InputProvenanceEligibilityV1,
-    replay_schema_versions: &[u32],
-) -> Result<()> {
-    ensure!(
-        eligibility == InputProvenanceEligibilityV1::CurrentSchemaCanonicalReplayOnly
-            && replay_schema_versions == [CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1],
-        "official ranked releases require one current-schema canonical replay"
-    );
-    Ok(())
-}
-
-fn materialize_release(root: &Path, loaded: &LoadedRelease) -> Result<()> {
-    materialize_content(
-        root,
-        &loaded.editions,
-        loaded.official_projection_plan_sha256,
-    )?;
-    for (digest, build) in &loaded.builds {
-        write_digest_document(root, "manifests/builds", *digest, &build.manifest)?;
-        copy_artifact_exact(
-            &build.draft.verifier.source,
-            &root
-                .join("private/build-artifacts")
-                .join(build.manifest.verifier.sha256.to_string()),
-            &build.manifest.verifier,
-        )?;
-        let sources = build
-            .draft
-            .viewer_artifacts
-            .iter()
-            .map(|source| (source.published_path.as_str(), source))
-            .collect::<BTreeMap<_, _>>();
-        ensure!(
-            sources.len() == build.draft.viewer_artifacts.len(),
-            "build draft repeats a viewer published path"
-        );
-        for artifact in &build.manifest.viewer_artifacts {
-            let source = sources
-                .get(artifact.path.as_str())
-                .ok_or_else(|| anyhow::anyhow!("viewer artifact source disappeared"))?;
-            let relative = build_artifact_object_path_v1(*digest, artifact)?;
-            copy_artifact_exact(
-                &source.source,
-                &root.join("public").join(relative),
-                &artifact.artifact,
-            )?;
-        }
-    }
-    for (digest, document) in &loaded.rules_configs {
-        write_digest_document(root, "manifests/rules-configs", *digest, document)?;
-    }
-    for (digest, document) in &loaded.policies {
-        write_digest_document(root, "manifests/policies", *digest, document)?;
-    }
-    for (digest, document) in &loaded.ruleset_manifests {
-        write_digest_document(root, "manifests/ruleset-manifests", *digest, document)?;
-    }
-    for (digest, document) in &loaded.published_rulesets {
-        write_digest_document(root, "manifests/published-rulesets", *digest, document)?;
-    }
-    for (digest, document) in &loaded.competitions {
-        write_digest_document(root, "manifests/competitions", *digest, document)?;
-    }
-    Ok(())
-}
-
-fn release_lock(root: &Path, loaded: &LoadedRelease) -> Result<OperatorReleaseLockV1> {
-    let mut files = Vec::new();
-    for (relative, absolute) in walk_regular_files(root)? {
-        let path = path_to_manifest(&relative)?;
-        let exposure = if path.starts_with("public/") {
-            ReleaseFileExposureV1::PublicStatic
-        } else if path.starts_with("private/") || path.starts_with("verifier-bundles/") {
-            ReleaseFileExposureV1::OperatorPrivate
-        } else {
-            ReleaseFileExposureV1::BackendManifest
-        };
-        files.push(ReleaseFileV1 {
-            path,
-            artifact: artifact_from_file(&absolute, "application/octet-stream")?,
-            exposure,
-        });
-    }
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    ensure!(
-        files.windows(2).all(|pair| pair[0].path < pair[1].path),
-        "release file inventory is not unique"
-    );
-    let projection_receipt_sha256 = loaded
-        .editions
-        .iter()
-        .flat_map(|edition| {
-            [
-                edition.native_source.receipt_sha256,
-                edition.shipping_source.receipt_sha256,
-            ]
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let source_tree_manifest_sha256 = loaded
-        .editions
-        .iter()
-        .flat_map(|edition| {
-            [
-                edition.native_source.source_tree_manifest_sha256,
-                edition.shipping_source.source_tree_manifest_sha256,
-            ]
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    Ok(OperatorReleaseLockV1 {
-        schema_version: RELEASE_LOCK_SCHEMA_VERSION,
-        source_plan_sha256: loaded.source_plan_sha256,
-        official_projection_plan_sha256: loaded.official_projection_plan_sha256,
-        official_content: official_content_digests(&loaded.editions)?,
-        projection_receipt_sha256,
-        source_tree_manifest_sha256,
-        build_manifest_sha256: loaded.builds.keys().copied().collect(),
-        rules_config_sha256: loaded.rules_configs.keys().copied().collect(),
-        policy_manifest_sha256: loaded.policies.keys().copied().collect(),
-        ruleset_manifest_sha256: loaded.ruleset_manifests.keys().copied().collect(),
-        competition_manifest_sha256: loaded.competitions.keys().copied().collect(),
-        files,
-    })
-}
-
-fn compare_trees(expected: &Path, actual: &Path) -> Result<()> {
-    let expected_files = walk_regular_files(expected)?
-        .into_iter()
-        .map(|(relative, absolute)| Ok((path_to_manifest(&relative)?, absolute)))
-        .collect::<Result<BTreeMap<_, _>>>()?;
-    let actual_files = walk_regular_files(actual)?
-        .into_iter()
-        .map(|(relative, absolute)| Ok((path_to_manifest(&relative)?, absolute)))
-        .collect::<Result<BTreeMap<_, _>>>()?;
-    ensure!(
-        expected_files.keys().eq(actual_files.keys()),
-        "release tree contains a missing or extra file"
-    );
-    for (path, expected_file) in expected_files {
-        let actual_file = actual_files.get(&path).expect("key sets checked");
-        let expected_artifact = artifact_from_file(&expected_file, "application/octet-stream")?;
-        let actual_artifact = artifact_from_file(actual_file, "application/octet-stream")?;
-        ensure!(
-            expected_artifact == actual_artifact,
-            "release file {path} differs from deterministic regeneration"
-        );
-    }
-    Ok(())
-}
-
-fn load_canonical_documents<T, F>(
-    paths: &[PathBuf],
-    mut identity: F,
-) -> Result<BTreeMap<Digest32, T>>
-where
-    T: DeserializeOwned + Serialize + robin_run_protocol::Validate,
-    F: FnMut(T) -> Result<(Digest32, T)>,
-{
-    let mut documents = BTreeMap::new();
-    for path in paths {
-        let document: T = load_canonical_document(path)?;
-        let (digest, document) = identity(document)?;
-        ensure!(
-            documents.insert(digest, document).is_none(),
-            "duplicate canonical document digest {digest}"
-        );
-    }
-    Ok(documents)
-}
-
 fn load_canonical_document<T>(path: &Path) -> Result<T>
 where
     T: DeserializeOwned + Serialize + robin_run_protocol::Validate,
 {
-    let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-    let document: T = strict_json_from_slice(&bytes)
-        .with_context(|| format!("parse canonical document {}", path.display()))?;
+    let (document, _): (T, _) = fs_util::load_canonical_bytes(path, MAX_DOCUMENT_BYTES)?;
     document.validate()?;
-    ensure!(
-        canonical_json_bytes(&document)? == bytes,
-        "{} is valid but not byte-for-byte canonical JSON",
-        path.display()
-    );
     Ok(document)
-}
-
-fn canonical_config_digest<T>(path: &Path) -> Result<Digest32>
-where
-    T: DeserializeOwned + Serialize,
-{
-    let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-    let document: T = strict_json_from_slice(&bytes)
-        .with_context(|| format!("parse operator config {}", path.display()))?;
-    Ok(Digest32::digest_bytes(canonical_json_bytes(&document)?))
 }
 
 fn canonicalize_typed<T>(input: &Path, output: &Path) -> Result<AuthoredDocument>
@@ -2500,17 +1052,6 @@ fn validate_mount_root(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_regular_file(path: &Path) -> Result<fs::Metadata> {
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("required file {} is absent", path.display()))?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "{} must be a regular non-symlink file",
-        path.display()
-    );
-    Ok(metadata)
-}
-
 fn validate_relative_source_path(path: &Path) -> Result<()> {
     ensure!(!path.as_os_str().is_empty(), "source path is empty");
     ensure!(!path.is_absolute(), "source path must be relative");
@@ -2536,53 +1077,8 @@ fn resolve_mounted_file(root: &Path, relative: &Path) -> Result<PathBuf> {
     Ok(candidate)
 }
 
-fn read_regular_file_bounded(path: &Path, maximum: u64) -> Result<Vec<u8>> {
-    let metadata = validate_regular_file(path)?;
-    ensure!(
-        metadata.len() <= maximum,
-        "{} exceeds the {} byte operator-document limit",
-        path.display(),
-        maximum
-    );
-    let capacity = usize::try_from(metadata.len()).context("file length does not fit usize")?;
-    let mut bytes = Vec::with_capacity(capacity);
-    File::open(path)?.read_to_end(&mut bytes)?;
-    ensure!(
-        u64::try_from(bytes.len()).ok() == Some(metadata.len()),
-        "{} changed while it was read",
-        path.display()
-    );
-    Ok(bytes)
-}
-
 fn walk_regular_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
-    let mut pending = vec![(PathBuf::new(), root.to_path_buf())];
-    let mut files = Vec::new();
-    while let Some((relative_root, absolute_root)) = pending.pop() {
-        let mut entries = fs::read_dir(&absolute_root)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries.into_iter().rev() {
-            let metadata = fs::symlink_metadata(entry.path())?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "tree contains forbidden symlink {}",
-                entry.path().display()
-            );
-            let relative = relative_root.join(entry.file_name());
-            if metadata.is_dir() {
-                pending.push((relative, entry.path()));
-            } else {
-                ensure!(
-                    metadata.is_file(),
-                    "tree contains non-regular entry {}",
-                    entry.path().display()
-                );
-                files.push((relative, entry.path()));
-            }
-        }
-    }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(files)
+    Ok(fs_util::walk_regular_tree(root)?.0)
 }
 
 fn path_to_manifest(path: &Path) -> Result<String> {
@@ -2609,6 +1105,10 @@ fn path_to_manifest(path: &Path) -> Result<String> {
 }
 
 fn validate_relative_source_path_shallow(path: &Path) -> Result<()> {
+    ensure!(
+        fs_util::valid_relative_path(path.to_str().context("path is not UTF-8")?),
+        "path is not canonical relative"
+    );
     ensure!(!path.is_absolute(), "path is absolute");
     ensure!(
         path.components()
@@ -2748,471 +1248,33 @@ fn strict_json_from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_run_protocol::{
-        CanonicalValue, ContentClosureKindV1, SimulationSpeechTimingSourceV1,
-        official_content_manifest_name_v1,
-    };
-
-    struct ProjectionFixture {
-        _source_native_demo: tempfile::TempDir,
-        _native_demo: tempfile::TempDir,
-        _source_shipping_demo: tempfile::TempDir,
-        _shipping_demo: tempfile::TempDir,
-        _source_native_full: tempfile::TempDir,
-        _native_full: tempfile::TempDir,
-        _source_shipping_full: tempfile::TempDir,
-        _shipping_full: tempfile::TempDir,
-        config: tempfile::TempDir,
-        plan: OfficialProjectionPlanV1,
-        plan_path: PathBuf,
-    }
-
-    impl ProjectionFixture {
-        fn new() -> Result<Self> {
-            let source_native_demo = tempfile::tempdir()?;
-            let native_demo = tempfile::tempdir()?;
-            let source_shipping_demo = tempfile::tempdir()?;
-            let shipping_demo = tempfile::tempdir()?;
-            let source_native_full = tempfile::tempdir()?;
-            let native_full = tempfile::tempdir()?;
-            let source_shipping_full = tempfile::tempdir()?;
-            let shipping_full = tempfile::tempdir()?;
-            let config = tempfile::tempdir()?;
-            let demo = edition_plan(
-                OfficialContentEditionV1::Demo,
-                source_native_demo.path(),
-                native_demo.path(),
-                source_shipping_demo.path(),
-                shipping_demo.path(),
-                config.path(),
-            )?;
-            let full = edition_plan(
-                OfficialContentEditionV1::Full,
-                source_native_full.path(),
-                native_full.path(),
-                source_shipping_full.path(),
-                shipping_full.path(),
-                config.path(),
-            )?;
-            let plan = OfficialProjectionPlanV1 {
-                schema_version: PROJECTION_PLAN_SCHEMA_VERSION,
-                demo,
-                full,
-            };
-            let plan_path = config.path().join("official-projections.json");
-            write_plan(&plan_path, &plan)?;
-            Ok(Self {
-                _source_native_demo: source_native_demo,
-                _native_demo: native_demo,
-                _source_shipping_demo: source_shipping_demo,
-                _shipping_demo: shipping_demo,
-                _source_native_full: source_native_full,
-                _native_full: native_full,
-                _source_shipping_full: source_shipping_full,
-                _shipping_full: shipping_full,
-                config,
-                plan,
-                plan_path,
-            })
-        }
-
-        fn rewrite_plan(&self) -> Result<()> {
-            fs::write(&self.plan_path, serde_json::to_vec(&self.plan)?)?;
-            Ok(())
-        }
-    }
-
-    fn write_plan(path: &Path, plan: &OfficialProjectionPlanV1) -> Result<()> {
-        fs::write(path, serde_json::to_vec(plan)?)?;
-        Ok(())
-    }
-
-    fn edition_plan(
-        edition: OfficialContentEditionV1,
-        native_source_root: &Path,
-        native_root: &Path,
-        shipping_source_root: &Path,
-        shipping_root: &Path,
-        config_root: &Path,
-    ) -> Result<EditionProjectionPlanV1> {
-        let authored_subjects = official_content_subjects_v1(edition)
-            .into_iter()
-            .map(|subject| {
-                let mut component_references = Vec::new();
-                for kind in required_component_kinds() {
-                    let relative = PathBuf::from(simulation_content_component_relative_path_v1(
-                        &subject, kind,
-                    )?);
-                    let document = SimulationContentComponentDocumentV1 {
-                        schema_version: 1,
-                        kind,
-                        component_schema_version: 1,
-                        payload: CanonicalValue::String(format!(
-                            "{edition:?}:{}:{kind:?}",
-                            subject.mission_id()
-                        )),
-                    };
-                    let bytes = document.bitcode_bytes()?;
-                    component_references.push(SimulationContentComponentV1 {
-                        kind,
-                        component_schema_version: 1,
-                        artifact: ArtifactRefV1 {
-                            sha256: Digest32::digest_bytes(&bytes),
-                            byte_length: u64::try_from(bytes.len())?,
-                            media_type: SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1.into(),
-                        },
-                    });
-                    for root in [native_root, shipping_root] {
-                        let path = root.join(&relative);
-                        fs::create_dir_all(path.parent().expect("component has a parent"))?;
-                        fs::write(path, &bytes)?;
-                    }
-                }
-                let name = official_content_manifest_name_v1(edition, &subject);
-                let content_manifest = ContentManifestV1 {
-                    schema_version: 1,
-                    name: name.clone(),
-                    edition,
-                    subject: subject.clone(),
-                    closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-                    projection_schema_version: 2,
-                    resource_locale_root: robin_run_protocol::ResourceLocaleRootV1::new(
-                        match edition {
-                            OfficialContentEditionV1::Demo => "1033",
-                            OfficialContentEditionV1::Full => "2047",
-                        },
-                    )?,
-                    speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
-                    components: component_references,
-                };
-                Ok(robin_run_protocol::OfficialProjectionSubjectReceiptV1 { content_manifest })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let (native_source_tree_manifest, native_source_tree_manifest_path) =
-            write_source_tree_manifest(
-                edition,
-                ProjectionSourceFormatV1::LooseNativeV1,
-                native_source_root,
-                config_root,
-            )?;
-        let (shipping_source_tree_manifest, shipping_source_tree_manifest_path) =
-            write_source_tree_manifest(
-                edition,
-                ProjectionSourceFormatV1::ShippingDatadirV10,
-                shipping_source_root,
-                config_root,
-            )?;
-        let native_exporter = ProjectionExporterIdentityV1 {
-            exporter_version: 1,
-            source_format: ProjectionSourceFormatV1::LooseNativeV1,
-        };
-        let shipping_exporter = ProjectionExporterIdentityV1 {
-            exporter_version: 1,
-            source_format: ProjectionSourceFormatV1::ShippingDatadirV10,
-        };
-        let native_projection_receipt = write_projection_receipt(
-            edition,
-            native_exporter,
-            &native_source_tree_manifest,
-            &authored_subjects,
-            config_root,
-        )?;
-        let shipping_projection_receipt = write_projection_receipt(
-            edition,
-            shipping_exporter,
-            &shipping_source_tree_manifest,
-            &authored_subjects,
-            config_root,
-        )?;
-        Ok(EditionProjectionPlanV1 {
-            edition,
-            native_source_root: native_source_root.to_path_buf(),
-            native_source_tree_manifest: native_source_tree_manifest_path,
-            native_projection_receipt,
-            native_projection_root: native_root.to_path_buf(),
-            shipping_source_root: shipping_source_root.to_path_buf(),
-            shipping_source_tree_manifest: shipping_source_tree_manifest_path,
-            shipping_projection_receipt,
-            shipping_projection_root: shipping_root.to_path_buf(),
-        })
-    }
-
-    fn write_source_tree_manifest(
-        edition: OfficialContentEditionV1,
-        source_format: ProjectionSourceFormatV1,
-        source_root: &Path,
-        config_root: &Path,
-    ) -> Result<(OfficialSourceTreeManifestV1, PathBuf)> {
-        let relative = match source_format {
-            ProjectionSourceFormatV1::LooseNativeV1 => PathBuf::from(format!(
-                "{}/Data/Text/Level.res",
-                official_resource_locale_root(edition)
-            )),
-            ProjectionSourceFormatV1::ShippingDatadirV10 => PathBuf::from("Data/source.marker"),
-        };
-        let marker = source_root.join(&relative);
-        fs::create_dir_all(marker.parent().unwrap())?;
-        fs::write(&marker, format!("{edition:?}:{source_format:?}"))?;
-        let bytes = fs::read(&marker)?;
-        let manifest = OfficialSourceTreeManifestV1 {
-            schema_version: 1,
-            edition,
-            source_format,
-            files: vec![robin_run_protocol::OfficialSourceFileV1 {
-                path: path_to_manifest(&relative)?,
-                sha256: Digest32::digest_bytes(&bytes),
-                byte_length: u64::try_from(bytes.len())?,
-            }],
-        };
-        let path = config_root.join(format!("{edition:?}-{source_format:?}-source-tree.json"));
-        fs::write(&path, manifest.canonical_bytes()?)?;
-        Ok((manifest, path))
-    }
-
-    fn write_projection_receipt(
-        edition: OfficialContentEditionV1,
-        exporter: ProjectionExporterIdentityV1,
-        source_tree_manifest: &OfficialSourceTreeManifestV1,
-        subjects: &[robin_run_protocol::OfficialProjectionSubjectReceiptV1],
-        config_root: &Path,
-    ) -> Result<PathBuf> {
-        let receipt = OfficialSimulationProjectionReceiptV1 {
-            schema_version: 1,
-            exporter,
-            edition,
-            source_tree_manifest_sha256: source_tree_manifest.canonical_digest()?,
-            source_file_count: u32::try_from(source_tree_manifest.files.len())?,
-            subjects: subjects.to_vec(),
-        };
-        let path = config_root.join(format!(
-            "{edition:?}-{:?}-projection-receipt.json",
-            exporter.source_format
-        ));
-        fs::write(&path, receipt.canonical_bytes()?)?;
-        Ok(path)
-    }
-
-    #[cfg(unix)]
-    fn make_tree_writable(root: &Path) -> Result<()> {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mut directories = vec![root.to_path_buf()];
-        let mut pending = vec![root.to_path_buf()];
-        while let Some(directory) = pending.pop() {
-            if !directory.exists() {
-                continue;
-            }
-            fs::set_permissions(&directory, fs::Permissions::from_mode(0o755))?;
-            for entry in fs::read_dir(&directory)? {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    pending.push(entry.path());
-                    directories.push(entry.path());
-                } else {
-                    fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o644))?;
-                }
-            }
-        }
-        drop(directories);
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    fn make_tree_writable(root: &Path) -> Result<()> {
-        for (_, file) in walk_regular_files(root)? {
-            let mut permissions = fs::metadata(&file)?.permissions();
-            permissions.set_readonly(false);
-            fs::set_permissions(file, permissions)?;
-        }
-        Ok(())
-    }
 
     #[test]
-    fn official_content_is_reproducible_private_for_full_and_exact_for_verifier() -> Result<()> {
-        let fixture = ProjectionFixture::new()?;
-        let first = fixture.config.path().join("release-a");
-        let second = fixture.config.path().join("release-b");
-        let first_digests = author_official_content(&fixture.plan_path, &first)?;
-        let second_digests = author_official_content(&fixture.plan_path, &second)?;
-        assert_eq!(first_digests, second_digests);
-        assert_eq!(first_digests.demo_content_manifest_sha256.len(), 1);
-        assert_eq!(first_digests.full_content_manifest_sha256.len(), 39);
-        compare_trees(&first, &second)?;
-
-        let public_content = first.join("public/content");
-        let public_content_ids =
-            fs::read_dir(public_content)?.collect::<std::io::Result<Vec<_>>>()?;
-        assert_eq!(
-            public_content_ids.len(),
-            1,
-            "only DEMO payload may be public"
-        );
-        assert_eq!(
-            public_content_ids[0].file_name().to_string_lossy(),
-            first_digests.demo_content_manifest_sha256[0].to_string()
-        );
-        let bundle_count = fs::read_dir(first.join("verifier-bundles"))?
-            .collect::<std::io::Result<Vec<_>>>()?
-            .len();
-        assert_eq!(bundle_count, 40);
-        assert_eq!(
-            fs::read_dir(first.join("private/projection-receipts"))?
-                .collect::<std::io::Result<Vec<_>>>()?
-                .len(),
-            4
-        );
-        assert_eq!(
-            fs::read_dir(first.join("private/source-tree-manifests"))?
-                .collect::<std::io::Result<Vec<_>>>()?
-                .len(),
-            4
-        );
-        assert_eq!(
-            fs::read_dir(first.join("private/verifier-source-bindings"))?
-                .collect::<std::io::Result<Vec<_>>>()?
-                .len(),
-            40
-        );
-        assert!(
-            walk_regular_files(&first.join("public"))?
-                .iter()
-                .all(|(path, _)| !path.to_string_lossy().contains("source-tree")
-                    && !path.to_string_lossy().contains("projection-receipt"))
-        );
-
-        assert!(author_official_content(&fixture.plan_path, &first).is_err());
-        fs::write(second.join("unexpected-extra"), b"not part of the release")?;
-        assert!(compare_trees(&first, &second).is_err());
-
-        make_tree_writable(&first)?;
-        make_tree_writable(&second)?;
-        Ok(())
-    }
-
-    #[test]
-    fn projection_mismatch_missing_mount_and_unknown_exporter_fail_closed() -> Result<()> {
-        let mismatch = ProjectionFixture::new()?;
-        let subject = official_content_subjects_v1(OfficialContentEditionV1::Full)
-            .into_iter()
-            .next()
-            .unwrap();
-        let kind = SimulationContentComponentKindV1::Profiles;
-        let relative = simulation_content_component_relative_path_v1(&subject, kind)?;
-        let path = mismatch.plan.full.shipping_projection_root.join(relative);
-        let changed = SimulationContentComponentDocumentV1 {
-            schema_version: 1,
-            kind,
-            component_schema_version: 1,
-            payload: CanonicalValue::String("transcoded simulation mismatch".into()),
-        };
-        fs::write(path, changed.bitcode_bytes()?)?;
-        assert!(
-            author_official_content(
-                &mismatch.plan_path,
-                &mismatch.config.path().join("mismatch-output")
-            )
-            .is_err()
-        );
-
-        let mut missing = ProjectionFixture::new()?;
-        missing.plan.full.shipping_projection_root =
-            missing.config.path().join("absent-full-shipping-export");
-        missing.rewrite_plan()?;
-        assert!(OfficialProjectionPlanV1::load(&missing.plan_path).is_err());
-
-        let unsupported = ProjectionFixture::new()?;
-        let receipt_path = &unsupported.plan.full.shipping_projection_receipt;
-        assert!(
-            validate_document(DocumentKind::ProjectionReceiptV2, receipt_path).is_err(),
-            "a V1 all-tree receipt must never decode as an official V2 authority"
-        );
-        let mut receipt: OfficialSimulationProjectionReceiptV1 =
-            serde_json::from_slice(&fs::read(receipt_path)?)?;
-        receipt.exporter.exporter_version = 9;
-        fs::write(receipt_path, canonical_json_bytes(&receipt)?)?;
-        assert!(
-            author_official_content(
-                &unsupported.plan_path,
-                &unsupported.config.path().join("unsupported-output")
-            )
-            .is_err()
-        );
-
-        let wrong_locale = ProjectionFixture::new()?;
-        let receipt_path = &wrong_locale.plan.full.shipping_projection_receipt;
-        let mut receipt: OfficialSimulationProjectionReceiptV1 =
-            serde_json::from_slice(&fs::read(receipt_path)?)?;
-        for subject in &mut receipt.subjects {
-            subject.content_manifest.resource_locale_root =
-                robin_run_protocol::ResourceLocaleRootV1::new(
-                    OFFICIAL_DEMO_RESOURCE_LOCALE_ROOT_V1,
-                )?;
-        }
-        fs::write(receipt_path, receipt.canonical_bytes()?)?;
-        assert!(
-            author_official_content(
-                &wrong_locale.plan_path,
-                &wrong_locale.config.path().join("wrong-locale-output")
-            )
-            .is_err()
-        );
-
-        let wrong_inventory = OfficialSourceTreeManifestV1 {
-            schema_version: 1,
-            edition: OfficialContentEditionV1::Demo,
-            source_format: ProjectionSourceFormatV1::LooseNativeV1,
-            files: vec![robin_run_protocol::OfficialSourceFileV1 {
-                path: "2047/Data/Text/Level.res".into(),
-                sha256: Digest32::from_bytes([91; 32]),
-                byte_length: 1,
-            }],
-        };
-        assert!(
-            validate_native_resource_locale_inventory(
-                OfficialContentEditionV1::Demo,
-                &wrong_inventory
-            )
-            .is_err()
-        );
-
-        let raw_drift = ProjectionFixture::new()?;
-        fs::write(
-            raw_drift
-                .plan
-                .full
-                .native_source_root
-                .join(OFFICIAL_FULL_RESOURCE_LOCALE_ROOT_V1)
-                .join("Data/Text/Level.res"),
-            b"source bytes changed after receipt",
-        )?;
-        assert!(
-            author_official_content(
-                &raw_drift.plan_path,
-                &raw_drift.config.path().join("raw-drift-output")
-            )
-            .is_err()
-        );
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::symlink;
-            let symlinked = ProjectionFixture::new()?;
-            symlink(
-                symlinked.config.path(),
-                symlinked
-                    .plan
-                    .demo
-                    .native_source_root
-                    .join("forbidden-link"),
-            )?;
+    fn document_kinds_advertise_live_stages_and_reject_retired_authority() {
+        use clap::ValueEnum as _;
+        for retired in [
+            "build",
+            "source-tree-manifest",
+            "projection-receipt",
+            "release-lock",
+            "verifier-source-binding",
+        ] {
             assert!(
-                author_official_content(
-                    &symlinked.plan_path,
-                    &symlinked.config.path().join("symlink-output")
-                )
-                .is_err()
+                DocumentKind::from_str(retired, false).is_err(),
+                "retired authority {retired}"
             );
         }
-        Ok(())
+        for live in [
+            "build-v2",
+            "source-tree-manifest-v2",
+            "projection-receipt-v2",
+            "projection-authority-matrix-v3",
+        ] {
+            assert!(
+                DocumentKind::from_str(live, false).is_ok(),
+                "live authority {live}"
+            );
+        }
     }
 
     #[test]
@@ -3249,89 +1311,6 @@ mod tests {
         }
         assert!(runtime.contains("steps.wasm-tools.outputs.wasm-bindgen"));
         assert!(static_origins.contains("steps.wasm-bindgen.outputs.executable"));
-    }
-
-    #[test]
-    fn official_release_rejects_historical_or_mixed_input_provenance() {
-        assert!(
-            validate_official_ranked_input_provenance(
-                InputProvenanceEligibilityV1::CurrentSchemaCanonicalReplayOnly,
-                &[CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1]
-            )
-            .is_ok()
-        );
-        for versions in [
-            vec![CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1.saturating_sub(1)],
-            vec![
-                CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1.saturating_sub(1),
-                CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-            ],
-        ] {
-            assert!(
-                validate_official_ranked_input_provenance(
-                    InputProvenanceEligibilityV1::CurrentSchemaCanonicalReplayOnly,
-                    &versions
-                )
-                .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn build_authoring_hashes_exact_bytes_and_never_overwrites() -> Result<()> {
-        let root = tempfile::tempdir()?;
-        let cargo_lock = root.path().join("Cargo.lock");
-        let verifier = root.path().join("verifier");
-        let viewer = root.path().join("viewer.wasm");
-        let entry = root.path().join("entry.js");
-        fs::write(&cargo_lock, b"lock-v1")?;
-        fs::write(&verifier, b"verifier-v1")?;
-        fs::write(&viewer, b"viewer-v1")?;
-        fs::write(&entry, b"export function main() {}")?;
-        let draft = BuildDraftV1 {
-            schema_version: 1,
-            source_commit: "a".repeat(40),
-            cargo_lock: cargo_lock.clone(),
-            target_triple: "x86_64-unknown-linux-gnu".into(),
-            cargo_profile: "release".into(),
-            cargo_features: vec!["replay".into()],
-            replay_schema_version: 20,
-            save_schema_version: 1,
-            network_protocol_version: 1,
-            verifier: BuildArtifactSourceV1 {
-                source: verifier.clone(),
-                media_type: "application/octet-stream".into(),
-            },
-            viewer_artifacts: vec![
-                ViewerArtifactSourceV1 {
-                    source: entry,
-                    published_path: "viewer/entry.js".into(),
-                    role: ViewerArtifactRoleV1::EntryJavaScript,
-                    media_type: "text/javascript".into(),
-                },
-                ViewerArtifactSourceV1 {
-                    source: viewer,
-                    published_path: "viewer/robin.wasm".into(),
-                    role: ViewerArtifactRoleV1::WebAssembly,
-                    media_type: "application/wasm".into(),
-                },
-            ],
-        };
-        let draft_path = root.path().join("build-draft.json");
-        fs::write(&draft_path, serde_json::to_vec(&draft)?)?;
-        let output = root.path().join("build-manifest.json");
-        let first = author_build(&draft_path, &output)?;
-        assert!(
-            validate_document(DocumentKind::BuildV2, &output).is_err(),
-            "a historical BuildManifestV1 must never authorize official V2 projection"
-        );
-        assert!(author_build(&draft_path, &output).is_err());
-        fs::write(verifier, b"verifier-v2")?;
-        let changed = BuildDraftV1::load(&draft_path)?
-            .author()?
-            .canonical_digest()?;
-        assert_ne!(first.digest, changed);
-        Ok(())
     }
 
     #[cfg(unix)]

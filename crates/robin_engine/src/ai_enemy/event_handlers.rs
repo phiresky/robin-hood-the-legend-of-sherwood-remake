@@ -13,19 +13,18 @@ use super::util::{ai_max_norm_distance, ai_square_distance, enemy_is_below_me};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
 fn good_strike_lifecycle_debug_matches(ctx: &AiContext) -> bool {
-    if std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == ctx.frame)
-        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
-            .is_none_or(|expected| ctx.original_creation_order == Some(expected))
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE",
+            [
+                "PARITY_DEBUG_GOOD_STRIKE_FRAME",
+                "PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(ctx.frame), ctx.original_creation_order])
 }
 
 impl EnemyAi {
@@ -94,8 +93,12 @@ impl EnemyAi {
                         );
                         self.base.antagonist = Some(charly);
                         self.base.face_entity(charly, ctx);
-                        self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForCharly);
-                        self.base.launch_timer(10, ctx.frame);
+                        self.set_state_with_timer(
+                            AiState::Seeking,
+                            Substate::SeekingOfficerWaitForCharly,
+                            10,
+                            ctx,
+                        );
                         return;
                     }
                     // Fall through to reunion tail.
@@ -129,7 +132,7 @@ impl EnemyAi {
                             | Substate::SeekingCharlyGetLectureByOfficer
                             | Substate::SeekingCharlyGetLectureByOfficer2 => {
                                 // Already sent to officer.
-                                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                                self.return_to_duty_default(sim, ctx, tick);
                                 return;
                             }
                             _ => {
@@ -254,8 +257,7 @@ impl EnemyAi {
                     actor: self.base.me,
                 },
             );
-            self.set_state(AiState::Default, Substate::DefaultSynchronizing);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Default, Substate::DefaultSynchronizing, 20, ctx);
         }
     }
 
@@ -290,355 +292,29 @@ impl EnemyAi {
                 return true;
             }
             StimulusType::EventOutOfView => {
-                if self.base.current_state == AiState::Attacking
-                    && let StimulusInfo::Human(enemy) = stimulus.info
-                {
-                    // Original compares the stimulus target strictly with
-                    // the enemy AI's primary target here
-                    // for this event. The actor's first
-                    // opponent can legitimately differ while the AI is in a
-                    // multi-opponent fight, so it must not stand in for that
-                    // independent AI member.
-                    let out_of_view_is_primary = Some(enemy) == self.base.primary_target;
-                    tracing::trace!(
-                        me = self.base.me,
-                        frame = ctx.frame,
-                        substate = ?self.base.current_substate,
-                        enemy = enemy.get(),
-                        primary_target = ?self.base.primary_target,
-                        enemy_seen_below = self.enemy_seen_below,
-                        list_them = ?self.list_them,
-                        "OUTOFVIEW while attacking"
-                    );
-                    // Lost sight of enemy while attacking.
-                    match self.base.current_substate {
-                        Substate::AttackingBowObservingLoading
-                        | Substate::AttackingBowObserving
-                        | Substate::AttackingBowShooting
-                        | Substate::AttackingBowLoading
-                        | Substate::AttackingBowAiming => {
-                            // These five labels precede
-                            // `_ANY_SWORDFIGHT_SUBSTATE_` in Original and
-                            // deliberately fall through it unless the special
-                            // below-target recovery consumes the event.
-                            if self.enemy_seen_below {
-                                self.reinitialize_them_list(ctx, tick);
-                                return true;
-                            }
-                            if out_of_view_is_primary
-                                && self.is_detecting_360_degrees(enemy.get(), ctx)
-                            {
-                                return false;
-                            }
-                            // The swordfight labels in turn fall through the
-                            // moving-combat stare-vector guard before the
-                            // shared lost-enemy handler.
-                            if self.enemy_is_behind_me(ctx) {
-                                return false;
-                            }
-                            self.out_of_view_seek_handler(
-                                sim,
-                                enemy.get(),
-                                global,
-                                ctx,
-                                tick,
-                                grid,
-                            );
-                        }
-
-                        s if s.is_any_swordfight() => {
-                            // _ANY_SWORDFIGHT_SUBSTATE_ 360° short-circuit
-                            // — if the target is still within the NPC's
-                            // real-radius "feel bubble" despite the cone
-                            // LOS drop, the event is silently ignored and
-                            // the NPC stays engaged. Without this check
-                            // the port bailed every time the view cone
-                            // flickered during `AttackingRunningToEnemy`,
-                            // cycling the NPC Attacking→Seeking→Attacking
-                            // every ~100 ms.
-                            //
-                            // NOTE: the previous port used
-                            // `find_fighter(enemy, tick)` as the proxy, but
-                            // `tick.nearby_fighters` is only populated on
-                            // the primary NPC-detection dispatch path — the
-                            // falling-edge EVENT_OUTOFVIEW dispatch built a
-                            // `tick_data` from `AiPerTickData::stub()`,
-                            // so `nearby_fighters` was empty and the check
-                            // always failed.  Using the `entity_views`
-                            // distance gate directly avoids that aliasing.
-                            if out_of_view_is_primary
-                                && self.is_detecting_360_degrees(enemy.get(), ctx)
-                            {
-                                // Still close — stay in swordfight.
-                                return false;
-                            }
-                            // The original game's any-swordfight-substate case has
-                            // no break here. A failed 360-degree check falls
-                            // through the same stare-vector guard used by
-                            // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
-                            // ADVANCING_WITH_SHIELD before reaching the
-                            // shared lost-enemy body.
-                            if self.enemy_is_behind_me(ctx) {
-                                return false;
-                            }
-                            self.out_of_view_seek_handler(
-                                sim,
-                                enemy.get(),
-                                global,
-                                ctx,
-                                tick,
-                                grid,
-                            );
-                        }
-
-                        // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
-                        // ADVANCING_WITH_SHIELD run an "enemy behind me"
-                        // check first — if the NPC is just looking the
-                        // wrong way while moving, the dot product of
-                        // (lookVector · stareVector) is negative and the
-                        // event is silently dropped. Only when the stare
-                        // is actually in front of the NPC do we fall
-                        // through to the seek handler below.
-                        Substate::AttackingReactiontimeRunning
-                        | Substate::AttackingApproachToObserve
-                        | Substate::AttackingAdvancingWithShield => {
-                            if self.enemy_is_behind_me(ctx) {
-                                // Just out of view because we're looking
-                                // the wrong way — ignore the OUTOFVIEW.
-                                return false;
-                            }
-                            // Fall through to the seek handler below by
-                            // invoking the shared helper directly.
-                            self.out_of_view_seek_handler(
-                                sim,
-                                enemy.get(),
-                                global,
-                                ctx,
-                                tick,
-                                grid,
-                            );
-                        }
-
-                        // Stationary / combat-posture substates. On
-                        // EVENT_OUTOFVIEW, forecast the target's
-                        // destination and either chase (via seek_area) or
-                        // face + get_battle_overview.
-                        //
-                        // `ATTACKING_REACTIONTIME_TURNING` is explicitly
-                        // excluded and falls to the default reinitialization
-                        // branch. The running/walking/charging substates are
-                        // members of the original game's any-swordfight-substate group
-                        // macro and were handled by the earlier arm.
-                        Substate::AttackingReactiontime
-                        | Substate::AttackingQuittingSwordfight
-                        | Substate::AttackingReserve
-                        | Substate::AttackingLastReserve
-                        | Substate::AttackingObserve
-                        | Substate::AttackingObserveAndMove
-                        | Substate::AttackingHitting
-                        | Substate::AttackingProtectingWithShield
-                        | Substate::AttackingPhalanx
-                        | Substate::AttackingTooProudToAttack
-                        | Substate::AttackingTooProudToAttackApproach => {
-                            self.out_of_view_seek_handler(
-                                sim,
-                                enemy.get(),
-                                global,
-                                ctx,
-                                tick,
-                                grid,
-                            );
-                        }
-
-                        // Do-nothing substates.
-                        Substate::AttackingTooProudToAttackRetire
-                        | Substate::AttackingTooProudToAttackRetireTurn
-                        | Substate::AttackingReactiontimeBending => {}
-
-                        // Wait-for-avenger substates. Original
-                        // sweeps around the
-                        // waiting soldier itself, not the
-                        // remembered avenger position it is staring at, and
-                        // takes the plain battle-overview default flags
-                        // (0) rather than the FAST_OVERVIEW variant used by
-                        // the sight/hearing entry points.
-                        Substate::AttackingWaitForAvengerOnRoof => {
-                            self.reinitialize_them_list(ctx, tick);
-                            if self.list_them.is_empty() {
-                                self.seek_area(
-                                    sim,
-                                    ctx.position,
-                                    parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
-                                    SeekFlags::empty(),
-                                    UNDEFINED_DIRECTION,
-                                    global,
-                                    ctx,
-                                    tick,
-                                );
-                            } else {
-                                self.get_battle_overview(0, ctx, tick);
-                            }
-                        }
-
-                        _ => {
-                            // Default — just reinitialize them list.
-                            self.reinitialize_them_list(ctx, tick);
-                        }
-                    }
-                }
+                return self.on_unexpected_out_of_view(
+                    stimulus,
+                    global,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventCouldntReachPoint => {
-                // Pathfinding failure.
-                match self.base.current_substate {
-                    // Seek point unreachable → try next.
-                    Substate::SeekingSeekpoint => {
-                        self.seek_next_point(sim, global, ctx, tick);
-                    }
-                    // Body unreachable → seek area.
-                    Substate::SeekingBody => {
-                        if !self.examine_other_bodies(ctx, tick) {
-                            self.seek_area(
-                                sim,
-                                ctx.position,
-                                parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
-                                SeekFlags::empty(),
-                                UNDEFINED_DIRECTION,
-                                global,
-                                ctx,
-                                tick,
-                            );
-                        }
-                    }
-                    Substate::AttackingObserve => {
-                        // Ignore.
-                    }
-                    Substate::AttackingRunningToLadder
-                        if stimulus.self_origin
-                            == crate::ai::SelfStimulusOrigin::EngineCompletion
-                            && self.base.timer_is_running
-                            && self.base.substate_at_last_timer_launch
-                                == Substate::AttackingRunningToLadder
-                            && self.base.when_does_timer_ring == ctx.frame.saturating_add(30) =>
-                    {
-                        // This is specifically the engine-completion bridge,
-                        // not an Original movement condolation. The latter
-                        // enters this handler with Condolation provenance and
-                        // must take the generic default arm below.
-                        //
-                        // The lift-entry movement during enemy approach reconsideration is
-                        // followed immediately by timer launch and return
-                        // immediately afterward. Control then
-                        // returns through enemy attack to DECISION_FIGHT, whose
-                        // couldn't-reachpoint arm switches to DECISION_OBSERVE
-                        // in the failed-reach branch. The failed
-                        // observe route takes the inline avenger-on-roof
-                        // fallback at lines 7973-7990. DECISION_FIGHT has not
-                        // registered its log line at this source point; the
-                        // lift branch's 30-frame timer is its exact surviving
-                        // provenance. Rust learns the first route result only
-                        // at this owner boundary, so resume that source-ordered
-                        // failure tail here.
-                        let target_position = ctx
-                            .entity_view(self.base.primary_target)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "ladder route-failure target {:?} disappeared",
-                                    self.base.primary_target
-                                )
-                            })
-                            .position;
-                        let target = self.required_primary_target("resuming a failed ladder route");
-                        let avenger_wait_position =
-                            tick.avenger_wait_position_for(self.base.primary_target);
-                        self.base.couldnt_reachpoint = true;
-                        if avenger_wait_position.is_some() {
-                            self.resume_reconsider_enemy_approach_after_go_near(
-                                target_position,
-                                avenger_wait_position,
-                                ctx,
-                            );
-                            // The original game constructs and settles this roof approach
-                            // before DECISION_OBSERVE returns. Route the typed
-                            // actor effects through the existing synchronous
-                            // owner boundary so its actual verdict is visible
-                            // to this frame's decision-tick completion.
-                            if self.base.outbox.actor.has_boundary_work() {
-                                self.base.outbox.reentrant.owner_work.push(
-                                    crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                        &mut self.base.outbox.actor,
-                                    )),
-                                );
-                            }
-                        } else {
-                            // DECISION_FIGHT clears the failed lift approach
-                            // and changes to DECISION_OBSERVE. Its observe
-                            // Approach movement fails synchronously too in this no-roof
-                            // case, so the following source tail installs
-                            // observation approach/timer 50 while retaining the
-                            // failure latch for tick completion's generic overview.
-                            self.resume_battle_observe_after_go_near(
-                                target.get(),
-                                target_position,
-                                None,
-                                ctx,
-                            );
-                        }
-                    }
-                    Substate::AttackingApproachToObserve
-                        if self.base.ai_log.iter().rev().any(|line| {
-                            line.frame == ctx.frame
-                                && line.line_type == LogLineType::BattleDecision
-                                && line.info == Decision::Observe as u16
-                        }) =>
-                    {
-                        // A same-frame failure here is the delayed result of
-                        // DECISION_OBSERVE's approach. The original game constructs the
-                        // route inside that statement and tests
-                        // unreachable-point flag immediately after the state change;
-                        // Rust can only discover a local Move failure after
-                        // the typed tail has entered the observation approach.
-                        // Resume that source-local roof fallback instead of
-                        // letting the staging delay turn it into the generic
-                        // attacking emergency overview.
-                        if let Some(wait_position) =
-                            tick.avenger_wait_position_for(self.base.primary_target)
-                        {
-                            let target_position = ctx
-                                .entity_view(self.base.primary_target)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "observe route-failure target {:?} disappeared",
-                                        self.base.primary_target
-                                    )
-                                })
-                                .position;
-                            self.go_near(
-                                AiState::Attacking,
-                                Substate::AttackingRunToAvengerOnRoof,
-                                wait_position,
-                                50,
-                                GotoFlags::RUN,
-                                ctx,
-                            );
-                            self.base.seek_position = target_position;
-                        } else {
-                            self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
-                        }
-                    }
-                    Substate::FleeingPanic => {
-                        // Original routes a failed panic-run movement back
-                        // through the shared FLEEING_PANIC state machine.
-                        // The generic emergency routine would instead return
-                        // a fleeing soldier to duty and discard the remaining
-                        // panic runs.
-                        self.base
-                            .think_expected_event_common_stuff(sim, stimulus, ctx);
-                    }
-                    _ => {
-                        self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
-                    }
-                }
+                return self.on_unexpected_couldnt_reach_point(
+                    stimulus,
+                    global,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventImpossible => {
@@ -655,51 +331,12 @@ impl EnemyAi {
             }
 
             StimulusType::EventFitAgain => {
-                // Recovered from unconsciousness.
-                //
-                // Engine-facing calls share the owner-work FIFO with
-                // state changes so their exact decision-tick order survives the
-                // temporary Rust borrow boundary.
-                // The money-fight branch routes to `return_to_duty` and
-                // clears `knocked_out_in_money_fight` so the victor
-                // cleanly rejoins their duty loop instead of getting stuck
-                // in `SleepingAwakening`.
-                if self.base.current_substate != Substate::SleepingUnconscious {
-                    // The dispatch only fires from SLEEPING_UNCONSCIOUS;
-                    // any other substate falls through as a no-op.
-                    return false;
-                }
-
-                let knocked_out_in_money_fight = self.base.knocked_out_in_money_fight;
-                self.base.outbox.reentrant.owner_work.push(
-                    crate::ai::AiOwnerWork::RestoreDetectableObjects {
-                        knocked_out_in_money_fight,
-                    },
-                );
-                self.base
-                    .outbox
-                    .reentrant
-                    .owner_work
-                    .push(crate::ai::AiOwnerWork::InformResurrection);
-                self.base.clear_emoticon();
-
-                if knocked_out_in_money_fight {
-                    self.base.knocked_out_in_money_fight = false;
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                } else {
-                    self.set_state(AiState::Sleeping, Substate::SleepingAwakening);
-                    self.base.outbox.reentrant.owner_work.push(
-                        crate::ai::AiOwnerWork::LaunchTimer {
-                            frames: parameters_ai::AI_WAKEUP_IDLING_TIME as u32,
-                            current_frame: ctx.frame,
-                        },
-                    );
-                    self.base.outbox.reentrant.owner_work.push(
-                        crate::ai::AiOwnerWork::SetEyeStatus(
-                            crate::element::EyeStatus::LookForward,
-                        ),
-                    );
-                }
+                return self.on_unexpected_fit_again(ThinkEnv {
+                    sim,
+                    ctx,
+                    tick,
+                    grid,
+                });
             }
 
             StimulusType::EventQuitSwordfight => {
@@ -740,258 +377,28 @@ impl EnemyAi {
             }
 
             StimulusType::EventSeesSoldier => {
-                // EVENT_SEES_SOLDIER: soldier-spotting-fellow-soldier →
-                // "go tell the officer" / "call this soldier over"
-                // coordination flow.
-                let StimulusInfo::Human(antagonist) = stimulus.info else {
-                    return false;
-                };
-
-                // State/substate reaction gate.
-                let react = match self.base.current_state {
-                    AiState::Default => true,
-                    AiState::Seeking => matches!(
-                        self.base.current_substate,
-                        Substate::SeekingOfficerLookingForSoldiers1
-                            | Substate::SeekingOfficerLookingForSoldiers1Sidewards
-                            | Substate::SeekingOfficerLookingForSoldiers2
-                            | Substate::SeekingOfficerLookingForSoldiers2Sidewards
-                            | Substate::SeekingOfficerLookingForSoldiers3
-                            | Substate::SeekingOfficerLookingForSoldiers3Sidewards
-                            | Substate::SeekingRunningToOfficer
-                    ),
-                    _ => false,
-                };
-                if !react {
-                    return false;
-                }
-
-                self.base.antagonist = Some(antagonist);
-                let antagonist_cs = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|cs| cs.handle == antagonist.get());
-
-                match self.get_rank() {
-                    ProfileRank::Soldier => {
-                        self.base.outbox.reentrant.cross_npc_actions.push(
-                            CrossNpcAction::RequestAlert {
-                                target: antagonist.get(),
-                                caller: self.base.me,
-                                continuation: crate::ai::AlertContinuation::SoldierSawOfficer,
-                            },
-                        );
-                    }
-                    ProfileRank::Officer => {
-                        // Officer sees soldier → assert that the seen
-                        // target is a soldier, gate on
-                        // soldier-call eligibility, then face + transition
-                        // into the SeekingOfficerCallSoldier handshake.
-                        let cs = antagonist_cs.unwrap_or_else(|| {
-                            panic!(
-                                "officer {} EVENT_SEES_SOLDIER requires target {} in camp soldier roster",
-                                self.base.me, antagonist
-                            )
-                        });
-                        assert_eq!(
-                            cs.rank,
-                            ProfileRank::Soldier,
-                            "officer {} EVENT_SEES_SOLDIER target {} must have soldier rank",
-                            self.base.me,
-                            antagonist
-                        );
-                        if self.can_call_this_soldier(cs, ctx, tick) {
-                            self.face_npc(antagonist.get(), ctx);
-                            // Transition to
-                            // SUBSTATE_SEEKING_OFFICER_CALL_SOLDIER — the
-                            // EventDone arm of that substate sends
-                            // CALL_HEY and launches the soldier-wait
-                            // handshake.
-                            self.set_state(AiState::Seeking, Substate::SeekingOfficerCallSoldier);
-                            // Remove all FRIEND detectables — committed to
-                            // this soldier, drop the rest of the friend
-                            // list so further EVENT_SEES_SOLDIER calls
-                            // don't pre-empt.
-                            self.base
-                                .outbox
-                                .actor
-                                .delete_detectable_type(crate::element::DetectableType::Friend);
-                        }
-                    }
-                    ProfileRank::Knight | ProfileRank::None => {
-                        // Knights never reach EVENT_SEES_SOLDIER in the
-                        // patrol-coordination flow.
-                    }
-                }
+                return self.on_unexpected_sees_soldier(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::CallAlert => {
-                match stimulus.info {
-                    StimulusInfo::Hint(ref hint) => {
-                        self.base.seek_position = hint.seek_point;
-                        self.base
-                            .my_reconnaissance_report
-                            .update(ReportType::Enemy, hint.seek_point);
-                        // React based on rank
-                        match self.get_rank() {
-                            ProfileRank::Officer => {
-                                self.base.friends_are_alerted = true;
-                                self.alert_soldiers(
-                                    hint.seek_point,
-                                    0,
-                                    global,
-                                    grid,
-                                    ctx,
-                                    tick,
-                                    AlertSoldiersFailureContinuation::None,
-                                );
-                            }
-                            _ => {
-                                self.current_task_priority = task_priority::ALERT;
-                                self.set_state(
-                                    AiState::Seeking,
-                                    Substate::SeekingHeardstepsReactiontime,
-                                );
-                                self.base.face_position(hint.seek_point);
-                                self.react(
-                                    parameters_ai::AI_MAX_ALERT_REACTIONTIME as u16,
-                                    ctx,
-                                    tick,
-                                );
-                            }
-                        }
-                    }
-                    // Civilian-sourced CALL_ALERT — a civilian ran to this
-                    // soldier and wants to hand over a report. Accept iff
-                    // in STATE_DEFAULT, else return false ("Sorry, dear
-                    // civilian, I have no time for you").  Transition to
-                    // SEEKING_WAIT_FOR_ALERTING_CIVILIAN, face the
-                    // civilian, launch a 20-frame reaction timer, set a
-                    // transient ? emoticon.
-                    StimulusInfo::Human(civilian) => {
-                        let caller = ctx.entity_view(civilian).unwrap_or_else(|| {
-                            panic!(
-                                "CALL_ALERT recipient {} requires caller {} entity view",
-                                self.base.me, civilian
-                            )
-                        });
-                        // The original game assigns the antagonist before deciding whether the
-                        // caller can be heard. A rejected civilian report therefore
-                        // still replaces the actor tracked by the current behavior.
-                        self.base.antagonist = Some(civilian);
-                        if caller.is_civilian() {
-                            if self.base.current_state != AiState::Default {
-                                return false;
-                            }
-                            // The original game's civilian alert branch uses the actor's
-                            // actor halt directly, not AI stop-all. The actor work
-                            // must be interrupted before the state callback, while an
-                            // in-flight waypoint macro and its macro timer survive.
-                            // This follows the CALL_ALERT civilian branch.
-                            self.base.outbox.actor.queue_halt();
-                            self.base.face_entity(civilian, ctx);
-                            self.set_state(
-                                AiState::Seeking,
-                                Substate::SeekingWaitForAlertingCivilian,
-                            );
-                            self.base.launch_timer(20, ctx.frame);
-                            self.base.set_transient_emoticon(
-                                EmoticonType::QuestionMark,
-                                20,
-                                ctx.frame,
-                            );
-                            return true;
-                        }
-                        match self.get_rank() {
-                            ProfileRank::Soldier => {
-                                let react = matches!(
-                                    self.base.current_state,
-                                    AiState::Default | AiState::Wondering
-                                ) || self.base.current_state == AiState::Seeking
-                                    && matches!(
-                                        self.base.current_substate,
-                                        Substate::SeekingSoldierGiveReportToOfficer
-                                            | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
-                                            | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
-                                            | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
-                                    );
-                                if !react
-                                    || !self.answer_question(Question::HasTheNewTaskPriority, ctx)
-                                {
-                                    return false;
-                                }
-                                assert_eq!(
-                                    caller.rank,
-                                    ProfileRank::Officer,
-                                    "soldier CALL_ALERT caller must be an officer"
-                                );
-                                // Original's soldier-from-officer CALL_ALERT arm calls
-                                // halts the actor directly, not all AI activity. Halting
-                                // interrupts actor work but leaves an in-flight waypoint
-                                // macro and its macro timer intact.
-                                self.base.outbox.actor.queue_halt();
-                                self.current_task_priority = self.new_task_priority;
-                                self.gather_position_instructed = false;
-                                self.base.friends_are_alerted = true;
-                                self.officers_position = caller.position;
-                                self.base.face_position_3d_with_ctx(caller.position, ctx);
-                                self.set_state(
-                                    AiState::Seeking,
-                                    Substate::SeekingGroupCalledByOfficer,
-                                );
-                                self.base.launch_timer(20, ctx.frame);
-                                self.base.set_transient_emoticon(
-                                    EmoticonType::QuestionMark,
-                                    20,
-                                    ctx.frame,
-                                );
-                                return true;
-                            }
-                            ProfileRank::Officer => {
-                                let react = self.base.current_state == AiState::Default
-                                    || self.base.current_state == AiState::Seeking
-                                        && matches!(
-                                            self.base.current_substate,
-                                            Substate::SeekingOfficerWaitForInstructedGroup
-                                                | Substate::SeekingOfficerWaitForInstructedSoldier
-                                        );
-                                if !react {
-                                    return false;
-                                }
-                                assert_eq!(
-                                    caller.rank,
-                                    ProfileRank::Soldier,
-                                    "officer CALL_ALERT caller must be a soldier"
-                                );
-                                // Original's officer-from-soldier CALL_ALERT arm also
-                                // halts the actor directly. In particular, it does
-                                // not route through AI stop-all and must not break an
-                                // in-flight waypoint macro or its macro timer.
-                                self.base.outbox.actor.queue_halt();
-                                self.base.friends_are_alerted = true;
-                                self.base.face_entity(civilian, ctx);
-                                self.set_state(
-                                    AiState::Seeking,
-                                    Substate::SeekingOfficerWaitForAlertingSoldier,
-                                );
-                                self.base.launch_timer(20, ctx.frame);
-                                self.base.set_transient_emoticon(
-                                    EmoticonType::QuestionMark,
-                                    20,
-                                    ctx.frame,
-                                );
-                                return true;
-                            }
-                            ProfileRank::Knight | ProfileRank::None => {
-                                panic!(
-                                    "CALL_ALERT reached unsupported recipient rank {:?}",
-                                    self.get_rank()
-                                )
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                return self.on_unexpected_call_alert(
+                    stimulus,
+                    global,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::CallCombatAlert => {
@@ -1036,61 +443,15 @@ impl EnemyAi {
             // Soldier accepts the call only if the new task priority
             // outranks the current one.
             StimulusType::CallHey => {
-                let StimulusInfo::Human(officer) = stimulus.info else {
-                    return false;
-                };
-                // Skip the civilian path (asserted away upstream).
-                if let Some(view) = ctx.entity_view(officer)
-                    && view.is_civilian()
-                {
-                    tracing::warn!(
-                        "EnemyAi::think_unexpected_event: CALL_HEY from civilian unhandled \
-                         (asserted away) — origin {officer}"
-                    );
-                    return false;
-                }
-                self.base.antagonist = Some(officer);
-
-                // React gate.
-                let react = match self.base.current_state {
-                    AiState::Default | AiState::Wondering => true,
-                    AiState::Seeking => matches!(
-                        self.base.current_substate,
-                        Substate::SeekingRunningToOfficer
-                            | Substate::SeekingRunningToOfficerSeen
-                            | Substate::SeekingHeardstepsReactiontime
-                            | Substate::SeekingBodyReactiontime
-                    ),
-                    _ => false,
-                };
-                if !react {
-                    return false;
-                }
-
-                // Rank dispatch. RANK_OFFICER / RANK_KNIGHT are asserted
-                // away upstream — only soldiers receive CALL_HEY.
-                if self.get_rank() != ProfileRank::Soldier {
-                    tracing::warn!(
-                        "EnemyAi::think_unexpected_event: CALL_HEY at non-soldier rank \
-                         {:?} (asserted away upstream)",
-                        self.get_rank()
-                    );
-                    return false;
-                }
-
-                // Gate on Q_HAS_THE_NEW_TASK_PRIORITY.
-                if !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
-                    return false;
-                }
-
-                self.current_task_priority = self.new_task_priority;
-                self.base.stop_all();
-                self.base.face_entity(officer, ctx);
-                self.set_state(AiState::Seeking, Substate::SeekingSoldierCalledByOfficer);
-                self.base.launch_timer(20, ctx.frame);
-                self.base
-                    .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
-                return true;
+                return self.on_unexpected_call_hey(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventWaspAway => {
@@ -1125,35 +486,12 @@ impl EnemyAi {
             // Special-strike gloating remark. Original guards on the
             // observable special-strike substate.
             StimulusType::EventGoodStrike => {
-                let will_say =
-                    self.base.current_substate == Substate::AttackingSwordfightSpecialStrike;
-                let debug = good_strike_lifecycle_debug_matches(ctx);
-                if debug {
-                    eprintln!(
-                        "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=think_entry state={:?} substate={:?} will_say={} vip={}]",
-                        ctx.frame,
-                        self.base.me,
-                        ctx.original_creation_order,
-                        self.base.current_state,
-                        self.base.current_substate,
-                        will_say,
-                        self.is_vip,
-                    );
-                }
-                if will_say {
-                    let remark = if self.is_vip {
-                        Remark::VipGoodStrikeCombat
-                    } else {
-                        Remark::GoodStrikeCombat
-                    };
-                    self.base.say(remark);
-                    if debug {
-                        eprintln!(
-                            "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=say_queued remark={:?}]",
-                            ctx.frame, self.base.me, ctx.original_creation_order, remark,
-                        );
-                    }
-                }
+                return self.on_unexpected_good_strike(ThinkEnv {
+                    sim,
+                    ctx,
+                    tick,
+                    grid,
+                });
             }
             // Kill remark.
             StimulusType::EventLethalStrike => {
@@ -1168,44 +506,15 @@ impl EnemyAi {
             }
 
             StimulusType::EventSeesBeggar => {
-                // When in a seek-area substate, queue the beggar for later
-                // identification (approach → identify1 → identify2).
-                if let StimulusInfo::Human(beggar) = stimulus.info
-                    && self.base.current_substate.is_seek_area()
-                {
-                    if Some(beggar) != self.beggar_to_examine {
-                        tracing::debug!(
-                            beggar = beggar.get(),
-                            substate = ?self.base.current_substate,
-                            "EventSeesBeggar: queued beggar for identification"
-                        );
-                        // Queue beggar for control during seek_next_point(sim, ).
-                        // Stores the beggar's actual position via the
-                        // antagonist's position. We read it from the
-                        // `ctx.antagonist` snapshot populated by the engine
-                        // when it dispatched this stimulus.
-                        self.beggars_to_control.push(beggar.get());
-                        let beggar_pos = ctx
-                            .antagonist
-                            .as_ref()
-                            .map(|a| a.position)
-                            .unwrap_or(self.base.seek_position);
-                        self.positions_of_beggars_to_control.push(beggar_pos);
-                        self.base
-                            .set_transient_emoticon(EmoticonType::QuestionMark, 20, 0);
-                    }
-
-                    // Remove this beggar's DETECTABLE_BEGGAR entry from every NPC.
-                    // is outside the original game's examined-beggar inequality
-                    // queueing guard. A repeated view while approaching the
-                    // claimed beggar must therefore still scrub every NPC's
-                    // BEGGAR list synchronously through the engine drain.
-                    self.base.outbox.actor.delete_beggar_for_all_npc.push(
-                        ctx.entity_id(beggar).unwrap_or_else(|| {
-                            panic!("EventSeesBeggar target {beggar} has no typed live entity view")
-                        }),
-                    );
-                }
+                return self.on_unexpected_sees_beggar(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventEnemyNear => {
@@ -1246,44 +555,15 @@ impl EnemyAi {
             // continue from where the script left them rather than
             // restarting the patrol.
             StimulusType::EventAfterScriptGoOn => {
-                if self.base.outbox.reentrant.engine_drains_after_script_go_on {
-                    return false;
-                }
-                while !self.base.stimulus_queue.is_empty() {
-                    if !self.base.locks_flag_field.is_empty() || self.base.script_locked {
-                        return false;
-                    }
-                    let queued = self.base.stimulus_queue.remove(0);
-                    if queued.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                        self.think(sim, &queued, global, ctx, tick, grid);
-                    }
-                }
-
-                if self.base.current_state == AiState::Default {
-                    let hiking_paths = &ctx.hiking_paths;
-                    let advanced_dest = if let Some(ref mut path) = self.base.patrol_path {
-                        path.advance();
-                        path.current_waypoint(hiking_paths).map(|wp| Position {
-                            x: wp.x as f32,
-                            y: wp.y as f32,
-                            sector: ctx.hiking_waypoint_sector(
-                                usize::from(path.hiking_path_index),
-                                usize::from(path.current_waypoint_index),
-                                wp.sector,
-                            ),
-                            level: wp.level,
-                        })
-                    } else {
-                        None
-                    };
-                    if let Some(dest) = advanced_dest {
-                        let flags = self.base.default_path_walking_flags;
-                        self.go_to(AiState::Default, Substate::DefaultEnroute, dest, flags, ctx);
-                    } else {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                    }
-                    return false;
-                }
+                return self.on_unexpected_after_script_go_on(
+                    global,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventObjectAway => {
@@ -1302,7 +582,7 @@ impl EnemyAi {
                     if is_money_of_interest {
                         self.stolen_money_standard_procedure(thief.get(), ctx, tick);
                     } else {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -1342,38 +622,15 @@ impl EnemyAi {
             // the PC-wait state and bumps an X-mark emoticon; if already
             // waiting for the PC we acknowledge silently.
             StimulusType::CallMrOfficerIAmBack => {
-                let StimulusInfo::Human(soldier) = stimulus.info else {
-                    return false;
-                };
-                self.base.antagonist = Some(soldier);
-
-                // Dispatch on current state/substate.
-                if self.base.current_state == AiState::Seeking
-                    && self.base.current_substate == Substate::SeekingOfficerWaitForCharly
-                {
-                    return true;
-                }
-                let react = match self.base.current_state {
-                    AiState::Default => true,
-                    AiState::Seeking => matches!(
-                        self.base.current_substate,
-                        Substate::SeekingOfficerWaitForInstructedGroup
-                            | Substate::SeekingOfficerWaitForInstructedSoldier
-                    ),
-                    _ => false,
-                };
-                if !react {
-                    return false;
-                }
-
-                self.base.outbox.actor.halt = true;
-                self.base.face_entity(soldier, ctx);
-                self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForCharly);
-                self.base.say(Remark::FoundCharly);
-                self.base.launch_timer(20, ctx.frame);
-                self.base
-                    .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
-                return true;
+                return self.on_unexpected_call_mr_officer_iam_back(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             // A charly the chief was tracking just walked back into view.
@@ -1381,42 +638,15 @@ impl EnemyAi {
             // eligible substate set the charly memory still gets cleared
             // (default arm).
             StimulusType::CallCharlyIsBack => {
-                let StimulusInfo::Human(charly) = stimulus.info else {
-                    return false;
-                };
-                let s = self.base.current_substate;
-                let in_eligible_substate = s.is_seek_area()
-                    || matches!(
-                        s,
-                        Substate::SeekingSoldierReturnToOfficer
-                            | Substate::SeekingSoldierGiveReportToOfficer
-                            | Substate::SeekingBodyReactiontime
-                            | Substate::SeekingBody
-                            | Substate::SeekingNet
-                            | Substate::SeekingGroupGetInstructedByOfficer
-                    );
-                if in_eligible_substate {
-                    if self.base.my_reconnaissance_report.charly == Some(charly) {
-                        self.base.set_checkpoint_charly(None);
-                        self.base.face_entity(charly, ctx);
-                        self.base.clear_emoticon();
-                        self.seek_flags &= !SeekFlags::REPORT_OFFICER_AFTER;
-                        self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
-                        // Dead/unconscious charly gets a long stare; a
-                        // healthy one only the standard 20.
-                        let timer = ctx
-                            .entity_view(charly)
-                            .map(|v| v.is_dead || v.is_unconscious)
-                            .unwrap_or(false);
-                        self.base
-                            .launch_timer(if timer { 200 } else { 20 }, ctx.frame);
-                    }
-                } else {
-                    // Default arm: even when we can't react, drop the
-                    // stale checkpoint so the chief doesn't keep nagging
-                    // about a charly that's home.
-                    self.base.set_checkpoint_charly(None);
-                }
+                return self.on_unexpected_call_charly_is_back(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             // Officer notices a soldier in a brawl. Dispatched from the
@@ -1515,154 +745,16 @@ impl EnemyAi {
 
         match stimulus_type {
             StimulusType::EventView => {
-                if let StimulusInfo::Human(enemy) = stimulus.info {
-                    match self.base.current_state {
-                        AiState::Sleeping => {} // ignore (should not happen)
-                        AiState::Wondering | AiState::Default | AiState::Seeking => {
-                            if !self.dispatch_stimulus_to_whole_patrol(
-                                sim, stimulus, global, ctx, tick, grid,
-                            ) {
-                                self.event_view_standard_procedure(
-                                    sim,
-                                    enemy.get(),
-                                    global,
-                                    ctx,
-                                    tick,
-                                    grid,
-                                );
-                            }
-                        }
-                        AiState::Menacing => {
-                            if Some(crate::entity_id::PcId(enemy.get())) != self.guarded_pc {
-                                self.event_view_standard_procedure(
-                                    sim,
-                                    enemy.get(),
-                                    global,
-                                    ctx,
-                                    tick,
-                                    grid,
-                                );
-                            }
-                        }
-                        AiState::Fleeing => {
-                            // Ignore EVENT_VIEW while fleeing to leave the
-                            // map (merry man flee) or while running back
-                            // for arrow reserves.
-                            if self.base.current_substate == Substate::FleeingMerryManRunToLeaveMap
-                                || self.base.current_substate == Substate::FleeingMerryManLeaveMap
-                                || self.base.current_substate
-                                    == Substate::FleeingRunForArrowReserves
-                            {
-                                // ignore — committed to leaving / resupply
-                            } else if self.base.current_substate == Substate::FleeingHiding
-                                || self.fleeing_seen_enemy_counter < 20
-                            {
-                                self.fleeing_seen_enemy_counter += 1;
-                                // Indoors we escalate to a building-wide
-                                // alert; outdoors we kick off a directed
-                                // panic away from the enemy.
-                                if ctx.in_building {
-                                    self.request_enemy_in_house_alert(ctx);
-                                } else {
-                                    let center = ctx
-                                        .entity_view(enemy)
-                                        .map(|v| v.position)
-                                        .unwrap_or(self.base.seek_position);
-                                    self.panic_from_position(
-                                        center,
-                                        crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                                    );
-                                }
-                            }
-                        }
-                        AiState::Attacking => {
-                            // Per-substate dispatch. Do NOT fall through to
-                            // a generic recovery path.
-                            match self.base.current_substate {
-                                Substate::AttackingReactiontimeTurning
-                                | Substate::AttackingReactiontime
-                                | Substate::AttackingReactiontimeRunning
-                                | Substate::AttackingOverviewLookLeft
-                                | Substate::AttackingOverviewLookRight
-                                | Substate::AttackingTooProudToAttackOverview => {
-                                    // Just track the extra enemy.
-                                    // The original game's enemy list is unique: the
-                                    // preceding VIEW may already have rebuilt
-                                    // this target into the final visible set.
-                                    if !self.list_them.contains(&enemy.get()) {
-                                        self.list_them.push(enemy.get());
-                                    }
-                                }
-
-                                Substate::AttackingArcherWaitOnArcheryPath
-                                | Substate::AttackingArcherWaitOnBendPoint
-                                | Substate::AttackingArcherWaitOnArcheryPathBending => {
-                                    // Archer waiting on firing point —
-                                    // rebuild list, re-eval elevation,
-                                    // re-run battle planning.
-                                    self.reinitialize_them_list(ctx, tick);
-                                    self.enemy_seen_below = enemy_is_below_me(
-                                        ctx,
-                                        tick.owner_live_position.or(Some(ctx.position)),
-                                        tick.enemy_detectable_live_world_position(enemy.get())
-                                            .or_else(|| {
-                                                ctx.entity_view(enemy)
-                                                    .map(|view| view.detection_position_world)
-                                            }),
-                                    );
-                                    self.battle_decisions(sim, global, ctx, tick, grid);
-                                }
-
-                                Substate::AttackingApproachingSleepingEnemy
-                                | Substate::AttackingKillingSleepingEnemy => {
-                                    // On seeing a new enemy while
-                                    // approaching / killing a sleeping
-                                    // target, pivot to standard engage
-                                    // unless the sighted enemy is itself
-                                    // unconscious (still not a threat).
-                                    let target_unconscious = ctx
-                                        .entity_view(enemy)
-                                        .map(|v| v.is_unconscious)
-                                        .unwrap_or(false);
-                                    if !target_unconscious {
-                                        self.event_view_standard_procedure(
-                                            sim,
-                                            enemy.get(),
-                                            global,
-                                            ctx,
-                                            tick,
-                                            grid,
-                                        );
-                                    }
-                                }
-
-                                // Indoor door-fight — escalate to
-                                // building-wide alert.
-                                Substate::AttackingDoorFightDelay
-                                | Substate::AttackingDoorFightLeaving
-                                    if ctx.in_building =>
-                                {
-                                    self.request_enemy_in_house_alert(ctx);
-                                }
-
-                                Substate::AttackingRiderChargingGettingDistance
-                                | Substate::AttackingRiderChargingReturning
-                                | Substate::AttackingRiderChargingApproachingBlindly => {
-                                    // Rider mid-charge sees a new enemy —
-                                    // rebuild list, maybe re-target the
-                                    // charge, else fall back to
-                                    // battle planning.
-                                    self.reinitialize_them_list(ctx, tick);
-                                    if !self.maybe_make_rider_attack(ctx, tick, grid) {
-                                        self.battle_decisions(sim, global, ctx, tick, grid);
-                                    }
-                                }
-
-                                _ => {}
-                            }
-                        }
-                    }
-                }
+                return self.on_alerting_view(
+                    stimulus,
+                    global,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventSeesShadow => {
@@ -1676,73 +768,15 @@ impl EnemyAi {
             }
 
             StimulusType::EventArrowLaunched => {
-                // A shield bearer whose current substate says "I am
-                // holding / advancing under a shield" slams the shield up
-                // against the incoming arrow and pivots to face the
-                // shooter.
-                if let StimulusInfo::Human(shooter) = stimulus.info {
-                    // Protecting with a shield: protection is already in
-                    // WAITING_SHIELD?  false : true — i.e., only re-raise
-                    // if we're still mid-animation.
-                    // Advancing / RunningToPhalanx: always protect.
-                    let b_protect = match self.base.current_substate {
-                        Substate::AttackingProtectingWithShield => ctx
-                            .entity_view(self.base.me)
-                            .map(|v| v.current_animation != crate::order::OrderType::WaitingShield)
-                            .unwrap_or(false),
-                        Substate::AttackingAdvancingWithShield
-                        | Substate::AttackingRunningToPhalanx => true,
-                        _ => false,
-                    };
-
-                    if b_protect {
-                        use crate::element::Command;
-                        use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
-
-                        // Remember the shooter.
-                        self.base.primary_target = Some(shooter);
-
-                        self.base.stop_all();
-
-                        // Launch RaiseShieldInstantly with
-                        // ShieldDangerPoint = primary target pos.
-                        let shooter_pos = ctx
-                            .entity_view(shooter)
-                            .map(|v| v.position)
-                            .unwrap_or(self.base.seek_position);
-                        let owner = self.base.owner_entity_id;
-                        let mut elem =
-                            SequenceElement::new_generic(1, Command::RaiseShieldInstantly, owner);
-                        elem.set_property(
-                            Field::ShieldDangerPoint,
-                            FieldValue::Point3D {
-                                x: shooter_pos.x,
-                                y: shooter_pos.y,
-                                z: 0.0,
-                            },
-                        );
-                        let mut seq = Sequence::new();
-                        seq.append_element(elem);
-                        self.base.outbox.actor.launch_sequences.push(seq);
-
-                        // Original immediately repeats state assignment and
-                        // shield updates after the synchronous instant-raise
-                        // launch, then Focuses the shooter. Close that actor
-                        // prefix so the trailing Focus cannot overtake it at
-                        // the deferred owner boundary.
-                        self.base.outbox.actor.raise_shield_immediately = true;
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                &mut self.base.outbox.actor,
-                            )),
-                        );
-
-                        self.base.outbox.actor.set_focus(shooter);
-
-                        self.set_state(AiState::Attacking, Substate::AttackingProtectingWithShield);
-                        self.base.launch_timer(15, ctx.frame);
-                    }
-                }
+                return self.on_alerting_arrow_launched(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventHear => {
@@ -1885,157 +919,27 @@ impl EnemyAi {
             }
 
             StimulusType::EventGotHit => {
-                // Three arms: (1) swordfighting → add opponent if
-                // cross-camp & not already engaged; (2) MenacingPcInComa →
-                // return-to-PC transition with no opponent
-                // ENTER_SWORDFIGHT sequence; (3) generic else → stop_all
-                // + non-human filter + brawl-friend-in-trouble +
-                // attack_enemy plus dead-or-unconscious view-status assignment.
-                // The original game checks whether the human is swordfighting,
-                // which is derived from the live opponent list.  The AI
-                // substate can remain AttackingSwordfight briefly after the
-                // last opponent has been removed, so it is not an equivalent
-                // predicate here.
-                if ctx.is_swordfighting {
-                    if let StimulusInfo::Human(attacker) = stimulus.info {
-                        // Only enroll if cross-camp and not already an
-                        // opponent.
-                        let attacker_view = ctx.entity_view(attacker).unwrap_or_else(|| {
-                            panic!(
-                                "soldier {} EVENT_GOTHIT requires attacker {attacker} entity view",
-                                self.base.me
-                            )
-                        });
-                        let attacker_is_hostile = ctx.is_hostile_with(attacker_view.camp);
-                        if attacker_is_hostile {
-                            let already_opponent = self
-                                .find_fighter(self.base.me, tick)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "soldier {} EVENT_GOTHIT requires self fighter snapshot",
-                                        self.base.me
-                                    )
-                                })
-                                .has_as_opponent(attacker.get());
-                            if !already_opponent {
-                                self.base.outbox.actor.enter_swordfight =
-                                    Some(EnterSwordfightRequest::Direct(attacker));
-                            }
-                        }
-                    }
-                } else if self.base.current_substate == Substate::MenacingPcInComa {
-                    // Menacing soldier hit — pivot to
-                    // ATTACKING_RETURN_TO_OTHER_PC_AFTER_MENACING, queue
-                    // ENTER_SWORDFIGHT with no opponent + jump_line, face
-                    // the attacker.
-                    if let StimulusInfo::Human(attacker) = stimulus.info {
-                        self.set_state(
-                            AiState::Attacking,
-                            Substate::AttackingReturnToOtherPcAfterMenacing,
-                        );
-                        self.base.primary_target = Some(attacker);
-                        self.base.outbox.actor.enter_swordfight =
-                            Some(EnterSwordfightRequest::RaiseSword);
-                        self.base.outbox.actor.enter_swordfight_jump_line = None;
-                        // The original game sets element direction here, not
-                        // AI facing. The hit animation
-                        // owns the gradual turn, so write only its direction
-                        // goal; launching a standalone Turn is both too late
-                        // and gets postponed behind RECEIVE_HIT_DAMAGE.
-                        self.base.set_direction_toward_entity(attacker, ctx);
-                    }
-                } else {
-                    // Generic effect-of-hit branch.
-                    self.base.stop_all();
-                    if let StimulusInfo::Human(attacker) = stimulus.info {
-                        let attacker_view = ctx.entity_view(attacker);
-                        let attacker_is_soldier =
-                            attacker_view.map(|v| v.is_soldier()).unwrap_or(false);
-                        let attacker_in_brawl = attacker_view
-                            .map(|v| v.ai_substate.is_fight_for_money())
-                            .unwrap_or(false);
-                        if attacker_is_soldier {
-                            if attacker_in_brawl {
-                                // Brawl-friend hit me — capture as
-                                // friend_in_trouble, transition to
-                                // WonderingBrawlGotHit, clear emoticon.
-                                self.base.friend_in_trouble = Some(attacker);
-                                self.set_state(AiState::Wondering, Substate::WonderingBrawlGotHit);
-                                self.base.set_emoticon(EmoticonType::None);
-                            }
-                            // Soldier-attacker in non-brawl substate:
-                            // falls through the empty switch — no
-                            // primary_target / attack_enemy update; only
-                            // view-status assignment below applies.
-                        } else {
-                            // Non-soldier human attacker — retarget and
-                            // attack.
-                            self.base.primary_target = Some(attacker);
-                            self.attack_enemy(attacker.get(), ctx, tick, grid);
-                        }
-                        // Dead-or-unconscious view-status assignment
-                        // applies whenever the attacker info was human,
-                        // regardless of which sub-arm fired.
-                        // Keep this on the owner FIFO: in the Original this
-                        // statement is the tail of EVENT_GOTHIT, after every
-                        // stop-all / enemy-attack actor work has completed.
-                        // Close the actor prefix explicitly: enemy attack can
-                        // reach another stop-all request whose deferred halt notification
-                        // produces Unfocus. Leaving that Halt in the ordinary
-                        // actor outbox would apply Unfocus after this tail and
-                        // restore LookForward.
-                        if self.base.outbox.actor.has_boundary_work() {
-                            self.base.outbox.reentrant.owner_work.push(
-                                crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
-                                    &mut self.base.outbox.actor,
-                                )),
-                            );
-                        }
-                        self.base.outbox.reentrant.owner_work.push(
-                            crate::ai::AiOwnerWork::SetEyeStatus(
-                                crate::element::EyeStatus::DieOrGetUnconscious,
-                            ),
-                        );
-                    } else {
-                        // Non-human stimulus info — clear primary_target.
-                        self.base.primary_target = None;
-                    }
-                }
+                return self.on_alerting_got_hit(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventApple => {
-                let in_swordfight_state = self.base.current_substate.is_any_swordfight();
-                let may_interrupt = sim.config().item_gameplay.apple_combat_interrupt;
-                if (!in_swordfight_state || may_interrupt)
-                    && let StimulusInfo::Position(ref pos) = stimulus.info
-                {
-                    self.base.stop_all();
-                    // Original-game soldier apple-alert handling
-                    // rejects every swordfight substate. The optional rule
-                    // deliberately breaks the reciprocal fight before the
-                    // apple daze takes ownership of the actor.
-                    if may_interrupt && ctx.is_swordfighting {
-                        self.base.outbox.actor.quit_swordfight = true;
-                    }
-                    self.base.seek_position = *pos;
-                    self.set_state(AiState::Wondering, Substate::WonderingAppleSauceInTheVisor);
-                    // Spawn a
-                    // `RHTITBIT_WEAK_STUNNED` titbit at
-                    // the computed stars-effect point if one doesn't already exist on
-                    // this NPC.  The AI can't touch the titbit manager,
-                    // so we lean on `EngineInner::sync_apple_sauce_titbits`
-                    // which runs every frame, scans for any NPC in
-                    // `WonderingAppleSauceInTheVisor`, and calls
-                    // `add_weak_stunned` — which internally runs
-                    // `TitbitExists` guard + `compute_stars_point`.  The
-                    // effect is same-frame (AI ticks before `sync_titbits`
-                    // in `perform_hourglass_inner`).
-                    // Apple hits visor, vision is restored gradually via
-                    // Gradually reopen eyes (view cone grows from 5 back to
-                    // standard radius).
-                    self.base.outbox.actor.slowly_open_eyes = true;
-                    self.base.launch_timer(60, ctx.frame);
-                }
+                return self.on_alerting_apple(
+                    stimulus,
+                    ThinkEnv {
+                        sim,
+                        ctx,
+                        tick,
+                        grid,
+                    },
+                );
             }
 
             StimulusType::EventStone => {
@@ -2340,8 +1244,7 @@ impl EnemyAi {
         } else if self.enemy_seen_below {
             // Archer saw enemy from a wall — no turn, just a short 5-tick
             // reaction to aim the bow.
-            self.set_state(AiState::Attacking, Substate::AttackingReactiontime);
-            self.base.launch_timer(5, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingReactiontime, 5, ctx);
         } else {
             // Standard case — turn towards enemy with a 20-tick
             // the timer as the upper bound for the turn animation.
@@ -3163,8 +2066,12 @@ impl EnemyAi {
             // re-picks a target via battle-overview evaluation.
             AiState::Attacking => {
                 if ctx.is_swordfighting {
-                    self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                    self.base.launch_timer(20, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingSwordfight,
+                        20,
+                        ctx,
+                    );
                 } else {
                     self.get_battle_overview(0, ctx, tick);
                 }
@@ -3174,2272 +2081,1322 @@ impl EnemyAi {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind};
-    use crate::element::{Camp, Posture};
-    use crate::element_kinds::ObjectType;
-    use crate::order::OrderType;
+mod tests;
 
-    fn object_view(object_type: ObjectType) -> AiEntityView {
-        AiEntityView {
-            original_creation_order: 41,
-            position: Position {
-                x: 10.0,
-                y: 20.0,
-                sector: None,
-                level: 0,
-            },
-            detection_position: crate::coordinates::MapPoint::new(10.0, 20.0),
-            detection_position_world: crate::coordinates::WorldPoint3D::new(10.0, 20.0, 0.0),
-            direction: 0,
-            posture: Posture::Upright,
-            camp: Camp::default(),
-            is_pc: false,
-            is_robin: false,
-            is_vip: false,
-            is_beggar: false,
-            is_child: false,
-            kind: EntityKind::Bonus,
-            is_tower_guard: false,
-            is_swordfighting: false,
-            is_able_to_fight: false,
-            active: true,
-            is_unconscious: false,
-            action_state: crate::element::ActionState::Waiting,
-            is_moving_map: false,
-            passing_door: false,
-            obstacle_idx: None,
-            in_building: false,
-            building_sector: None,
-            script_locked: false,
-            forecasted_destination: crate::ai::PreparedForecastDestination::fixed(
-                Position::default(),
-                0,
-            ),
-            ai_state: AiState::Default,
-            ai_substate: Substate::DefaultOnPost,
-            current_animation: OrderType::WaitingUprightBored,
-            elevation: 0.0,
-            object_type,
-            is_dead: false,
-            is_carried: false,
-            is_archer: false,
-            is_rider: false,
-            stuck_under_net: false,
-            covering_nets: Vec::new(),
-            in_coma: false,
-            guard: None,
-            has_patrol_path: false,
-            initial_position: Position::default(),
-            number_of_arrows: 0,
-            rank: ProfileRank::None,
-            reported_to_officer: false,
-            looted_after_money_fight: false,
-            current_money: 0,
-            macro_in_progress: false,
-            path_current_waypoint_index: 0,
-            path_last_waypoint_index: 0,
-            path_forward_movement: true,
-            patrol_hiking_path_index: None,
-            interesting_object: None,
-            report_type: ReportType::Nothing,
-            report_seek_position: Position::default(),
-            report_seen_bodies: Vec::new(),
-            report_charly: None,
+impl EnemyAi {
+    fn on_unexpected_out_of_view(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+            ..
+        } = env;
+        if self.base.current_state == AiState::Attacking
+            && let StimulusInfo::Human(enemy) = stimulus.info
+        {
+            // Original compares the stimulus target strictly with
+            // the enemy AI's primary target here
+            // for this event. The actor's first
+            // opponent can legitimately differ while the AI is in a
+            // multi-opponent fight, so it must not stand in for that
+            // independent AI member.
+            let out_of_view_is_primary = Some(enemy) == self.base.primary_target;
+            tracing::trace!(
+                me = self.base.me,
+                frame = ctx.frame,
+                substate = ?self.base.current_substate,
+                enemy = enemy.get(),
+                primary_target = ?self.base.primary_target,
+                enemy_seen_below = self.enemy_seen_below,
+                list_them = ?self.list_them,
+                "OUTOFVIEW while attacking"
+            );
+            // Lost sight of enemy while attacking.
+            match self.base.current_substate {
+                Substate::AttackingBowObservingLoading
+                | Substate::AttackingBowObserving
+                | Substate::AttackingBowShooting
+                | Substate::AttackingBowLoading
+                | Substate::AttackingBowAiming => {
+                    // These five labels precede
+                    // `_ANY_SWORDFIGHT_SUBSTATE_` in Original and
+                    // deliberately fall through it unless the special
+                    // below-target recovery consumes the event.
+                    if self.enemy_seen_below {
+                        self.reinitialize_them_list(ctx, tick);
+                        return true;
+                    }
+                    if out_of_view_is_primary && self.is_detecting_360_degrees(enemy.get(), ctx) {
+                        return false;
+                    }
+                    // The swordfight labels in turn fall through the
+                    // moving-combat stare-vector guard before the
+                    // shared lost-enemy handler.
+                    if self.enemy_is_behind_me(ctx) {
+                        return false;
+                    }
+                    self.out_of_view_seek_handler(sim, enemy.get(), global, ctx, tick, grid);
+                }
+
+                s if s.is_any_swordfight() => {
+                    // _ANY_SWORDFIGHT_SUBSTATE_ 360° short-circuit
+                    // — if the target is still within the NPC's
+                    // real-radius "feel bubble" despite the cone
+                    // LOS drop, the event is silently ignored and
+                    // the NPC stays engaged. Without this check
+                    // the port bailed every time the view cone
+                    // flickered during `AttackingRunningToEnemy`,
+                    // cycling the NPC Attacking→Seeking→Attacking
+                    // every ~100 ms.
+                    //
+                    // NOTE: the previous port used
+                    // `find_fighter(enemy, tick)` as the proxy, but
+                    // `tick.nearby_fighters` is only populated on
+                    // the primary NPC-detection dispatch path — the
+                    // falling-edge EVENT_OUTOFVIEW dispatch built a
+                    // `tick_data` from `AiPerTickData::stub()`,
+                    // so `nearby_fighters` was empty and the check
+                    // always failed.  Using the `entity_views`
+                    // distance gate directly avoids that aliasing.
+                    if out_of_view_is_primary && self.is_detecting_360_degrees(enemy.get(), ctx) {
+                        // Still close — stay in swordfight.
+                        return false;
+                    }
+                    // The original game's any-swordfight-substate case has
+                    // no break here. A failed 360-degree check falls
+                    // through the same stare-vector guard used by
+                    // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
+                    // ADVANCING_WITH_SHIELD before reaching the
+                    // shared lost-enemy body.
+                    if self.enemy_is_behind_me(ctx) {
+                        return false;
+                    }
+                    self.out_of_view_seek_handler(sim, enemy.get(), global, ctx, tick, grid);
+                }
+
+                // REACTIONTIME_RUNNING / APPROACH_TO_OBSERVE /
+                // ADVANCING_WITH_SHIELD run an "enemy behind me"
+                // check first — if the NPC is just looking the
+                // wrong way while moving, the dot product of
+                // (lookVector · stareVector) is negative and the
+                // event is silently dropped. Only when the stare
+                // is actually in front of the NPC do we fall
+                // through to the seek handler below.
+                Substate::AttackingReactiontimeRunning
+                | Substate::AttackingApproachToObserve
+                | Substate::AttackingAdvancingWithShield => {
+                    if self.enemy_is_behind_me(ctx) {
+                        // Just out of view because we're looking
+                        // the wrong way — ignore the OUTOFVIEW.
+                        return false;
+                    }
+                    // Fall through to the seek handler below by
+                    // invoking the shared helper directly.
+                    self.out_of_view_seek_handler(sim, enemy.get(), global, ctx, tick, grid);
+                }
+
+                // Stationary / combat-posture substates. On
+                // EVENT_OUTOFVIEW, forecast the target's
+                // destination and either chase (via seek_area) or
+                // face + get_battle_overview.
+                //
+                // `ATTACKING_REACTIONTIME_TURNING` is explicitly
+                // excluded and falls to the default reinitialization
+                // branch. The running/walking/charging substates are
+                // members of the original game's any-swordfight-substate group
+                // macro and were handled by the earlier arm.
+                Substate::AttackingReactiontime
+                | Substate::AttackingQuittingSwordfight
+                | Substate::AttackingReserve
+                | Substate::AttackingLastReserve
+                | Substate::AttackingObserve
+                | Substate::AttackingObserveAndMove
+                | Substate::AttackingHitting
+                | Substate::AttackingProtectingWithShield
+                | Substate::AttackingPhalanx
+                | Substate::AttackingTooProudToAttack
+                | Substate::AttackingTooProudToAttackApproach => {
+                    self.out_of_view_seek_handler(sim, enemy.get(), global, ctx, tick, grid);
+                }
+
+                // Do-nothing substates.
+                Substate::AttackingTooProudToAttackRetire
+                | Substate::AttackingTooProudToAttackRetireTurn
+                | Substate::AttackingReactiontimeBending => {}
+
+                // Wait-for-avenger substates. Original
+                // sweeps around the
+                // waiting soldier itself, not the
+                // remembered avenger position it is staring at, and
+                // takes the plain battle-overview default flags
+                // (0) rather than the FAST_OVERVIEW variant used by
+                // the sight/hearing entry points.
+                Substate::AttackingWaitForAvengerOnRoof => {
+                    self.reinitialize_them_list(ctx, tick);
+                    if self.list_them.is_empty() {
+                        self.seek_area(
+                            sim,
+                            ctx.position,
+                            parameters_ai::AI_LOST_ENEMY_SEEK_RADIUS as u16,
+                            SeekFlags::empty(),
+                            UNDEFINED_DIRECTION,
+                            global,
+                            ctx,
+                            tick,
+                        );
+                    } else {
+                        self.get_battle_overview(0, ctx, tick);
+                    }
+                }
+
+                _ => {
+                    // Default — just reinitialize them list.
+                    self.reinitialize_them_list(ctx, tick);
+                }
+            }
         }
+        false
     }
 
-    #[test]
-    fn failed_fleeing_panic_move_uses_panic_seek_fallback() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(68);
-        ai.base.current_state = AiState::Fleeing;
-        ai.base.current_substate = Substate::FleeingPanic;
-        ai.base.lasting_panic_runs = 7;
-        ai.base.set_alert_status(crate::ai::AlertLevel::Red);
-
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.base.current_state, AiState::Fleeing);
-        assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
-        assert_eq!(ai.base.view_alert_status, crate::ai::AlertLevel::Red);
-        assert!(ai.base.outbox.actor.panic_seek_fallback);
+    fn on_unexpected_couldnt_reach_point(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
+        // Pathfinding failure.
+        match self.base.current_substate {
+            // Seek point unreachable → try next.
+            Substate::SeekingSeekpoint => {
+                self.seek_next_point(sim, global, ctx, tick);
+            }
+            // Body unreachable → seek area.
+            Substate::SeekingBody => {
+                if !self.examine_other_bodies(ctx, tick) {
+                    self.seek_area(
+                        sim,
+                        ctx.position,
+                        parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                        SeekFlags::empty(),
+                        UNDEFINED_DIRECTION,
+                        global,
+                        ctx,
+                        tick,
+                    );
+                }
+            }
+            Substate::AttackingObserve => {
+                // Ignore.
+            }
+            Substate::AttackingRunningToLadder
+                if stimulus.self_origin == crate::ai::SelfStimulusOrigin::EngineCompletion
+                    && self.base.timer_is_running
+                    && self.base.substate_at_last_timer_launch
+                        == Substate::AttackingRunningToLadder
+                    && self.base.when_does_timer_ring == ctx.frame.saturating_add(30) =>
+            {
+                // This is specifically the engine-completion bridge,
+                // not an Original movement condolation. The latter
+                // enters this handler with Condolation provenance and
+                // must take the generic default arm below.
+                //
+                // The lift-entry movement during enemy approach reconsideration is
+                // followed immediately by timer launch and return
+                // immediately afterward. Control then
+                // returns through enemy attack to DECISION_FIGHT, whose
+                // couldn't-reachpoint arm switches to DECISION_OBSERVE
+                // in the failed-reach branch. The failed
+                // observe route takes the inline avenger-on-roof
+                // fallback at lines 7973-7990. DECISION_FIGHT has not
+                // registered its log line at this source point; the
+                // lift branch's 30-frame timer is its exact surviving
+                // provenance. Rust learns the first route result only
+                // at this owner boundary, so resume that source-ordered
+                // failure tail here.
+                let target_position = ctx
+                    .entity_view(self.base.primary_target)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "ladder route-failure target {:?} disappeared",
+                            self.base.primary_target
+                        )
+                    })
+                    .position;
+                let target = self.required_primary_target("resuming a failed ladder route");
+                let avenger_wait_position =
+                    tick.avenger_wait_position_for(self.base.primary_target);
+                self.base.couldnt_reachpoint = true;
+                if avenger_wait_position.is_some() {
+                    self.resume_reconsider_enemy_approach_after_go_near(
+                        target_position,
+                        avenger_wait_position,
+                        ctx,
+                    );
+                    // The original game constructs and settles this roof approach
+                    // before DECISION_OBSERVE returns. Route the typed
+                    // actor effects through the existing synchronous
+                    // owner boundary so its actual verdict is visible
+                    // to this frame's decision-tick completion.
+                    if self.base.outbox.actor.has_boundary_work() {
+                        self.base.outbox.reentrant.owner_work.push(
+                            crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                                &mut self.base.outbox.actor,
+                            )),
+                        );
+                    }
+                } else {
+                    // DECISION_FIGHT clears the failed lift approach
+                    // and changes to DECISION_OBSERVE. Its observe
+                    // Approach movement fails synchronously too in this no-roof
+                    // case, so the following source tail installs
+                    // observation approach/timer 50 while retaining the
+                    // failure latch for tick completion's generic overview.
+                    self.resume_battle_observe_after_go_near(
+                        target.get(),
+                        target_position,
+                        None,
+                        ctx,
+                    );
+                }
+            }
+            Substate::AttackingApproachToObserve
+                if self.base.ai_log.iter().rev().any(|line| {
+                    line.frame == ctx.frame
+                        && line.line_type == LogLineType::BattleDecision
+                        && line.info == Decision::Observe as u16
+                }) =>
+            {
+                // A same-frame failure here is the delayed result of
+                // DECISION_OBSERVE's approach. The original game constructs the
+                // route inside that statement and tests
+                // unreachable-point flag immediately after the state change;
+                // Rust can only discover a local Move failure after
+                // the typed tail has entered the observation approach.
+                // Resume that source-local roof fallback instead of
+                // letting the staging delay turn it into the generic
+                // attacking emergency overview.
+                if let Some(wait_position) =
+                    tick.avenger_wait_position_for(self.base.primary_target)
+                {
+                    let target_position = ctx
+                        .entity_view(self.base.primary_target)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "observe route-failure target {:?} disappeared",
+                                self.base.primary_target
+                            )
+                        })
+                        .position;
+                    self.go_near(
+                        AiState::Attacking,
+                        Substate::AttackingRunToAvengerOnRoof,
+                        wait_position,
+                        50,
+                        GotoFlags::RUN,
+                        ctx,
+                    );
+                    self.base.seek_position = target_position;
+                } else {
+                    self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
+                }
+            }
+            Substate::FleeingPanic => {
+                // Original routes a failed panic-run movement back
+                // through the shared FLEEING_PANIC state machine.
+                // The generic emergency routine would instead return
+                // a fleeing soldier to duty and discard the remaining
+                // panic runs.
+                self.base
+                    .think_expected_event_common_stuff(sim, stimulus, ctx);
+            }
+            _ => {
+                self.couldnt_reachpoint_emergency_routine(sim, global, ctx, tick);
+            }
+        }
+        false
     }
 
-    #[test]
-    fn event_view_uses_owner_boundary_position_instead_of_stale_live_map() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        let mut enemy_view = object_view(ObjectType::None);
-        enemy_view.kind = EntityKind::Pc;
-        enemy_view.is_pc = true;
-        enemy_view.position = Position {
-            x: 10.0,
-            y: 0.0,
-            sector: None,
-            level: 0,
-        };
-        enemy_view.detection_position = crate::coordinates::MapPoint::new(100.0, 0.0);
-        enemy_view.detection_position_world =
-            crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0);
-        let mut views = AiEntityViewMap::new();
-        views.insert(12, enemy_view);
-        let ctx = AiContext {
-            position: Position::default(),
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
+    fn on_unexpected_fit_again(&mut self, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { sim, ctx, tick, .. } = env;
+        // Recovered from unconsciousness.
+        //
+        // Engine-facing calls share the owner-work FIFO with
+        // state changes so their exact decision-tick order survives the
+        // temporary Rust borrow boundary.
+        // The money-fight branch routes to `return_to_duty` and
+        // clears `knocked_out_in_money_fight` so the victor
+        // cleanly rejoins their duty loop instead of getting stuck
+        // in `SleepingAwakening`.
+        if self.base.current_substate != Substate::SleepingUnconscious {
+            // The dispatch only fires from SLEEPING_UNCONSCIOUS;
+            // any other substate falls through as a no-op.
+            return false;
+        }
 
-        let mut tick = AiPerTickData::stub();
-        tick.owner_live_position = Some(ctx.position);
-        tick.enemy_detectable_positions.push((
-            12,
-            Position {
-                x: 100.0,
-                y: 0.0,
-                sector: None,
-                level: 0,
+        let knocked_out_in_money_fight = self.base.knocked_out_in_money_fight;
+        self.base.outbox.reentrant.owner_work.push(
+            crate::ai::AiOwnerWork::RestoreDetectableObjects {
+                knocked_out_in_money_fight,
             },
-        ));
-        assert!(tick.enemy_detectable_live_world_positions.is_empty());
-
-        ai.event_view_standard_procedure(
-            &sim,
-            12,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
         );
-
-        assert_eq!(ai.base.current_state, AiState::Attacking);
-        assert!(
-            !ai.enemy_seen_below,
-            "non-optical dispatch must use the concrete entity-view geometry when no live detectable list was prepared"
-        );
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingReactiontimeTurning
-        );
-    }
-
-    #[test]
-    fn moving_fast_event_view_distance_uses_literal_owner_position_during_door_pass() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(134);
-        let enemy_position = Position {
-            x: 1648.9281,
-            y: 1804.8717,
-            sector: crate::position_interface::SectorHandle::new(0),
-            level: 0,
-        };
-        let mut enemy_view = object_view(ObjectType::None);
-        enemy_view.kind = EntityKind::Pc;
-        enemy_view.is_pc = true;
-        enemy_view.position = enemy_position;
-        enemy_view.detection_position =
-            crate::coordinates::MapPoint::new(enemy_position.x, enemy_position.y);
-        enemy_view.detection_position_world =
-            crate::coordinates::WorldPoint3D::new(enemy_position.x, enemy_position.y, 0.0);
-        let mut views = AiEntityViewMap::new();
-        views.insert(342, enemy_view);
-        let ctx = AiContext {
-            // AI Position(owner) is already forecast onto the selected
-            // door's far side, but the original game's enemy distance directly reads
-            // the still-interpolating element position instead.
-            position: Position {
-                x: 1151.0,
-                y: 1817.0,
-                sector: crate::position_interface::SectorHandle::new(77),
-                level: 1,
-            },
-            self_action_state: crate::element::ActionState::MovingFast,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.owner_live_position = Some(Position {
-            x: 1171.3004,
-            y: 1846.5278,
-            sector: crate::position_interface::SectorHandle::new(0),
-            level: 0,
-        });
-        tick.enemy_detectable_positions.push((342, enemy_position));
-
-        ai.event_view_standard_procedure(
-            &sim,
-            342,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingReactiontimeRunning
-        );
-        assert_eq!(
-            ai.base
-                .outbox
-                .actor
-                .orders
-                .last()
-                .expect("moving-fast enemy sighting queues approach movement")
-                .tolerance,
-            161.0
-        );
-    }
-
-    #[test]
-    fn moving_fast_event_view_distance_uses_stretched_world_3d_positions() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(70);
-        let enemy_position = Position {
-            x: 57.0,
-            y: 245.0,
-            sector: crate::position_interface::SectorHandle::new(0),
-            level: 0,
-        };
-        let mut enemy_view = object_view(ObjectType::None);
-        enemy_view.kind = EntityKind::Pc;
-        enemy_view.is_pc = true;
-        enemy_view.position = enemy_position;
-        enemy_view.elevation = 36.001007;
-        enemy_view.detection_position =
-            crate::coordinates::MapPoint::new(enemy_position.x, enemy_position.y);
-        enemy_view.detection_position_world = crate::coordinates::WorldPoint3D::new(
-            enemy_position.x,
-            enemy_position.y + 36.001007,
-            36.001007,
-        );
-        let mut views = AiEntityViewMap::new();
-        views.insert(132, enemy_view);
-        let ctx = AiContext {
-            position: Position {
-                x: 277.4972,
-                y: 379.12796,
-                sector: crate::position_interface::SectorHandle::new(0).map(|sector| {
-                    sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
-                }),
-                level: 0,
-            },
-            elevation: 1.387514,
-            self_action_state: crate::element::ActionState::MovingFast,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.owner_live_position = Some(ctx.position);
-        tick.enemy_detectable_positions.push((132, enemy_position));
-
-        ai.event_view_standard_procedure(
-            &sim,
-            132,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base
-                .outbox
-                .actor
-                .orders
-                .last()
-                .expect("moving-fast enemy sighting queues approach movement")
-                .tolerance,
-            94.0
-        );
-    }
-
-    #[test]
-    fn event_view_near_gate_uses_world_y_and_elevation() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        // Make the immediate battle-planning path terminate predictably once
-        // it observes the empty visible-enemy list.
-        ai.combat_trainer = true;
-
-        let mut enemy_view = object_view(ObjectType::None);
-        enemy_view.kind = EntityKind::Pc;
-        enemy_view.is_pc = true;
-        enemy_view.position = Position {
-            x: 609.0,
-            y: 2299.0,
-            sector: None,
-            level: 2,
-        };
-        enemy_view.elevation = 150.001;
-        enemy_view.detection_position = crate::coordinates::MapPoint::new(609.0, 2299.0);
-        enemy_view.detection_position_world =
-            crate::coordinates::WorldPoint3D::new(609.0, 2449.001, 150.001);
-        let mut views = AiEntityViewMap::new();
-        let mut owner_view = object_view(ObjectType::None);
-        owner_view.kind = EntityKind::Soldier;
-        owner_view.detection_position_world =
-            crate::coordinates::WorldPoint3D::new(575.6, 2465.001, 105.001);
-        views.insert(1, owner_view);
-        views.insert(12, enemy_view);
-        let ctx = AiContext {
-            position: Position {
-                x: 575.6,
-                y: 2360.0,
-                sector: None,
-                level: 1,
-            },
-            elevation: 105.001,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        let mut tick = AiPerTickData::stub();
-        tick.owner_live_position = Some(ctx.position);
-        tick.enemy_detectable_positions.push((
-            12,
-            Position {
-                x: 609.0,
-                y: 2299.0,
-                sector: None,
-                level: 2,
-            },
-        ));
-
-        ai.event_view_standard_procedure(
-            &sim,
-            12,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        // Raw map Y differs by 61 (and would take the turn branch), while
-        // Original world Y differs by only 16 after adding elevation.  The
-        // 45-unit elevation component keeps the 3D max norm below 50.
-        assert_ne!(
-            ai.base.current_substate,
-            Substate::AttackingReactiontimeTurning
-        );
-    }
-
-    #[test]
-    fn event_view_near_gate_uses_literal_target_position_during_door_pass() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(112);
-
-        let mut enemy_view = object_view(ObjectType::None);
-        enemy_view.kind = EntityKind::Pc;
-        enemy_view.is_pc = true;
-        // AI Position(enemy): the destination side of the active door pass,
-        // close enough to take the immediate-battle branch if used here.
-        enemy_view.position = Position {
-            x: 663.75,
-            y: 1421.5,
-            sector: None,
-            level: 2,
-        };
-        // Enemy world position: the still-interpolating body position read by
-        // maximum-norm distance, more than 50 units from the observing soldier.
-        enemy_view.detection_position = crate::coordinates::MapPoint::new(560.9536, 1422.7441);
-        enemy_view.detection_position_world =
-            crate::coordinates::WorldPoint3D::new(560.9536, 1552.7451, 130.001);
-        enemy_view.elevation = 130.001;
-        let mut views = AiEntityViewMap::new();
-        views.insert(170, enemy_view);
-        let ctx = AiContext {
-            position: Position {
-                x: 657.0,
-                y: 1400.0,
-                sector: None,
-                level: 3,
-            },
-            elevation: 143.06665,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.owner_live_position = Some(Position {
-            x: 654.72314,
-            y: 1403.2888,
-            sector: None,
-            level: 3,
-        });
-        tick.enemy_detectable_positions.push((
-            170,
-            Position {
-                x: 663.75,
-                y: 1421.5,
-                sector: None,
-                level: 2,
-            },
-        ));
-
-        ai.event_view_standard_procedure(
-            &sim,
-            170,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingReactiontimeTurning
-        );
-        assert!(ai.base.list_us.is_empty());
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "officer 1 EVENT_SEES_SOLDIER requires target 42 in camp soldier roster"
-    )]
-    fn review_officer_sees_soldier_requires_target_in_live_soldier_roster() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.soldier_profile_rank = ProfileRank::Officer;
-        ai.set_state(AiState::Default, Substate::DefaultOnPost);
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventSeesSoldier, 42),
-            &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        );
-    }
-
-    #[test]
-    fn review_call_go_to_officer_preserves_original_boolean_gate() {
-        let sim = crate::sim_rng::test_context();
-        let stimulus = Stimulus::with_human(StimulusType::CallGoToOfficer, 42);
-
-        let mut available = EnemyAi::new(1);
-        available.soldier_profile_rank = ProfileRank::Soldier;
-        assert!(available.think_unexpected_event(
-            &sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        ));
-        assert_eq!(
-            available.base.current_substate,
-            Substate::SeekingCharlySentToOfficer
-        );
-        assert_eq!(available.base.antagonist, Some(AiEntityHandle::new(42)));
-        assert!(available.reported_to_officer);
-
-        let mut busy = EnemyAi::new(2);
-        busy.soldier_profile_rank = ProfileRank::Soldier;
-        busy.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-        assert!(!busy.think_unexpected_event(
-            &sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        ));
-    }
-
-    #[test]
-    fn found_charly_assigns_friend_only_after_speech_returns() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.base.antagonist = Some(AiEntityHandle::new(90));
-        ai.set_state(AiState::Seeking, Substate::SeekingGroupCalledByOfficer);
-        ai.base.outbox.reentrant.owner_work.clear();
-
-        let mut charly = object_view(ObjectType::None);
-        charly.kind = EntityKind::Soldier;
-        charly.rank = ProfileRank::Soldier;
-        charly.ai_state = AiState::Seeking;
-        charly.ai_substate = Substate::SeekingGroupCalledByOfficer;
-        let mut views = AiEntityViewMap::new();
-        views.insert(42, charly);
-        let ctx = AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.event_sees_charly_standard_procedure(
-            &sim,
-            AiEntityHandle::new(42),
-            &ctx,
-            &AiPerTickData::stub(),
-        );
-
-        assert_eq!(ai.base.friend_in_trouble, None);
-        assert!(matches!(
-            ai.base.outbox.reentrant.owner_work.as_slice(),
-            [
-                AiOwnerWork::StateChange(_),
-                AiOwnerWork::ActorEffects(effects),
-                AiOwnerWork::Speech(AiSpeechAttempt {
-                    remark: Remark::FoundCharly,
-                    ..
-                }),
-                AiOwnerWork::ResumeSendCharlyAfterSpeech { charly: 42 }
-            ] if effects.unalert_near_charly_seekers
-                == Some(CharlySeekerTarget::Npc(AiEntityHandle::new(42)))
-        ));
-    }
-
-    #[test]
-    fn sync_reunion_uses_enroute_partners_last_waypoint() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(89);
-        ai.set_state(AiState::Default, Substate::DefaultLookingSidewardsForCharly);
-        ai.base.synchronize_charly = Some(AiEntityHandle::new(96));
-        ai.base.synchronize_index = 3;
-        ai.base.macro_in_progress = true;
-        ai.base.macro_command = vec![MacroOpcode::Wait as u8, 100, 0];
-        ai.base.macro_command_offset = 0;
-        ai.base.number_of_remaining_macro_bytes = 3;
-
-        // Enemy friend-check initialization checks *last* while an
-        // actor is still SUBSTATE_DEFAULT_ENROUTE.  Being stationary at the
-        // requested current waypoint is not enough: the actor has not yet
-        // crossed the reach-point boundary that updates the observable path
-        // state.
-        let mut partner = object_view(ObjectType::None);
-        partner.kind = EntityKind::Soldier;
-        partner.ai_state = AiState::Default;
-        partner.ai_substate = Substate::DefaultEnroute;
-        partner.macro_in_progress = false;
-        partner.path_current_waypoint_index = 3;
-        partner.path_last_waypoint_index = 2;
-        partner.is_moving_map = false;
-        let mut views = AiEntityViewMap::new();
-        views.insert(96, partner);
-        let ctx = AiContext {
-            frame: 1_072,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.event_sees_charly_standard_procedure(
-            &sim,
-            AiEntityHandle::new(96),
-            &ctx,
-            &AiPerTickData::stub(),
-        );
-
-        assert_eq!(ai.base.current_substate, Substate::DefaultSynchronizing);
-        assert_eq!(ai.base.macro_command_offset, 0);
-        assert_eq!(ai.base.number_of_remaining_macro_bytes, 3);
-        assert!(!ai.base.macro_timer_is_running);
-        assert!(matches!(
-            ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
-            [CrossNpcAction::RegisterSynchronizingActor {
-                target: 96,
-                actor: 89,
-            }]
-        ));
-    }
-
-    #[test]
-    fn got_hit_uses_live_swordfight_relationship_not_stale_ai_substate() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Pc;
-        attacker.camp = Camp::Royalists;
-        attacker.position = Position::default();
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            camp: Camp::Lacklandists,
-            is_swordfighting: false,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.fighter_registry
-            .push(crate::ai_enemy::FighterSnapshot {
-                handle: 1,
-                ..crate::ai_enemy::FighterSnapshot::default()
-            });
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert!(
-            !ai.base.outbox.actor.has_boundary_work(),
-            "all actor effects authored before the got-hit event's final view-status assignment must be closed as a synchronous prefix"
-        );
-        assert!(matches!(
-            ai.base
-                .outbox
-                .reentrant
-                .owner_work
-                .iter()
-                .rev()
-                .nth(1),
-            Some(crate::ai::AiOwnerWork::ActorEffects(effects)) if effects.halt
-        ));
-        assert!(matches!(
-            ai.base.outbox.reentrant.owner_work.last(),
-            Some(crate::ai::AiOwnerWork::SetEyeStatus(
-                crate::element::EyeStatus::DieOrGetUnconscious
-            ))
-        ));
-    }
-
-    #[test]
-    fn classic_apple_rule_keeps_a_swordfighter_engaged() {
-        let config = crate::engine::SimConfig {
-            item_gameplay: crate::gameplay_config::ItemGameplayConfig::classic(),
-            ..Default::default()
-        };
-        let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
-        let mut ai = EnemyAi::new(1);
-        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-        let ctx = AiContext {
-            is_swordfighting: true,
-            frame: 50,
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_position(StimulusType::EventApple, Position::default()),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-        assert!(!ai.base.outbox.actor.quit_swordfight);
-    }
-
-    #[test]
-    fn rebalanced_apple_interrupts_then_owns_the_fighter_state() {
-        let mut config = crate::engine::SimConfig {
-            item_gameplay: crate::gameplay_config::ItemGameplayConfig::classic(),
-            ..Default::default()
-        };
-        config.item_gameplay.apple_combat_interrupt = true;
-        let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
-        let mut ai = EnemyAi::new(1);
-        ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-        let ctx = AiContext {
-            is_swordfighting: true,
-            frame: 50,
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_position(StimulusType::EventApple, Position::default()),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.base.current_state, AiState::Wondering);
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::WonderingAppleSauceInTheVisor
-        );
-        let state_change = ai
-            .base
+        self.base
             .outbox
             .reentrant
             .owner_work
-            .iter()
-            .rev()
-            .find_map(|work| match work {
-                crate::ai::AiOwnerWork::StateChange(notification) => Some(notification),
-                _ => None,
-            })
-            .expect("apple interrupt queues the Wondering state boundary");
-        let interrupt_prefix = state_change
-            .actor_effects_before_callback
-            .as_ref()
-            .expect("apple interruption applies its actor effects before state change");
-        assert!(interrupt_prefix.halt);
-        assert!(interrupt_prefix.quit_swordfight);
-        assert!(ai.base.outbox.actor.slowly_open_eyes);
-        assert_eq!(ai.base.when_does_timer_ring, 110);
-    }
+            .push(crate::ai::AiOwnerWork::InformResurrection);
+        self.base.clear_emoticon();
 
-    #[test]
-    fn got_hit_while_swordfighting_requests_direct_entry_against_new_attacker() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
-        attacker.camp = Camp::Royalists;
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            camp: Camp::Lacklandists,
-            is_swordfighting: true,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.fighter_registry
-            .push(crate::ai_enemy::FighterSnapshot {
-                handle: 1,
-                opponent_handles: vec![3],
-                ..crate::ai_enemy::FighterSnapshot::default()
-            });
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.outbox.actor.enter_swordfight,
-            Some(EnterSwordfightRequest::Direct(AiEntityHandle::new(2))),
-            "the original game enters swordfight directly from the hit event"
-        );
-    }
-
-    #[test]
-    fn got_hit_while_menacing_sets_hit_animation_direction_goal_without_turn_order() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.set_state(AiState::Menacing, Substate::MenacingPcInComa);
-
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
-        attacker.position = Position {
-            x: 716.74176,
-            y: 252.32974,
-            sector: None,
-            level: 0,
-        };
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            position: Position {
-                x: 756.42523,
-                y: 205.49872,
-                sector: None,
-                level: 0,
-            },
-            direction: 15,
-            is_swordfighting: false,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(
-            ai.base.outbox.actor.set_direction,
-            Some(9),
-            "Original direction assignment faces the hitter while RECEIVE_HIT_DAMAGE remains installed"
-        );
-        assert!(
-            ai.base.outbox.actor.orders.is_empty(),
-            "direct direction assignment must not launch a standalone turn sequence"
-        );
-        assert_eq!(
-            ai.base.outbox.actor.enter_swordfight,
-            Some(EnterSwordfightRequest::RaiseSword)
-        );
-    }
-
-    #[test]
-    fn got_hit_while_swordfighting_ignores_existing_opponent() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
-        attacker.camp = Camp::Royalists;
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            camp: Camp::Lacklandists,
-            is_swordfighting: true,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.fighter_registry
-            .push(crate::ai_enemy::FighterSnapshot {
-                handle: 1,
-                opponent_handles: vec![2],
-                ..crate::ai_enemy::FighterSnapshot::default()
-            });
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
-    }
-
-    #[test]
-    #[should_panic(expected = "soldier 1 EVENT_GOTHIT requires attacker 2 entity view")]
-    fn got_hit_while_swordfighting_requires_attacker_entity_view() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        let ctx = AiContext {
-            is_swordfighting: true,
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.fighter_registry
-            .push(crate::ai_enemy::FighterSnapshot {
-                handle: 1,
-                ..crate::ai_enemy::FighterSnapshot::default()
-            });
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-    }
-
-    #[test]
-    fn got_hit_by_friend_does_not_require_fighter_snapshot() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
-        attacker.camp = Camp::Lacklandists;
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            camp: Camp::Lacklandists,
-            is_swordfighting: true,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
-    }
-
-    #[test]
-    #[should_panic(expected = "soldier 1 EVENT_GOTHIT requires self fighter snapshot")]
-    fn got_hit_while_swordfighting_requires_self_fighter_snapshot() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Soldier;
-        attacker.camp = Camp::Royalists;
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            camp: Camp::Lacklandists,
-            is_swordfighting: true,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-    }
-
-    #[test]
-    fn got_hit_can_begin_close_swordfight_from_default_state() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        assert_eq!(ai.base.current_state, AiState::Default);
-
-        let mut attacker = object_view(ObjectType::None);
-        attacker.kind = EntityKind::Pc;
-        attacker.is_pc = true;
-        attacker.camp = Camp::Royalists;
-        attacker.position = Position::default();
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, attacker);
-        let ctx = AiContext {
-            camp: Camp::Lacklandists,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.fighter_registry
-            .push(crate::ai_enemy::FighterSnapshot {
-                handle: 1,
-                ..crate::ai_enemy::FighterSnapshot::default()
-            });
-
-        ai.think_alerting_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventGotHit, 2),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
-            ai.base
+        if knocked_out_in_money_fight {
+            self.base.knocked_out_in_money_fight = false;
+            self.return_to_duty_default(sim, ctx, tick);
+        } else {
+            self.set_state(AiState::Sleeping, Substate::SleepingAwakening);
+            self.base
                 .outbox
                 .reentrant
                 .owner_work
-                .iter()
-                .find_map(|work| match work {
-                    crate::ai::AiOwnerWork::StateChange(notification) => notification
-                        .actor_effects_before_callback
-                        .as_ref()
-                        .and_then(|effects| effects.enter_swordfight),
-                    _ => None,
+                .push(crate::ai::AiOwnerWork::LaunchTimer {
+                    frames: parameters_ai::AI_WAKEUP_IDLING_TIME as u32,
+                    current_frame: ctx.frame,
+                });
+            self.base
+                .outbox
+                .reentrant
+                .owner_work
+                .push(crate::ai::AiOwnerWork::SetEyeStatus(
+                    crate::element::EyeStatus::LookForward,
+                ));
+        }
+        false
+    }
+
+    fn on_unexpected_sees_soldier(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { ctx, tick, .. } = env;
+        // EVENT_SEES_SOLDIER: soldier-spotting-fellow-soldier →
+        // "go tell the officer" / "call this soldier over"
+        // coordination flow.
+        let StimulusInfo::Human(antagonist) = stimulus.info else {
+            return false;
+        };
+
+        // State/substate reaction gate.
+        let react = match self.base.current_state {
+            AiState::Default => true,
+            AiState::Seeking => matches!(
+                self.base.current_substate,
+                Substate::SeekingOfficerLookingForSoldiers1
+                    | Substate::SeekingOfficerLookingForSoldiers1Sidewards
+                    | Substate::SeekingOfficerLookingForSoldiers2
+                    | Substate::SeekingOfficerLookingForSoldiers2Sidewards
+                    | Substate::SeekingOfficerLookingForSoldiers3
+                    | Substate::SeekingOfficerLookingForSoldiers3Sidewards
+                    | Substate::SeekingRunningToOfficer
+            ),
+            _ => false,
+        };
+        if !react {
+            return false;
+        }
+
+        self.base.antagonist = Some(antagonist);
+        let antagonist_cs = tick
+            .camp_soldiers
+            .iter()
+            .find(|cs| cs.handle == antagonist.get());
+
+        match self.get_rank() {
+            ProfileRank::Soldier => {
+                self.base
+                    .outbox
+                    .reentrant
+                    .cross_npc_actions
+                    .push(CrossNpcAction::RequestAlert {
+                        target: antagonist.get(),
+                        caller: self.base.me,
+                        continuation: crate::ai::AlertContinuation::SoldierSawOfficer,
+                    });
+            }
+            ProfileRank::Officer => {
+                // Officer sees soldier → assert that the seen
+                // target is a soldier, gate on
+                // soldier-call eligibility, then face + transition
+                // into the SeekingOfficerCallSoldier handshake.
+                let cs = antagonist_cs.unwrap_or_else(|| {
+                    panic!(
+                        "officer {} EVENT_SEES_SOLDIER requires target {} in camp soldier roster",
+                        self.base.me, antagonist
+                    )
+                });
+                assert_eq!(
+                    cs.rank,
+                    ProfileRank::Soldier,
+                    "officer {} EVENT_SEES_SOLDIER target {} must have soldier rank",
+                    self.base.me,
+                    antagonist
+                );
+                if self.can_call_this_soldier(cs, ctx, tick) {
+                    self.face_npc(antagonist.get(), ctx);
+                    // Transition to
+                    // SUBSTATE_SEEKING_OFFICER_CALL_SOLDIER — the
+                    // EventDone arm of that substate sends
+                    // CALL_HEY and launches the soldier-wait
+                    // handshake.
+                    self.set_state(AiState::Seeking, Substate::SeekingOfficerCallSoldier);
+                    // Remove all FRIEND detectables — committed to
+                    // this soldier, drop the rest of the friend
+                    // list so further EVENT_SEES_SOLDIER calls
+                    // don't pre-empt.
+                    self.base
+                        .outbox
+                        .actor
+                        .delete_detectable_type(crate::element::DetectableType::Friend);
+                }
+            }
+            ProfileRank::Knight | ProfileRank::None => {
+                // Knights never reach EVENT_SEES_SOLDIER in the
+                // patrol-coordination flow.
+            }
+        }
+        false
+    }
+
+    fn on_unexpected_call_alert(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        match stimulus.info {
+            StimulusInfo::Hint(ref hint) => {
+                self.base.seek_position = hint.seek_point;
+                self.base
+                    .my_reconnaissance_report
+                    .update(ReportType::Enemy, hint.seek_point);
+                // React based on rank
+                match self.get_rank() {
+                    ProfileRank::Officer => {
+                        self.base.friends_are_alerted = true;
+                        self.alert_soldiers(
+                            hint.seek_point,
+                            0,
+                            global,
+                            grid,
+                            ctx,
+                            tick,
+                            AlertSoldiersFailureContinuation::None,
+                        );
+                    }
+                    _ => {
+                        self.current_task_priority = task_priority::ALERT;
+                        self.set_state(AiState::Seeking, Substate::SeekingHeardstepsReactiontime);
+                        self.base.face_position(hint.seek_point);
+                        self.react(parameters_ai::AI_MAX_ALERT_REACTIONTIME as u16, ctx, tick);
+                    }
+                }
+            }
+            // Civilian-sourced CALL_ALERT — a civilian ran to this
+            // soldier and wants to hand over a report. Accept iff
+            // in STATE_DEFAULT, else return false ("Sorry, dear
+            // civilian, I have no time for you").  Transition to
+            // SEEKING_WAIT_FOR_ALERTING_CIVILIAN, face the
+            // civilian, launch a 20-frame reaction timer, set a
+            // transient ? emoticon.
+            StimulusInfo::Human(civilian) => {
+                let caller = ctx.entity_view(civilian).unwrap_or_else(|| {
+                    panic!(
+                        "CALL_ALERT recipient {} requires caller {} entity view",
+                        self.base.me, civilian
+                    )
+                });
+                // The original game assigns the antagonist before deciding whether the
+                // caller can be heard. A rejected civilian report therefore
+                // still replaces the actor tracked by the current behavior.
+                self.base.antagonist = Some(civilian);
+                if caller.is_civilian() {
+                    if self.base.current_state != AiState::Default {
+                        return false;
+                    }
+                    // The original game's civilian alert branch uses the actor's
+                    // actor halt directly, not AI stop-all. The actor work
+                    // must be interrupted before the state callback, while an
+                    // in-flight waypoint macro and its macro timer survive.
+                    // This follows the CALL_ALERT civilian branch.
+                    self.base.outbox.actor.queue_halt();
+                    self.base.face_entity(civilian, ctx);
+                    self.set_state(AiState::Seeking, Substate::SeekingWaitForAlertingCivilian);
+                    self.base.launch_timer(20, ctx.frame);
+                    self.base
+                        .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
+                    return true;
+                }
+                match self.get_rank() {
+                    ProfileRank::Soldier => {
+                        let react = matches!(
+                            self.base.current_state,
+                            AiState::Default | AiState::Wondering
+                        ) || self.base.current_state == AiState::Seeking
+                            && matches!(
+                                self.base.current_substate,
+                                Substate::SeekingSoldierGiveReportToOfficer
+                                    | Substate::SeekingSoldierGiveAlertingReportToOfficerStart
+                                    | Substate::SeekingSoldierGiveAlertingReportToOfficerPoint
+                                    | Substate::SeekingSoldierGiveAlertingReportToOfficerEnd
+                            );
+                        if !react || !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
+                            return false;
+                        }
+                        assert_eq!(
+                            caller.rank,
+                            ProfileRank::Officer,
+                            "soldier CALL_ALERT caller must be an officer"
+                        );
+                        // Original's soldier-from-officer CALL_ALERT arm calls
+                        // halts the actor directly, not all AI activity. Halting
+                        // interrupts actor work but leaves an in-flight waypoint
+                        // macro and its macro timer intact.
+                        self.base.outbox.actor.queue_halt();
+                        self.current_task_priority = self.new_task_priority;
+                        self.gather_position_instructed = false;
+                        self.base.friends_are_alerted = true;
+                        self.officers_position = caller.position;
+                        self.base.face_position_3d_with_ctx(caller.position, ctx);
+                        self.set_state(AiState::Seeking, Substate::SeekingGroupCalledByOfficer);
+                        self.base.launch_timer(20, ctx.frame);
+                        self.base
+                            .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
+                        return true;
+                    }
+                    ProfileRank::Officer => {
+                        let react = self.base.current_state == AiState::Default
+                            || self.base.current_state == AiState::Seeking
+                                && matches!(
+                                    self.base.current_substate,
+                                    Substate::SeekingOfficerWaitForInstructedGroup
+                                        | Substate::SeekingOfficerWaitForInstructedSoldier
+                                );
+                        if !react {
+                            return false;
+                        }
+                        assert_eq!(
+                            caller.rank,
+                            ProfileRank::Soldier,
+                            "officer CALL_ALERT caller must be a soldier"
+                        );
+                        // Original's officer-from-soldier CALL_ALERT arm also
+                        // halts the actor directly. In particular, it does
+                        // not route through AI stop-all and must not break an
+                        // in-flight waypoint macro or its macro timer.
+                        self.base.outbox.actor.queue_halt();
+                        self.base.friends_are_alerted = true;
+                        self.base.face_entity(civilian, ctx);
+                        self.set_state(
+                            AiState::Seeking,
+                            Substate::SeekingOfficerWaitForAlertingSoldier,
+                        );
+                        self.base.launch_timer(20, ctx.frame);
+                        self.base
+                            .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
+                        return true;
+                    }
+                    ProfileRank::Knight | ProfileRank::None => {
+                        panic!(
+                            "CALL_ALERT reached unsupported recipient rank {:?}",
+                            self.get_rank()
+                        )
+                    }
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+
+    fn on_unexpected_call_hey(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { ctx, .. } = env;
+        let StimulusInfo::Human(officer) = stimulus.info else {
+            return false;
+        };
+        // Skip the civilian path (asserted away upstream).
+        if let Some(view) = ctx.entity_view(officer)
+            && view.is_civilian()
+        {
+            tracing::warn!(
+                "EnemyAi::think_unexpected_event: CALL_HEY from civilian unhandled \
+                     (asserted away) — origin {officer}"
+            );
+            return false;
+        }
+        self.base.antagonist = Some(officer);
+
+        // React gate.
+        let react = match self.base.current_state {
+            AiState::Default | AiState::Wondering => true,
+            AiState::Seeking => matches!(
+                self.base.current_substate,
+                Substate::SeekingRunningToOfficer
+                    | Substate::SeekingRunningToOfficerSeen
+                    | Substate::SeekingHeardstepsReactiontime
+                    | Substate::SeekingBodyReactiontime
+            ),
+            _ => false,
+        };
+        if !react {
+            return false;
+        }
+
+        // Rank dispatch. RANK_OFFICER / RANK_KNIGHT are asserted
+        // away upstream — only soldiers receive CALL_HEY.
+        if self.get_rank() != ProfileRank::Soldier {
+            tracing::warn!(
+                "EnemyAi::think_unexpected_event: CALL_HEY at non-soldier rank \
+                     {:?} (asserted away upstream)",
+                self.get_rank()
+            );
+            return false;
+        }
+
+        // Gate on Q_HAS_THE_NEW_TASK_PRIORITY.
+        if !self.answer_question(Question::HasTheNewTaskPriority, ctx) {
+            return false;
+        }
+
+        self.current_task_priority = self.new_task_priority;
+        self.base.stop_all();
+        self.base.face_entity(officer, ctx);
+        self.set_state_with_timer(
+            AiState::Seeking,
+            Substate::SeekingSoldierCalledByOfficer,
+            20,
+            ctx,
+        );
+        self.base
+            .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
+        true
+    }
+
+    fn on_unexpected_good_strike(&mut self, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { ctx, .. } = env;
+        let will_say = self.base.current_substate == Substate::AttackingSwordfightSpecialStrike;
+        let debug = good_strike_lifecycle_debug_matches(ctx);
+        if debug {
+            eprintln!(
+                "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=think_entry state={:?} substate={:?} will_say={} vip={}]",
+                ctx.frame,
+                self.base.me,
+                ctx.original_creation_order,
+                self.base.current_state,
+                self.base.current_substate,
+                will_say,
+                self.is_vip,
+            );
+        }
+        if will_say {
+            let remark = if self.is_vip {
+                Remark::VipGoodStrikeCombat
+            } else {
+                Remark::GoodStrikeCombat
+            };
+            self.base.say(remark);
+            if debug {
+                eprintln!(
+                    "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=say_queued remark={:?}]",
+                    ctx.frame, self.base.me, ctx.original_creation_order, remark,
+                );
+            }
+        }
+        false
+    }
+
+    fn on_unexpected_sees_beggar(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { ctx, .. } = env;
+        // When in a seek-area substate, queue the beggar for later
+        // identification (approach → identify1 → identify2).
+        if let StimulusInfo::Human(beggar) = stimulus.info
+            && self.base.current_substate.is_seek_area()
+        {
+            if Some(beggar) != self.beggar_to_examine {
+                tracing::debug!(
+                    beggar = beggar.get(),
+                    substate = ?self.base.current_substate,
+                    "EventSeesBeggar: queued beggar for identification"
+                );
+                // Queue beggar for control during seek_next_point(sim, ).
+                // Stores the beggar's actual position via the
+                // antagonist's position. We read it from the
+                // `ctx.antagonist` snapshot populated by the engine
+                // when it dispatched this stimulus.
+                self.beggars_to_control.push(beggar.get());
+                let beggar_pos = ctx
+                    .antagonist
+                    .as_ref()
+                    .map(|a| a.position)
+                    .unwrap_or(self.base.seek_position);
+                self.positions_of_beggars_to_control.push(beggar_pos);
+                self.base
+                    .set_transient_emoticon(EmoticonType::QuestionMark, 20, 0);
+            }
+
+            // Remove this beggar's DETECTABLE_BEGGAR entry from every NPC.
+            // is outside the original game's examined-beggar inequality
+            // queueing guard. A repeated view while approaching the
+            // claimed beggar must therefore still scrub every NPC's
+            // BEGGAR list synchronously through the engine drain.
+            self.base.outbox.actor.delete_beggar_for_all_npc.push(
+                ctx.entity_id(beggar).unwrap_or_else(|| {
+                    panic!("EventSeesBeggar target {beggar} has no typed live entity view")
+                }),
+            );
+        }
+        false
+    }
+
+    fn on_unexpected_after_script_go_on(
+        &mut self,
+        global: &mut AiGlobalState,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+            ..
+        } = env;
+        if self.base.outbox.reentrant.engine_drains_after_script_go_on {
+            return false;
+        }
+        while !self.base.stimulus_queue.is_empty() {
+            if !self.base.locks_flag_field.is_empty() || self.base.script_locked {
+                return false;
+            }
+            let queued = self.base.stimulus_queue.remove(0);
+            if queued.stimulus_type != StimulusType::EventAfterScriptGoOn {
+                self.think(sim, &queued, global, ctx, tick, grid);
+            }
+        }
+
+        if self.base.current_state == AiState::Default {
+            let hiking_paths = &ctx.hiking_paths;
+            let advanced_dest = if let Some(ref mut path) = self.base.patrol_path {
+                path.advance();
+                path.current_waypoint(hiking_paths).map(|wp| Position {
+                    x: wp.x as f32,
+                    y: wp.y as f32,
+                    sector: ctx.hiking_waypoint_sector(
+                        usize::from(path.hiking_path_index),
+                        usize::from(path.current_waypoint_index),
+                        wp.sector,
+                    ),
+                    level: wp.level,
                 })
-        });
-        assert_eq!(
-            engage,
-            Some(EnterSwordfightRequest::Engage(AiEntityHandle::new(2)))
-        );
-        assert_eq!(ai.base.current_state, AiState::Attacking);
-        assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
-    }
-
-    #[test]
-    fn seeing_shadow_raises_music_alert_without_accelerating_view_refresh() {
-        let mut ai = EnemyAi::new(1);
-        let ctx = AiContext {
-            posture: Posture::Upright,
-            ..AiContext::test_fixture()
-        };
-
-        ai.event_sees_shadow_standard_procedure(
-            &Position {
-                x: 10.0,
-                y: 20.0,
-                sector: None,
-                level: 0,
-            },
-            &ctx,
-            &AiPerTickData::stub(),
-        );
-
-        assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
-        assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
-        assert_eq!(ai.base.current_substate, Substate::DefaultLookingShadow);
-    }
-
-    fn ctx_with_object(object_type: ObjectType) -> AiContext {
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, object_view(object_type));
-        AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            posture: Posture::Upright,
-            ..AiContext::test_fixture()
+            } else {
+                None
+            };
+            if let Some(dest) = advanced_dest {
+                let flags = self.base.default_path_walking_flags;
+                self.go_to(AiState::Default, Substate::DefaultEnroute, dest, flags, ctx);
+            } else {
+                self.return_to_duty_default(sim, ctx, tick);
+            }
+            return false;
         }
+        false
     }
 
-    #[test]
-    fn event_sees_runtime_money_objects_reacts_but_bonus_purse_is_ignored() {
-        for object_type in [ObjectType::Purse, ObjectType::Coin] {
-            let mut ai = EnemyAi::new(1);
-            let ctx = ctx_with_object(object_type);
+    fn on_unexpected_call_mr_officer_iam_back(
+        &mut self,
+        stimulus: &Stimulus,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv { ctx, .. } = env;
+        let StimulusInfo::Human(soldier) = stimulus.info else {
+            return false;
+        };
+        self.base.antagonist = Some(soldier);
 
-            ai.event_sees_object_standard_procedure(2, &ctx, &AiPerTickData::stub());
-
-            assert_eq!(ai.base.current_state, AiState::Wondering);
-            assert_eq!(
-                ai.base.current_substate,
-                Substate::WonderingMoneyReactiontime
-            );
-            assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(2)));
+        // Dispatch on current state/substate.
+        if self.base.current_state == AiState::Seeking
+            && self.base.current_substate == Substate::SeekingOfficerWaitForCharly
+        {
+            return true;
+        }
+        let react = match self.base.current_state {
+            AiState::Default => true,
+            AiState::Seeking => matches!(
+                self.base.current_substate,
+                Substate::SeekingOfficerWaitForInstructedGroup
+                    | Substate::SeekingOfficerWaitForInstructedSoldier
+            ),
+            _ => false,
+        };
+        if !react {
+            return false;
         }
 
-        let mut ai = EnemyAi::new(1);
-        let ctx = ctx_with_object(ObjectType::BonusPurse);
-
-        ai.event_sees_object_standard_procedure(2, &ctx, &AiPerTickData::stub());
-
-        assert_eq!(ai.base.current_state, AiState::Default);
-        assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
-        assert_eq!(ai.base.interesting_object, None);
+        self.base.outbox.actor.halt = true;
+        self.base.face_entity(soldier, ctx);
+        self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForCharly);
+        self.base.say(Remark::FoundCharly);
+        self.base.launch_timer(20, ctx.frame);
+        self.base
+            .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
+        true
     }
 
-    #[test]
-    fn event_sees_runtime_ale_reacts_but_bonus_ale_is_ignored() {
-        let mut ai = EnemyAi::new(1);
-        let ale_position = Position {
-            x: 632.4453,
-            y: 1835.14,
-            sector: None,
-            level: 0,
+    fn on_unexpected_call_charly_is_back(
+        &mut self,
+        stimulus: &Stimulus,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv { ctx, .. } = env;
+        let StimulusInfo::Human(charly) = stimulus.info else {
+            return false;
         };
-        let mut ale_view = object_view(ObjectType::Ale);
-        ale_view.position = ale_position;
-        let mut views = AiEntityViewMap::new();
-        views.insert(2, ale_view);
-        let ctx = AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            posture: Posture::Upright,
-            ..AiContext::test_fixture()
-        };
-
-        ai.event_sees_object_standard_procedure(2, &ctx, &AiPerTickData::stub());
-
-        assert_eq!(ai.base.current_state, AiState::Wondering);
-        assert_eq!(ai.base.current_substate, Substate::WonderingAleReactiontime);
-        assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(2)));
-        assert_eq!(ai.base.seek_position, ale_position);
-
-        let mut ai = EnemyAi::new(1);
-        let ctx = ctx_with_object(ObjectType::BonusAle);
-
-        ai.event_sees_object_standard_procedure(2, &ctx, &AiPerTickData::stub());
-
-        assert_eq!(ai.base.current_state, AiState::Default);
-        assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
-        assert_eq!(ai.base.interesting_object, None);
-    }
-
-    #[test]
-    fn event_sees_civilian_beggar_preserves_the_legacy_slots_entity_kind() {
-        let sim_context = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingSeekpoint;
-
-        let mut beggar_view = object_view(ObjectType::None);
-        beggar_view.kind = EntityKind::Civilian;
-        beggar_view.is_beggar = true;
-        let mut views = AiEntityViewMap::new();
-        views.insert(17, beggar_view);
-        let ctx = AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_unexpected_event(
-            &sim_context,
-            &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(
-            ai.base.outbox.actor.delete_beggar_for_all_npc,
-            vec![crate::element::EntityId::Civilian(
-                crate::entity_id::CivilianId(17)
-            )]
-        );
-    }
-
-    #[test]
-    fn event_sees_current_beggar_does_not_requeue_but_still_requests_global_scrub() {
-        let sim_context = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
-        ai.beggar_to_examine = Some(AiEntityHandle::new(17));
-
-        let mut beggar_view = object_view(ObjectType::None);
-        beggar_view.kind = EntityKind::Civilian;
-        beggar_view.is_beggar = true;
-        let mut views = AiEntityViewMap::new();
-        views.insert(17, beggar_view);
-        let ctx = AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_unexpected_event(
-            &sim_context,
-            &Stimulus::with_human(StimulusType::EventSeesBeggar, 17),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert!(ai.beggars_to_control.is_empty());
-        assert!(ai.positions_of_beggars_to_control.is_empty());
-        assert_eq!(
-            ai.base.outbox.actor.delete_beggar_for_all_npc,
-            vec![crate::element::EntityId::Civilian(
-                crate::entity_id::CivilianId(17)
-            )]
-        );
-    }
-
-    #[test]
-    fn event_enemy_near_assigns_stimulus_target_and_begins_swordfight() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
-        for substate in [
-            Substate::AttackingReactiontimeTurning,
-            Substate::AttackingReactiontime,
-            Substate::AttackingApproachToObserve,
-            Substate::AttackingObserve,
-        ] {
-            let mut ai = EnemyAi::new(1);
-            ai.base.current_state = AiState::Attacking;
-            ai.base.current_substate = substate;
-            ai.base.primary_target = Some(AiEntityHandle::new(12));
-            // The original trainer gate is exclusively on the sender.
-            ai.combat_trainer = true;
-
-            let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
-            ai.think_unexpected_event(
-                sim,
-                &stimulus,
-                &mut AiGlobalState::default(),
-                &AiContext::test_fixture(),
-                &AiPerTickData::stub(),
-                None,
+        let s = self.base.current_substate;
+        let in_eligible_substate = s.is_seek_area()
+            || matches!(
+                s,
+                Substate::SeekingSoldierReturnToOfficer
+                    | Substate::SeekingSoldierGiveReportToOfficer
+                    | Substate::SeekingBodyReactiontime
+                    | Substate::SeekingBody
+                    | Substate::SeekingNet
+                    | Substate::SeekingGroupGetInstructedByOfficer
             );
+        if in_eligible_substate {
+            if self.base.my_reconnaissance_report.charly == Some(charly) {
+                self.base.set_checkpoint_charly(None);
+                self.base.face_entity(charly, ctx);
+                self.base.clear_emoticon();
+                self.seek_flags &= !SeekFlags::REPORT_OFFICER_AFTER;
+                self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
+                // Dead/unconscious charly gets a long stare; a
+                // healthy one only the standard 20.
+                let timer = ctx
+                    .entity_view(charly)
+                    .map(|v| v.is_dead || v.is_unconscious)
+                    .unwrap_or(false);
+                self.base
+                    .launch_timer(if timer { 200 } else { 20 }, ctx.frame);
+            }
+        } else {
+            // Default arm: even when we can't react, drop the
+            // stale checkpoint so the chief doesn't keep nagging
+            // about a charly that's home.
+            self.base.set_checkpoint_charly(None);
+        }
+        false
+    }
 
-            assert_eq!(
-                ai.base.primary_target,
-                Some(AiEntityHandle::new(77)),
-                "substate {substate:?}"
-            );
-            // begin_swordfight raises Engage before its state change suspends
-            // the actor-outbox prefix into the queued state-change owner
-            // work; read the request from either place.
-            let engage = ai.base.outbox.actor.enter_swordfight.or_else(|| {
-                ai.base
+    fn on_alerting_view(
+        &mut self,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        env: ThinkEnv<'_>,
+    ) -> bool {
+        let ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+            ..
+        } = env;
+        if let StimulusInfo::Human(enemy) = stimulus.info {
+            match self.base.current_state {
+                AiState::Sleeping => {} // ignore (should not happen)
+                AiState::Wondering | AiState::Default | AiState::Seeking => {
+                    if !self
+                        .dispatch_stimulus_to_whole_patrol(sim, stimulus, global, ctx, tick, grid)
+                    {
+                        self.event_view_standard_procedure(
+                            sim,
+                            enemy.get(),
+                            global,
+                            ctx,
+                            tick,
+                            grid,
+                        );
+                    }
+                }
+                AiState::Menacing => {
+                    if Some(crate::entity_id::PcId(enemy.get())) != self.guarded_pc {
+                        self.event_view_standard_procedure(
+                            sim,
+                            enemy.get(),
+                            global,
+                            ctx,
+                            tick,
+                            grid,
+                        );
+                    }
+                }
+                AiState::Fleeing => {
+                    // Ignore EVENT_VIEW while fleeing to leave the
+                    // map (merry man flee) or while running back
+                    // for arrow reserves.
+                    if self.base.current_substate == Substate::FleeingMerryManRunToLeaveMap
+                        || self.base.current_substate == Substate::FleeingMerryManLeaveMap
+                        || self.base.current_substate == Substate::FleeingRunForArrowReserves
+                    {
+                        // ignore — committed to leaving / resupply
+                    } else if self.base.current_substate == Substate::FleeingHiding
+                        || self.fleeing_seen_enemy_counter < 20
+                    {
+                        self.fleeing_seen_enemy_counter += 1;
+                        // Indoors we escalate to a building-wide
+                        // alert; outdoors we kick off a directed
+                        // panic away from the enemy.
+                        if ctx.in_building {
+                            self.request_enemy_in_house_alert(ctx);
+                        } else {
+                            let center = ctx
+                                .entity_view(enemy)
+                                .map(|v| v.position)
+                                .unwrap_or(self.base.seek_position);
+                            self.panic_from_position(
+                                center,
+                                crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                            );
+                        }
+                    }
+                }
+                AiState::Attacking => {
+                    // Per-substate dispatch. Do NOT fall through to
+                    // a generic recovery path.
+                    match self.base.current_substate {
+                        Substate::AttackingReactiontimeTurning
+                        | Substate::AttackingReactiontime
+                        | Substate::AttackingReactiontimeRunning
+                        | Substate::AttackingOverviewLookLeft
+                        | Substate::AttackingOverviewLookRight
+                        | Substate::AttackingTooProudToAttackOverview => {
+                            // Just track the extra enemy.
+                            // The original game's enemy list is unique: the
+                            // preceding VIEW may already have rebuilt
+                            // this target into the final visible set.
+                            if !self.list_them.contains(&enemy.get()) {
+                                self.list_them.push(enemy.get());
+                            }
+                        }
+
+                        Substate::AttackingArcherWaitOnArcheryPath
+                        | Substate::AttackingArcherWaitOnBendPoint
+                        | Substate::AttackingArcherWaitOnArcheryPathBending => {
+                            // Archer waiting on firing point —
+                            // rebuild list, re-eval elevation,
+                            // re-run battle planning.
+                            self.reinitialize_them_list(ctx, tick);
+                            self.enemy_seen_below = enemy_is_below_me(
+                                ctx,
+                                tick.owner_live_position.or(Some(ctx.position)),
+                                tick.enemy_detectable_live_world_position(enemy.get())
+                                    .or_else(|| {
+                                        ctx.entity_view(enemy)
+                                            .map(|view| view.detection_position_world)
+                                    }),
+                            );
+                            self.battle_decisions(sim, global, ctx, tick, grid);
+                        }
+
+                        Substate::AttackingApproachingSleepingEnemy
+                        | Substate::AttackingKillingSleepingEnemy => {
+                            // On seeing a new enemy while
+                            // approaching / killing a sleeping
+                            // target, pivot to standard engage
+                            // unless the sighted enemy is itself
+                            // unconscious (still not a threat).
+                            let target_unconscious = ctx
+                                .entity_view(enemy)
+                                .map(|v| v.is_unconscious)
+                                .unwrap_or(false);
+                            if !target_unconscious {
+                                self.event_view_standard_procedure(
+                                    sim,
+                                    enemy.get(),
+                                    global,
+                                    ctx,
+                                    tick,
+                                    grid,
+                                );
+                            }
+                        }
+
+                        // Indoor door-fight — escalate to
+                        // building-wide alert.
+                        Substate::AttackingDoorFightDelay | Substate::AttackingDoorFightLeaving
+                            if ctx.in_building =>
+                        {
+                            self.request_enemy_in_house_alert(ctx);
+                        }
+
+                        Substate::AttackingRiderChargingGettingDistance
+                        | Substate::AttackingRiderChargingReturning
+                        | Substate::AttackingRiderChargingApproachingBlindly => {
+                            // Rider mid-charge sees a new enemy —
+                            // rebuild list, maybe re-target the
+                            // charge, else fall back to
+                            // battle planning.
+                            self.reinitialize_them_list(ctx, tick);
+                            if !self.maybe_make_rider_attack(ctx, tick, grid) {
+                                self.battle_decisions(sim, global, ctx, tick, grid);
+                            }
+                        }
+
+                        _ => {}
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn on_alerting_arrow_launched(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { ctx, .. } = env;
+        // A shield bearer whose current substate says "I am
+        // holding / advancing under a shield" slams the shield up
+        // against the incoming arrow and pivots to face the
+        // shooter.
+        if let StimulusInfo::Human(shooter) = stimulus.info {
+            // Protecting with a shield: protection is already in
+            // WAITING_SHIELD?  false : true — i.e., only re-raise
+            // if we're still mid-animation.
+            // Advancing / RunningToPhalanx: always protect.
+            let b_protect = match self.base.current_substate {
+                Substate::AttackingProtectingWithShield => ctx
+                    .entity_view(self.base.me)
+                    .map(|v| v.current_animation != crate::order::OrderType::WaitingShield)
+                    .unwrap_or(false),
+                Substate::AttackingAdvancingWithShield | Substate::AttackingRunningToPhalanx => {
+                    true
+                }
+                _ => false,
+            };
+
+            if b_protect {
+                use crate::element::Command;
+                use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+                // Remember the shooter.
+                self.base.primary_target = Some(shooter);
+
+                self.base.stop_all();
+
+                // Launch RaiseShieldInstantly with
+                // ShieldDangerPoint = primary target pos.
+                let shooter_pos = ctx
+                    .entity_view(shooter)
+                    .map(|v| v.position)
+                    .unwrap_or(self.base.seek_position);
+                let owner = self.base.owner_entity_id;
+                let mut elem =
+                    SequenceElement::new_generic(1, Command::RaiseShieldInstantly, owner);
+                elem.set_property(
+                    Field::ShieldDangerPoint,
+                    FieldValue::Point3D {
+                        x: shooter_pos.x,
+                        y: shooter_pos.y,
+                        z: 0.0,
+                    },
+                );
+                let mut seq = Sequence::new();
+                seq.append_element(elem);
+                self.base.outbox.actor.launch_sequences.push(seq);
+
+                // Original immediately repeats state assignment and
+                // shield updates after the synchronous instant-raise
+                // launch, then Focuses the shooter. Close that actor
+                // prefix so the trailing Focus cannot overtake it at
+                // the deferred owner boundary.
+                self.base.outbox.actor.raise_shield_immediately = true;
+                self.base
                     .outbox
                     .reentrant
                     .owner_work
-                    .iter()
-                    .find_map(|work| match work {
-                        crate::ai::AiOwnerWork::StateChange(notification) => notification
-                            .actor_effects_before_callback
-                            .as_ref()
-                            .and_then(|effects| effects.enter_swordfight),
-                        _ => None,
-                    })
-            });
-            assert_eq!(
-                engage,
-                Some(EnterSwordfightRequest::Engage(AiEntityHandle::new(77))),
-                "substate {substate:?}"
-            );
-            assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+                    .push(crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                        &mut self.base.outbox.actor,
+                    )));
+
+                self.base.outbox.actor.set_focus(shooter);
+
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingProtectingWithShield,
+                    15,
+                    ctx,
+                );
+            }
         }
+        false
     }
 
-    #[test]
-    fn event_enemy_near_is_ignored_outside_original_substates() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
-        let mut ai = EnemyAi::new(1);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunningToEnemy;
-        ai.base.primary_target = Some(AiEntityHandle::new(12));
-
-        let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
-        ai.think_unexpected_event(
-            sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(12)));
-        assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
-        assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
-    }
-
-    #[test]
-    fn officer_call_alert_halts_actor_without_breaking_running_macro() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(44);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultInMacro;
-        ai.base.macro_in_progress = true;
-        ai.base.macro_timer_is_running = true;
-        ai.base.when_does_macro_timer_ring = 10_054;
-        ai.current_task_priority = task_priority::ALERT;
-        ai.new_task_priority = task_priority::ALERT;
-
-        let mut officer = object_view(ObjectType::None);
-        officer.kind = EntityKind::Soldier;
-        officer.rank = ProfileRank::Officer;
-        officer.position = Position {
-            x: 100.0,
-            y: 20.0,
-            sector: None,
-            level: 0,
-        };
-        let mut views = AiEntityViewMap::new();
-        views.insert(91, officer);
-        let ctx = AiContext {
-            frame: 9_768,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        let accepted = ai.think_unexpected_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::CallAlert, 91),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert!(accepted);
-        let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-            matches!(
-                work,
-                crate::ai::AiOwnerWork::StateChange(notification)
-                    if notification
-                        .actor_effects_before_callback
-                        .as_ref()
-                        .is_some_and(|effects| effects.halt)
-            )
-        });
-        assert!(halted_before_state_change);
-        assert!(ai.base.macro_in_progress);
-        assert!(ai.base.macro_timer_is_running);
-        assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
-        assert_eq!(ai.base.current_state, AiState::Seeking);
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::SeekingGroupCalledByOfficer
-        );
-    }
-
-    #[test]
-    fn civilian_call_alert_halts_actor_without_breaking_running_macro() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(44);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultInMacro;
-        ai.base.macro_in_progress = true;
-        ai.base.macro_timer_is_running = true;
-        ai.base.when_does_macro_timer_ring = 10_054;
-
-        let mut civilian = object_view(ObjectType::None);
-        civilian.kind = EntityKind::Civilian;
-        civilian.position = Position {
-            x: 100.0,
-            y: 20.0,
-            sector: None,
-            level: 0,
-        };
-        let mut views = AiEntityViewMap::new();
-        views.insert(91, civilian);
-        let ctx = AiContext {
-            frame: 9_768,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        let accepted = ai.think_unexpected_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::CallAlert, 91),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert!(accepted);
-        let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-            matches!(
-                work,
-                crate::ai::AiOwnerWork::StateChange(notification)
-                    if notification
-                        .actor_effects_before_callback
-                        .as_ref()
-                        .is_some_and(|effects| effects.halt)
-            )
-        });
-        assert!(halted_before_state_change);
-        assert!(ai.base.macro_in_progress);
-        assert!(ai.base.macro_timer_is_running);
-        assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
-        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(91)));
-        assert_eq!(ai.base.current_state, AiState::Seeking);
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::SeekingWaitForAlertingCivilian
-        );
-        assert!(ai.base.timer_is_running);
-        assert_eq!(ai.base.when_does_timer_ring, 9_788);
-    }
-
-    #[test]
-    fn rejected_civilian_call_alert_still_replaces_antagonist() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(44);
-        ai.soldier_profile_rank = ProfileRank::Soldier;
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingRunningToOfficer;
-        ai.base.antagonist = Some(AiEntityHandle::new(78));
-
-        let mut civilian = object_view(ObjectType::None);
-        civilian.kind = EntityKind::Civilian;
-        let mut views = AiEntityViewMap::new();
-        views.insert(91, civilian);
-        let ctx = AiContext {
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        let accepted = ai.think_unexpected_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::CallAlert, 91),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert!(!accepted);
-        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(91)));
-        assert_eq!(ai.base.current_state, AiState::Seeking);
-        assert_eq!(ai.base.current_substate, Substate::SeekingRunningToOfficer);
-    }
-
-    #[test]
-    fn soldier_call_alert_halts_officer_without_breaking_running_macro() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(44);
-        ai.soldier_profile_rank = ProfileRank::Officer;
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultInMacro;
-        ai.base.macro_in_progress = true;
-        ai.base.macro_timer_is_running = true;
-        ai.base.when_does_macro_timer_ring = 10_054;
-
-        let mut soldier = object_view(ObjectType::None);
-        soldier.kind = EntityKind::Soldier;
-        soldier.rank = ProfileRank::Soldier;
-        soldier.position = Position {
-            x: 100.0,
-            y: 20.0,
-            sector: None,
-            level: 0,
-        };
-        let mut views = AiEntityViewMap::new();
-        views.insert(91, soldier);
-        let ctx = AiContext {
-            frame: 9_768,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        let accepted = ai.think_unexpected_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::CallAlert, 91),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert!(accepted);
-        let halted_before_state_change = ai.base.outbox.reentrant.owner_work.iter().any(|work| {
-            matches!(
-                work,
-                crate::ai::AiOwnerWork::StateChange(notification)
-                    if notification
-                        .actor_effects_before_callback
-                        .as_ref()
-                        .is_some_and(|effects| effects.halt)
-            )
-        });
-        assert!(halted_before_state_change);
-        assert!(ai.base.macro_in_progress);
-        assert!(ai.base.macro_timer_is_running);
-        assert_eq!(ai.base.when_does_macro_timer_ring, 10_054);
-        assert_eq!(ai.base.current_state, AiState::Seeking);
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::SeekingOfficerWaitForAlertingSoldier
-        );
-    }
-
-    #[test]
-    fn couldnt_reach_running_enemy_enters_battle_overview() {
-        let sim_context = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(1);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunningToEnemy;
-        ai.base.list_us = vec![1, 2];
-
-        ai.think_unexpected_event(
-            &sim_context,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingOverviewLookLeft
-        );
-        assert_eq!(
-            ai.base.outbox.actor.look_sidewards,
-            Some(LookDirection::Left)
-        );
-        assert_eq!(
-            ai.base.list_us,
-            vec![1, 2],
-            "battle-overview evaluation must not rebuild the persistent friend list"
-        );
-    }
-
-    #[test]
-    fn same_frame_observe_move_failure_resumes_inline_roof_fallback() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingApproachToObserve;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.ai_log.push(LogLine {
-            line_type: LogLineType::BattleDecision,
-            info: Decision::Observe as u16,
-            frame: 8_103,
-        });
-
-        let target_position = Position {
-            x: 2_788.0,
-            y: 1_029.0,
-            sector: crate::position_interface::SectorHandle::new(53),
-            level: 2,
-        };
-        let wait_position = Position {
-            x: 2_793.0,
-            y: 571.0,
-            sector: crate::position_interface::SectorHandle::new(53),
-            level: 2,
-        };
-        let mut target = object_view(ObjectType::None);
-        target.kind = EntityKind::Pc;
-        target.is_pc = true;
-        target.position = target_position;
-        let mut views = AiEntityViewMap::new();
-        views.insert(183, target);
-        let ctx = AiContext {
-            frame: 8_103,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.avenger_on_roof_wait_positions
-            .push((183, wait_position));
-
-        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-        stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-        ai.think_unexpected_event(
-            &sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingRunToAvengerOnRoof
-        );
-        assert_eq!(ai.base.seek_position, target_position);
-        assert_eq!(ai.base.last_goto_destination, wait_position);
-        assert!(ai.base.outbox.actor.look_sidewards.is_none());
-    }
-
-    #[test]
-    fn same_frame_fight_lift_failure_preserves_inline_roof_fallback() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.last_synced_focus_target = Some(AiEntityHandle::new(183));
-        ai.base.timer_is_running = true;
-        ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-        ai.base.when_does_timer_ring = 8_133;
-
-        let target_position = Position {
-            x: 2_788.0,
-            y: 1_029.0,
-            sector: crate::position_interface::SectorHandle::new(63),
-            level: 3,
-        };
-        let wait_position = Position {
-            x: 2_793.0,
-            y: 571.0,
-            sector: crate::position_interface::SectorHandle::new(53),
-            level: 2,
-        };
-        let mut target = object_view(ObjectType::None);
-        target.kind = EntityKind::Pc;
-        target.is_pc = true;
-        target.position = target_position;
-        let mut views = AiEntityViewMap::new();
-        views.insert(183, target);
-        let ctx = AiContext {
-            frame: 8_103,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let mut tick = AiPerTickData::stub();
-        tick.avenger_on_roof_wait_positions
-            .push((183, wait_position));
-
-        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-        stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-        ai.think_unexpected_event(
-            &sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingRunToAvengerOnRoof
-        );
-        assert_eq!(ai.base.seek_position, target_position);
-        assert_eq!(ai.base.last_goto_destination, wait_position);
-        assert_eq!(
-            ai.base.last_synced_focus_target,
-            Some(AiEntityHandle::new(183))
-        );
-        assert!(!ai.base.couldnt_reachpoint);
-        assert!(ai.base.outbox.actor.orders.is_empty());
-        let Some(crate::ai::AiOwnerWork::ActorEffects(roof_effects)) =
-            ai.base.outbox.reentrant.owner_work.last()
-        else {
-            panic!("roof fallback must settle at a synchronous owner boundary")
-        };
-        assert_eq!(roof_effects.orders.len(), 1);
-        assert_eq!(roof_effects.orders[0].target_x, wait_position.x);
-        assert_eq!(roof_effects.orders[0].target_y, wait_position.y);
-        assert!(roof_effects.look_sidewards.is_none());
-        assert!(!roof_effects.unfocus);
-    }
-
-    #[test]
-    fn same_frame_roof_fallback_failure_uses_generic_overview() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.list_us = vec![64, 79];
-
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut AiGlobalState::default(),
-            &AiContext {
-                frame: 7_938,
-                ..AiContext::test_fixture()
-            },
-            &AiPerTickData::stub(),
-            None,
-        );
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingOverviewLookLeft
-        );
-        assert_eq!(
-            ai.base.outbox.actor.look_sidewards,
-            Some(LookDirection::Left)
-        );
-    }
-
-    #[test]
-    fn same_frame_ladder_condolation_uses_generic_overview() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.list_us = vec![64, 79];
-        ai.base.timer_is_running = true;
-        ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-        ai.base.when_does_timer_ring = 7_968;
-
-        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-        stimulus.self_origin = crate::ai::SelfStimulusOrigin::Condolation;
-        ai.think_unexpected_event(
-            &sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &AiContext {
-                frame: 7_938,
-                ..AiContext::test_fixture()
-            },
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingOverviewLookLeft
-        );
-        assert_eq!(
-            ai.base.outbox.actor.look_sidewards,
-            Some(LookDirection::Left)
-        );
-    }
-
-    #[test]
-    fn later_ladder_failure_still_uses_generic_emergency_routine() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.list_us = vec![64, 79];
-        ai.base.ai_log.push(LogLine {
-            line_type: LogLineType::BattleDecision,
-            info: Decision::Fight as u16,
-            frame: 8_102,
-        });
-
-        let ctx = AiContext {
-            frame: 8_103,
-            ..AiContext::test_fixture()
-        };
-        let mut stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-        stimulus.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-        ai.think_unexpected_event(
-            &sim,
-            &stimulus,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingOverviewLookLeft
-        );
-        assert_eq!(
-            ai.base.outbox.actor.look_sidewards,
-            Some(LookDirection::Left)
-        );
-    }
-
-    #[test]
-    fn same_frame_fight_lift_failure_without_roof_wait_resumes_observe_then_overview() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunningToLadder;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.last_synced_focus_target = Some(AiEntityHandle::new(183));
-        ai.base.timer_is_running = true;
-        ai.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
-        ai.base.when_does_timer_ring = 7_968;
-
-        let target_position = Position {
-            x: 2_762.243,
-            y: 882.6701,
-            sector: crate::position_interface::SectorHandle::new(53),
-            level: 2,
-        };
-        let mut target = object_view(ObjectType::None);
-        target.kind = EntityKind::Pc;
-        target.is_pc = true;
-        target.position = target_position;
-        let mut views = AiEntityViewMap::new();
-        views.insert(183, target);
-        let ctx = AiContext {
-            frame: 7_938,
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-        let tick = AiPerTickData::stub();
-
-        let mut engine_completion = Stimulus::new(StimulusType::EventCouldntReachPoint);
-        engine_completion.self_origin = crate::ai::SelfStimulusOrigin::EngineCompletion;
-        ai.think_unexpected_event(
-            &sim,
-            &engine_completion,
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingApproachToObserve
-        );
-        assert_eq!(ai.base.when_does_timer_ring, 7_988);
-        assert!(ai.base.timer_is_running);
-        assert!(ai.base.couldnt_reachpoint);
-        assert_eq!(
-            ai.base.last_synced_focus_target,
-            Some(AiEntityHandle::new(183))
-        );
-
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &tick,
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingOverviewLookLeft
-        );
-        assert_eq!(
-            ai.base.outbox.actor.look_sidewards,
-            Some(LookDirection::Left)
-        );
-    }
-
-    #[test]
-    fn later_roof_failure_still_uses_generic_emergency_routine() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(64);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingRunToAvengerOnRoof;
-        ai.base.primary_target = Some(AiEntityHandle::new(183));
-        ai.base.list_us = vec![64, 79];
-        let ctx = AiContext {
-            frame: 8_104,
-            ..AiContext::test_fixture()
-        };
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::AttackingOverviewLookLeft
-        );
-        assert_eq!(
-            ai.base.outbox.actor.look_sidewards,
-            Some(LookDirection::Left)
-        );
-    }
-
-    #[test]
-    fn couldnt_reach_seeking_body_examines_queued_body_before_starting_seek_area() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(206);
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingBody;
-        ai.other_bodies_to_examine.push(207);
-
-        let alternate_position = Position {
-            x: 658.0,
-            y: 2910.0,
-            sector: crate::position_interface::SectorHandle::new(18),
-            level: 0,
-        };
-        let mut alternate_body = object_view(ObjectType::None);
-        alternate_body.kind = EntityKind::Soldier;
-        alternate_body.position = alternate_position;
-        // Other-body examination prunes the queue by incapacitation, not
-        // by combat readiness — a KO'd body is what keeps this entry
-        // queued.
-        alternate_body.is_unconscious = true;
-        alternate_body.is_able_to_fight = false;
-        let mut views = AiEntityViewMap::new();
-        views.insert(207, alternate_body);
-        let ctx = AiContext {
-            position: Position {
-                x: 792.0,
-                y: 2612.0,
-                sector: crate::position_interface::SectorHandle::new(44),
-                level: 0,
-            },
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut AiGlobalState::default(),
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(207)));
-        assert_eq!(ai.base.seek_position, alternate_position);
-        assert_eq!(ai.base.current_substate, Substate::SeekingBody);
-        assert!(ai.my_seek_points.is_empty());
-    }
-
-    /// Enemy examination of other bodies
-    /// prunes the queue head while the body is not out of order. That test is
-    /// a body-state predicate, *not* combat readiness.
-    /// Civilians never report able-to-fight, so proxying the two keeps a woken
-    /// civilian sleeper queued forever: the soldier re-examines the body it is
-    /// already standing next to, approach movement short-circuits to
-    /// `EVENT_REACHPOINT`, and the seek collapses into returning to duty.
-    #[test]
-    fn examine_other_bodies_prunes_recovered_civilian_that_cannot_fight() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(206);
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingBody;
-        // Head of the queue: a civilian that woke up. `is_able_to_fight` is
-        // false for every civilian, but incapacitation is false now.
-        ai.other_bodies_to_examine.push(207);
-        // Behind it: a soldier that is genuinely still down.
-        ai.other_bodies_to_examine.push(208);
-
-        let mut recovered = object_view(ObjectType::None);
-        recovered.kind = EntityKind::Civilian;
-        recovered.is_able_to_fight = false;
-
-        let down_position = Position {
-            x: 658.0,
-            y: 2910.0,
-            sector: crate::position_interface::SectorHandle::new(18),
-            level: 0,
-        };
-        let mut still_down = object_view(ObjectType::None);
-        still_down.kind = EntityKind::Soldier;
-        still_down.position = down_position;
-        still_down.is_able_to_fight = false;
-        still_down.is_unconscious = true;
-
-        let mut views = AiEntityViewMap::new();
-        views.insert(207, recovered);
-        views.insert(208, still_down);
-        let ctx = AiContext {
-            position: Position {
-                x: 792.0,
-                y: 2612.0,
-                sector: crate::position_interface::SectorHandle::new(44),
-                level: 0,
-            },
-            entity_views: crate::ai_entity_view::shared_entity_views(views),
-            ..AiContext::test_fixture()
-        };
-
-        assert!(ai.examine_other_bodies(&ctx, &AiPerTickData::stub()));
-        assert_eq!(
-            ai.base.detected_body,
-            Some(AiEntityHandle::new(208)),
-            "the recovered civilian must be pruned, not examined"
-        );
-        assert_eq!(ai.base.seek_position, down_position);
-        assert!(ai.other_bodies_to_examine.is_empty());
-        let _ = &sim;
-    }
-
-    /// The predicate itself, in both directions: incapacitation is the OR of
-    /// the five body states (plus PC coma) and is independent of
-    /// combat readiness.
-    #[test]
-    fn is_out_of_order_is_not_the_complement_of_is_able_to_fight() {
-        // Civilian that is up and about: never able to fight, but in order.
-        let mut civilian = object_view(ObjectType::None);
-        civilian.kind = EntityKind::Civilian;
-        civilian.is_able_to_fight = false;
-        assert!(!civilian.is_out_of_order());
-
-        // Netted / tied / carried / KO'd / dead all count as out of order even
-        // when the combat-readiness flag says otherwise.
-        for apply in [
-            (|v: &mut AiEntityView| v.stuck_under_net = true) as fn(&mut AiEntityView),
-            |v: &mut AiEntityView| v.posture = Posture::Tied,
-            |v: &mut AiEntityView| v.posture = Posture::Carried,
-            |v: &mut AiEntityView| v.is_unconscious = true,
-            |v: &mut AiEntityView| v.is_dead = true,
-        ] {
-            let mut soldier = object_view(ObjectType::None);
-            soldier.kind = EntityKind::Soldier;
-            soldier.is_able_to_fight = true;
-            apply(&mut soldier);
-            assert!(soldier.is_out_of_order());
+    fn on_alerting_got_hit(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv {
+            ctx, tick, grid, ..
+        } = env;
+        // Three arms: (1) swordfighting → add opponent if
+        // cross-camp & not already engaged; (2) MenacingPcInComa →
+        // return-to-PC transition with no opponent
+        // ENTER_SWORDFIGHT sequence; (3) generic else → stop_all
+        // + non-human filter + brawl-friend-in-trouble +
+        // attack_enemy plus dead-or-unconscious view-status assignment.
+        // The original game checks whether the human is swordfighting,
+        // which is derived from the live opponent list.  The AI
+        // substate can remain AttackingSwordfight briefly after the
+        // last opponent has been removed, so it is not an equivalent
+        // predicate here.
+        if ctx.is_swordfighting {
+            if let StimulusInfo::Human(attacker) = stimulus.info {
+                // Only enroll if cross-camp and not already an
+                // opponent.
+                let attacker_view = ctx.entity_view(attacker).unwrap_or_else(|| {
+                    panic!(
+                        "soldier {} EVENT_GOTHIT requires attacker {attacker} entity view",
+                        self.base.me
+                    )
+                });
+                let attacker_is_hostile = ctx.is_hostile_with(attacker_view.camp);
+                if attacker_is_hostile {
+                    let already_opponent = self
+                        .find_fighter(self.base.me, tick)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "soldier {} EVENT_GOTHIT requires self fighter snapshot",
+                                self.base.me
+                            )
+                        })
+                        .has_as_opponent(attacker.get());
+                    if !already_opponent {
+                        self.base.outbox.actor.enter_swordfight =
+                            Some(EnterSwordfightRequest::Direct(attacker));
+                    }
+                }
+            }
+        } else if self.base.current_substate == Substate::MenacingPcInComa {
+            // Menacing soldier hit — pivot to
+            // ATTACKING_RETURN_TO_OTHER_PC_AFTER_MENACING, queue
+            // ENTER_SWORDFIGHT with no opponent + jump_line, face
+            // the attacker.
+            if let StimulusInfo::Human(attacker) = stimulus.info {
+                self.set_state(
+                    AiState::Attacking,
+                    Substate::AttackingReturnToOtherPcAfterMenacing,
+                );
+                self.base.primary_target = Some(attacker);
+                self.base.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
+                self.base.outbox.actor.enter_swordfight_jump_line = None;
+                // The original game sets element direction here, not
+                // AI facing. The hit animation
+                // owns the gradual turn, so write only its direction
+                // goal; launching a standalone Turn is both too late
+                // and gets postponed behind RECEIVE_HIT_DAMAGE.
+                self.base.set_direction_toward_entity(attacker, ctx);
+            }
+        } else {
+            // Generic effect-of-hit branch.
+            self.base.stop_all();
+            if let StimulusInfo::Human(attacker) = stimulus.info {
+                let attacker_view = ctx.entity_view(attacker);
+                let attacker_is_soldier = attacker_view.map(|v| v.is_soldier()).unwrap_or(false);
+                let attacker_in_brawl = attacker_view
+                    .map(|v| v.ai_substate.is_fight_for_money())
+                    .unwrap_or(false);
+                if attacker_is_soldier {
+                    if attacker_in_brawl {
+                        // Brawl-friend hit me — capture as
+                        // friend_in_trouble, transition to
+                        // WonderingBrawlGotHit, clear emoticon.
+                        self.base.friend_in_trouble = Some(attacker);
+                        self.set_state(AiState::Wondering, Substate::WonderingBrawlGotHit);
+                        self.base.set_emoticon(EmoticonType::None);
+                    }
+                    // Soldier-attacker in non-brawl substate:
+                    // falls through the empty switch — no
+                    // primary_target / attack_enemy update; only
+                    // view-status assignment below applies.
+                } else {
+                    // Non-soldier human attacker — retarget and
+                    // attack.
+                    self.base.primary_target = Some(attacker);
+                    self.attack_enemy(attacker.get(), ctx, tick, grid);
+                }
+                // Dead-or-unconscious view-status assignment
+                // applies whenever the attacker info was human,
+                // regardless of which sub-arm fired.
+                // Keep this on the owner FIFO: in the Original this
+                // statement is the tail of EVENT_GOTHIT, after every
+                // stop-all / enemy-attack actor work has completed.
+                // Close the actor prefix explicitly: enemy attack can
+                // reach another stop-all request whose deferred halt notification
+                // produces Unfocus. Leaving that Halt in the ordinary
+                // actor outbox would apply Unfocus after this tail and
+                // restore LookForward.
+                if self.base.outbox.actor.has_boundary_work() {
+                    self.base.outbox.reentrant.owner_work.push(
+                        crate::ai::AiOwnerWork::ActorEffects(std::mem::take(
+                            &mut self.base.outbox.actor,
+                        )),
+                    );
+                }
+                self.base
+                    .outbox
+                    .reentrant
+                    .owner_work
+                    .push(crate::ai::AiOwnerWork::SetEyeStatus(
+                        crate::element::EyeStatus::DieOrGetUnconscious,
+                    ));
+            } else {
+                // Non-human stimulus info — clear primary_target.
+                self.base.primary_target = None;
+            }
         }
-
-        // The coma arm is PC-only.
-        let mut comatose = object_view(ObjectType::None);
-        comatose.kind = EntityKind::Pc;
-        comatose.in_coma = true;
-        assert!(comatose.is_out_of_order());
-        let mut soldier_flagged_coma = object_view(ObjectType::None);
-        soldier_flagged_coma.kind = EntityKind::Soldier;
-        soldier_flagged_coma.in_coma = true;
-        assert!(!soldier_flagged_coma.is_out_of_order());
+        false
     }
 
-    #[test]
-    fn couldnt_reach_seeking_body_centers_fallback_on_actor_not_stale_body() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(206);
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingBody;
-        ai.base.seek_position = Position {
-            x: 2_000.0,
-            y: 2_000.0,
-            sector: crate::position_interface::SectorHandle::new(44),
-            level: 0,
-        };
-        let actor_position = Position {
-            x: 792.0,
-            y: 2612.0,
-            sector: crate::position_interface::SectorHandle::new(44),
-            level: 0,
-        };
-        let actor_seek_point = Position {
-            x: 652.0,
-            y: 2_928.0,
-            sector: crate::position_interface::SectorHandle::new(44),
-            level: 0,
-        };
-        let stale_body_seek_point = Position {
-            x: 2_020.0,
-            y: 2_000.0,
-            sector: crate::position_interface::SectorHandle::new(44),
-            level: 0,
-        };
-        let point = |id, position| SeekPoint {
-            position,
-            frame_when_full_interest: 0,
-            directions: vec![0],
-            last_calculated_interest: 100,
-            locked: false,
-            id,
-        };
-        let mut global = AiGlobalState {
-            seek_points: vec![point(0, actor_seek_point), point(1, stale_body_seek_point)],
-            ..Default::default()
-        };
-        let ctx = AiContext {
-            position: actor_position,
-            self_is_soldier: true,
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            &mut global,
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.seek_center, actor_position);
-        assert_eq!(ai.actual_seek_point, Some(0));
-        assert_eq!(ai.base.last_goto_destination, actor_seek_point);
-        assert_ne!(ai.base.last_goto_destination, stale_body_seek_point);
-    }
-
-    #[test]
-    fn event_hear_faces_noise_position_projection_not_recorded_actor_elevation() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(70);
-        ai.base.current_state = AiState::Seeking;
-        ai.base.current_substate = Substate::SeekingSeekpoint;
-
-        // Trace-shaped boundary from SuN/Profile_004/Savegame_016 r013
-        // frame 895. Sector 0 has no projection area, so world-point conversion
-        // leaves the noise at z=0 even though the producing PC recorded its
-        // own elevation (36) on the noise record.
-        let noise = Noise {
-            origin: NoiseOrigin::from_position(Position {
-                x: f32::from_bits(0x428b_1027),
-                y: f32::from_bits(0x43af_c940),
-                sector: crate::position_interface::SectorHandle::new(0).map(|sector| {
-                    sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap())
-                }),
-                level: 0,
-            }),
-            noise_type: NoiseType::ZingZing,
-            volume: 200,
-            elevation: 36,
-            element_id: 133,
-        };
-        let ctx = AiContext {
-            position: Position {
-                x: f32::from_bits(0x4326_9901),
-                y: f32::from_bits(0x438f_54f0),
-                sector: crate::position_interface::SectorHandle::new(0),
-                level: 0,
-            },
-            self_body_position_world: crate::coordinates::WorldPoint3D::new(
-                f32::from_bits(0x4326_9901),
-                f32::from_bits(0x43a1_5511),
-                f32::from_bits(0x4210_0107),
-            ),
-            elevation: f32::from_bits(0x4210_0107),
-            direction: 4,
-            ..AiContext::test_fixture_with_motion_sector(0, 0)
-        };
-
-        let scalar_dx = noise.origin.x - ctx.position.x;
-        let scalar_dy =
-            (noise.origin.y - ctx.position.y) + (noise.elevation as f32 - ctx.elevation);
-        assert_eq!(
-            crate::position_interface::vector_to_sector_0_to_15_with_aspect(
-                scalar_dx,
-                scalar_dy,
-                crate::position_interface::ASPECT_RATIO,
-            ),
-            10,
-            "the replaced scalar-elevation shortcut must select the adjacent sector"
-        );
-
-        ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
-
-        let turn = ai
-            .base
-            .outbox
-            .actor
-            .orders
-            .iter()
-            .find(|intent| intent.order_type == OrderType::Turning)
-            .expect("the seeking EventHear arm must author a Turn");
-        assert_eq!(turn.explicit_direction, Some(11));
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::SeekingHeardstepsReactiontime
-        );
-    }
-
-    /// Linux3/Profile_001/Savegame_028 r001 frame 10385: an arrow landed
-    /// outside every motion area, so the original game's trajectory calculation left its
-    /// impact position at the authored no-sector and no-layer sentinel.
-    /// EventHear stores that raw position and Face projects it at ground
-    /// level; rejecting the sentinel aborts an otherwise valid replay.
-    #[test]
-    fn event_hear_zonk_preserves_null_layer_impact_position() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(161);
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultOnPost;
-        ai.current_task_priority = task_priority::NONE;
-        ai.new_task_priority = task_priority::STRANGE_THING;
-
-        let noise = Noise {
-            origin: NoiseOrigin::from_position(Position {
-                x: 341.819_34,
-                y: 716.628_85,
-                sector: None,
-                level: u16::MAX,
-            }),
-            noise_type: NoiseType::Zonk,
-            volume: 1,
-            elevation: 480,
-            element_id: 0,
-        };
-        let ctx = AiContext {
-            frame: 10_385,
-            position: Position {
-                x: 317.8,
-                y: 716.0,
-                sector: None,
-                level: 8,
-            },
-            self_body_position_world: crate::coordinates::WorldPoint3D {
-                x: 317.8,
-                y: 1196.001,
-                z: 480.001_04,
-            },
-            elevation: 480.001_04,
-            direction: 4,
-            self_is_active: true,
-            ..AiContext::test_fixture()
-        };
-
-        ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
-
-        assert_eq!(ai.base.seek_position, noise.origin.legacy_position());
-        assert_eq!(ai.base.seek_position.level, u16::MAX);
-        assert_eq!(ai.base.current_state, AiState::Wondering);
-        assert_eq!(ai.base.current_substate, Substate::WonderingWatching);
-        let turn = ai
-            .base
-            .outbox
-            .actor
-            .orders
-            .iter()
-            .find(|intent| intent.order_type == OrderType::Turning)
-            .expect("the null-sector impact still authors Original's ground-projected Turn");
-        assert_eq!(turn.explicit_direction, Some(0));
-    }
-
-    #[test]
-    fn distraction_noise_records_the_impact_and_enters_investigation() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(71);
-        ai.base.current_state = AiState::Default;
-        ai.base.current_substate = Substate::DefaultOnPost;
-        ai.current_task_priority = task_priority::NONE;
-        ai.new_task_priority = task_priority::STRANGE_THING;
-        let origin = Position {
-            x: 140.0,
-            y: 90.0,
-            sector: None,
-            level: 0,
-        };
-        let noise = Noise {
-            origin: NoiseOrigin::from_position(origin),
-            noise_type: NoiseType::Distraction,
-            volume: crate::parameters_ai::NOISE_VOLUME_DISTRACTION as u16,
-            elevation: 0,
-            element_id: 0,
-        };
-        let ctx = AiContext {
-            frame: 300,
-            self_is_active: true,
-            ..AiContext::test_fixture()
-        };
-
-        ai.event_hear_standard_procedure(&sim, &noise, &ctx, &AiPerTickData::stub());
-
-        assert!(ai.investigating_distraction);
-        assert_eq!(ai.base.seek_position, origin);
-        assert_eq!(
-            ai.base.my_reconnaissance_report.report_type,
-            ReportType::Noise
-        );
-        assert_eq!(ai.base.my_reconnaissance_report.seek_position, origin);
-        assert_eq!(ai.base.current_state, AiState::Seeking);
-        assert_eq!(
-            ai.base.current_substate,
-            Substate::SeekingHeardstepsPreReactiontime
-        );
-        assert!(ai.base.timer_is_running);
-    }
-
-    /// This behavior sweeps the waiting
-    /// soldier's own position when the avenger it is watching for goes out of
-    /// view and no fighters remain. Rust used the remembered avenger position
-    /// seek position, which shifts the seek center and therefore the
-    /// near-point membership that drives the phase-4 selection draw count.
-    #[test]
-    fn avenger_roof_out_of_view_seeks_from_live_owner_position() {
-        let sim = crate::sim_rng::test_context();
-        let mut ai = EnemyAi::new(178);
-        ai.base.current_state = AiState::Attacking;
-        ai.base.current_substate = Substate::AttackingWaitForAvengerOnRoof;
-        ai.base.primary_target = None;
-        // Keep the stale avenger center far from the live position so a
-        // regression cannot accidentally pick the same seek points.
-        ai.base.seek_position = Position {
-            x: 240.0,
-            y: 860.0,
-            ..Position::default()
-        };
-
-        let live_position = Position {
-            x: 1_800.0,
-            y: 2_200.0,
-            ..Position::default()
-        };
-        let mut global = AiGlobalState {
-            seek_points: [(1_810.0, 2_200.0), (1_820.0, 2_200.0)]
-                .into_iter()
-                .enumerate()
-                .map(|(id, (x, y))| crate::ai::SeekPoint {
-                    position: Position {
-                        x,
-                        y,
-                        ..Position::default()
-                    },
-                    frame_when_full_interest: 0,
-                    directions: vec![0],
-                    last_calculated_interest: 100,
-                    locked: false,
-                    id: id as u16,
-                })
-                .collect(),
-            ..Default::default()
-        };
-
-        let ctx = AiContext {
-            frame: 12_345,
-            position: live_position,
-            ..AiContext::test_fixture()
-        };
-
-        ai.think_unexpected_event(
-            &sim,
-            &Stimulus::with_human(StimulusType::EventOutOfView, 42),
-            &mut global,
-            &ctx,
-            &AiPerTickData::stub(),
-            None,
-        );
-
-        assert_eq!(ai.seek_center, live_position);
-        assert_ne!(ai.seek_center, ai.base.seek_position);
+    fn on_alerting_apple(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+        let ThinkEnv { sim, ctx, .. } = env;
+        let in_swordfight_state = self.base.current_substate.is_any_swordfight();
+        let may_interrupt = sim.config().item_gameplay.apple_combat_interrupt;
+        if (!in_swordfight_state || may_interrupt)
+            && let StimulusInfo::Position(ref pos) = stimulus.info
+        {
+            self.base.stop_all();
+            // Original-game soldier apple-alert handling
+            // rejects every swordfight substate. The optional rule
+            // deliberately breaks the reciprocal fight before the
+            // apple daze takes ownership of the actor.
+            if may_interrupt && ctx.is_swordfighting {
+                self.base.outbox.actor.quit_swordfight = true;
+            }
+            self.base.seek_position = *pos;
+            self.set_state(AiState::Wondering, Substate::WonderingAppleSauceInTheVisor);
+            // Spawn a
+            // `RHTITBIT_WEAK_STUNNED` titbit at
+            // the computed stars-effect point if one doesn't already exist on
+            // this NPC.  The AI can't touch the titbit manager,
+            // so we lean on `EngineInner::sync_apple_sauce_titbits`
+            // which runs every frame, scans for any NPC in
+            // `WonderingAppleSauceInTheVisor`, and calls
+            // `add_weak_stunned` — which internally runs
+            // `TitbitExists` guard + `compute_stars_point`.  The
+            // effect is same-frame (AI ticks before `sync_titbits`
+            // in `perform_hourglass_inner`).
+            // Apple hits visor, vision is restored gradually via
+            // Gradually reopen eyes (view cone grows from 5 back to
+            // standard radius).
+            self.base.outbox.actor.slowly_open_eyes = true;
+            self.base.launch_timer(60, ctx.frame);
+        }
+        false
     }
 }
+use super::ThinkEnv;

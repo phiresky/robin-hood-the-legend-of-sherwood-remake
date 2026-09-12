@@ -101,22 +101,14 @@ impl RepulsivePoint {
         distance_destination: f32,
         actor_radius: f32,
     ) -> Option<MapVec> {
-        let r = rhline::repulsive_point_compute_deviation(
-            rhline::Vec2::new(movement.x, movement.y),
-            rhline::Vec2::new(origin.x, origin.y),
+        rhline::repulsive_point_compute_deviation(
+            self,
+            movement,
+            origin,
             movement_mag,
             distance_destination,
             actor_radius,
-            rhline::Vec2::new(self.position.x, self.position.y),
-            self.radius,
-            // Original-game deviation calculation reads the stored
-            // action radius, which force setup has already expanded by
-            // the inner radius.
-            self.action_radius,
-            self.force_a,
-            self.force_b,
-        )?;
-        Some(MapVec::new(r.x, r.y))
+        )
     }
 }
 
@@ -212,21 +204,14 @@ impl RepulsiveLine {
         distance_destination: f32,
         actor_radius: f32,
     ) -> Option<MapVec> {
-        let r = rhline::repulsive_line_compute_deviation(
-            rhline::Vec2::new(movement.x, movement.y),
-            rhline::Vec2::new(origin.x, origin.y),
+        rhline::repulsive_line_compute_deviation(
+            self,
+            movement,
+            origin,
             movement_mag,
             distance_destination,
             actor_radius,
-            self.radius,
-            self.action_radius,
-            self.force_a,
-            self.force_b,
-            rhline::Vec2::new(self.normal.x, self.normal.y),
-            rhline::Vec2::new(self.vector.x, self.vector.y),
-            rhline::Vec2::new(self.a.x, self.a.y),
-        )?;
-        Some(MapVec::new(r.x, r.y))
+        )
     }
 }
 

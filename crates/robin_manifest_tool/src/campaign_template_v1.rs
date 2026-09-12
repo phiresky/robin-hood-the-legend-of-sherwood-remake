@@ -567,13 +567,8 @@ fn validate_normalized_output(output: &Path) -> Result<()> {
 }
 
 fn validate_regular_file(path: &Path, label: &str) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
+    crate::fs_util::validate_regular_file(path)
         .with_context(|| format!("inspect {label} {}", path.display()))?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "{label} is not a regular non-symlink file: {}",
-        path.display()
-    );
     Ok(())
 }
 

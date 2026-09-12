@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[path = "admin/mod.rs"]
 mod admin;
 

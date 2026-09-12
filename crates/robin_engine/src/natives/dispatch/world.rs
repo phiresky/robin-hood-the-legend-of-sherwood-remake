@@ -11,7 +11,7 @@ impl NativeContext<'_, '_> {
             IsAnimationActive => {
                 let actor_h = stack.pop_i32();
                 if actor_h == 0 {
-                    tracing::warn!("Script error: IsAnimationActive with null handle");
+                    tracing::warn!(target: "script","Script error: IsAnimationActive with null handle");
                     0
                 } else {
                     self.get_entity(actor_h)
@@ -25,7 +25,7 @@ impl NativeContext<'_, '_> {
                 let actor_h = stack.pop_i32();
                 let is_fx = self.get_entity(actor_h).is_some_and(|e| e.is_fx());
                 if !self.actor_exists(actor_h) || !is_fx {
-                    tracing::error!(
+                    tracing::warn!(target: "script",
                         "Script error (SetAnimationState): invalid animation handle {actor_h}"
                     );
                     0
@@ -135,18 +135,18 @@ impl NativeContext<'_, '_> {
                 let fx_id = match self.actor_id(fx_h) {
                     Some(id) if self.get_entity(fx_h).is_some_and(|entity| entity.is_fx()) => id,
                     None => {
-                        tracing::warn!(
+                        tracing::warn!(target: "script",
                             "Script error (LinkTargetToFX): null/invalid FX handle {fx_h}"
                         );
                         return 0;
                     }
                     Some(_) => {
-                        tracing::warn!("Script error (LinkTargetToFX): handle {fx_h} is not an FX");
+                        tracing::warn!(target: "script","Script error (LinkTargetToFX): handle {fx_h} is not an FX");
                         return 0;
                     }
                 };
                 let Some(fx_entity) = self.get_entity(fx_h) else {
-                    tracing::warn!("Script error (LinkTargetToFX): invalid FX handle {fx_h}");
+                    tracing::warn!(target: "script","Script error (LinkTargetToFX): invalid FX handle {fx_h}");
                     return 0;
                 };
                 if !fx_entity.is_fx() {
@@ -154,7 +154,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 let Some(target_entity) = self.get_entity_mut(target_h) else {
-                    tracing::warn!(
+                    tracing::warn!(target: "script",
                         "Script error (LinkTargetToFX): invalid target handle {target_h}"
                     );
                     return 0;
@@ -246,7 +246,7 @@ impl NativeContext<'_, '_> {
                     }
                     1
                 } else {
-                    tracing::warn!(
+                    tracing::warn!(target: "script",
                         "Script error: CleanFromHisBuildingBeforeTeleport: \
                          actor {actor_h} not in a building"
                     );
@@ -269,14 +269,14 @@ impl NativeContext<'_, '_> {
                         zone.leave(actor_id);
                         1
                     } else {
-                        tracing::warn!(
+                        tracing::warn!(target: "script",
                             "Script error: CleanFromScriptZoneBeforeTeleport: \
                              actor {actor_h} not in zone {loc_h}"
                         );
                         0
                     }
                 } else {
-                    tracing::warn!(
+                    tracing::warn!(target: "script",
                         "Script error: CleanFromScriptZoneBeforeTeleport: \
                          invalid zone {loc_h}"
                     );
@@ -508,8 +508,8 @@ impl NativeContext<'_, '_> {
                 let door_h = stack.pop_i32();
                 let active = stack.pop_i32();
                 if self.get_door(door_h).is_none() {
-                    tracing::warn!(
-                        "Script Error: ActivateDoorMouseSector: door {door_h} not found"
+                    tracing::warn!(target: "script",
+                        "Script error: ActivateDoorMouseSector: door {door_h} not found"
                     );
                     return 0;
                 }
@@ -539,15 +539,15 @@ impl NativeContext<'_, '_> {
                 // "not a scroll" warn + 0; scroll → its status.
                 let scroll_h = stack.pop_i32();
                 if scroll_h == 0 {
-                    tracing::warn!("Script Error: GetScrollStatus with null element");
+                    tracing::warn!(target: "script","Script error: GetScrollStatus with null element");
                     0
                 } else {
                     let is_scroll = self
                         .get_entity(scroll_h)
                         .is_some_and(|e| e.kind() == ElementKind::ObjectScroll);
                     if !is_scroll {
-                        tracing::warn!(
-                            "Script Error: GetScrollStatus on non-scroll element {scroll_h}"
+                        tracing::warn!(target: "script",
+                            "Script error: GetScrollStatus on non-scroll element {scroll_h}"
                         );
                         return 0;
                     }
@@ -568,21 +568,21 @@ impl NativeContext<'_, '_> {
                 let status = stack.pop_i32();
                 let scroll_h = stack.pop_i32();
                 if scroll_h == 0 {
-                    tracing::warn!("Script Error: SetScrollStatus with null element");
+                    tracing::warn!(target: "script","Script error: SetScrollStatus with null element");
                     return 0;
                 }
                 let is_scroll = self
                     .get_entity(scroll_h)
                     .is_some_and(|e| e.kind() == ElementKind::ObjectScroll);
                 if !is_scroll {
-                    tracing::warn!(
-                        "Script Error: SetScrollStatus on non-scroll element {scroll_h}"
+                    tracing::warn!(target: "script",
+                        "Script error: SetScrollStatus on non-scroll element {scroll_h}"
                     );
                     return 0;
                 }
                 if !(0..=3).contains(&status) {
-                    tracing::warn!(
-                        "Script Error: SetScrollStatus status {status} out of range (must be 0..=3)"
+                    tracing::warn!(target: "script",
+                        "Script error: SetScrollStatus status {status} out of range (must be 0..=3)"
                     );
                     return 0;
                 }
@@ -609,8 +609,8 @@ impl NativeContext<'_, '_> {
                 // Branch 1: bad NPC handle.
                 let npc_is_npc = self.get_entity(npc_h).is_some_and(|e| e.is_npc());
                 if !npc_is_npc {
-                    tracing::warn!(
-                        "Script Error: AttachScrollToNPC with non-NPC actor handle {npc_h}"
+                    tracing::warn!(target: "script",
+                        "Script error: AttachScrollToNPC with non-NPC actor handle {npc_h}"
                     );
                     return 0;
                 }
@@ -633,8 +633,8 @@ impl NativeContext<'_, '_> {
                         .get_entity(scroll_h)
                         .is_some_and(|e| e.kind() == ElementKind::ObjectScroll);
                     if !scroll_ok {
-                        tracing::warn!(
-                            "Script Error: AttachScrollToNPC element {scroll_h} is not a scroll object"
+                        tracing::warn!(target: "script",
+                            "Script error: AttachScrollToNPC element {scroll_h} is not a scroll object"
                         );
                     }
                     // Branch 4: replace-or-insert; mark dirty when the value

@@ -361,10 +361,11 @@ impl EngineInner {
         let left = line.left_obstacle_index;
         let right = line.right_obstacle_index;
 
-        let (current, layer) = match self.world.entities.get(entity_id) {
-            Some(e) => (e.element_data().obstacle_index(), e.element_data().layer()),
-            None => return,
-        };
+        let entity = self.expect_entity(entity_id, "elevation crossing owner");
+        let (current, layer) = (
+            entity.element_data().obstacle_index(),
+            entity.element_data().layer(),
+        );
 
         let mut next: Option<crate::sight_obstacle::SightObstacleIndex>;
         let mut found = true;
@@ -514,10 +515,10 @@ impl EngineInner {
 
         // Read the actor's current obstacle — used as the seed for the
         // sort when multiple lines are crossed.
-        let mut current_obstacle = match self.world.entities.get(entity_id) {
-            Some(e) => e.element_data().obstacle_index(),
-            None => return false,
-        };
+        let mut current_obstacle = self
+            .expect_entity(entity_id, "elevation crossing sort owner")
+            .element_data()
+            .obstacle_index();
 
         // Bubble-sort elevation lines by obstacle continuity.  Each
         // iteration picks the next line whose left or right side

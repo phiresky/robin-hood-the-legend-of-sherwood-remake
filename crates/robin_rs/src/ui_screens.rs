@@ -441,5 +441,4 @@ impl BuyBlazonsScreen {
 }
 
 #[cfg(test)]
-#[path = "ui_screens_tests.rs"]
 mod tests;

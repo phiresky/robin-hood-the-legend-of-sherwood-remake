@@ -1,7 +1,5 @@
 //! Host effect application around the shared authoritative timeline.
 
-pub use robin_engine::sim_timeline::*;
-
 use crate::host::{ApplicationContext, HostAudio, HostEffectBatches, HostFrontend};
 use robin_engine::engine::{DevState, Engine, HostDisplayState, LevelAssets};
 use robin_engine::game_operation::GameCode;
@@ -283,8 +281,8 @@ fn prepare_display_effects(
         dev.add_noise_to_display(noise);
     }
     dev.tick_noise_display(1.0);
-    for (show, restore_position) in side_effects.pending_minimap_display_maps.drain(..) {
-        display.display_minimap(show, restore_position);
+    for request in side_effects.pending_minimap_display_maps.drain(..) {
+        display.display_minimap(request.show, request.restore_position);
     }
     side_effects
 }

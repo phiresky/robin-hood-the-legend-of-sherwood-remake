@@ -17,7 +17,7 @@ fn begin_interactive_frame(
     runtime: &mut TimelineRuntime,
     hud: &mut MissionHud,
     presentation: &MissionPresentation,
-) -> FrameStart {
+) -> Result<FrameStart, String> {
     let MissionIngress {
         host,
         manager,
@@ -40,7 +40,8 @@ fn begin_interactive_frame(
     // Publishes the current sim_frame to the server's broadcast
     // pump so peer-input target frames are stamped against a
     // fresh cursor.
-    let net_drain = drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms());
+    let net_drain = drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms())
+        .map_err(|error| error.to_string())?;
     let mp_clock_pause = net_drain.pause_simulation;
     let net_inputs = net_drain.inputs;
 
@@ -76,10 +77,10 @@ fn begin_interactive_frame(
     // headless construction never reaches this presentation stage.
     host.frontend.presentation.draw_order = manager.engine.compute_display_order();
 
-    FrameStart {
+    Ok(FrameStart {
         frame,
         mp_clock_pause,
-    }
+    })
 }
 
 /// Apply host-only camera controls. These deliberately remain available while
@@ -252,7 +253,7 @@ pub(super) async fn collect_input_and_menus(
         runtime,
         &mut frontend.hud,
         &frontend.presentation,
-    );
+    )?;
     let mut modal_rendered_this_frame = false;
     let MissionMutation {
         host,

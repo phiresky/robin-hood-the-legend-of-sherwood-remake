@@ -400,7 +400,13 @@ impl EngineInner {
                     action_distance,
                 )
             }
-            None => return,
+            None => {
+                tracing::warn!(
+                    ?actor,
+                    "DropAle actor disappeared before route construction"
+                );
+                return;
+            }
         };
 
         // running → RunningUpright, else crouched → WalkingCrouched,

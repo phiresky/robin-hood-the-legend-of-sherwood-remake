@@ -3,6 +3,19 @@
 use super::*;
 
 impl EngineInner {
+    /// Snapshot every occupied slot without resolving or refreshing position
+    /// caches: later owners must retain the exact pre-movement boundary.
+    pub(in crate::engine) fn boundary_positions_snapshot(
+        &self,
+    ) -> EntitySlots<Option<crate::entities::BoundaryPosition>> {
+        let mut positions = EntitySlots::filled(self.world.entities.len(), None);
+        for (entity_id, entity) in self.world.entities.occupied() {
+            positions[entity_id] =
+                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
+        }
+        positions
+    }
+
     /// Consume the host sound-manager update that completed after the
     /// preceding Original engine frame.
     ///
@@ -296,12 +309,7 @@ impl EngineInner {
         // while actors with a later creation order have not run yet.
         let positions_before_movement = {
             let _detail = entity_system_detail_guard(EntitySystemDetail::BoundarySnapshot);
-            let mut positions = EntitySlots::filled(self.world.entities.len(), None);
-            for (entity_id, entity) in self.world.entities.occupied() {
-                positions[entity_id] =
-                    Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-            }
-            positions
+            self.boundary_positions_snapshot()
         };
 
         // ── Per-frame movement tick ─────────────────────────────
@@ -498,7 +506,10 @@ impl EngineInner {
         // `MotionState::Done`, then clears `last_motion_state` so the
         // next tick starts fresh.  Read by the postpone-race guard in
         // `EngineInner::engine_postpone`.
-        self.propagate_done_to_current_orders();
+        crate::engine::order_arbitration::propagate_done_to_current_orders(
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+        );
 
         // Keep bodies carried by Little John positioned on the carrier and
         // drive their sprite animation synchronized with the carrier.

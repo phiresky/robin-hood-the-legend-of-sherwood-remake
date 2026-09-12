@@ -1803,7 +1803,7 @@ which are true continuous-tone rasters.)
 Repro:
 
 ```
-cargo run --release --example jxl_sprite_probe -- \
+cargo run --release -p robin_assets --features research --example jxl_sprite_probe -- \
     --data-dir datadirs/fullgame_linux --out tmp/jxl_sprite_probe
 # report: tmp/jxl_sprite_probe/report.txt; worst-case side-by-side
 # PNGs under tmp/jxl_sprite_probe/<char>/worst_q{80,90}/
@@ -1930,9 +1930,9 @@ q80; nothing to wire.
 RLE/pak repro:
 
 ```
-cargo run --release --example jxl_sprite_probe -- \
+cargo run --release -p robin_assets --features research --example jxl_sprite_probe -- \
     --data-dir datadirs/fullgame_linux --out tmp/jxl_sprite_probe --rle
-cargo run --release --example jxl_sprite_probe -- \
+cargo run --release -p robin_assets --features research --example jxl_sprite_probe -- \
     --data-dir datadirs/fullgame_linux --out tmp/jxl_sprite_probe --pak
 # reports: tmp/jxl_sprite_probe/report_{rle,pak}.txt; dumps under
 # tmp/jxl_sprite_probe/rle/worst_q{70,80}/ and .../pak_*/worst/

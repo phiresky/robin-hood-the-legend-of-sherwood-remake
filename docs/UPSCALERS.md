@@ -33,14 +33,19 @@ copies.
 ## RetroArch presets
 
 Desktop/native builds can opt into the MPL-2.0 librashader runtime with the
-`retroarch-shaders` Cargo feature. It is disabled by default because its
-The glslang and SPIRV-Cross native toolchains are expensive to compile. Enabling it
+`retroarch-shaders` Cargo feature. It is disabled by default because the
+glslang and SPIRV-Cross native toolchains are expensive to compile. Enabling it
 adds discovery of repository Libretro
 `.slangp` presets when that collection is installed alongside the game, plus
 the native file picker (`I` on the Graphics screen). An imported preset is
 validated immediately and its absolute path is persisted; referenced shader
 files remain beside the preset, so moving or deleting that directory causes
 an explicit load error.
+
+The tracked `vendor/slang-shaders/` collection supports this optional path
+without a network download. It is runtime data, not dead source merely because
+the feature is non-default. Keep its license files and preset-relative shader
+dependencies together when packaging or relocating it.
 
 Individual Libretro presets retain their own licenses. In particular,
 CRT-Royale is GPL-licensed and is available only as an external runtime preset;

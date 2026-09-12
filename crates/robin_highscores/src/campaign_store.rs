@@ -517,7 +517,7 @@ async fn open_path_verified(
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
+    options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path).await?.into_std().await;
     verify_open_campaign_file(file, digest, max_bytes, require_read_only).await
 }
@@ -559,14 +559,14 @@ async fn verify_open_campaign_file(
 
 #[cfg(target_os = "linux")]
 async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::os::unix::fs::PermissionsExt as _;
-    let fd = openat2(
+    let fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(std::io::Error::from)?;
     let directory = std::fs::File::from(fd);

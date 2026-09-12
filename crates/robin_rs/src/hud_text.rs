@@ -718,7 +718,10 @@ fn render_portrait_text_gpu(
         let vis_top = (sh - pos_visage) as i32;
         if !sword_visible {
             let individual_name = || {
-                entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_default()
+                entity_display_name(engine, assets, portraits, pc_id, entity).unwrap_or_else(|| {
+                    tracing::warn!(?pc_id, "Portrait actor has no display-name source");
+                    Cow::Borrowed("")
+                })
             };
             let name = if matches!(item.target(), PortraitTarget::Pc(_)) {
                 individual_name()

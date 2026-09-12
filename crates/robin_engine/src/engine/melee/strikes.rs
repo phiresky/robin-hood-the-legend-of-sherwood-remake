@@ -13,61 +13,62 @@ pub(crate) fn sword_damage_debug_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_SWORD_DAMAGE").is_some())
 }
 
+fn strike_effect_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_STRIKE_EFFECT",
+            [
+                "PARITY_DEBUG_STRIKE_EFFECT_FRAME",
+                "PARITY_DEBUG_STRIKE_EFFECT_ATTACKER_CREATION_ORDER",
+                "PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER",
+            ],
+        )
+    })
+}
+
 fn strike_effect_debug_matches(
     frame: u32,
     attacker_creation_order: u32,
     victim_creation_order: u32,
 ) -> bool {
-    if std::env::var_os("PARITY_DEBUG_STRIKE_EFFECT").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for strike-effect diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_STRIKE_EFFECT_FRAME").is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_ATTACKER_CREATION_ORDER")
-            .is_none_or(|expected| expected == attacker_creation_order)
-        && parse_filter("PARITY_DEBUG_STRIKE_EFFECT_VICTIM_CREATION_ORDER")
-            .is_none_or(|expected| expected == victim_creation_order)
+    strike_effect_debug_gate().matches([
+        Some(frame),
+        Some(attacker_creation_order),
+        Some(victim_creation_order),
+    ])
 }
 
 fn special_strike_lifecycle_debug_matches(frame: u32, owner: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_SPECIAL_STRIKE_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for special-strike diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_FRAME").is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_SPECIAL_STRIKE_OWNER_HANDLE")
-            .is_none_or(|expected| expected == owner)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SPECIAL_STRIKE_LIFECYCLE",
+            [
+                "PARITY_DEBUG_SPECIAL_STRIKE_FRAME",
+                "PARITY_DEBUG_SPECIAL_STRIKE_OWNER_HANDLE",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(owner)])
 }
 
 fn opponent_sprite_timing_debug_matches(frame: u32, owner: u32, target: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_OPPONENT_SPRITE_TIMING").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for opponent-sprite-timing diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_FRAME")
-        .is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_OWNER")
-            .is_none_or(|expected| expected == owner)
-        && parse_filter("PARITY_DEBUG_OPPONENT_SPRITE_TIMING_TARGET")
-            .is_none_or(|expected| expected == target)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_OPPONENT_SPRITE_TIMING",
+            [
+                "PARITY_DEBUG_OPPONENT_SPRITE_TIMING_FRAME",
+                "PARITY_DEBUG_OPPONENT_SPRITE_TIMING_OWNER",
+                "PARITY_DEBUG_OPPONENT_SPRITE_TIMING_TARGET",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(owner), Some(target)])
 }
 
 fn special_strike_selected_snapshot(
@@ -772,15 +773,17 @@ impl EngineInner {
             crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
         );
 
-        let frame = self.control.frame_counter;
-        let attacker_creation_order = self.world.original_creation_order(attacker_id);
-        let victim_creation_order = self.world.original_creation_order(target_id);
-        if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
-            eprintln!(
-                "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=pulse strike={strike:?} animation={animation:?} motion={motion:?} started={started} hit={hit} completed={completed} sprite_frame={current_frame} frame_count={frame_count} action_done_frame={action_done_frame} action_done_counter={action_done_counter}]",
-                attacker_id.index(),
-                target_id.index(),
-            );
+        if strike_effect_debug_gate().enabled() {
+            let frame = self.control.frame_counter;
+            let attacker_creation_order = self.world.original_creation_order(attacker_id);
+            let victim_creation_order = self.world.original_creation_order(target_id);
+            if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
+                eprintln!(
+                    "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=pulse strike={strike:?} animation={animation:?} motion={motion:?} started={started} hit={hit} completed={completed} sprite_frame={current_frame} frame_count={frame_count} action_done_frame={action_done_frame} action_done_counter={action_done_counter}]",
+                    attacker_id.index(),
+                    target_id.index(),
+                );
+            }
         }
 
         if started {
@@ -841,34 +844,36 @@ impl EngineInner {
         let in_range = profile
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
-        let frame = self.control.frame_counter;
-        let attacker_creation_order = self.world.original_creation_order(attacker_id);
-        let victim_creation_order = self.world.original_creation_order(victim_id);
-        if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
-            let attacker = self.expect_entity(attacker_id, "strike-effect diagnostic attacker");
-            let victim = self.expect_entity(victim_id, "strike-effect diagnostic victim");
-            let attacker_direction = attacker.element_data().direction();
-            let victim_direction = direction_to(&self.world.entities, attacker_id, victim_id);
-            let angle_delta = (attacker_direction - victim_direction).rem_euclid(16);
-            let attacker_has_victim = attacker
-                .human_data()
-                .is_some_and(|human| human.opponents.contains(&victim_id));
-            let victim_has_attacker = victim
-                .human_data()
-                .is_some_and(|human| human.opponents.contains(&attacker_id));
-            let non_mutual = attacker_has_victim != victim_has_attacker;
-            let already_hit = attacker
-                .human_data()
-                .is_some_and(|human| human.sword_sweep.victims.contains(&victim_id));
-            let queued = in_range && profile_idx.is_some();
-            eprintln!(
-                "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=candidate strike={strike:?} attacker_sector={:?} victim_sector={:?} attacker_direction={attacker_direction} victim_direction={victim_direction} angle_delta={angle_delta} distance_bits={:#010x} in_range={in_range} attacker_has_victim={attacker_has_victim} victim_has_attacker={victim_has_attacker} non_mutual={non_mutual} already_hit={already_hit} profile_idx={profile_idx:?} queue={queued}]",
-                attacker_id.index(),
-                victim_id.index(),
-                attacker.element_data().sector(),
-                victim.element_data().sector(),
-                distance.to_bits(),
-            );
+        if strike_effect_debug_gate().enabled() {
+            let frame = self.control.frame_counter;
+            let attacker_creation_order = self.world.original_creation_order(attacker_id);
+            let victim_creation_order = self.world.original_creation_order(victim_id);
+            if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
+                let attacker = self.expect_entity(attacker_id, "strike-effect diagnostic attacker");
+                let victim = self.expect_entity(victim_id, "strike-effect diagnostic victim");
+                let attacker_direction = attacker.element_data().direction();
+                let victim_direction = direction_to(&self.world.entities, attacker_id, victim_id);
+                let angle_delta = (attacker_direction - victim_direction).rem_euclid(16);
+                let attacker_has_victim = attacker
+                    .human_data()
+                    .is_some_and(|human| human.opponents.contains(&victim_id));
+                let victim_has_attacker = victim
+                    .human_data()
+                    .is_some_and(|human| human.opponents.contains(&attacker_id));
+                let non_mutual = attacker_has_victim != victim_has_attacker;
+                let already_hit = attacker
+                    .human_data()
+                    .is_some_and(|human| human.sword_sweep.victims.contains(&victim_id));
+                let queued = in_range && profile_idx.is_some();
+                eprintln!(
+                    "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=candidate strike={strike:?} attacker_sector={:?} victim_sector={:?} attacker_direction={attacker_direction} victim_direction={victim_direction} angle_delta={angle_delta} distance_bits={:#010x} in_range={in_range} attacker_has_victim={attacker_has_victim} victim_has_attacker={victim_has_attacker} non_mutual={non_mutual} already_hit={already_hit} profile_idx={profile_idx:?} queue={queued}]",
+                    attacker_id.index(),
+                    victim_id.index(),
+                    attacker.element_data().sector(),
+                    victim.element_data().sector(),
+                    distance.to_bits(),
+                );
+            }
         }
         if in_range {
             if let Some(profile_idx) = profile_idx {
@@ -1720,10 +1725,14 @@ impl EngineInner {
             gesture_quality.is_strike_quality(),
             "invalid gesture quality reached sweep initialization"
         );
-        let profile = match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
-            Some(p) => p,
-            None => return,
+        // No weapon means no sweep; a referenced profile must exist.
+        let Some(profile_idx) = profile_idx else {
+            return;
         };
+        let profile = assets
+            .profile_manager
+            .get_hth_weapon(profile_idx)
+            .unwrap_or_else(|| panic!("sweep has missing weapon profile {profile_idx}"));
         let thrust = &profile.thrusts[strike as usize];
         let direction = thrust.direction;
         // Original-game sword strike-angle access evaluates authored-degree
@@ -1808,7 +1817,7 @@ impl EngineInner {
             rotation_per_frame: signed_rotation,
             direction,
             strike,
-            attacker_profile_idx: profile_idx,
+            attacker_profile_idx: Some(profile_idx),
             gesture_quality,
             strike_kind,
         };
@@ -1881,9 +1890,9 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(attacker_id) else {
                 return;
             };
-            let actor = match entity.actor_data() {
-                Some(a) => a,
-                None => return,
+            let Some(actor) = entity.actor_data() else {
+                // Sweep polling admits entities without actor capability.
+                return;
             };
             if let Some(sweep) = &actor.sweep_state {
                 let pos = entity.element_data().position_map();
@@ -2721,13 +2730,12 @@ impl EngineInner {
         inc_y: f32,
     ) {
         // Read flyer position + sector.
-        let (flyer_pos_ground, flyer_sector) = match self.get_entity(flyer_id) {
-            Some(e) => {
-                let elem = e.element_data();
-                let position = elem.position();
-                ((position.x, position.y), elem.sector())
-            }
-            None => return,
+        let (flyer_pos_ground, flyer_sector) = {
+            let elem = self
+                .expect_entity(flyer_id, "domino effect flyer")
+                .element_data();
+            let position = elem.position();
+            ((position.x, position.y), elem.sector())
         };
 
         // The flyer's `is_active_and_outside_building` test is
@@ -3316,66 +3324,13 @@ impl EngineInner {
             // estimation.  Use `INVERSE_SWORDFIGHT_ASPECT_RATIO`
             // (= 1.0): the isometric correction is intentionally
             // disabled for sword-fight math.
-            let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
-            let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
-            let nearby: Vec<crate::combat::NearbyVictim> = self
-                .world
-                .entities
-                .humans()
-                .filter_map(|(eid, e)| {
-                    let elem = e.element_data();
-                    if !should_collect_strike_estimation_human(
-                        eid.into(),
-                        attack.soldier_id,
-                        Some(attack.target_id),
-                        elem.active,
-                    ) {
-                        return None;
-                    }
-                    let eligible_for_regular_strikes = is_possible_sword_strike_victim(
-                        &self.world.entities,
-                        attack.soldier_id,
-                        e,
-                        eid,
-                        &assets.profile_manager,
-                        &self.world.fast_grid,
-                        obstacles,
-                    );
-                    let vdx = elem.position_map().x - attack.attacker_pos.0;
-                    let vdy = (elem.position_map().y - attack.attacker_pos.1) * inv_aspect;
-                    let dist = (vdx * vdx + vdy * vdy).sqrt();
-                    let sector =
-                        crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
-                    let def_wid = get_hth_weapon_id_full(e, &assets.profile_manager);
-                    let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
-                    let lp = get_life_points(e);
-                    // Check if this victim is walking with a sword (for
-                    // circle-strike approach tolerance).
-                    let is_walking_with_sword = e
-                        .actor_data()
-                        .map(|a| a.action_state == ActionState::MovingSword)
-                        .unwrap_or(false);
-                    Some(crate::combat::NearbyVictim {
-                        is_active: elem.active,
-                        eligible_for_regular_strikes,
-                        dx: vdx,
-                        dy_stretched: vdy,
-                        distance: dist,
-                        direction_sector: sector,
-                        camp: e.camp(),
-                        facing_direction: elem.direction(),
-                        elevation: elem.position().z,
-                        life_points: lp,
-                        defender_profile: def_prof,
-                        is_primary_target: eid == attack.target_id,
-                        is_walking_with_sword,
-                    })
-                })
-                .collect();
+            let nearby = self.collect_strike_estimation_victims(
+                assets,
+                attack.soldier_id,
+                attack.attacker_pos,
+                Some(attack.target_id),
+                attack.target_id,
+            );
 
             let ctx = crate::combat::StrikeSelectionContext {
                 attacker_profile,
@@ -3692,14 +3647,10 @@ impl EngineInner {
         // Keep this after every rejection/launch path, but before returning
         // to the dispatcher's owner-work drain.
         for owner in pending_considerations {
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!("sword-strike consideration owner {owner:?} lost Enemy AI")
-                });
+            let ai = self.world.entities.expect_enemy_ai_mut(
+                owner,
+                format_args!("sword-strike consideration owner {owner:?} lost Enemy AI"),
+            );
             if std::mem::take(&mut ai.pending_combat_insult_after_strike_consideration)
                 && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
                 && !ai.pending_special_strike
@@ -4102,8 +4053,8 @@ mod tests {
     #[test]
     fn loaded_in_progress_falling_push_restores_serialized_flight() {
         let mut engine = EngineInner::new();
-        let attacker = engine.add_entity(falling_pushed_soldier(false));
-        let victim = engine.add_entity(falling_pushed_soldier(false));
+        let attacker = engine.add_test_entity(falling_pushed_soldier(false));
+        let victim = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, victim);
 
         let (sequence, element, _) = engine
@@ -4232,7 +4183,7 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(falling_ladder_pc(200));
+        let victim = engine.add_test_entity(falling_ladder_pc(200));
         {
             let actor = engine
                 .get_entity_mut(victim)
@@ -4277,7 +4228,7 @@ mod tests {
                 .map(|sector| sector.with_arena_index(goal_sector_index)),
             ..Default::default()
         });
-        let victim_id = engine.add_entity(victim);
+        let victim_id = engine.add_test_entity(victim);
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(&sim, &LevelAssets::default());
@@ -4306,7 +4257,7 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(falling_pushed_soldier(true));
+        let victim_id = engine.add_test_entity(falling_pushed_soldier(true));
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
         engine
             .get_entity_mut(victim_id)
@@ -4414,7 +4365,7 @@ mod tests {
         flight.goal_z = 0.0;
 
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
 
         // The actor update has already retired the falling order and changed
         // posture. The later terminal flight reconciliation must not
@@ -4496,7 +4447,7 @@ mod tests {
         flight.obstacle = crate::position_interface::ObstacleHandle::new(0);
 
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
         engine.tick_push_flight_terminal_landings(&sim, &assets);
 
         let victim = engine.get_entity(victim_id).unwrap();
@@ -4540,12 +4491,14 @@ mod tests {
         flight.goal_z = 0.0;
 
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_push_flight_for_owner(&sim, &LevelAssets::default(), victim_id);
-        let flights = crate::movement_diagnostics::take_parity_flight_capture();
-        let _ = crate::movement_diagnostics::take_parity_movement_capture();
+        let flights =
+            crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
+        let _ =
+            crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().position_map(), exact_goal);
@@ -4569,8 +4522,8 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
-        let earlier = engine.add_entity(falling_pushed_soldier(false));
-        let later = engine.add_entity(falling_pushed_soldier(false));
+        let earlier = engine.add_test_entity(falling_pushed_soldier(false));
+        let later = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, earlier);
         install_falling_pushed_order(&mut engine, later);
 
@@ -4604,8 +4557,10 @@ mod tests {
                 .position_map(),
             MapPoint::new(15.0, 20.0)
         );
-        let flights = crate::movement_diagnostics::take_parity_flight_capture();
-        let _ = crate::movement_diagnostics::take_parity_movement_capture();
+        let flights =
+            crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
+        let _ =
+            crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
         assert_eq!(flights.len(), 2);
         assert_eq!(flights[0].entity, earlier);
         assert_eq!(flights[1].entity, later);
@@ -4615,7 +4570,7 @@ mod tests {
             flights[0].post_position_map.x.bits
         );
         assert!(
-            crate::movement_diagnostics::take_parity_flight_capture().is_empty(),
+            crate::movement_diagnostics::take_parity_flight_capture().is_none(),
             "taking one frame's flight diagnostics must isolate the next frame"
         );
     }
@@ -4655,7 +4610,7 @@ mod tests {
         actor.continuation.motion_state = crate::sprite::MotionState::Start;
 
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(entity);
+        let victim = engine.add_test_entity(entity);
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
         let sequence = engine.orders.sequence_manager.launch_element(damage);
@@ -4725,7 +4680,7 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(falling_ladder_pc(50));
+        let victim = engine.add_test_entity(falling_ladder_pc(50));
         let mut opponent_entity = falling_pushed_soldier(false);
         let Entity::Soldier(soldier) = &mut opponent_entity else {
             unreachable!()
@@ -4735,7 +4690,7 @@ mod tests {
             ..Default::default()
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
-        let opponent = engine.add_entity(opponent_entity);
+        let opponent = engine.add_test_entity(opponent_entity);
         {
             let ai = engine
                 .get_entity_mut(opponent)
@@ -4807,8 +4762,8 @@ mod tests {
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
-        let victim = engine.add_entity(falling_ladder_pc(200));
-        let opponent = engine.add_entity(falling_pushed_soldier(false));
+        let victim = engine.add_test_entity(falling_ladder_pc(200));
+        let opponent = engine.add_test_entity(falling_pushed_soldier(false));
         engine
             .get_entity_mut(victim)
             .unwrap()
@@ -4866,7 +4821,7 @@ mod tests {
             .unwrap()
             .goal_x = 14.0;
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(&sim, &LevelAssets::default());
@@ -4894,7 +4849,7 @@ mod tests {
         let mut entity = falling_pushed_soldier(false);
         entity.human_data_mut().unwrap().unconscious = true;
         let mut engine = EngineInner::new();
-        let victim_id = engine.add_entity(entity);
+        let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(sim, &LevelAssets::default());
@@ -4938,8 +4893,8 @@ mod tests {
         if let Entity::Soldier(soldier) = &mut victim {
             soldier.soldier.cached_camp = Camp::Lacklandists;
         }
-        let attacker_id = engine.add_entity(attacker);
-        let victim_id = engine.add_entity(victim);
+        let attacker_id = engine.add_test_entity(attacker);
+        let victim_id = engine.add_test_entity(victim);
 
         engine
             .get_entity_mut(attacker_id)

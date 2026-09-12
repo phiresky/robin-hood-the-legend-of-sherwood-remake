@@ -22,7 +22,9 @@ pub fn drain_pending_bg_blits(frontend: &mut HostFrontend, effects: &mut HostEff
     }
 
     for blit in blits {
-        let _ = apply_bg_blit(frontend, blit);
+        if !apply_bg_blit(frontend, blit) {
+            tracing::warn!("Background decal could not be built");
+        }
     }
 }
 

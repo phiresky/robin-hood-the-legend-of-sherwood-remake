@@ -654,10 +654,29 @@ fn run_bounded_command(
         Some(status) => status,
         None => {
             child.kill().context("kill timed-out projection sandbox")?;
-            let _ = child.wait();
-            let _ = stdout_thread.join();
-            let _ = stderr_thread.join();
-            bail!("projection sandbox exceeded {} seconds", timeout.as_secs());
+            let mut cleanup_errors = Vec::new();
+            if let Err(error) = child.wait() {
+                cleanup_errors.push(format!("reap child: {error}"));
+            }
+            for (label, result) in [
+                ("stdout", stdout_thread.join()),
+                ("stderr", stderr_thread.join()),
+            ] {
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => cleanup_errors.push(format!("drain {label}: {error}")),
+                    Err(_) => cleanup_errors.push(format!("{label} drain panicked")),
+                }
+            }
+            bail!(
+                "projection sandbox exceeded {} seconds; cleanup errors: {}",
+                timeout.as_secs(),
+                if cleanup_errors.is_empty() {
+                    "none".to_owned()
+                } else {
+                    cleanup_errors.join("; ")
+                }
+            );
         }
     };
     let stdout = stdout_thread

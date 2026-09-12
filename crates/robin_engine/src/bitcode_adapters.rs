@@ -108,8 +108,51 @@ macro_rules! impl_native_bitcode_index {
 
 pub(crate) use impl_native_bitcode_index;
 
+/// Define a nominal, sentinel-excluding index without changing its scalar wire
+/// representation or the niche used by `Option<Index>`.
+macro_rules! define_index_newtype {
+    ($(#[$meta:meta])* $vis:vis struct $name:ident($field_vis:vis $storage:ty), $wire:ty) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
+            serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+        $vis struct $name($field_vis $storage);
+
+        impl $name {
+            #[inline]
+            pub fn new(value: $wire) -> Option<Self> {
+                <$storage>::new(value).map(Self)
+            }
+            #[inline]
+            pub fn get(self) -> $wire { self.0.get() }
+        }
+        impl From<$name> for $wire {
+            #[inline]
+            fn from(value: $name) -> Self { value.get() }
+        }
+        impl From<$name> for usize {
+            #[inline]
+            fn from(value: $name) -> Self { value.get() as usize }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
+        crate::bitcode_adapters::impl_native_bitcode_index!($name, $wire);
+    };
+}
+
+pub(crate) use define_index_newtype;
+
 macro_rules! impl_native_bitcode_flags {
     ($type:ty, $wire:ty) => {
+        impl robin_util::state_hash::StateHash for $type {
+            #[inline]
+            fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                robin_util::state_hash::StateHash::state_hash(&self.bits(), state);
+            }
+        }
+
         impl crate::bitcode_adapters::NativeBitcode for $type {
             type Wire = $wire;
 
@@ -153,3 +196,49 @@ macro_rules! impl_native_bitcode_rect {
 }
 
 pub(crate) use impl_native_bitcode_rect;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn nominal_indices_retain_niches_scalar_bytes_and_hashes() {
+        use crate::patch::PatchIndex;
+        use crate::sector::BuildingIdx;
+        use robin_util::state_hash::compute;
+        assert_eq!(std::mem::size_of::<Option<PatchIndex>>(), 4);
+        assert_eq!(std::mem::size_of::<Option<BuildingIdx>>(), 2);
+        assert!(PatchIndex::new(u32::MAX).is_none());
+        assert!(BuildingIdx::new(u16::MAX).is_none());
+        for value in [0, 1, 256, u32::MAX - 1] {
+            let index = PatchIndex::new(value).unwrap();
+            assert_eq!(bitcode::encode(&index), bitcode::encode(&value));
+            assert_eq!(
+                compute(&index),
+                compute(&nonmax::NonMaxU32::new(value).unwrap())
+            );
+            assert_eq!(
+                bitcode::decode::<PatchIndex>(&bitcode::encode(&index)).unwrap(),
+                index
+            );
+            assert_eq!(
+                serde_json::to_value(index).unwrap(),
+                serde_json::json!(value)
+            );
+            assert_eq!(index.to_string(), value.to_string());
+        }
+    }
+
+    #[test]
+    fn flags_keep_unknown_bits_and_hash_their_underlying_scalar() {
+        use crate::position_interface::PositionComputed;
+        for bits in 0..=u8::MAX {
+            let flags = PositionComputed::from_bits_retain(bits);
+            assert_eq!(
+                robin_util::state_hash::compute(&flags),
+                robin_util::state_hash::compute(&bits)
+            );
+            assert_eq!(bitcode::encode(&flags), bitcode::encode(&bits));
+            let restored: PositionComputed = bitcode::decode(&bitcode::encode(&flags)).unwrap();
+            assert_eq!(restored.bits(), bits);
+        }
+    }
+}

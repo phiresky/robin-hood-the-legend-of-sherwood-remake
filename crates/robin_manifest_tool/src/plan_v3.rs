@@ -878,24 +878,10 @@ fn validate_exact_tree_inventory(root: &Path, expected_files: &BTreeSet<String>)
 }
 
 fn walk_directories(root: &Path) -> Result<BTreeSet<String>> {
+    let (_, entries) = crate::fs_util::walk_regular_tree(root)?;
     let mut directories = BTreeSet::from([String::new()]);
-    let mut pending = vec![(PathBuf::new(), root.to_path_buf())];
-    while let Some((relative_root, absolute_root)) = pending.pop() {
-        for entry in fs::read_dir(absolute_root)? {
-            let entry = entry?;
-            let metadata = fs::symlink_metadata(entry.path())?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "plan-v3 tree contains a forbidden symlink"
-            );
-            if metadata.is_dir() {
-                let relative = relative_root.join(entry.file_name());
-                directories.insert(path_to_manifest(&relative)?);
-                pending.push((relative, entry.path()));
-            } else {
-                ensure!(metadata.is_file(), "plan-v3 tree has a special node");
-            }
-        }
+    for relative in entries {
+        directories.insert(path_to_manifest(&relative)?);
     }
     Ok(directories)
 }

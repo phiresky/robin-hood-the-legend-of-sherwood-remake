@@ -9,8 +9,128 @@ use cap_std::fs::{Dir, OpenOptions};
 use std::io::ErrorKind;
 use std::path::Path;
 
+/// Reject symlinks without replacing the caller's descriptor identity checks.
+///
+/// Access, mode and additional confinement remain explicit: relative callers
+/// specify BENEATH; mount-bound callers additionally specify NO_XDEV.
+#[cfg(target_os = "linux")]
+pub fn open_no_symlinks_at(
+    directory: impl std::os::fd::AsFd,
+    path: impl rustix::path::Arg,
+    flags: rustix::fs::OFlags,
+    mode: rustix::fs::Mode,
+    additional_resolution: rustix::fs::ResolveFlags,
+) -> rustix::io::Result<std::os::fd::OwnedFd> {
+    rustix::fs::openat2(
+        directory,
+        path,
+        flags,
+        mode,
+        additional_resolution
+            | rustix::fs::ResolveFlags::NO_SYMLINKS
+            | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+    )
+}
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+
+/// Open a regular ambient file without following any symlink component.
+pub fn open_regular_no_symlinks(path: &Path) -> std::io::Result<std::fs::File> {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::{CWD, Mode, OFlags, ResolveFlags};
+        let file = std::fs::File::from(open_no_symlinks_at(
+            CWD,
+            path,
+            OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+            ResolveFlags::empty(),
+        )?);
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::other("path is not a regular file"));
+        }
+        Ok(file)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err(std::io::Error::new(
+            ErrorKind::Unsupported,
+            "no-symlink authority requires Linux openat2",
+        ))
+    }
+}
+
+/// Bound both the initial metadata and a file that grows while being read.
+pub fn read_bounded_regular_file(file: std::fs::File, limit: u64) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let metadata = file.metadata()?;
+    anyhow::ensure!(metadata.is_file(), "input is not a regular file");
+    anyhow::ensure!(
+        metadata.len() <= limit,
+        "input exceeds the {limit}-byte safety limit"
+    );
+    let read_limit = limit
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("input limit overflows"))?;
+    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
+    file.take(read_limit).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        u64::try_from(bytes.len())? <= limit,
+        "input grew beyond its safety limit"
+    );
+    Ok(bytes)
+}
+
+pub fn read_bounded_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
+    read_bounded_regular_file(open_regular_no_symlinks(path)?, limit)
+}
+
+/// Lock operations retain the same open-file-description and descriptor lifetime.
+pub mod file_lock {
+    use std::fs::File;
+    use std::io;
+
+    macro_rules! operation {
+        ($name:ident, $unix:ident, $portable:ident) => {
+            pub fn $name(file: &File) -> io::Result<()> {
+                #[cfg(unix)]
+                {
+                    rustix::fs::flock(file, rustix::fs::FlockOperation::$unix)
+                        .map_err(io::Error::from)
+                }
+                #[cfg(not(unix))]
+                {
+                    fs2::FileExt::$portable(file)
+                }
+            }
+        };
+    }
+    operation!(lock_shared, LockShared, lock_shared);
+    operation!(try_lock_shared, NonBlockingLockShared, try_lock_shared);
+    operation!(
+        try_lock_exclusive,
+        NonBlockingLockExclusive,
+        try_lock_exclusive
+    );
+    operation!(unlock, Unlock, unlock);
+}
+
+pub fn available_space(path: &Path) -> std::io::Result<u64> {
+    #[cfg(unix)]
+    {
+        let filesystem = rustix::fs::statvfs(path)?;
+        filesystem
+            .f_frsize
+            .checked_mul(filesystem.f_bavail)
+            .ok_or_else(|| std::io::Error::other("available filesystem space overflows"))
+    }
+    #[cfg(not(unix))]
+    {
+        fs2::available_space(path)
+    }
+}
 
 /// Shared API/worker state is private to the deployment's dedicated data
 /// group. Setgid directories preserve that group on every descendant created
@@ -22,13 +142,13 @@ pub(crate) const SHARED_IMMUTABLE_FILE_MODE: u32 = 0o440;
 pub(crate) fn pin_private_root(path: &Path) -> std::io::Result<Dir> {
     #[cfg(target_os = "linux")]
     let file = {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-        let fd = openat2(
+        use rustix::fs::{Mode, OFlags};
+        let fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )
         .map_err(std::io::Error::from)?;
         std::fs::File::from(fd)
@@ -51,14 +171,14 @@ pub(crate) fn pin_private_root(path: &Path) -> std::io::Result<Dir> {
 pub(crate) fn open_private_dir(parent: &Dir, relative: &Path) -> std::io::Result<Dir> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             parent.as_fd(),
             relative,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )
         .map_err(std::io::Error::from)?;
         let file = std::fs::File::from(fd);
@@ -103,14 +223,14 @@ pub(crate) fn create_private_file(parent: &Dir, name: &Path) -> std::io::Result<
 pub(crate) fn open_regular_file(parent: &Dir, name: &Path) -> std::io::Result<std::fs::File> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             parent.as_fd(),
             name,
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )
         .map_err(std::io::Error::from)?;
         let file = std::fs::File::from(fd);
@@ -136,7 +256,7 @@ pub(crate) fn open_private_database_file(
 ) -> std::io::Result<std::fs::File> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
         let mut flags = OFlags::RDWR | OFlags::CLOEXEC;
         if create {
@@ -147,12 +267,12 @@ pub(crate) fn open_private_database_file(
         } else {
             Mode::empty()
         };
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             parent.as_fd(),
             name,
             flags,
             mode,
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )
         .map_err(std::io::Error::from)?;
         let file = std::fs::File::from(fd);
@@ -234,6 +354,49 @@ pub(crate) async fn remove_temporary_and_sync(
 #[cfg(test)]
 mod object_tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bounded_authority_rejects_links_directories_and_oversized_files() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("authority");
+        std::fs::write(&path, b"exact").unwrap();
+        assert_eq!(read_bounded_no_symlinks(&path, 5).unwrap(), b"exact");
+        assert!(read_bounded_no_symlinks(&path, 4).is_err());
+        assert!(read_bounded_no_symlinks(root.path(), 5).is_err());
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        assert!(read_bounded_no_symlinks(&alias, 5).is_err());
+        let parent_alias = root.path().join("parent-alias");
+        std::os::unix::fs::symlink(root.path(), &parent_alias).unwrap();
+        assert!(read_bounded_no_symlinks(&parent_alias.join("authority"), 5).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn relative_authority_retains_beneath_and_pinned_directory_semantics() {
+        use rustix::fs::{Mode, OFlags, ResolveFlags};
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("pinned");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("authority"), b"original").unwrap();
+        let pinned = std::fs::File::open(&directory).unwrap();
+        std::fs::rename(&directory, root.path().join("moved")).unwrap();
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("authority"), b"replacement").unwrap();
+        let open = |path: &str| {
+            open_no_symlinks_at(
+                &pinned,
+                path,
+                OFlags::RDONLY | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_XDEV,
+            )
+        };
+        let file = std::fs::File::from(open("authority").unwrap());
+        assert_eq!(read_bounded_regular_file(file, 8).unwrap(), b"original");
+        assert!(open("../pinned/authority").is_err());
+    }
     use std::{io::Write as _, sync::Arc};
 
     #[tokio::test]

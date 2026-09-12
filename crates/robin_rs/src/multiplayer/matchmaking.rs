@@ -249,11 +249,6 @@ impl MatchmakingSession {
     }
 }
 
-fn checked_epoch_ms(millis: u128) -> Result<u64, String> {
-    u64::try_from(millis)
-        .map_err(|_| "system clock timestamp exceeds the u64 Unix range".to_owned())
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 fn checked_start_epoch_ms(now_epoch_ms: u64) -> Result<u64, String> {
     now_epoch_ms
@@ -261,37 +256,11 @@ fn checked_start_epoch_ms(now_epoch_ms: u64) -> Result<u64, String> {
         .ok_or_else(|| "matchmaking start timestamp exceeds the u64 Unix range".to_owned())
 }
 
+pub use super::clock::current_epoch_ms;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+use super::clock::epoch_ms_at as native_epoch_ms_at;
 #[cfg(not(target_arch = "wasm32"))]
-fn native_epoch_ms_at(now: std::time::SystemTime) -> Result<u64, String> {
-    let duration = now
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("system clock precedes the Unix epoch: {error}"))?;
-    checked_epoch_ms(duration.as_millis())
-}
-
-fn try_current_epoch_ms() -> Result<u64, String> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        native_epoch_ms_at(std::time::SystemTime::now())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let duration = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map_err(|error| format!("system clock precedes the Unix epoch: {error}"))?;
-        checked_epoch_ms(duration.as_millis())
-    }
-}
-
-/// Current wall-clock time used by active multiplayer mission admission.
-///
-/// The frame driver cannot recover from an invalid system clock after a
-/// mission has started, so fail loudly instead of silently substituting a
-/// plausible timestamp. Matchmaking setup uses [`try_current_epoch_ms`]
-/// directly and reports the failure to the menu before changing game state.
-pub fn current_epoch_ms() -> u64 {
-    try_current_epoch_ms().expect("multiplayer requires a valid Unix system clock")
-}
+use super::clock::try_current_epoch_ms;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open_native(nickname: String) -> Result<MatchmakingSession, String> {

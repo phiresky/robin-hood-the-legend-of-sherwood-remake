@@ -1,6 +1,79 @@
 use super::*;
 
+/// Complete authored route input. Flags are named at construction sites;
+/// their order no longer depends on thirteen positional arguments.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct GateRouteRequest {
+    pub entity_id: EntityId,
+    pub source_sector: Option<crate::position_interface::SectorHandle>,
+    pub gate_path: Vec<crate::gate::GatePathStep>,
+    pub goal: GoalShape,
+    pub goal_layer: u16,
+    pub base_action: OrderType,
+    pub move_after_last_door: bool,
+    pub speed_factor: f32,
+    pub initial_flags: crate::sequence::MoveFlags,
+    pub prefix_elements: Vec<crate::sequence::SequenceElement>,
+    pub tail_elements: Vec<crate::sequence::SequenceElement>,
+    pub append_arrival_speech: bool,
+    pub append_recovery: bool,
+}
+
+/// Local sequence assembly state, carried between the gate and goal phases.
+/// Keeping the command level explicit preserves the original branch-specific increments.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GateRouteEmission {
+    seq: crate::sequence::Sequence,
+    level: u16,
+    prev_sector: Option<crate::position_interface::SectorHandle>,
+    ended_early: bool,
+}
+
+impl GateRouteRequest {
+    fn entity_goal(&self) -> Option<(EntityId, f32, bool)> {
+        match self.goal {
+            GoalShape::Seek {
+                target, tolerance, ..
+            } => Some((target, tolerance, true)),
+            GoalShape::Target {
+                target, tolerance, ..
+            } => Some((target, tolerance, false)),
+            _ => None,
+        }
+    }
+}
+
+// Public sector numbers are not unique; retained arena identity must win.
+fn is_building_sector(
+    engine: &EngineInner,
+    sector: crate::position_interface::SectorHandle,
+) -> bool {
+    route_sector_by_exact_handle(engine, sector)
+        .map(|gs| gs.sector_type.is_building())
+        .unwrap_or(false)
+}
+
+fn is_ladder_lift(engine: &EngineInner, sector: crate::position_interface::SectorHandle) -> bool {
+    route_sector_by_exact_handle(engine, sector)
+        .and_then(|gs| gs.lift_type)
+        .map(|lt| lt == crate::sector::LiftType::Ladder)
+        .unwrap_or(false)
+}
+
 impl EngineInner {
+    /// Launch a route for callers that do not retain the resulting sequence ID.
+    /// Invalid routes are rejected by the same builder and remain visible in diagnostics.
+    pub(crate) fn launch_gate_movement_order(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        request: GateRouteRequest,
+    ) {
+        let entity_id = request.entity_id;
+        if self.launch_gate_movement_sequence(sim, request).is_none() {
+            tracing::warn!(entity = ?entity_id, "gate movement order could not be launched");
+        }
+    }
+
     /// Build a movement sequence that traverses a gate path from
     /// `find_path_gates` and ends at `goal` on `goal_layer`.
     ///
@@ -44,185 +117,23 @@ impl EngineInner {
     ///   carrying `MoveFlags::LINE` and the line id so the actor's
     ///   arrival check snaps to line tolerance.  Intermediate gate
     ///   moves never carry `MoveFlags::LINE`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn build_gate_movement_sequence(
+    #[must_use]
+    pub(crate) fn launch_gate_movement_sequence(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        entity_id: EntityId,
-        source_sector: Option<crate::position_interface::SectorHandle>,
-        gate_path: Vec<crate::gate::GatePathStep>,
-        goal: GoalShape,
-        goal_layer: u16,
-        base_action: OrderType,
-        move_after_last_door: bool,
-        speed_factor: f32,
-        initial_flags: crate::sequence::MoveFlags,
-        prefix_elements: Vec<crate::sequence::SequenceElement>,
-        tail_elements: Vec<crate::sequence::SequenceElement>,
-        append_arrival_speech: bool,
-        append_recovery: bool,
+        mut request: GateRouteRequest,
     ) -> Option<crate::sequence::SequenceId> {
         use crate::element::Command;
-        use crate::sequence::{
-            Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
-        };
-
-        // Determine first jump gate.  Every gate *before* the first
-        // jump gets the `TO_JUMP` flag so its movement element sets
-        // the actor up for the jump.  Only the Point and Door goal
-        // variants apply this flag-mutation; the Line variant passes
-        // the input flags to every gate unmodified, so suppress the
-        // OR for `GoalShape::Line`.
-        let apply_to_jump = !matches!(goal, GoalShape::Line { .. });
-        let first_jump: Option<usize> = if apply_to_jump {
-            gate_path.iter().enumerate().find_map(|(i, step)| {
-                let is_jump = self
-                    .scripts
-                    .mission
-                    .as_ref()
-                    .and_then(|_| {
-                        self.script_domains
-                            .interactables
-                            .doors
-                            .get(usize::from(step.door_index))
-                    })
-                    .map(|d| d.is_jump())
-                    .unwrap_or(false);
-                if is_jump { Some(i) } else { None }
-            })
-        } else {
-            None
-        };
-
-        let flags_at = |gate_idx: usize| -> MoveFlags {
-            match first_jump {
-                Some(j) if gate_idx <= j => initial_flags | MoveFlags::TO_JUMP,
-                _ => initial_flags,
-            }
-        };
+        use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
+        let entity_id = request.entity_id;
+        let source_sector = request.source_sector;
+        let base_action = request.base_action;
+        let speed_factor = request.speed_factor;
 
         // Snapshot the canonical gate data in one short borrow so the main
         // loop can call grid and sequence helpers on `self` without fighting
         // the borrow checker.
-        #[derive(Clone, Copy)]
-        struct GateShot {
-            door_index: crate::gate::DoorIndex,
-            direct: bool,
-            // Exact sector on the source side of this gate.  This is the
-            // route's retained previous-sector identity when a
-            // legacy/compatibility caller supplies only the public number.
-            old_sector: crate::position_interface::SectorHandle,
-            // Geometry used by the emitted sub-elements.
-            entry: MapPoint,
-            exit: MapPoint,
-            entry_layer: u16,
-            exit_layer: u16,
-            // Where the actor ends up *after* crossing.
-            new_sector: crate::position_interface::SectorHandle,
-            // Gate typing.
-            is_jump: bool,
-            jump_line_src: Option<crate::jump_line::JumpLineIndex>,
-            jump_line_dst: Option<crate::jump_line::JumpLineIndex>,
-            // Door typing (only meaningful when !is_jump).
-            is_locked_pc_unlockable: bool,
-            // Sequence handling keeps the caller's action on
-            // gate approach, WAIT_FREE_LIFT, PASS_DOOR, and post-pass
-            // asserts. Door-specific action-pair queries exist in
-            // reference material but are inactive at execution time.
-            entry_action: OrderType,
-            door_action: OrderType,
-        }
-
-        let gate_shots = {
-            self.scripts.mission.as_ref()?;
-            let shots: Vec<GateShot> = gate_path
-                .iter()
-                .filter_map(|step| {
-                    let door = self
-                        .script_domains
-                        .interactables
-                        .doors
-                        .get(usize::from(step.door_index))?;
-                    let (
-                        entry,
-                        exit,
-                        entry_layer,
-                        exit_layer,
-                        old_sector_number,
-                        old_sector_index,
-                        new_sector_number,
-                        new_sector_index,
-                    ) = if step.direct {
-                        (
-                            door.point_out,
-                            door.point_in,
-                            door.layer_out,
-                            door.layer_in,
-                            u16::from(door.sector_out),
-                            door.sector_out_index,
-                            u16::from(door.sector_in),
-                            door.sector_in_index,
-                        )
-                    } else {
-                        (
-                            door.point_in,
-                            door.point_out,
-                            door.layer_in,
-                            door.layer_out,
-                            u16::from(door.sector_in),
-                            door.sector_in_index,
-                            u16::from(door.sector_out),
-                            door.sector_out_index,
-                        )
-                    };
-                    let old_sector = crate::position_interface::SectorHandle::new(
-                        old_sector_number,
-                    )
-                    .map(|handle| {
-                        old_sector_index.map_or(handle, |index| handle.with_arena_index(index))
-                    })?;
-                    let new_sector = crate::position_interface::SectorHandle::new(
-                        new_sector_number,
-                    )
-                    .map(|handle| {
-                        new_sector_index.map_or(handle, |index| handle.with_arena_index(index))
-                    })?;
-                    let is_jump = door.is_jump();
-                    let (jump_src, jump_dst) = if is_jump {
-                        let (s, d) = if step.direct {
-                            (door.jump_line_out, door.jump_line_in)
-                        } else {
-                            (door.jump_line_in, door.jump_line_out)
-                        };
-                        (
-                            s.and_then(crate::jump_line::JumpLineIndex::new),
-                            d.and_then(crate::jump_line::JumpLineIndex::new),
-                        )
-                    } else {
-                        (None, None)
-                    };
-                    let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
-                    let (entry_action, door_action) = (base_action, base_action);
-                    Some(GateShot {
-                        door_index: step.door_index,
-                        direct: step.direct,
-                        old_sector,
-                        entry,
-                        exit,
-                        entry_layer,
-                        exit_layer,
-                        new_sector,
-                        is_jump,
-                        jump_line_src: jump_src,
-                        jump_line_dst: jump_dst,
-                        is_locked_pc_unlockable,
-                        entry_action,
-                        door_action,
-                    })
-                })
-                .collect();
-            shots
-        }; // host borrow dropped here
+        let gate_shots = self.snapshot_gate_route(&request.gate_path, base_action)?;
 
         // Does the entity have the lockpick contextual action?
         // Needed to choose the lockpick sub-element branch.
@@ -231,28 +142,10 @@ impl EngineInner {
             .actor_auth_info()
             .has_lockpick;
 
-        // The original game carries exact sector identity through the previous sector. Public
-        // numbers are not unique, so consult retained arena identity first;
-        // the number map is only the compatibility fallback for old saves.
-        let is_building_sector =
-            |this: &Self, sector: crate::position_interface::SectorHandle| -> bool {
-                route_sector_by_exact_handle(this, sector)
-                    .map(|gs| gs.sector_type.is_building())
-                    .unwrap_or(false)
-            };
-
-        let is_ladder_lift =
-            |this: &Self, sector: crate::position_interface::SectorHandle| -> bool {
-                route_sector_by_exact_handle(this, sector)
-                    .and_then(|gs| gs.lift_type)
-                    .map(|lt| lt == crate::sector::LiftType::Ladder)
-                    .unwrap_or(false)
-            };
-
         let mut seq = Sequence::new();
         let mut level: u16 = 1;
 
-        for mut elem in prefix_elements {
+        for mut elem in request.prefix_elements.drain(..) {
             elem.command_level = level;
             seq.append_element(elem);
             level += 1;
@@ -270,7 +163,7 @@ impl EngineInner {
             gate_shots.is_empty() || source_sector.is_some(),
             "gate movement route for {entity_id:?} has no source sector"
         );
-        let mut prev_sector = source_sector;
+        let prev_sector = source_sector;
 
         // Cross-sector source-sector sanity assert.  When the goal
         // sector differs from the source, prepend an `AssertPosition`
@@ -307,21 +200,130 @@ impl EngineInner {
             level += 1;
         }
 
-        let entity_goal = match goal {
-            GoalShape::Seek {
-                target, tolerance, ..
-            } => Some((target, tolerance, true)),
-            GoalShape::Target {
-                target, tolerance, ..
-            } => Some((target, tolerance, false)),
-            _ => None,
+        let emission = GateRouteEmission {
+            seq,
+            level,
+            prev_sector,
+            ended_early: false,
+        };
+        let emission =
+            self.append_gate_elements(sim, &request, &gate_shots, has_lockpick, emission);
+        let GateRouteEmission {
+            mut seq,
+            mut level,
+            ended_early,
+            ..
+        } = self.append_route_tail(sim, &request, &gate_shots, has_lockpick, emission);
+
+        for mut elem in request.tail_elements.drain(..) {
+            elem.command_level = level;
+            seq.append_element(elem);
+            level += 1;
+        }
+
+        // Append a `SpeakHeroReachDestination` element at the tail of
+        // the gate-movement sequence so the PC barks the "I have
+        // arrived" line once the destination is reached.
+        // The sequence receives the incremented count left by
+        // movement construction, so speech is the next command level,
+        // after the final movement has completed. The PC's instruction handling
+        // terminates it on dispatch and queues
+        // `HeroDoneCommand` via `arbitrate_instruct`.
+        if request.append_arrival_speech && !seq.is_empty() {
+            let speak_level = seq
+                .last()
+                .map(|element| element.command_level.saturating_add(1))
+                .unwrap_or(level);
+            let speak = SequenceElement::new(
+                speak_level,
+                Command::SpeakHeroReachDestination,
+                Some(entity_id),
+            );
+            seq.append_element(speak);
+        }
+
+        // Append posture-recovery sub-elements right after the Speak
+        // element so a PC mid-bow-aim / crouched / helping-climb /
+        // simulating-beggar ends the order in a neutral posture
+        // instead of frozen in their pre-move state.  Only fires for
+        // PCs; `append_posture_recovery` bails on non-PC entities.
+        if request.append_recovery {
+            self.append_posture_recovery(entity_id, &mut seq);
+        }
+
+        let seq_id = self.launch_sequence(seq);
+        tracing::trace!(
+            entity = ?entity_id,
+            ?seq_id,
+            gates = request.gate_path.len(),
+            early = ended_early,
+            goal = ?request.goal,
+            move_after_last_door = request.move_after_last_door,
+            "Launched gate-traversal movement sequence"
+        );
+
+        // Destination markers are emitted by player group-move callers
+        // only; AI/pathfinding callers use this helper without dropping
+        // a ground mark.
+        Some(seq_id)
+    }
+    /// Append the selected gates in path order, stopping after an intermediate lockpick.
+    fn append_gate_elements(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        request: &GateRouteRequest,
+        gate_shots: &[GateShot],
+        has_lockpick: bool,
+        emission: GateRouteEmission,
+    ) -> GateRouteEmission {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
+        let entity_id = request.entity_id;
+        let goal = request.goal;
+        let initial_flags = request.initial_flags;
+        let speed_factor = request.speed_factor;
+        let gate_path = &request.gate_path;
+        let entity_goal = request.entity_goal();
+        let GateRouteEmission {
+            mut seq,
+            mut level,
+            mut prev_sector,
+            ..
+        } = emission;
+
+        // Determine first jump gate.  Every gate *before* the first
+        // jump gets the `TO_JUMP` flag so its movement element sets
+        // the actor up for the jump.  Only the Point and Door goal
+        // variants apply this flag-mutation; the Line variant passes
+        // the input flags to every gate unmodified, so suppress the
+        // OR for `GoalShape::Line`.
+        let apply_to_jump = !matches!(goal, GoalShape::Line { .. });
+        let first_jump: Option<usize> = if apply_to_jump {
+            gate_path.iter().enumerate().find_map(|(i, step)| {
+                let is_jump = self
+                    .scripts
+                    .mission
+                    .as_ref()
+                    .and_then(|_| {
+                        self.script_domains
+                            .interactables
+                            .doors
+                            .get(usize::from(step.door_index))
+                    })
+                    .map(|d| d.is_jump())
+                    .unwrap_or(false);
+                if is_jump { Some(i) } else { None }
+            })
+        } else {
+            None
         };
 
-        // Goal-point used for the trailing MOVE (if any).  For Point
-        // goals this is the caller's point; for Line goals it's the
-        // line's midpoint; for Door goals it's the approach point on
-        // the near side of the goal door.
-        let goal_point = goal.goal_point();
+        let flags_at = |gate_idx: usize| -> MoveFlags {
+            match first_jump {
+                Some(j) if gate_idx <= j => initial_flags | MoveFlags::TO_JUMP,
+                _ => initial_flags,
+            }
+        };
 
         // Tracks whether a lockpick branch on an intermediate gate
         // terminated the sequence early.
@@ -646,6 +648,41 @@ impl EngineInner {
             prev_sector = Some(shot.new_sector);
         }
 
+        GateRouteEmission {
+            seq,
+            level,
+            prev_sector,
+            ended_early,
+        }
+    }
+
+    /// Append the goal-specific movement only when gate traversal did not stop for lockpicking.
+    fn append_route_tail(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        request: &GateRouteRequest,
+        gate_shots: &[GateShot],
+        has_lockpick: bool,
+        emission: GateRouteEmission,
+    ) -> GateRouteEmission {
+        use crate::element::Command;
+        use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
+        let entity_id = request.entity_id;
+        let goal = request.goal;
+        let goal_layer = request.goal_layer;
+        let base_action = request.base_action;
+        let initial_flags = request.initial_flags;
+        let speed_factor = request.speed_factor;
+        let move_after_last_door = request.move_after_last_door;
+        let entity_goal = request.entity_goal();
+        let goal_point = goal.goal_point();
+        let GateRouteEmission {
+            mut seq,
+            mut level,
+            prev_sector,
+            ended_early,
+        } = emission;
+
         // Clear TO_JUMP once we're past the last jump gate — the
         // trailing MOVE uses `initial_flags` unmodified.
         let trailing_flags = initial_flags;
@@ -926,7 +963,7 @@ impl EngineInner {
                     // where the "walk up to door and pick it" finale
                     // is emitted.
                     if goal_door_pc_lockable && has_lockpick {
-                        let (cam_pt, direct) = {
+                        let cam_pt = {
                             let d = self.scripts.mission.as_ref().and_then(|_| {
                                 self.script_domains
                                     .interactables
@@ -951,9 +988,8 @@ impl EngineInner {
                             let cam = d
                                 .map(|d| if direct { d.point_in } else { d.point_out })
                                 .unwrap_or(far_side_point);
-                            (cam, direct)
+                            cam
                         };
-                        let _ = direct;
                         let mut turn =
                             SequenceElement::new_generic(level, Command::Turn, Some(entity_id));
                         turn.set_property(
@@ -978,57 +1014,12 @@ impl EngineInner {
             }
         }
 
-        for mut elem in tail_elements {
-            elem.command_level = level;
-            seq.append_element(elem);
-            level += 1;
+        GateRouteEmission {
+            seq,
+            level,
+            prev_sector,
+            ended_early,
         }
-
-        // Append a `SpeakHeroReachDestination` element at the tail of
-        // the gate-movement sequence so the PC barks the "I have
-        // arrived" line once the destination is reached.
-        // The sequence receives the incremented count left by
-        // movement construction, so speech is the next command level,
-        // after the final movement has completed. The PC's instruction handling
-        // terminates it on dispatch and queues
-        // `HeroDoneCommand` via `arbitrate_instruct`.
-        if append_arrival_speech && !seq.is_empty() {
-            let speak_level = seq
-                .last()
-                .map(|element| element.command_level.saturating_add(1))
-                .unwrap_or(level);
-            let speak = SequenceElement::new(
-                speak_level,
-                Command::SpeakHeroReachDestination,
-                Some(entity_id),
-            );
-            seq.append_element(speak);
-        }
-
-        // Append posture-recovery sub-elements right after the Speak
-        // element so a PC mid-bow-aim / crouched / helping-climb /
-        // simulating-beggar ends the order in a neutral posture
-        // instead of frozen in their pre-move state.  Only fires for
-        // PCs; `append_posture_recovery` bails on non-PC entities.
-        if append_recovery {
-            self.append_posture_recovery(entity_id, &mut seq);
-        }
-
-        let seq_id = self.launch_sequence(seq);
-        tracing::trace!(
-            entity = ?entity_id,
-            ?seq_id,
-            gates = gate_path.len(),
-            early = ended_early,
-            goal = ?goal,
-            move_after_last_door,
-            "Launched gate-traversal movement sequence"
-        );
-
-        // Destination markers are emitted by player group-move callers
-        // only; AI/pathfinding callers use this helper without dropping
-        // a ground mark.
-        Some(seq_id)
     }
 
     /// Append posture-cleanup sub-elements at the tail of a PC move
@@ -1140,5 +1131,138 @@ impl EngineInner {
             }
             _ => {}
         }
+    }
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct GateShot {
+    door_index: crate::gate::DoorIndex,
+    direct: bool,
+    // Exact sector on the source side of this gate.  This is the
+    // route's retained previous-sector identity when a
+    // legacy/compatibility caller supplies only the public number.
+    old_sector: crate::position_interface::SectorHandle,
+    // Geometry used by the emitted sub-elements.
+    entry: MapPoint,
+    exit: MapPoint,
+    entry_layer: u16,
+    exit_layer: u16,
+    // Where the actor ends up *after* crossing.
+    new_sector: crate::position_interface::SectorHandle,
+    // Gate typing.
+    is_jump: bool,
+    jump_line_src: Option<crate::jump_line::JumpLineIndex>,
+    jump_line_dst: Option<crate::jump_line::JumpLineIndex>,
+    // Door typing (only meaningful when !is_jump).
+    is_locked_pc_unlockable: bool,
+    // Sequence handling keeps the caller's action on
+    // gate approach, WAIT_FREE_LIFT, PASS_DOOR, and post-pass
+    // asserts. Door-specific action-pair queries exist in
+    // reference material but are inactive at execution time.
+    entry_action: OrderType,
+    door_action: OrderType,
+}
+
+impl EngineInner {
+    /// Snapshot every gate before order generation mutates actor/sequence state.
+    /// A malformed retained route must not turn into a different shortened path.
+    fn snapshot_gate_route(
+        &self,
+        gate_path: &[crate::gate::GatePathStep],
+        base_action: OrderType,
+    ) -> Option<Vec<GateShot>> {
+        self.scripts.mission.as_ref()?;
+        let shots: Vec<GateShot> = gate_path
+            .iter()
+            .filter_map(|step| {
+                let door = self
+                    .script_domains
+                    .interactables
+                    .doors
+                    .get(usize::from(step.door_index))?;
+                let (
+                    entry,
+                    exit,
+                    entry_layer,
+                    exit_layer,
+                    old_sector_number,
+                    old_sector_index,
+                    new_sector_number,
+                    new_sector_index,
+                ) = if step.direct {
+                    (
+                        door.point_out,
+                        door.point_in,
+                        door.layer_out,
+                        door.layer_in,
+                        u16::from(door.sector_out),
+                        door.sector_out_index,
+                        u16::from(door.sector_in),
+                        door.sector_in_index,
+                    )
+                } else {
+                    (
+                        door.point_in,
+                        door.point_out,
+                        door.layer_in,
+                        door.layer_out,
+                        u16::from(door.sector_in),
+                        door.sector_in_index,
+                        u16::from(door.sector_out),
+                        door.sector_out_index,
+                    )
+                };
+                let old_sector = crate::position_interface::SectorHandle::new(old_sector_number)
+                    .map(|handle| {
+                        old_sector_index.map_or(handle, |index| handle.with_arena_index(index))
+                    })?;
+                let new_sector = crate::position_interface::SectorHandle::new(new_sector_number)
+                    .map(|handle| {
+                        new_sector_index.map_or(handle, |index| handle.with_arena_index(index))
+                    })?;
+                let is_jump = door.is_jump();
+                let (jump_src, jump_dst) = if is_jump {
+                    let (s, d) = if step.direct {
+                        (door.jump_line_out, door.jump_line_in)
+                    } else {
+                        (door.jump_line_in, door.jump_line_out)
+                    };
+                    (
+                        s.and_then(crate::jump_line::JumpLineIndex::new),
+                        d.and_then(crate::jump_line::JumpLineIndex::new),
+                    )
+                } else {
+                    (None, None)
+                };
+                let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
+                let (entry_action, door_action) = (base_action, base_action);
+                Some(GateShot {
+                    door_index: step.door_index,
+                    direct: step.direct,
+                    old_sector,
+                    entry,
+                    exit,
+                    entry_layer,
+                    exit_layer,
+                    new_sector,
+                    is_jump,
+                    jump_line_src: jump_src,
+                    jump_line_dst: jump_dst,
+                    is_locked_pc_unlockable,
+                    entry_action,
+                    door_action,
+                })
+            })
+            .collect();
+
+        if shots.len() != gate_path.len() {
+            tracing::warn!(
+                expected = gate_path.len(),
+                resolved = shots.len(),
+                "gate route contains a missing door or invalid sector; refusing partial route"
+            );
+            return None;
+        }
+        Some(shots)
     }
 }

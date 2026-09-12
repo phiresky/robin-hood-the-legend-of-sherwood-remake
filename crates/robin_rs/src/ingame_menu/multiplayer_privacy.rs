@@ -10,7 +10,7 @@ use super::layout::{
     render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 
 const ID_PUBLICATION: u32 = 200;
 const ID_OK: u32 = 300;
@@ -23,81 +23,120 @@ pub async fn show_multiplayer_privacy(
     cursor: Option<ModalCursor<'_>>,
     config: &mut MultiplayerConfig,
 ) -> bool {
-    let transform = MenuTransform::centered(
-        renderer.screen_width() as i32,
-        renderer.screen_height() as i32,
-    );
-    let mut working = *config;
-    let mut dirty = false;
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let ok = resources.menu_text.get(MT_BTN_OK);
-    let cancel = resources.menu_text.get(MT_BTN_CANCEL);
-    let bottom = align_bottom_right(&[(&ok, true), (&cancel, true)], btn_w, btn_h);
-    let (field_w, field_h) = resources.input_field_dimensions();
+    let mut state = MultiplayerPrivacyModalState::new(event_pump, renderer, resources, config);
+    let mut io = ModalScreenIo {
+        window: event_pump,
+        renderer,
+        resources,
+        cursor: cursor.as_ref(),
+    };
+    loop {
+        let done = state.tick(&mut io);
+        crate::window::sleep_ui_frame().await;
+        if done {
+            return state.commit(config);
+        }
+    }
+}
 
-    let mut frame = FrameWnd::interactive();
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_PUBLICATION,
-        "Publish Browser Join Links",
-        30,
-        110,
-        field_w,
-        field_h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_OK,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
+/// Retained widget/input and staged preference state for one modal frame.
+pub struct MultiplayerPrivacyModalState {
+    working: MultiplayerConfig,
+    dirty: bool,
+    frame: FrameWnd,
+    input: ModalInputState,
+    accepted: bool,
+    done: bool,
+}
 
-    let mut done = false;
-    let mut accepted = false;
-    let mut input = ModalInputState::from_window(event_pump, transform);
-    while !done {
+impl MultiplayerPrivacyModalState {
+    pub fn new(
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+        config: &MultiplayerConfig,
+    ) -> Self {
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let working = *config;
+        let dirty = false;
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let ok = resources.menu_text.get(MT_BTN_OK);
+        let cancel = resources.menu_text.get(MT_BTN_CANCEL);
+        let bottom = align_bottom_right(&[(&ok, true), (&cancel, true)], btn_w, btn_h);
+        let (field_w, field_h) = resources.input_field_dimensions();
+
+        let mut frame = FrameWnd::interactive();
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_PUBLICATION,
+            "Publish Browser Join Links",
+            30,
+            110,
+            field_w,
+            field_h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_OK,
+            &bottom[0].label,
+            bottom[0].x,
+            bottom[0].y,
+            bottom[0].w,
+            bottom[0].h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_CANCEL,
+            &bottom[1].label,
+            bottom[1].x,
+            bottom[1].y,
+            bottom[1].w,
+            bottom[1].h,
+        ));
+
+        let input = ModalInputState::from_window(event_pump, transform);
+
+        Self {
+            working,
+            dirty,
+            frame,
+            input,
+            accepted: false,
+            done: false,
+        }
+    }
+
+    /// Poll and draw exactly one frame; the caller owns pacing.
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> bool {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
+        if self.done {
+            return true;
+        }
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input.update_from_event(&event, transform);
+            self.input.update_from_event(&event, transform);
             match event {
-                GameEvent::Quit => done = true,
+                GameEvent::Quit => self.done = true,
                 GameEvent::KeyDown {
                     keycode: Keycode::Return | Keycode::KpEnter,
                     ..
                 } => {
-                    accepted = true;
-                    done = true;
+                    self.accepted = true;
+                    self.done = true;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Escape,
                     ..
-                } => done = true,
+                } => self.done = true,
                 _ => {}
             }
         }
-        let widget_events = input.process_frame(&mut frame);
+        let widget_events = self.input.process_frame(&mut self.frame);
         if let Some(id) = widget_bridge::find_activated(&widget_events) {
-            match id {
-                ID_PUBLICATION => {
-                    working.publish_browser_join_links = !working.publish_browser_join_links;
-                    dirty = true;
-                }
-                ID_OK => {
-                    accepted = true;
-                    done = true;
-                }
-                ID_CANCEL => done = true,
-                _ => {}
-            }
+            self.activate(id);
         }
 
         enter_modal_gpu_phase(renderer);
@@ -130,38 +169,89 @@ pub async fn show_multiplayer_privacy(
                 render_text_virt_font(renderer, font, transform, line, 30, y);
             }
         }
-        if let Some(widget) = frame.widget(ID_PUBLICATION) {
+        if let Some(widget) = self.frame.widget(ID_PUBLICATION) {
             widget_bridge::draw_widget_radio(
                 renderer,
                 resources,
                 transform,
                 widget,
-                working.publish_browser_join_links,
+                self.working.publish_browser_join_links,
             );
         }
         for id in [ID_OK, ID_CANCEL] {
-            if let Some(widget) = frame.widget(id) {
+            if let Some(widget) = self.frame.widget(id) {
                 widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
             }
         }
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &input);
+        if let Some(cursor) = cursor {
+            cursor.draw(renderer, transform, &self.input);
         }
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+
+        self.done
     }
 
-    if accepted && dirty && working != *config {
-        *config = working;
-        true
-    } else {
-        false
+    fn activate(&mut self, id: u32) {
+        match id {
+            ID_PUBLICATION => {
+                self.working.publish_browser_join_links = !self.working.publish_browser_join_links;
+                self.dirty = true;
+            }
+            ID_OK => {
+                self.accepted = true;
+                self.done = true;
+            }
+            ID_CANCEL => self.done = true,
+            _ => {}
+        }
+    }
+
+    /// Publish staged changes only after acceptance and an actual difference.
+    pub fn commit(self, target: &mut MultiplayerConfig) -> bool {
+        if self.accepted && self.dirty && self.working != *target {
+            *target = self.working;
+            true
+        } else {
+            false
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn state(config: MultiplayerConfig) -> MultiplayerPrivacyModalState {
+        MultiplayerPrivacyModalState {
+            working: config,
+            dirty: false,
+            frame: FrameWnd::interactive(),
+            input: ModalInputState::new(),
+            accepted: false,
+            done: false,
+        }
+    }
+
+    #[test]
+    fn staged_publication_requires_acceptance_and_a_real_change() {
+        for (actions, changed) in [
+            (vec![ID_PUBLICATION, ID_OK], true),
+            (vec![ID_PUBLICATION, ID_CANCEL], false),
+            (vec![ID_PUBLICATION, ID_PUBLICATION, ID_OK], false),
+            (vec![ID_OK], false),
+        ] {
+            let original = MultiplayerConfig::default();
+            let mut target = original;
+            let mut state = state(original);
+            for action in actions {
+                state.activate(action);
+                assert_eq!(target, original, "editing must not publish staged changes");
+            }
+            assert!(state.done);
+            assert_eq!(state.commit(&mut target), changed);
+            assert_eq!(target != original, changed);
+        }
+    }
 
     #[test]
     fn privacy_row_controls_only_browser_publication() {

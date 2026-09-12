@@ -85,7 +85,7 @@ impl KeyConfig {
     /// Add the reusable-cloak action to a key profile written before the
     /// action existed. Preserve all user bindings; V is used only when it is
     /// still free, otherwise the new action starts unbound.
-    pub fn ensure_reusable_cloak_binding(&mut self) {
+    fn ensure_reusable_cloak_binding(&mut self) {
         if self.get_binding("ToggleCloak").is_some() {
             return;
         }
@@ -119,7 +119,7 @@ impl KeyConfig {
     }
 
     /// Return the action name whose primary *or* secondary key matches `key`.
-    pub fn get_action_for_key(&self, key: KeyCode) -> Option<&str> {
+    fn get_action_for_key(&self, key: KeyCode) -> Option<&str> {
         self.bindings
             .iter()
             .find(|b| b.primary_key == Some(key) || b.secondary_key == Some(key))
@@ -166,7 +166,7 @@ impl KeyConfig {
 
     /// Load all primary keys from a flat array. Clears existing bindings and
     /// recreates them from the array.
-    pub fn load_keys_array(&mut self, keys: &[Option<KeyCode>]) {
+    fn load_keys_array(&mut self, keys: &[Option<KeyCode>]) {
         self.bindings.clear();
         for (&name, &key) in KEY_NAMES.iter().zip(keys) {
             self.bindings.push(KeyBinding {

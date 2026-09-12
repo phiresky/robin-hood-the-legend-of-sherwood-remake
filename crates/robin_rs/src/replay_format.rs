@@ -56,7 +56,7 @@ pub fn encode_compact(
 pub fn decode_compact(
     text: &str,
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
-    let decoded = robin_replay_format::trusted_local::decode(text)?;
+    let decoded = robin_replay_format::decode_compact(text)?;
     validate_spellforge_runtime_package(&decoded.1)?;
     Ok(decoded)
 }
@@ -66,7 +66,7 @@ pub fn decode_compact(
 pub fn decode_compact_for_admission(
     text: &str,
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
-    let decoded = robin_replay_format::contained_worker::admit(text)?;
+    let decoded = robin_replay_format::decode_compact_for_admission(text)?;
     validate_spellforge_runtime_package(&decoded.1)?;
     Ok(decoded)
 }

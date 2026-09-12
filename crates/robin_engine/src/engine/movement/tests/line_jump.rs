@@ -2,8 +2,8 @@
 mod suite {
     use super::super::*;
     use crate::element::{
-        ActionState, ActorData, ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity,
-        HumanData, NpcData, PcData, Posture, SoldierData,
+        ActionState, ActorData, ActorSoldier, Command, ElementData, ElementKind, Entity, HumanData,
+        NpcData, Posture, SoldierData,
     };
     use crate::sequence::{
         Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
@@ -11,16 +11,7 @@ mod suite {
     };
 
     fn extraction_test_pc(posture: Posture) -> Entity {
-        Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(posture);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        })
+        Entity::Pc(crate::engine::test_support::actors::unbound_pc(posture))
     }
 
     fn extraction_test_assets() -> LevelAssets {
@@ -82,10 +73,10 @@ mod suite {
     #[test]
     fn shoulder_line_jump_routes_only_the_approach_on_the_carrier() {
         let mut engine = EngineInner::new();
-        let carrier = engine.add_entity(extraction_test_pc(Posture::CarryingOnShoulders));
+        let carrier = engine.add_test_entity(extraction_test_pc(Posture::CarryingOnShoulders));
         let mut rider = extraction_test_pc(Posture::OnShoulders);
         rider.human_data_mut().expect("test rider is human").carrier = Some(carrier);
-        let rider = engine.add_entity(rider);
+        let rider = engine.add_test_entity(rider);
 
         assert_eq!(line_jump_approach_owner(&engine, rider), carrier);
         assert_eq!(
@@ -328,7 +319,7 @@ mod suite {
                 -4.0, -4.0, 4.0, 4.0,
             ));
         pc.position_iface_mut().set_anti_collision_on(true);
-        let owner = engine.add_entity(pc);
+        let owner = engine.add_test_entity(pc);
         {
             let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
             level.sector_number_map.insert(SectorNumber::new(1), 0);
@@ -376,7 +367,8 @@ mod suite {
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
-        let captures = crate::movement_diagnostics::take_parity_movement_capture();
+        let captures =
+            crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
 
         let position = engine
             .get_entity(owner)
@@ -470,7 +462,7 @@ mod suite {
         pc.element_data_mut().set_position_map(start);
         pc.element_data_mut().set_direction_instantly(11);
         pc.position_iface_mut().set_anti_collision_on(false);
-        let owner = engine.add_entity(pc);
+        let owner = engine.add_test_entity(pc);
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -496,6 +488,7 @@ mod suite {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
         let capture = crate::movement_diagnostics::take_parity_movement_capture()
+            .expect("capture started")
             .into_iter()
             .find(|capture| capture.entity == owner)
             .expect("running-stairs owner must emit a production movement capture");
@@ -617,7 +610,7 @@ mod suite {
         pc.element_data_mut().set_position_map(start);
         pc.element_data_mut().set_direction_instantly(11);
         pc.position_iface_mut().set_anti_collision_on(false);
-        let owner = engine.add_entity(pc);
+        let owner = engine.add_test_entity(pc);
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -685,6 +678,7 @@ mod suite {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
         let capture = crate::movement_diagnostics::take_parity_movement_capture()
+            .expect("capture started")
             .into_iter()
             .find(|capture| capture.entity == owner)
             .expect("running-stairs owner must emit a production movement capture");
@@ -973,7 +967,7 @@ mod suite {
         );
         element.sprite.position_iface.zero_all_increments();
 
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 action_state: ActionState::MovingFast,
@@ -1294,7 +1288,7 @@ mod suite {
             .position_iface_mut()
             .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         owner_entity.position_iface_mut().set_map_position(start);
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
         {
             let actor = engine
                 .get_entity_mut(owner)
@@ -1330,7 +1324,7 @@ mod suite {
         target_entity
             .position_iface_mut()
             .set_map_position(target_position);
-        let target = engine.add_entity(target_entity);
+        let target = engine.add_test_entity(target_entity);
 
         let mut movement =
             SequenceElement::new_movement(1, command, Some(owner), OrderType::WalkingUpright);
@@ -1539,7 +1533,7 @@ mod suite {
             .pc_data_mut()
             .expect("test PC has PC state")
             .shield_danger_point = crate::coordinates::WorldPoint3D::new(140.0, 100.0, 0.0);
-        let shield_pc = engine.add_entity(shield_pc);
+        let shield_pc = engine.add_test_entity(shield_pc);
 
         assert_eq!(
             engine.combat_face_target_for_owner(shield_pc, true),

@@ -527,6 +527,9 @@ pub fn entity_view_from_entity(
 ) -> AiEntityView {
     let elem = entity.element_data();
     let actor = entity.actor_data();
+    let npc = entity.npc_data();
+    let human = entity.human_data();
+    let brain = npc.and_then(|npc| npc.ai_brain.base());
     let position = Position {
         x: elem.position_map().x,
         y: elem.position_map().y,
@@ -674,13 +677,13 @@ pub fn entity_view_from_entity(
         _ => false,
     };
 
-    let is_unconscious = match entity {
-        Entity::Soldier(s) => s.human.unconscious,
-        Entity::Civilian(c) => c.human.unconscious,
-        Entity::Pc(pc) => pc.human.unconscious,
-        _ => false,
-    };
+    let is_unconscious = human.is_some_and(|human| human.unconscious);
     let active = elem.active;
+    // This mixed-kind projection deliberately includes pickups and scenery.
+    // They have no actor state; `kind` remains authoritative for interpreting
+    // the existing wire-compatible null sentinel below.
+    // TODO: make actor-only view fields optional together in a versioned view
+    // schema, rather than changing just one field and its many fixture users.
     let action_state = actor.map(|a| a.action_state).unwrap_or_default();
     let passing_door = actor.is_some_and(|a| a.active_door_pass.is_some());
     let obstacle_idx = elem.obstacle_index();
@@ -696,30 +699,11 @@ pub fn entity_view_from_entity(
     // Read off the AI controller's `script_locked` flag (set by
     // `ScriptLockAI`, cleared by `ScriptUnlockAI`).  Non-NPC entities
     // have no AI brain, return false.
-    let script_locked = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| b.ai_is_script_locked())
-            .unwrap_or(false),
-        Entity::Civilian(c) => c
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| b.ai_is_script_locked())
-            .unwrap_or(false),
-        _ => false,
-    };
+    let script_locked = brain.is_some_and(|brain| brain.ai_is_script_locked());
 
     let elevation = elem.position().z;
 
-    let stuck_under_net = match entity {
-        Entity::Soldier(s) => s.human.stuck_under_nets_counter > 0,
-        Entity::Civilian(c) => c.human.stuck_under_nets_counter > 0,
-        Entity::Pc(pc) => pc.human.stuck_under_nets_counter > 0,
-        _ => false,
-    };
+    let stuck_under_net = human.is_some_and(|human| human.stuck_under_nets_counter > 0);
 
     // Only meaningful for Bonus entities; human/None defaults make
     // sense for everything else.
@@ -737,12 +721,7 @@ pub fn entity_view_from_entity(
         _ => false,
     };
 
-    let is_carried = match entity {
-        Entity::Soldier(s) => s.human.carrier.is_some(),
-        Entity::Civilian(c) => c.human.carrier.is_some(),
-        Entity::Pc(pc) => pc.human.carrier.is_some(),
-        _ => false,
-    };
+    let is_carried = human.is_some_and(|human| human.carrier.is_some());
 
     // Read off the enemy AI brain's `is_archer_unit` flag.  Defaults
     // to false for soldiers without a brain or for non-soldier kinds.
@@ -788,47 +767,23 @@ pub fn entity_view_from_entity(
 
     // True when a patrol path is registered on the AI controller
     // (see `AiController::has_patrol_path`).
-    let has_patrol_path = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| b.has_patrol_path)
-            .unwrap_or(false),
-        Entity::Civilian(c) => c
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| b.has_patrol_path)
-            .unwrap_or(false),
-        _ => false,
-    };
+    let has_patrol_path = brain.is_some_and(|brain| brain.has_patrol_path);
 
     // The original game's initial position is mutated when assigning a new post and the
     // no-path patrol-assignment branches. The controller owns that live
     // value; the NPC fields retain their level-load/save snapshot and can be
     // stale after a script changes the post.
-    let initial_position = match entity {
-        Entity::Soldier(s) => authoritative_initial_position(
-            s.npc.ai_brain.base(),
+    let initial_position = npc.map_or(position, |npc| {
+        authoritative_initial_position(
+            brain,
             Position {
-                x: s.npc.initial_position_x,
-                y: s.npc.initial_position_y,
-                sector: s.npc.initial_position_sector,
-                level: s.npc.initial_position_level,
+                x: npc.initial_position_x,
+                y: npc.initial_position_y,
+                sector: npc.initial_position_sector,
+                level: npc.initial_position_level,
             },
-        ),
-        Entity::Civilian(c) => authoritative_initial_position(
-            c.npc.ai_brain.base(),
-            Position {
-                x: c.npc.initial_position_x,
-                y: c.npc.initial_position_y,
-                sector: c.npc.initial_position_sector,
-                level: c.npc.initial_position_level,
-            },
-        ),
-        _ => position,
-    };
+        )
+    });
 
     // Arrow count on soldier NPCs; other kinds always return 0.
     let number_of_arrows = match entity {
@@ -855,77 +810,31 @@ pub fn entity_view_from_entity(
         _ => (crate::profiles::ProfileRank::None, false, false),
     };
 
-    let current_money = match entity {
-        Entity::Soldier(s) => s.npc.money,
-        Entity::Civilian(c) => c.npc.money,
-        _ => 0,
-    };
+    let current_money = npc.map_or(0, |npc| npc.money);
 
     // Read `interesting_object` off `AiController::base` for NPCs.
-    let interesting_object = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| b.interesting_object)
-            .unwrap_or(None),
-        Entity::Civilian(c) => c
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| b.interesting_object)
-            .unwrap_or(None),
-        _ => None,
-    };
+    let interesting_object = brain.and_then(|brain| brain.interesting_object);
 
     // Read `my_reconnaissance_report` off `AiController` for any NPC
     // (soldier or civilian).  Civilians need this exposed so an
     // officer's civilian-report processing can merge bodies/charly
     // without a second borrow on the civilian's AI brain mid-think.
-    let (report_type, report_seek_position, report_seen_bodies, report_charly) = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| {
-                (
-                    b.my_reconnaissance_report.report_type,
-                    b.my_reconnaissance_report.seek_position,
-                    b.my_reconnaissance_report.seen_bodies.clone(),
-                    b.my_reconnaissance_report.charly,
-                )
-            })
-            .unwrap_or((
-                crate::ai::ReportType::Nothing,
-                Position::default(),
-                Vec::new(),
-                None,
-            )),
-        Entity::Civilian(c) => c
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| {
-                (
-                    b.my_reconnaissance_report.report_type,
-                    b.my_reconnaissance_report.seek_position,
-                    b.my_reconnaissance_report.seen_bodies.clone(),
-                    b.my_reconnaissance_report.charly,
-                )
-            })
-            .unwrap_or((
-                crate::ai::ReportType::Nothing,
-                Position::default(),
-                Vec::new(),
-                None,
-            )),
-        _ => (
+    let (report_type, report_seek_position, report_seen_bodies, report_charly) = brain
+        .map(|brain| {
+            let report = &brain.my_reconnaissance_report;
+            (
+                report.report_type,
+                report.seek_position,
+                report.seen_bodies.clone(),
+                report.charly,
+            )
+        })
+        .unwrap_or((
             crate::ai::ReportType::Nothing,
             Position::default(),
             Vec::new(),
             None,
-        ),
-    };
+        ));
 
     // `macro_in_progress` + patrol-path waypoint indices — read off
     // `AiController::base` for NPCs.
@@ -935,27 +844,12 @@ pub fn entity_view_from_entity(
         path_last_waypoint_index,
         path_forward_movement,
         patrol_hiking_path_index,
-    ) = match entity {
-        Entity::Soldier(s) => s
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| {
-                let (cur, last, fwd, idx) = patrol_path_view_fields(b);
-                (b.macro_in_progress, cur, last, fwd, idx)
-            })
-            .unwrap_or((false, 0, 0, true, None)),
-        Entity::Civilian(c) => c
-            .npc
-            .ai_brain
-            .base()
-            .map(|b| {
-                let (cur, last, fwd, idx) = patrol_path_view_fields(b);
-                (b.macro_in_progress, cur, last, fwd, idx)
-            })
-            .unwrap_or((false, 0, 0, true, None)),
-        _ => (false, 0, 0, true, None),
-    };
+    ) = brain
+        .map(|brain| {
+            let (cur, last, fwd, idx) = patrol_path_view_fields(brain);
+            (brain.macro_in_progress, cur, last, fwd, idx)
+        })
+        .unwrap_or((false, 0, 0, true, None));
 
     AiEntityView {
         original_creation_order,

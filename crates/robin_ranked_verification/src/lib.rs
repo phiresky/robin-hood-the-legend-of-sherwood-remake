@@ -1,7 +1,7 @@
 //! Dependency-minimal deterministic ranked replay preparation.
 //!
-//! This crate is the shared authority used by the interactive client and the
-//! isolated production verifier. It deliberately owns no renderer, window,
+//! This crate provides preparation authority for the isolated production
+//! verifier. It deliberately owns no renderer, window,
 //! audio device, video decoder, gamepad, or multiplayer transport.
 
 mod mission_loading;

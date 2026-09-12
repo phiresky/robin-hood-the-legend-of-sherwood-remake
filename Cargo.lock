@@ -5908,6 +5908,7 @@ dependencies = [
  "bytemuck",
  "bzip2",
  "clap",
+ "crc32fast",
  "flate2",
  "foldhash 0.2.0",
  "futures-channel",
@@ -5920,6 +5921,7 @@ dependencies = [
  "robin_content",
  "robin_data_io",
  "robin_engine",
+ "robin_test_support",
  "robin_util",
  "serde",
  "serde_json",
@@ -5969,10 +5971,10 @@ dependencies = [
  "enum-map",
  "fastrand",
  "geo",
+ "hex",
  "i_overlay 8.1.1",
  "indexmap",
  "json-patch",
- "md-5",
  "nonmax",
  "num_enum",
  "rayon",
@@ -5980,6 +5982,7 @@ dependencies = [
  "robin_data_io",
  "robin_run_protocol",
  "robin_state_hash_derive",
+ "robin_test_support",
  "robin_util",
  "serde",
  "serde-big-array",
@@ -5995,7 +5998,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
- "unicode-security",
  "web-time",
 ]
 
@@ -6015,15 +6017,16 @@ dependencies = [
  "fs2",
  "futures-util",
  "hex",
+ "hmac",
  "http-body-util",
  "ipnet",
- "libc",
  "nix 0.29.0",
  "rand",
  "ring",
  "robin_engine",
  "robin_replay_format",
  "robin_run_protocol",
+ "robin_util",
  "rustix 1.1.4",
  "sd-notify",
  "serde",
@@ -6091,6 +6094,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.20",
  "toml",
  "wait-timeout",
 ]
@@ -6103,7 +6107,9 @@ dependencies = [
  "clap",
  "png",
  "robin_assets",
+ "robin_data_io",
  "robin_engine",
+ "robin_util",
  "serde",
  "serde_json",
  "tempfile",
@@ -6117,6 +6123,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "robin_assets",
+ "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6131,6 +6138,7 @@ dependencies = [
  "bitcode 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap",
  "fs2",
+ "hex",
  "png",
  "robin_assets",
  "robin_engine",
@@ -6273,10 +6281,12 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_lua",
+ "robin_modding_tools",
  "robin_official_content",
  "robin_replay_format",
  "robin_run_protocol",
  "robin_spellforge",
+ "robin_test_support",
  "robin_util",
  "rustls",
  "semver",
@@ -6319,6 +6329,7 @@ version = "0.0.0"
 dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
+ "hex",
  "semver",
  "serde",
  "serde_json",
@@ -6331,6 +6342,7 @@ dependencies = [
 name = "robin_spellforge"
 version = "0.0.0"
 dependencies = [
+ "hex",
  "rilua",
  "robin_engine",
  "serde",
@@ -6354,6 +6366,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "robin_test_support"
+version = "0.0.0"
+
+[[package]]
 name = "robin_util"
 version = "0.0.0"
 dependencies = [
@@ -6367,6 +6383,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
+ "unicode-security",
  "xxhash-rust",
 ]
 

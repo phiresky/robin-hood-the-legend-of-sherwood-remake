@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn timer_expires_on_exact_active_tick_and_stops_after_victory() {
-        let mut loaded = LoadedLevel::empty_for_test();
+        let mut loaded = LoadedLevel::empty();
         loaded.mission.timed_mission = Some(TimedMissionDefinition {
             limit_seconds: 1,
             warning_seconds: 1,
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn ambience_cue_switches_perception_and_sound_filters() {
-        let mut loaded = LoadedLevel::empty_for_test();
+        let mut loaded = LoadedLevel::empty();
         loaded.mission.ambience_schedule = vec![AmbienceScheduleCue {
             at_seconds: 1,
             ambiance: Ambiance::Night,
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn disabled_features_freeze_their_authoritative_clocks() {
-        let mut loaded = LoadedLevel::empty_for_test();
+        let mut loaded = LoadedLevel::empty();
         loaded.mission.timed_mission = Some(TimedMissionDefinition {
             limit_seconds: 1,
             warning_seconds: 1,
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn hourglass_routes_expiry_through_ordinary_level_failure() {
-        let mut loaded = LoadedLevel::empty_for_test();
+        let mut loaded = LoadedLevel::empty();
         loaded.mission.timed_mission = Some(TimedMissionDefinition {
             limit_seconds: 1,
             warning_seconds: 1,

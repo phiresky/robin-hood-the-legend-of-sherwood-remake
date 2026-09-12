@@ -6,23 +6,12 @@ use super::*;
 ///
 /// The macro/quick-action paths write back through the owner's `PcData`, so
 /// these fixtures need a real entity rather than a synthetic `PcId` handle.
-#[cfg(test)]
 fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
-    let pc = engine.add_entity(Entity::Pc(crate::element::ActorPc {
-        element: {
-            let mut initial_element =
-                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
-            initial_element.kind = crate::element::ElementKind::ActorPc;
-            initial_element.active = true;
-            initial_element
-        },
-        actor: Default::default(),
-        human: Default::default(),
-        pc: crate::element::PcData {
-            life_points: 100,
-            ..Default::default()
-        },
-    }));
+    let mut actor = make_test_pc(crate::element::Posture::Upright);
+    actor.position_iface_mut().clear_pathfinder_index();
+    actor.element_data_mut().active = true;
+    actor.pc_data_mut().expect("PC fixture").life_points = 100;
+    let pc = engine.add_test_entity(actor);
     // Macro playback dispatches real group-move commands, whose formation
     // geometry reads the mover's map position and move box. A default
     // entity has an empty (hyperspace) box, so give it real geometry.
@@ -42,7 +31,6 @@ fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
     pc
 }
 
-#[cfg(test)]
 fn add_group_move_test_sector(engine: &mut EngineInner) -> crate::fast_find_grid::SectorIndex {
     use crate::coordinates::MapBBox;
     use crate::fast_find_grid::GridSector;
@@ -81,7 +69,6 @@ fn add_group_move_test_sector(engine: &mut EngineInner) -> crate::fast_find_grid
     crate::fast_find_grid::SectorIndex::new(raw).expect("test sector index")
 }
 
-#[cfg(test)]
 fn recorded_test_route(engine: &mut EngineInner) -> crate::macro_store::RecordedQaMoveRoute {
     let goal_sector_index = engine
         .world
@@ -102,7 +89,6 @@ fn recorded_test_route(engine: &mut EngineInner) -> crate::macro_store::Recorded
     }
 }
 
-#[cfg(test)]
 fn arm_group_move_recording(engine: &mut EngineInner, pcs: &[crate::element::EntityId]) {
     for &pc in pcs {
         engine
@@ -117,7 +103,6 @@ fn arm_group_move_recording(engine: &mut EngineInner, pcs: &[crate::element::Ent
 
 /// Seed a PC's macro slot with a recorded "move to (x,y)" step and a
 /// wired titbit.  Used by the playback/abort/tetris tests below.
-#[cfg(test)]
 fn seed_macro_slot(
     engine: &mut EngineInner,
     pc: crate::element::EntityId,
@@ -171,7 +156,6 @@ fn seed_macro_slot(
 /// Seed a macro whose interaction target no longer exists. Original's
 /// Quick-action startup rejects the cloned sequence, fizzles the portrait, and
 /// leaves both the slot and its titbit available for a later retry.
-#[cfg(test)]
 fn seed_invalid_interaction_macro_slot(
     engine: &mut EngineInner,
     pc: crate::element::EntityId,

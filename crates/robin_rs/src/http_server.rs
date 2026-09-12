@@ -68,24 +68,24 @@
 //! No authentication. Bind is `127.0.0.1` only. Pass `--http-server 0`
 //! to disable the server entirely.
 
-use crate::rpc_diagnostics::{
+use crate::http_server::diagnostics::{
     decompile_script, engine_dump_json, frame_console_response_to_json, info_json,
     level_assets_json, list_natives_json, snapshot_host_debug, snapshot_script, snapshot_state,
 };
-pub use crate::rpc_screenshot::apply_screenshot_flags;
-use crate::rpc_screenshot::{can_capture_presented_ui, encode_png};
+pub use crate::http_server::screenshot::apply_screenshot_flags;
+use crate::http_server::screenshot::{can_capture_presented_ui, encode_png};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
 use robin_engine::replay_rankability::InputTaintKind;
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::thread;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::time::Duration;
 
 use robin_engine::engine::{Engine, LevelAssets};
@@ -405,7 +405,15 @@ impl From<serde_json::Value> for ReplyBody {
 /// becomes a 400 with `{"error": msg}` (always JSON).
 pub type Reply = Result<ReplyBody, RpcError>;
 
+pub mod diagnostics;
+pub mod query;
+pub mod screenshot;
+
+mod dispatch;
 mod error;
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
+use dispatch::dispatch_query;
+use dispatch::start_replay_export;
 pub use error::{RpcError, RpcErrorKind};
 
 async fn resolve_deferred_reply(reply: Reply) -> Reply {
@@ -437,14 +445,14 @@ mod request_lifetime;
 pub use request_lifetime::Responder;
 
 mod ingress;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 mod native_routes;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 mod native_transport;
 mod request_decode;
 use ingress::RequestRouter;
 pub use ingress::SessionIngress;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use native_transport::NativeRequest;
 
 type Queue = Arc<Mutex<RequestRouter>>;
@@ -453,11 +461,11 @@ struct HttpServer {
     replay_exports: crate::replay_service::ReplayExports,
     replay_launches: crate::replay_service::ReplayLaunches,
     queue: Queue,
-    #[cfg(all(test, not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
     bind_addr: std::net::SocketAddr,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
     listener: Option<thread::JoinHandle<()>>,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
     stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -479,13 +487,7 @@ impl std::fmt::Debug for HttpTransport {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for HttpTransport {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live HTTP transport cannot be deserialized",
-        ))
-    }
-}
+robin_util::deny_deserialize!(HttpTransport, "live HTTP transport cannot be deserialized");
 
 #[cfg(target_arch = "wasm32")]
 thread_local! {
@@ -522,7 +524,7 @@ impl HttpTransport {
     pub fn stop(&mut self) {
         self.port = None;
         if let Some(server) = self.server.take() {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             let mut server = server;
             #[cfg(target_arch = "wasm32")]
             BROWSER_QUEUE.with(|binding| {
@@ -531,12 +533,12 @@ impl HttpTransport {
                     *binding = std::sync::Weak::new();
                 }
             });
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             if let Some(stop) = server.stop.take() {
                 let _ = stop.send(());
             }
             server.queue.lock().expect("RPC router poisoned").retire();
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             if let Some(listener) = server.listener.take() {
                 if listener.join().is_err() {
                     tracing::error!("script HTTP listener panicked during shutdown");
@@ -549,6 +551,29 @@ impl HttpTransport {
 impl Drop for HttpTransport {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(all(test, not(feature = "script-rpc"), not(target_arch = "wasm32")))]
+mod disabled_transport_tests {
+    use super::*;
+
+    #[test]
+    fn native_listener_requires_feature_but_disabled_ingress_remains_usable() {
+        let replay = crate::replay_service::ReplayService::default();
+        let mut transport = HttpTransport::default();
+        assert!(
+            transport
+                .start(DEFAULT_PORT, replay.exports(), replay.launches())
+                .is_err()
+        );
+        assert!(!transport.is_started());
+        transport
+            .start(0, replay.exports(), replay.launches())
+            .unwrap();
+        let _ingress = transport.attach();
+        transport.stop();
+        assert!(!transport.is_started());
     }
 }
 
@@ -632,7 +657,7 @@ mod browser_transport_tests {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 mod transport_lifecycle_tests {
     use super::*;
     use std::io::Write;
@@ -1043,7 +1068,7 @@ impl HttpTransport {
             0
         };
         if let Some(bound_port) = self.port {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
             if self
                 .server
                 .as_ref()
@@ -1082,7 +1107,16 @@ impl HttpTransport {
             tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
             Ok(())
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(not(feature = "script-rpc"), not(target_arch = "wasm32")))]
+        {
+            let _ = (replay_exports, replay_launches);
+            if port != 0 {
+                return Err("native HTTP transport requires the script-rpc feature".into());
+            }
+            self.port = Some(0);
+            Ok(())
+        }
+        #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
         {
             if port == 0 {
                 self.port = Some(port);
@@ -1097,7 +1131,7 @@ impl HttpTransport {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 fn start(
     port: u16,
     replay_exports: crate::replay_service::ReplayExports,
@@ -1161,7 +1195,7 @@ fn start(
 /// never send `Origin` / `Sec-Fetch-Site` and send an exact local
 /// `Host`, so they pass untouched. Returns a rejection reason, or
 /// `None` when the request is acceptable.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 fn browser_rejection_reason(
     origin: Option<&str>,
     sec_fetch_site: Option<&str>,
@@ -1191,7 +1225,7 @@ fn browser_rejection_reason(
 
 /// Send a payload to the game loop and wait for the reply.  Caps the
 /// wait at 60 s so a wedged game doesn't hang the client forever.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
     let (response_tx, rx) = Responder::channel();
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
@@ -1289,340 +1323,6 @@ fn decode_load_replay(
         "paused": paused,
         "note": "pending — takes effect on next mission init (restart mission to apply)",
     })))
-}
-
-impl SessionIngress {
-    pub fn drain(
-        &mut self,
-        engine: &mut Engine,
-        frontend: &mut crate::host::HostFrontend,
-        local_seat: robin_engine::player_command::PlayerId,
-        net: Option<&crate::multiplayer::NetChannels>,
-        assets: &LevelAssets,
-        post_commands: &mut FrameCommands,
-    ) -> Vec<engine_api::ExternalAction> {
-        let mut selected = frontend.selected_view_element();
-        let mut external_actions = Vec::new();
-        self.drain_with_capabilities(
-            engine,
-            assets,
-            &mut selected,
-            net,
-            post_commands,
-            &mut external_actions,
-            DispatchCapabilities::Interactive {
-                frontend,
-                local_seat,
-            },
-        );
-        external_actions
-    }
-
-    /// Drain requests for a headless tool that owns an [`Engine`] directly.
-    ///
-    /// This is the small counterpart to [`SessionIngress::drain`] used by deterministic
-    /// replay/debug runners. Requests which need the renderer or live host UI are
-    /// rejected, while engine inspection, script/native calls, player commands,
-    /// and the pause/step queue remain available.
-    pub fn drain_headless(
-        &mut self,
-        engine: &mut Engine,
-        assets: &LevelAssets,
-        selected_view_element: &mut Option<engine_element::EntityId>,
-    ) -> FrameCommands {
-        let mut commands = FrameCommands::new();
-        let mut external_actions = Vec::new();
-        self.drain_with_capabilities(
-            engine,
-            assets,
-            selected_view_element,
-            None,
-            &mut commands,
-            &mut external_actions,
-            DispatchCapabilities::Headless,
-        );
-        commands
-    }
-
-    /// Admission, taint accounting and routing have one ordering for every
-    /// runner. Only the named presentation/diagnostic capabilities differ.
-    fn drain_with_capabilities(
-        &mut self,
-        engine: &mut Engine,
-        assets: &LevelAssets,
-        selected_view_element: &mut Option<engine_element::EntityId>,
-        net: Option<&crate::multiplayer::NetChannels>,
-        commands: &mut FrameCommands,
-        external_actions: &mut Vec<engine_api::ExternalAction>,
-        mut capabilities: DispatchCapabilities<'_>,
-    ) {
-        for req in self.take_requests() {
-            if !req.admit_unless_deferred() {
-                continue;
-            }
-            self.observe_ranked_input_taint(&req.payload);
-            match req.payload.classify() {
-                RoutedRequest::HostDebug => {
-                    req.response_tx
-                        .send(capabilities.host_debug(engine, assets));
-                }
-                RoutedRequest::Query(QueryRequest::EngineDump) => {
-                    req.response_tx.send(capabilities.engine_dump(engine));
-                }
-                RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
-                    query,
-                    self.replay_status(),
-                    engine,
-                    assets,
-                )),
-                RoutedRequest::Deferred(request) => {
-                    self.defer_request(request, req.response_tx, capabilities.has_presentation())
-                }
-                RoutedRequest::Process(request) => self.dispatch_process(request, req.response_tx),
-                RoutedRequest::Command(command) => {
-                    let reply = dispatch_command(
-                        command,
-                        engine,
-                        assets,
-                        selected_view_element,
-                        net,
-                        commands,
-                        external_actions,
-                    );
-                    capabilities.publish_selection(*selected_view_element);
-                    req.response_tx.send(reply);
-                }
-            }
-        }
-    }
-}
-
-/// Live capabilities are borrowed for one drain, never saved or reconstructed.
-enum DispatchCapabilities<'a> {
-    Interactive {
-        frontend: &'a mut crate::host::HostFrontend,
-        local_seat: robin_engine::player_command::PlayerId,
-    },
-    Headless,
-}
-
-impl DispatchCapabilities<'_> {
-    fn has_presentation(&self) -> bool {
-        matches!(self, Self::Interactive { .. })
-    }
-
-    fn engine_dump(&self, engine: &Engine) -> Reply {
-        // Original-parity runners own a nonserializable RNG source. Their
-        // established diagnostic policy removes it from a clone only; the
-        // interactive endpoint deliberately retains its full-snapshot policy.
-        let value = match self {
-            Self::Headless => {
-                engine_dump_json(&engine.diagnostic_snapshot_without_original_rng_replay())
-            }
-            Self::Interactive { .. } => engine_dump_json(engine),
-        };
-        value
-            .map(ReplyBody::Json)
-            .map_err(|error| RpcError::internal(format!("engine serialize: {error}")))
-    }
-
-    fn host_debug(&self, engine: &Engine, assets: &LevelAssets) -> Reply {
-        match self {
-            Self::Interactive {
-                frontend,
-                local_seat,
-            } => Ok(snapshot_host_debug(engine, frontend, *local_seat, assets).into()),
-            Self::Headless => Err(RpcError::unavailable_capability(
-                "host-debug is unavailable in a headless runner",
-            )),
-        }
-    }
-
-    fn publish_selection(&mut self, selected: Option<engine_element::EntityId>) {
-        if let Self::Interactive { frontend, .. } = self {
-            frontend.set_selected_view_element(selected);
-        }
-    }
-}
-
-fn admit_external_actions(
-    engine: &mut Engine,
-    assets: &LevelAssets,
-    actions: Vec<engine_api::ExternalAction>,
-    journal: &mut Vec<engine_api::ExternalAction>,
-) -> Result<Vec<engine_api::ExternalActionResult>, RpcError> {
-    let output = engine
-        .advance_frame(
-            assets,
-            engine_api::SimulationFrameInput::no_hourglass()
-                .with_post_external_actions(actions.clone()),
-        )
-        .map_err(|error| {
-            let message = format!("developer action frame admission failed: {error}");
-            match error {
-                engine_api::FrameAdvanceError::RankedSimulationSettingCommandRejected {
-                    ..
-                } => RpcError::invalid_request(message),
-                engine_api::FrameAdvanceError::RankedSimulationConfigViolation { .. }
-                | engine_api::FrameAdvanceError::SpellforgeMissionAborted { .. }
-                | engine_api::FrameAdvanceError::DirectorCompletionRejected { .. }
-                | engine_api::FrameAdvanceError::SoundBoundaryRejected { .. }
-                | engine_api::FrameAdvanceError::RecordedDropAleRouteRejected { .. } => {
-                    RpcError::internal(message)
-                }
-            }
-        })?;
-    journal.extend(actions);
-    Ok(output.external_action_results)
-}
-
-fn dispatch_command(
-    payload: CommandRequest,
-    engine: &mut Engine,
-    assets: &LevelAssets,
-    selected_view_element: &mut Option<engine_element::EntityId>,
-    net: Option<&crate::multiplayer::NetChannels>,
-    frame_commands: &mut FrameCommands,
-    external_actions: &mut Vec<engine_api::ExternalAction>,
-) -> Reply {
-    match payload {
-        CommandRequest::Native { name, args, this } => {
-            let results = admit_external_actions(
-                engine,
-                assets,
-                vec![engine_api::ExternalAction::Native {
-                    name,
-                    args,
-                    this_actor: this,
-                }],
-                external_actions,
-            )?;
-            match results.into_iter().next() {
-                Some(engine_api::ExternalActionResult::Native(result)) => result
-                    .map(|value| ReplyBody::Json(serde_json::json!({"return": value})))
-                    .map_err(RpcError::invalid_request),
-                _ => Err(RpcError::internal(
-                    "native frame admission returned no native result",
-                )),
-            }
-        }
-        CommandRequest::Batch(calls) => {
-            let actions = calls
-                .into_iter()
-                .map(|call| engine_api::ExternalAction::Native {
-                    name: call.op,
-                    args: call.args,
-                    this_actor: call.this,
-                })
-                .collect();
-            let results = admit_external_actions(engine, assets, actions, external_actions)?
-                .into_iter()
-                .map(|result| match result {
-                    engine_api::ExternalActionResult::Native(Ok(value)) => {
-                        serde_json::json!({"return": value})
-                    }
-                    engine_api::ExternalActionResult::Native(Err(error)) => {
-                        serde_json::json!({"error": error})
-                    }
-                    _ => serde_json::json!({"error": "non-native batch result"}),
-                })
-                .collect::<Vec<_>>();
-            Ok(ReplyBody::Json(serde_json::json!({"results": results})))
-        }
-        CommandRequest::Console(cmd) => {
-            // HTTP forces the full developer parser, but it has no live
-            // `DevState`. Presentation-only commands therefore stay outside
-            // the authoritative journal and report that limitation.
-            let Some(command) = robin_engine::console::parse_with_final(&cmd, false) else {
-                return Ok(ReplyBody::Json(frame_console_response_to_json(
-                    engine_api::FrameConsoleResponse::Unknown,
-                )));
-            };
-            if command.is_host_only() {
-                return Ok(ReplyBody::Json(frame_console_response_to_json(
-                    engine_api::FrameConsoleResponse::NotImplemented(
-                        "host-only console command over HTTP".to_owned(),
-                    ),
-                )));
-            }
-            let results = admit_external_actions(
-                engine,
-                assets,
-                vec![engine_api::ExternalAction::ConsoleCommand {
-                    command,
-                    selected_view_element: *selected_view_element,
-                }],
-                external_actions,
-            )?;
-            match results.into_iter().next() {
-                Some(engine_api::ExternalActionResult::ConsoleCommand {
-                    response,
-                    selected_view_element: selected,
-                }) => {
-                    *selected_view_element = selected;
-                    Ok(ReplyBody::Json(frame_console_response_to_json(response)))
-                }
-                _ => Err(RpcError::internal(
-                    "console frame admission returned no console result",
-                )),
-            }
-        }
-        CommandRequest::Player(cmd) => {
-            // In multiplayer, route the command over the wire so every
-            // peer applies it at the same `target_frame`.  The local
-            // engine doesn't mutate here; the echo lands via
-            // `drain_net_inputs` at `sim_frame + INPUT_DELAY_FRAMES`.
-            if let Some(net) = net {
-                net.send_input(cmd)
-                    .map_err(RpcError::unavailable_capability)?;
-            } else {
-                frame_commands.push(cmd);
-            }
-            Ok(ReplyBody::Json(serde_json::json!({"ok": true})))
-        }
-    }
-}
-
-fn dispatch_query(
-    query: QueryRequest,
-    replay: Option<ReplayStatus>,
-    engine: &Engine,
-    assets: &LevelAssets,
-) -> Reply {
-    match query {
-        QueryRequest::State => Ok(ReplyBody::Json(snapshot_state(engine, replay))),
-        QueryRequest::EngineDump => engine_dump_json(engine)
-            .map(ReplyBody::Json)
-            .map_err(|e| RpcError::internal(format!("engine serialize: {e}"))),
-        QueryRequest::LevelAssets => level_assets_json(engine, assets)
-            .map(ReplyBody::Json)
-            .map_err(|e| RpcError::internal(format!("level assets serialize: {e}"))),
-        QueryRequest::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
-        QueryRequest::Decompile { class } => {
-            Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
-        }
-    }
-}
-
-impl SessionIngress {
-    fn dispatch_process(&self, request: ProcessRequest, response: Responder) {
-        let Some((exports, launches)) = &self.replay_capabilities else {
-            response.send(Err(RpcError::unavailable_capability(
-                "replay transport capabilities were not attached",
-            )));
-            return;
-        };
-        match request {
-            ProcessRequest::ExportReplay => start_replay_export(exports, response),
-            ProcessRequest::LoadReplay { data, paused } => {
-                response.send(decode_load_replay(launches, &data, paused))
-            }
-        }
-    }
-}
-
-fn start_replay_export(exports: &crate::replay_service::ReplayExports, response_tx: Responder) {
-    response_tx.send(Ok(ReplyBody::ReplayExport(exports.export())));
 }
 
 /// Per-frame replay-playback status surfaced to the script-RPC
@@ -1733,7 +1433,7 @@ impl PendingStep {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
@@ -1836,7 +1536,7 @@ mod tests {
                     assets: &mut assets,
                     level_directory: "",
                     progress: &mut |_| {},
-                    loaded: robin_engine::level_data::LoadedLevel::empty_for_test(),
+                    loaded: robin_engine::level_data::LoadedLevel::empty(),
                     bg_pixel_dims: (0.0, 0.0),
                 },
                 ground_mark_sprite: None,
@@ -2099,11 +1799,12 @@ mod tests {
         assert!(browser_rejection_reason(None, None, Some("LOCALHOST:17640"), 17640).is_none());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
     #[test]
     fn screenshot_query_parses_frame_and_full_map() {
         let req =
-            crate::rpc_query::screenshot("frame=10&full_map=1&hide_ui=true&entity_ids=0").unwrap();
+            crate::http_server::query::screenshot("frame=10&full_map=1&hide_ui=true&entity_ids=0")
+                .unwrap();
         assert_eq!(req.frame, Some(10));
         assert!(req.full_map);
         assert!(req.hide_ui);

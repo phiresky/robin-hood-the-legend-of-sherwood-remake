@@ -857,46 +857,9 @@ impl EngineInner {
             // Original-game soldier-profile lookup and
             // hand-to-hand profile index bounds. Preserve that invariant
             // instead of substituting generic rank/fighting/ranges.
-            let soldier_profile = assets
-                .profile_manager
-                .get_soldier(s.soldier.soldier_profile_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "soldier {} requires missing soldier profile {}",
-                        EntityId::from(npc_id).index(),
-                        u32::from(s.soldier.soldier_profile_index)
-                    )
-                });
+            let (soldier_profile, fighting_ability, bow_profile) =
+                self.soldier_profile_facts(assets, s, EntityId::from(npc_id));
             let has_formation = soldier_profile.formation;
-            let fighting_ability = {
-                let base = soldier_profile.fighting;
-                if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
-                    let diff = self.control.sim_config.difficulty;
-                    diff.rules().enemy_fighting(base, 100)
-                } else {
-                    base
-                }
-            };
-            // Enemy archer detection is exactly
-            // the actor having a bow. Weapon initialization creates the
-            // bow whenever the one-based shooting-weapon id is non-zero;
-            // the bow profile's ranges do not participate in identity.
-            let bow_profile = if soldier_profile.shooting_weapon_id == 0 {
-                None
-            } else {
-                Some(
-                    assets
-                        .profile_manager
-                        .get_bow(soldier_profile.shooting_weapon_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "soldier {} requires missing bow profile {}",
-                                EntityId::from(npc_id).index(),
-                                soldier_profile.shooting_weapon_id
-                            )
-                        }),
-                )
-            };
             let is_archer_unit = is_archer_from_bow(bow_profile);
             let bow_max_range = bow_profile
                 .map(|bow| {
@@ -1428,7 +1391,7 @@ mod tests {
             .add_sector(grid_sector(100.0, 200.0), 2);
         assert_ne!(wrong, exact);
 
-        let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        let target = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -1495,5 +1458,60 @@ mod tests {
             carried_before,
             "a not-yet-run carrier keeps the carried body's pre-movement geometry"
         );
+    }
+}
+
+impl EngineInner {
+    pub(super) fn soldier_profile_facts<'a>(
+        &self,
+        assets: &'a LevelAssets,
+        s: &crate::element::ActorSoldier,
+        id: EntityId,
+    ) -> (
+        &'a crate::profiles::SoldierProfile,
+        u16,
+        Option<&'a crate::profiles::BowProfile>,
+    ) {
+        let soldier_profile = assets
+            .profile_manager
+            .get_soldier(s.soldier.soldier_profile_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "soldier {} requires missing soldier profile {}",
+                    id.index(),
+                    u32::from(s.soldier.soldier_profile_index)
+                )
+            });
+        let fighting_ability = {
+            let base = soldier_profile.fighting;
+            if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
+                let diff = self.control.sim_config.difficulty;
+                diff.rules().enemy_fighting(base, 100)
+            } else {
+                base
+            }
+        };
+        // Enemy archer detection is exactly
+        // the actor having a bow. Weapon initialization creates the
+        // bow whenever the one-based shooting-weapon id is non-zero;
+        // the bow profile's ranges do not participate in identity.
+        let bow_profile = if soldier_profile.shooting_weapon_id == 0 {
+            None
+        } else {
+            Some(
+                assets
+                    .profile_manager
+                    .get_bow(soldier_profile.shooting_weapon_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "soldier {} requires missing bow profile {}",
+                            id.index(),
+                            soldier_profile.shooting_weapon_id
+                        )
+                    }),
+            )
+        };
+
+        (soldier_profile, fighting_ability, bow_profile)
     }
 }

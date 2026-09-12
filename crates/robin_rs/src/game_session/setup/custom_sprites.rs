@@ -476,10 +476,7 @@ mod tests {
         let mut expected = None;
         for root in [&source, &v1, &family] {
             let files = isolated_files();
-            assert_eq!(
-                files.add_overlay_path(root.to_str().unwrap()),
-                engine_sbfile::SBFILE_NO_ERROR
-            );
+            assert_eq!(files.add_overlay_path(root.to_str().unwrap()), Ok(()));
             let digest = decoded_digest(prepare_overlay_characters(&files, None).unwrap());
             if let Some(expected) = expected {
                 assert_eq!(digest, expected);
@@ -493,7 +490,7 @@ mod tests {
                         archive_directory(root, prefix).into(),
                         None
                     ),
-                    engine_sbfile::SBFILE_NO_ERROR
+                    Ok(())
                 );
                 assert_eq!(
                     decoded_digest(prepare_overlay_characters(&archive, None).unwrap()),
@@ -509,7 +506,7 @@ mod tests {
                 archive_directory(&source, "").into(),
                 None
             ),
-            engine_sbfile::SBFILE_NO_ERROR
+            Ok(())
         );
         assert!(
             prepare_overlay_characters(&files, None)
@@ -533,7 +530,7 @@ mod tests {
                 archive_directory(&source, "").into(),
                 None
             ),
-            engine_sbfile::SBFILE_NO_ERROR
+            Ok(())
         );
         assert!(prepare_overlay_characters(&files, Some(&selected)).is_err());
     }
@@ -545,14 +542,8 @@ mod tests {
         let zip = std::env::var("FABRI18_MOD_ZIP").expect("FABRI18_MOD_ZIP");
         let disk = isolated_files();
         let archive = isolated_files();
-        assert_eq!(
-            disk.add_overlay_path(&directory),
-            engine_sbfile::SBFILE_NO_ERROR
-        );
-        assert_eq!(
-            archive.add_overlay_zip(&zip),
-            engine_sbfile::SBFILE_NO_ERROR
-        );
+        assert_eq!(disk.add_overlay_path(&directory), Ok(()));
+        assert_eq!(archive.add_overlay_zip(&zip), Ok(()));
         // Each family is loaded independently to bound fixture memory.
         let mut family_count = 0;
         let mut frame_count = 0;
@@ -662,10 +653,7 @@ mod tests {
         )
         .unwrap();
         let files = isolated_files();
-        assert_eq!(
-            files.add_overlay_path(dir.path().to_str().unwrap()),
-            engine_sbfile::SBFILE_NO_ERROR
-        );
+        assert_eq!(files.add_overlay_path(dir.path().to_str().unwrap()), Ok(()));
         assert!(matches!(
             prepare_overlay_characters(&files, None),
             Err(ResourcePreparationError::Unavailable { .. })
@@ -726,7 +714,7 @@ mod tests {
         let files = isolated_files();
         assert_eq!(
             files.add_overlay_path(directory.path().to_str().unwrap()),
-            engine_sbfile::SBFILE_NO_ERROR
+            Ok(())
         );
         let prepared = prepare_overlay_characters(&files, None).unwrap();
         assert_eq!(prepared.batches.len(), 1);
@@ -763,7 +751,7 @@ mod tests {
         let files = isolated_files();
         assert_eq!(
             files.add_overlay_path(directory.path().to_str().unwrap()),
-            engine_sbfile::SBFILE_NO_ERROR
+            Ok(())
         );
         let prepared = prepare_overlay_characters(&files, None).unwrap();
         assert!(

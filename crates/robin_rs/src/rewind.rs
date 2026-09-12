@@ -28,12 +28,12 @@
 
 use std::collections::BTreeMap;
 
-use crate::sim_timeline::{
+use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::player_command::PlayerInput;
+use robin_engine::sim_timeline::{
     CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, SnapshotHistory,
     TimelineHistory, replay_authoritative_frame,
 };
-use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::player_command::PlayerInput;
 
 /// How often (in sim frames) to take a snapshot.  Matches the cadence
 /// of the replay state-hash check so the two systems have similar
@@ -93,7 +93,7 @@ impl RewindBuffer {
             recent_checkpoints: SnapshotHistory::new(
                 CheckpointPolicy::EveryFrame,
                 RetentionPolicy::Latest {
-                    capacity: crate::sim_timeline::RECENT_TIMELINE_HISTORY_FRAMES,
+                    capacity: robin_engine::sim_timeline::RECENT_TIMELINE_HISTORY_FRAMES,
                 },
             ),
             pending_recent: None,
@@ -523,8 +523,8 @@ mod tests {
 
     #[test]
     fn splice_late_input_drops_snapshots_derived_from_the_old_command_stream() {
-        use crate::sim_timeline::{RestoreError, RestorePolicy};
         use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        use robin_engine::sim_timeline::{RestoreError, RestorePolicy};
 
         let mut buf = RewindBuffer::new();
         let mut assets = LevelAssets::default();
