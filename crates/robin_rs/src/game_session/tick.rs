@@ -823,7 +823,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
                 false,
             ),
         );
-        timeline.begin_history_frame(frame, engine, assets);
+        timeline.begin_history_frame(frame, engine);
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
@@ -1327,7 +1327,7 @@ mod tests {
         // normal tick, include its late post-refresh command, then commit
         // history AND its live recorder token before servicing the HTTP step.
         let mut normal = MissionFrame::new(0);
-        timeline.open_frame(&mut normal, &manager.engine, &assets);
+        timeline.open_frame(&mut normal, &manager.engine);
         timeline.begin_recording(&mut normal, true);
         normal.stage_post_commands().push(PlayerInput::new(
             PlayerId::HOST,
@@ -2094,7 +2094,7 @@ mod tests {
         // The engine need not advance here because this test exercises the
         // history ownership contract, not deterministic replay itself.
         for frame in 0..=425 {
-            rewind_buffer.begin_frame(frame, &engine, &assets);
+            rewind_buffer.begin_frame(frame, &engine);
             rewind_buffer.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
         assert_eq!(rewind_buffer.next_record_frame(), 426);

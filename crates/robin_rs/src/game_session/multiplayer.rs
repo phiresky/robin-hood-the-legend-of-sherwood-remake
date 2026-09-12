@@ -1702,7 +1702,7 @@ mod tests {
             NetOutbound::ReadyToSim { frame: 32 }
         ));
 
-        rewind.begin_frame(32, &manager.engine, &assets);
+        rewind.begin_frame(32, &manager.engine);
         rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         assert!(rewind.frame_for(32).is_some());
         assert_eq!(rewind.oldest_cmd_frame(), 32);
@@ -1888,15 +1888,10 @@ mod tests {
         );
     }
 
-    fn rewind_with_horizon(
-        manager: &EngineManager,
-        assets: &LevelAssets,
-        start: u32,
-        end: u32,
-    ) -> RewindBuffer {
+    fn rewind_with_horizon(manager: &EngineManager, start: u32, end: u32) -> RewindBuffer {
         let mut rewind = RewindBuffer::new();
         for frame in start..end {
-            rewind.begin_frame(frame, &manager.engine, assets);
+            rewind.begin_frame(frame, &manager.engine);
             rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
         assert_eq!(rewind.oldest_cmd_frame(), start);
@@ -1906,7 +1901,7 @@ mod tests {
     #[test]
     fn client_too_old_input_requests_a_complete_snapshot_reconnect() {
         let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
-        let mut rewind = rewind_with_horizon(&manager, &assets, 25, 35);
+        let mut rewind = rewind_with_horizon(&manager, 25, 35);
         incoming
             .send(NetEvent::Input {
                 server_frame: 35,
@@ -1946,7 +1941,7 @@ mod tests {
     fn host_too_old_peer_input_reconnects_every_predicting_client() {
         let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
         host.transport.test_local_seat(PlayerId::HOST);
-        let mut rewind = rewind_with_horizon(&manager, &assets, 25, 35);
+        let mut rewind = rewind_with_horizon(&manager, 25, 35);
         incoming
             .send(NetEvent::Input {
                 server_frame: 35,
@@ -2035,7 +2030,7 @@ mod tests {
         let (_host, manager, assets, _incoming, _outgoing) = network_drain_fixture();
         let mut rewind = RewindBuffer::new();
         for frame in 0..2 {
-            rewind.begin_frame(frame, &manager.engine, &assets);
+            rewind.begin_frame(frame, &manager.engine);
             rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
         for frame in 1..=3 {
