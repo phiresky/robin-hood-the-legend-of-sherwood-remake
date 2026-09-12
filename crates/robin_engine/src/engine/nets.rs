@@ -850,7 +850,7 @@ impl EngineInner {
         layer: Option<crate::position_interface::Layer>,
     ) -> bool {
         // No valid landing layer at all → crumple.
-        let Some(layer) = layer else { return true };
+        let Some(_layer) = layer else { return true };
 
         let obstacle_idx = self.find_landing_obstacle(assets, landing);
 
