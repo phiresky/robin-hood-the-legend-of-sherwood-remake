@@ -2487,7 +2487,7 @@ mod tests {
         // 999 would admit the target as already in range if substituted for
         // the actor's live distance (10), and must not reach the replacement.
         assert_moved_target_refresh_returns_explicit_in_progress(
-            crate::element::MotionState::Done,
+            MotionState::Done,
             1,
             crate::sequence::SequenceState::Interrupted,
             999.0,
