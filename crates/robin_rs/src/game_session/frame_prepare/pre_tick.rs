@@ -25,7 +25,7 @@ fn drain_pre_tick_network(
         // Late input invalidates the capture opened before local input/UI.
         // Reconstruction returns to this same pre-tick frame; retain its
         // queued commands/facts but capture their corrected starting state.
-        runtime.reopen_after_pre_tick_network_rollback(frame, &manager.engine, assets);
+        runtime.reopen_after_pre_tick_network_rollback(frame, &manager.engine);
     }
     *mp_clock_pause |= drain.pause_simulation;
     frame.stage_commands().commands.extend(drain.inputs);
@@ -457,7 +457,7 @@ mod tests {
                 true,
             );
             let mut frame = MissionFrame::new(123);
-            timeline.open_frame(&mut frame, &manager.engine, &assets);
+            timeline.open_frame(&mut frame, &manager.engine);
             frame
                 .stage_commands()
                 .commands
@@ -563,7 +563,7 @@ mod tests {
         // Commit two ordinary historical frames before opening this host
         // iteration, exactly as the graphical driver does before local UI.
         for number in 0..2 {
-            timeline.begin_history_frame(number, &manager.engine, &assets);
+            timeline.begin_history_frame(number, &manager.engine);
             let input = SimulationFrameInput::default()
                 .with_hourglass(false)
                 .with_post_initialize(false);
@@ -584,7 +584,7 @@ mod tests {
         frame.adopt_authoritative_input(
             SimulationFrameInput::no_hourglass().with_post_initialize(false),
         );
-        timeline.open_frame(&mut frame, &manager.engine, &assets);
+        timeline.open_frame(&mut frame, &manager.engine);
         let original_hash = frame.recorder_hash.unwrap();
         let local = PlayerInput::host(PlayerCommand::SetUnbindingEnabled { enabled: false });
         let due = PlayerInput::host(PlayerCommand::SetAmountOfSpeaking { amount: 7 });
@@ -678,7 +678,7 @@ mod tests {
         // last_mp_rollback. A sentinel makes an unwanted re-sample observable.
         timeline.advance_frame();
         let mut next_frame = MissionFrame::new(31);
-        timeline.open_frame(&mut next_frame, &manager.engine, &assets);
+        timeline.open_frame(&mut next_frame, &manager.engine);
         next_frame.recorder_hash = Some(0x55aa);
         super::drain_pre_tick_network(
             &mut timeline,

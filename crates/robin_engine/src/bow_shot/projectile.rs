@@ -1010,7 +1010,6 @@ pub(crate) fn refresh_arrow_after_previous_hourglass(
 }
 
 pub(crate) fn make_arrow_falling_down(
-    _sim: &crate::sim_rng::SimulationContext,
     proj: &mut ElementProjectile,
     thrown_away_by_shield: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1213,13 +1212,10 @@ pub(crate) fn projectile_shield_holder(
 /// or the trajectory runs out, the arrow is flagged for despawn and
 /// the engine applies damage.
 pub fn tick_arrows(
-    sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         None,
@@ -1237,14 +1233,11 @@ pub fn tick_arrows(
 /// game already advanced the arrow before insertion, and the global
 /// element hourglass pass for that frame has already finished.
 pub fn tick_arrows_excluding(
-    sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     skip_arrow_ids: &[EntityId],
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         None,
@@ -1262,15 +1255,12 @@ pub fn tick_arrows_excluding(
 /// which advances it before the
 /// arrow enters the engine element list.
 pub fn tick_arrow(
-    sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     arrow_id: EntityId,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         obstacle_check,
@@ -1285,7 +1275,6 @@ pub fn tick_arrow(
 /// Test adapter for actor-order collision scans with default diplomacy.
 #[cfg(test)]
 pub(crate) fn tick_arrow_in_actor_order(
-    sim: &crate::sim_rng::SimulationContext,
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1293,7 +1282,6 @@ pub(crate) fn tick_arrow_in_actor_order(
     actor_order: &[EntityId],
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         obstacle_check,
@@ -1306,7 +1294,6 @@ pub(crate) fn tick_arrow_in_actor_order(
 }
 
 pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
-    sim: &crate::sim_rng::SimulationContext,
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1315,7 +1302,6 @@ pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
     diplomacy: &crate::diplomacy::DiplomacyState,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         obstacle_check,
@@ -1334,15 +1320,12 @@ pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
 /// creation-ordered entity pass so projectile and PC hourglasses can retain
 /// their relative element-array order.
 pub fn tick_existing_projectile(
-    sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     projectile_id: EntityId,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         obstacle_check,
@@ -1357,7 +1340,6 @@ pub fn tick_existing_projectile(
 /// Production variant of [`tick_existing_projectile`] whose actor collision
 /// scans follow the original game's combined actor order.
 pub(crate) fn tick_existing_projectile_in_actor_order(
-    sim: &crate::sim_rng::SimulationContext,
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1366,7 +1348,6 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
     diplomacy: &crate::diplomacy::DiplomacyState,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(
-        sim,
         entities,
         sight_obstacles,
         obstacle_check,
@@ -1379,8 +1360,6 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
 }
 
 fn tick_arrows_matching(
-    sim: &crate::sim_rng::SimulationContext,
-
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -1920,7 +1899,7 @@ fn tick_arrows_matching(
             // (no human / FX-target check), so `continue` after
             // reporting.
             if matches!(proj.object.object_type, ObjectType::Arrow) {
-                make_arrow_falling_down(sim, proj, true, obstacle_check);
+                make_arrow_falling_down(proj, true, obstacle_check);
 
                 results.push(ArrowTickResult {
                     arrow: arrow_id,

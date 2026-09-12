@@ -125,7 +125,7 @@ impl RewindBuffer {
     /// [`Self::end_frame_input`] if this frame aligns to
     /// [`SNAPSHOT_INTERVAL`] — non-aligned frames still need to
     /// register their commands but don't add to the snapshot ring.
-    pub fn begin_frame(&mut self, frame: u32, engine: &Engine, _assets: &LevelAssets) {
+    pub fn begin_frame(&mut self, frame: u32, engine: &Engine) {
         self.history.begin_frame(frame, engine);
         self.pending_recent = Some(Snapshot::new(frame, engine));
     }
@@ -382,7 +382,7 @@ mod tests {
         let mut buffer = RewindBuffer::new();
 
         buffer.seed_initial_anchor(frame, &engine);
-        buffer.begin_frame(frame, &engine, &assets);
+        buffer.begin_frame(frame, &engine);
         buffer.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
 
         assert!(buffer.frame_for(frame).is_some());
@@ -439,7 +439,7 @@ mod tests {
         let application_context = host.application_context().clone();
         let mut dev = DevState::default();
         for frame in 0..3 {
-            rewind.begin_frame(frame, &engine, &assets);
+            rewind.begin_frame(frame, &engine);
 
             // Deliberately keep host scratch contradictory. The Engine-owned
             // camera transition is the only gameplay gate.
@@ -505,7 +505,7 @@ mod tests {
         )
         .expect("fixture engine");
         for frame in 0..3 {
-            buf.begin_frame(frame, &engine, &assets);
+            buf.begin_frame(frame, &engine);
             buf.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
 
@@ -536,7 +536,7 @@ mod tests {
         )
         .expect("fixture engine");
         for frame in 0..=SNAPSHOT_INTERVAL {
-            buf.begin_frame(frame, &engine, &assets);
+            buf.begin_frame(frame, &engine);
             buf.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
         }
         assert!(

@@ -2,7 +2,7 @@
 
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
-use robin_engine::engine::{Engine, LevelAssets, SimulationFrameInput};
+use robin_engine::engine::{Engine, SimulationFrameInput};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub(super) struct ReconstructionHistory {
@@ -21,12 +21,12 @@ impl ReconstructionHistory {
         }
     }
 
-    pub(super) fn adopt_snapshot(&mut self, frame: u32, engine: &Engine, assets: &LevelAssets) {
+    pub(super) fn adopt_snapshot(&mut self, frame: u32, engine: &Engine) {
         self.buffer = RewindBuffer::new();
         self.buffer.seed_initial_anchor(frame, engine);
         self.reset_checker();
         // Loading occurs after open_frame; reopen its capture against adopted state.
-        self.buffer.begin_frame(frame, engine, assets);
+        self.buffer.begin_frame(frame, engine);
     }
 
     pub(super) fn finish_restore(&mut self, frame: u32) {
@@ -63,17 +63,18 @@ impl<'de> Deserialize<'de> for ReconstructionHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_engine::engine::LevelAssets;
 
     #[test]
     fn snapshot_adoption_replaces_history_and_reopens_the_adopted_boundary() {
         let mut assets = LevelAssets::default();
         let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
         let mut history = ReconstructionHistory::new(RewindBuffer::new(), None);
-        history.buffer.begin_frame(0, &engine, &assets);
+        history.buffer.begin_frame(0, &engine);
         history
             .buffer
             .end_frame_input(SimulationFrameInput::default());
-        history.adopt_snapshot(9, &engine, &assets);
+        history.adopt_snapshot(9, &engine);
         assert!(history.buffer.frame_for(0).is_none());
         assert_eq!(history.buffer.oldest_reachable_frame(), Some(9));
         history

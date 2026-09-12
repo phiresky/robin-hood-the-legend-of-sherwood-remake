@@ -330,7 +330,6 @@ pub(super) async fn process_operation_and_save(
             event,
             &mut frame,
             &manager.engine,
-            assets.as_ref(),
         );
     }
 

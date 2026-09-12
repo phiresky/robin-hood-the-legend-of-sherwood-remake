@@ -1775,7 +1775,7 @@ mod tests {
                 true,
             );
             let mut frame = MissionFrame::new(0);
-            timeline.open_frame(&mut frame, &engine, &assets);
+            timeline.open_frame(&mut frame, &engine);
             frame.stage_commands().push(PlayerInput::new(
                 PlayerId::HOST,
                 PlayerCommand::SetLockAlt(true),

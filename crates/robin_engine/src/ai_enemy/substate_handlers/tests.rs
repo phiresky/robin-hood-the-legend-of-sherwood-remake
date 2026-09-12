@@ -1567,19 +1567,15 @@ fn door_fight_wait_timer_starts_battle_overview() {
     // directly selected area search and consumed an RNG draw that the original game
     // did not make. Hostile AI handles this timer by calling
     // battle-overview evaluation and beginning the observation sequence instead.
-    let sim = crate::sim_rng::test_context();
     let mut ai = EnemyAi::new(95);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingDoorFightWaiting;
     ai.list_them.push(170);
 
     ai.attacking_door_fight_waiting(
-        &sim,
         StimulusType::EventTimer,
-        &mut AiGlobalState::default(),
         &AiContext::test_fixture(),
         &AiPerTickData::stub(),
-        None,
     );
 
     assert_eq!(ai.base.current_state, AiState::Attacking);
@@ -1641,7 +1637,6 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
     ai.attacking_phalanx(
         &sim,
         StimulusType::EventTimer,
-        &mut AiGlobalState::default(),
         &AiContext::test_fixture(),
         &tick,
         None,

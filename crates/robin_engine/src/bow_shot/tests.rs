@@ -154,11 +154,7 @@ fn existing_arrow_collision_uses_new_move_old_position() {
     assert!(norm(reconstructed_old, belt) > norm(reconstructed_old, integrated));
     assert!(norm(saved_old, belt) <= norm(saved_old, integrated));
 
-    let results = tick_arrows(
-        &crate::sim_rng::test_context(),
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         results
             .iter()
@@ -1416,8 +1412,6 @@ fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
 
 #[test]
 fn tick_arrows_follows_trajectory_and_hits() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     // Place a soldier at (50, 0) (belt lives at Z=25, the
     // default belt elevation for an upright human).  The
     // trajectory arcs from the bow height down to belt height at
@@ -1476,11 +1470,7 @@ fn tick_arrows_follows_trajectory_and_hits() {
 
     let mut hit = None;
     for _ in 0..20 {
-        let results = tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        );
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         for r in &results {
             if r.hit_target.is_some() {
                 hit = r.hit_target;
@@ -1501,8 +1491,6 @@ fn tick_arrows_follows_trajectory_and_hits() {
 
 #[test]
 fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let traj = vec![
         TrajectoryPoint {
             position: WorldPoint3D {
@@ -1557,11 +1545,7 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
 
     let mut hit = None;
     for _ in 0..20 {
-        let results = tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        );
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         hit = results.into_iter().find(|result| {
             result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
         });
@@ -1582,8 +1566,6 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
 
 #[test]
 fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let arrow = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Pc(crate::entity_id::PcId(0)),
         bow_point: WorldPoint3D {
@@ -1655,7 +1637,6 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
     ]);
 
     let results = tick_arrow(
-        sim,
         &mut entities,
         crate::sight_obstacle::ObstacleList::empty(),
         None,
@@ -1686,8 +1667,6 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
 
 #[test]
 fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let arrow = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Soldier(crate::entity_id::SoldierId(0)),
         bow_point: WorldPoint3D {
@@ -1734,11 +1713,7 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         results
             .iter()
@@ -1755,7 +1730,6 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
 
 #[test]
 fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
-    let sim = &crate::sim_rng::test_context();
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
     let victim_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let arrow = spawn_arrow(SpawnArrowParams {
@@ -1809,7 +1783,6 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
     .unwrap();
 
     let results = tick_arrow_in_actor_order_with_diplomacy(
-        sim,
         &mut entities,
         crate::sight_obstacle::ObstacleList::empty(),
         None,
@@ -1828,8 +1801,6 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
 
 #[test]
 fn tick_arrows_selects_last_eligible_human_in_actor_order() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let arrow = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Pc(crate::entity_id::PcId(0)),
         bow_point: WorldPoint3D {
@@ -1866,11 +1837,7 @@ fn tick_arrows_selects_last_eligible_human_in_actor_order() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
     assert!(
         results.iter().any(|result| {
@@ -1888,8 +1855,6 @@ fn tick_arrows_selects_last_eligible_human_in_actor_order() {
 
 #[test]
 fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
     let arrow = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Pc(crate::entity_id::PcId(0)),
@@ -1944,7 +1909,6 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
     assert_eq!(actor_order, [pc, soldier_2, soldier_1]);
 
     let results = tick_arrow_in_actor_order(
-        sim,
         &mut world.entities,
         crate::sight_obstacle::ObstacleList::empty(),
         None,
@@ -1962,77 +1926,72 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
 
 #[test]
 fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
-    crate::sim_rng::with_seed(1, |sim| {
-        use crate::element::ActionState;
+    use crate::element::ActionState;
 
-        let make_holder = || {
-            let mut holder = make_soldier(50.0, 0.0);
-            let actor = holder.actor_data_mut().unwrap();
-            actor.action_state = ActionState::HoldingShield;
-            actor.shield_obstacle = Some(compute_shield_obstacle(
-                MapPoint { x: 50.0, y: 0.0 },
-                0.0,
-                4,
-                &shield_params_for_soldier(20, 40),
-            ));
-            holder.element_data_mut().set_direction_instantly(4);
-            holder
-        };
-        let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
-        let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: WorldPoint3D::new(100.0, 0.0, 40.0),
-            trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-            target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-            target_pos: MapPoint { x: 50.0, y: 0.0 },
-            trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D::new(50.0, 0.0, 40.0),
-                time: 2,
-            }],
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
-        });
-        let mut entities = entity_table(vec![
-            Some(make_pc(100.0, 0.0)),
-            Some(make_holder()),
-            Some(make_holder()),
-            Some(arrow),
-        ]);
-        let soldier_1 = EntityId::Soldier(crate::entity_id::SoldierId(1));
-        let soldier_2 = EntityId::Soldier(crate::entity_id::SoldierId(2));
-        let actor_order = [
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            soldier_2,
-            soldier_1,
-        ];
-
-        let mut shield_hit = None;
-        for _ in 0..10 {
-            for result in tick_arrow_in_actor_order(
-                sim,
-                &mut entities,
-                crate::sight_obstacle::ObstacleList::empty(),
-                None,
-                arrow_id,
-                &actor_order,
-            ) {
-                shield_hit = shield_hit.or(result.shield_hit);
-            }
-            if shield_hit.is_some() {
-                break;
-            }
-        }
-
-        assert_eq!(shield_hit, Some(soldier_2));
+    let make_holder = || {
+        let mut holder = make_soldier(50.0, 0.0);
+        let actor = holder.actor_data_mut().unwrap();
+        actor.action_state = ActionState::HoldingShield;
+        actor.shield_obstacle = Some(compute_shield_obstacle(
+            MapPoint { x: 50.0, y: 0.0 },
+            0.0,
+            4,
+            &shield_params_for_soldier(20, 40),
+        ));
+        holder.element_data_mut().set_direction_instantly(4);
+        holder
+    };
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
+    let arrow = spawn_arrow(SpawnArrowParams {
+        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+        bow_point: WorldPoint3D::new(100.0, 0.0, 40.0),
+        trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
+        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+        target_pos: MapPoint { x: 50.0, y: 0.0 },
+        trajectory: vec![TrajectoryPoint {
+            position: WorldPoint3D::new(50.0, 0.0, 40.0),
+            time: 2,
+        }],
+        damage: 30,
+        layer: 0,
+        lands_in_hole: false,
+        initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
     });
+    let mut entities = entity_table(vec![
+        Some(make_pc(100.0, 0.0)),
+        Some(make_holder()),
+        Some(make_holder()),
+        Some(arrow),
+    ]);
+    let soldier_1 = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    let soldier_2 = EntityId::Soldier(crate::entity_id::SoldierId(2));
+    let actor_order = [
+        EntityId::Pc(crate::entity_id::PcId(0)),
+        soldier_2,
+        soldier_1,
+    ];
+
+    let mut shield_hit = None;
+    for _ in 0..10 {
+        for result in tick_arrow_in_actor_order(
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+            None,
+            arrow_id,
+            &actor_order,
+        ) {
+            shield_hit = shield_hit.or(result.shield_hit);
+        }
+        if shield_hit.is_some() {
+            break;
+        }
+    }
+
+    assert_eq!(shield_hit, Some(soldier_2));
 }
 
 #[test]
 fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let [lean_x, lean_y] = crate::position_interface::sector_to_vector_iso(0);
     let arrow_y = lean_y * 40.0;
     let arrow_old = WorldPoint3D {
@@ -2083,11 +2042,7 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
     assert!(results.iter().any(|result| {
         result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
@@ -2099,8 +2054,6 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
 
 #[test]
 fn tick_arrows_stationary_projectile_does_not_hit_human() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut arrow_element = {
         let mut initial_element = ElementData::default();
         initial_element.kind = ElementKind::ObjectProjectile;
@@ -2148,11 +2101,7 @@ fn tick_arrows_stationary_projectile_does_not_hit_human() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         results.iter().all(|r| r.hit_target.is_none()),
         "the original game returns no victim when the projectile is not moving"
@@ -2161,8 +2110,6 @@ fn tick_arrows_stationary_projectile_does_not_hit_human() {
 
 #[test]
 fn tick_arrows_without_shooter_does_not_hit_human() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut arrow = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Pc(crate::entity_id::PcId(0)),
         bow_point: WorldPoint3D {
@@ -2195,11 +2142,7 @@ fn tick_arrows_without_shooter_does_not_hit_human() {
     }
     let mut entities = entity_table(vec![None, Some(make_soldier(50.0, 0.0)), Some(arrow)]);
 
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         results.iter().all(|r| r.hit_target.is_none()),
         "the original game returns no victim when the projectile has no shooter"
@@ -2217,8 +2160,6 @@ fn tick_arrows_without_shooter_does_not_hit_human() {
 /// lying, netted and tied humans, and then skipped the whole scan.
 #[test]
 fn tick_arrows_dead_shooter_still_hits_human() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::Posture;
 
     let mut shooter = make_pc(0.0, 0.0);
@@ -2260,11 +2201,7 @@ fn tick_arrows_dead_shooter_still_hits_human() {
 
     let mut any_hit = None;
     for _ in 0..10 {
-        for r in tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        ) {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
             if r.hit_target.is_some() {
                 any_hit = r.hit_target;
             }
@@ -2281,8 +2218,6 @@ fn tick_arrows_dead_shooter_still_hits_human() {
 /// yields a `Command::ActivateApple` activation on tick.
 #[test]
 fn tick_arrows_apple_projectile_activates_apple_target() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
     let target_pos = MapPoint { x: 50.0, y: 0.0 };
@@ -2363,11 +2298,7 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
     let mut activation = None;
     let mut impact = None;
     for _ in 0..20 {
-        for r in tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        ) {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
             if let Some(hit) = r.fx_target_hit {
                 activation = Some(hit);
                 impact = Some((r.impact_fx, r.impact_pos));
@@ -2396,8 +2327,6 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
 /// that would otherwise land without activating scripted targets.
 #[test]
 fn tick_arrows_arrow_target_uses_current_position_range_gate() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
     let mut target_element = {
@@ -2460,11 +2389,7 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
     });
 
     let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
     assert!(
         results.iter().any(|r| {
@@ -2486,8 +2411,6 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
 /// scripted targets from a stopped projectile.
 #[test]
 fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
     let mut target_element = {
@@ -2550,11 +2473,7 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
     });
 
     let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
     assert!(
         results.iter().all(|r| r.fx_target_hit.is_none()),
@@ -2564,8 +2483,6 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
 
 #[test]
 fn tick_arrows_has_no_artificial_lifetime_timeout() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let trajectory = (1..=320)
         .map(|i| TrajectoryPoint {
             position: WorldPoint3D {
@@ -2600,11 +2517,7 @@ fn tick_arrows_has_no_artificial_lifetime_timeout() {
 
     let mut despawn_frame = None;
     for frame in 0..260 {
-        let results = tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        );
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         if results.iter().any(|r| r.despawn) {
             despawn_frame = Some(frame);
             break;
@@ -2626,8 +2539,6 @@ fn tick_arrows_has_no_artificial_lifetime_timeout() {
 /// launched.
 #[test]
 fn tick_arrows_apple_projectile_ignores_non_apple_target() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
     let mut target_element = {
@@ -2681,11 +2592,7 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
     });
 
     let mut entities = entity_table(vec![Some(target), Some(apple)]);
-    let results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         results.is_empty(),
         "the original game ignores nonmatching target filters before the target can burst"
@@ -2696,8 +2603,6 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
 /// row and leaves grounded animation/removal to the derived owner path.
 #[test]
 fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
     let mut target_element = {
@@ -2744,11 +2649,7 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
     let mut entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
 
     // First tick: apple reaches target, bursts.
-    let impact_results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let impact_results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         impact_results
             .iter()
@@ -2764,11 +2665,8 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
         _ => panic!("expected apple projectile"),
     }
 
-    let grounded_base_results = tick_arrows(
-        sim,
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let grounded_base_results =
+        tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
     assert!(
         grounded_base_results.is_empty(),
         "projectile ticking must not duplicate the derived landed animation/removal"
@@ -2779,8 +2677,6 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
 /// without shield yields no impact FX (silent).
 #[test]
 fn tick_arrows_impact_fx_per_projectile_type() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     fn spawn_projectile_at_impact(obj: ObjectType) -> Entity {
         let mut element = {
             let mut initial_element = ElementData::default();
@@ -2816,11 +2712,7 @@ fn tick_arrows_impact_fx_per_projectile_type() {
             Some(spawn_projectile_at_impact(obj)),
             Some(make_pc(100.0, 0.0)),
         ]);
-        let results = tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        );
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         results.into_iter().find_map(|r| r.impact_fx)
     };
     assert_eq!(fx_for(ObjectType::Apple), Some(509));
@@ -3670,12 +3562,7 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
         .set_position(WorldPoint3D::new(0.0, 0.0, 25.0));
     arrow.projectile.dive = false;
 
-    make_arrow_falling_down(
-        &crate::sim_rng::test_context(),
-        &mut arrow,
-        false,
-        Some(&check),
-    );
+    make_arrow_falling_down(&mut arrow, false, Some(&check));
 
     assert!(arrow.projectile.falling);
     assert!(arrow.projectile.dive);
@@ -3686,12 +3573,7 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
         water_zones: Some(&dry_zones),
         ..check
     };
-    make_arrow_falling_down(
-        &crate::sim_rng::test_context(),
-        &mut arrow,
-        false,
-        Some(&dry_check),
-    );
+    make_arrow_falling_down(&mut arrow, false, Some(&dry_check));
     assert!(
         arrow.projectile.dive,
         "trajectory calculation does not clear an earlier dive flag when a ricochet recomputes a dry fall"
@@ -3705,8 +3587,6 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
 /// snapshot.
 #[test]
 fn tick_arrows_skips_lying_victim() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::Posture;
 
     let mut soldier = make_soldier(50.0, 0.0);
@@ -3747,11 +3627,7 @@ fn tick_arrows_skips_lying_victim() {
 
     let mut any_hit = None;
     for _ in 0..10 {
-        for r in tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        ) {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
             if r.hit_target.is_some() {
                 any_hit = r.hit_target;
                 break;
@@ -3771,8 +3647,6 @@ fn tick_arrows_skips_lying_victim() {
 /// for that gap.
 #[test]
 fn tick_arrows_does_not_hit_when_arcing_overhead() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     // Arrow stays well above the soldier's belt (Z=25).
     let trajectory = vec![
         TrajectoryPoint {
@@ -3829,11 +3703,7 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
 
     let mut any_hit = None;
     for _ in 0..20 {
-        for r in tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        ) {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
             if r.hit_target.is_some() {
                 any_hit = r.hit_target;
             }
@@ -3853,8 +3723,6 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
 /// past.  Complement to [`tick_arrows_does_not_hit_when_arcing_overhead`].
 #[test]
 fn tick_arrows_hits_through_belt_column() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let trajectory = vec![
         TrajectoryPoint {
             position: WorldPoint3D {
@@ -3900,11 +3768,7 @@ fn tick_arrows_hits_through_belt_column() {
     ]);
     let mut hit = None;
     for _ in 0..20 {
-        for r in tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        ) {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
             if r.hit_target.is_some() {
                 hit = r.hit_target;
             }
@@ -3922,120 +3786,114 @@ fn tick_arrows_hits_through_belt_column() {
 /// despawn on the same tick.
 #[test]
 fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
-    crate::sim_rng::with_seed(1, |sim| {
-        use crate::element::ActionState;
+    use crate::element::ActionState;
 
-        // Shield holder facing east (sector 4 = +X), toward the arrow
-        // which is flying westward from bow_point (100,…) to target
-        // (50,…).  The shield quad projects forward in the holder's
-        // facing direction, so the arrow's path intersects it.
-        let mut shield_holder = make_soldier(50.0, 0.0);
-        {
-            let actor = shield_holder.actor_data_mut().unwrap();
-            actor.action_state = ActionState::HoldingShield;
-            let params = shield_params_for_soldier(20, 40);
-            let obs = compute_shield_obstacle(MapPoint { x: 50.0, y: 0.0 }, 0.0, 4, &params);
-            actor.shield_obstacle = Some(obs);
-        }
-        shield_holder.element_data_mut().set_direction_instantly(4);
-        // The original game scans every actor and checks only whether a shield is held. Saved
-        // mission actors can remain inactive while retaining that state and
-        // must still block a projectile crossing their serialized shield.
-        shield_holder.element_data_mut().active = false;
+    // Shield holder facing east (sector 4 = +X), toward the arrow
+    // which is flying westward from bow_point (100,…) to target
+    // (50,…).  The shield quad projects forward in the holder's
+    // facing direction, so the arrow's path intersects it.
+    let mut shield_holder = make_soldier(50.0, 0.0);
+    {
+        let actor = shield_holder.actor_data_mut().unwrap();
+        actor.action_state = ActionState::HoldingShield;
+        let params = shield_params_for_soldier(20, 40);
+        let obs = compute_shield_obstacle(MapPoint { x: 50.0, y: 0.0 }, 0.0, 4, &params);
+        actor.shield_obstacle = Some(obs);
+    }
+    shield_holder.element_data_mut().set_direction_instantly(4);
+    // The original game scans every actor and checks only whether a shield is held. Saved
+    // mission actors can remain inactive while retaining that state and
+    // must still block a projectile crossing their serialized shield.
+    shield_holder.element_data_mut().active = false;
 
-        // Arrow flying from +X toward the shield holder at Z=40 —
-        // mid-shield height for `shield_params_for_soldier(20, 40)`
-        // which places the quad between Z=30 and Z=50.  The holder
-        // stands at ground Y=0, so the arrow shares that ground Y and
-        // clears the quad only on height, which the Z extent decides.
-        let trajectory = vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 40.0,
-            },
-            time: 2,
-        }];
-        let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: WorldPoint3D {
-                x: 100.0,
-                y: 0.0,
-                z: 40.0,
-            },
-            trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-            target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-            target_pos: MapPoint { x: 50.0, y: 0.0 },
-            trajectory,
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D {
-                x: 1.0,
-                y: 0.0,
-                z: 0.0,
-            },
-        });
-
-        let mut entities = entity_table(vec![
-            Some(make_pc(100.0, 0.0)),
-            Some(shield_holder),
-            Some(arrow),
-        ]);
-
-        // Advance ticks until the shield_hit fires.
-        let mut shield_hit = None;
-        let mut despawn_seen = false;
-        for _ in 0..10 {
-            for r in tick_arrows(
-                sim,
-                &mut entities,
-                crate::sight_obstacle::ObstacleList::empty(),
-            ) {
-                if let Some(holder) = r.shield_hit {
-                    shield_hit = Some(holder);
-                    despawn_seen = r.despawn;
-                }
-            }
-            if shield_hit.is_some() {
-                break;
-            }
-        }
-        assert_eq!(
-            shield_hit,
-            Some(EntityId::Soldier(crate::entity_id::SoldierId(1))),
-            "arrow must report shield hit on the holder"
-        );
-        assert!(
-            !despawn_seen,
-            "shield-hit arrow keeps flying (falling) on same tick"
-        );
-
-        // The projectile should be flagged as falling, and the hit
-        // check must now skip (falling arrows pass through bodies).
-        match entities.get_at_index(2).map(|(_, entity)| entity).unwrap() {
-            Entity::Projectile(p) => {
-                assert!(
-                    p.projectile.falling,
-                    "shield deflection flips arrow into falling state"
-                );
-                assert!(
-                    p.projectile.flying,
-                    "falling arrow still visually flying (arcs to ground)"
-                );
-                assert_ne!(
-                    p.element.position(),
-                    (WorldPoint3D {
-                        x: 50.0,
-                        y: 40.0,
-                        z: 40.0
-                    }),
-                    "falling advances the trajectory immediately"
-                );
-            }
-            _ => panic!("expected projectile"),
-        }
+    // Arrow flying from +X toward the shield holder at Z=40 —
+    // mid-shield height for `shield_params_for_soldier(20, 40)`
+    // which places the quad between Z=30 and Z=50.  The holder
+    // stands at ground Y=0, so the arrow shares that ground Y and
+    // clears the quad only on height, which the Z extent decides.
+    let trajectory = vec![TrajectoryPoint {
+        position: WorldPoint3D {
+            x: 50.0,
+            y: 0.0,
+            z: 40.0,
+        },
+        time: 2,
+    }];
+    let arrow = spawn_arrow(SpawnArrowParams {
+        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+        bow_point: WorldPoint3D {
+            x: 100.0,
+            y: 0.0,
+            z: 40.0,
+        },
+        trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
+        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
+        target_pos: MapPoint { x: 50.0, y: 0.0 },
+        trajectory,
+        damage: 30,
+        layer: 0,
+        lands_in_hole: false,
+        initial_velocity: WorldVec3D {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        },
     });
+
+    let mut entities = entity_table(vec![
+        Some(make_pc(100.0, 0.0)),
+        Some(shield_holder),
+        Some(arrow),
+    ]);
+
+    // Advance ticks until the shield_hit fires.
+    let mut shield_hit = None;
+    let mut despawn_seen = false;
+    for _ in 0..10 {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+            if let Some(holder) = r.shield_hit {
+                shield_hit = Some(holder);
+                despawn_seen = r.despawn;
+            }
+        }
+        if shield_hit.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        shield_hit,
+        Some(EntityId::Soldier(crate::entity_id::SoldierId(1))),
+        "arrow must report shield hit on the holder"
+    );
+    assert!(
+        !despawn_seen,
+        "shield-hit arrow keeps flying (falling) on same tick"
+    );
+
+    // The projectile should be flagged as falling, and the hit
+    // check must now skip (falling arrows pass through bodies).
+    match entities.get_at_index(2).map(|(_, entity)| entity).unwrap() {
+        Entity::Projectile(p) => {
+            assert!(
+                p.projectile.falling,
+                "shield deflection flips arrow into falling state"
+            );
+            assert!(
+                p.projectile.flying,
+                "falling arrow still visually flying (arcs to ground)"
+            );
+            assert_ne!(
+                p.element.position(),
+                (WorldPoint3D {
+                    x: 50.0,
+                    y: 40.0,
+                    z: 40.0
+                }),
+                "falling advances the trajectory immediately"
+            );
+        }
+        _ => panic!("expected projectile"),
+    }
 }
 
 #[test]
@@ -4084,7 +3942,6 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
     fn run(
         explicit_refresh: bool,
     ) -> (Option<EntityId>, ([f32; 3], [f32; 3]), ([f32; 3], [f32; 3])) {
-        let sim = crate::sim_rng::test_context();
         let mut holder = make_pc(50.0, 0.0);
         holder.element_data_mut().set_direction_instantly(4);
         holder.actor_data_mut().unwrap().action_state = ActionState::HoldingShield;
@@ -4144,11 +4001,7 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
         let mut entities = entity_table(vec![Some(make_pc(100.0, 0.0)), Some(holder), Some(arrow)]);
         let mut shield_hit = None;
         for _ in 0..10 {
-            for result in tick_arrows(
-                &sim,
-                &mut entities,
-                crate::sight_obstacle::ObstacleList::empty(),
-            ) {
+            for result in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
                 shield_hit = shield_hit.or(result.shield_hit);
             }
         }
@@ -4253,7 +4106,7 @@ fn non_shield_arrow_ricochet_advances_immediately() {
         projectile.element.set_direction_instantly(4);
         let impact_position = projectile.element.position();
 
-        make_arrow_falling_down(sim, &mut projectile, false, None);
+        make_arrow_falling_down(&mut projectile, false, None);
 
         assert!(projectile.projectile.falling);
         assert!(projectile.projectile.flying);
@@ -4285,54 +4138,52 @@ fn non_shield_arrow_ricochet_advances_immediately() {
 
 #[test]
 fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
-    crate::sim_rng::with_seed(1, |sim| {
-        // Savegame_linux2/Profile_002/Savegame_017/replay-016, frame 566:
-        // the arrow reaches a ground endpoint a fraction below zero.  Its
-        // shield-deflection trajectory is empty, but Original's nested
-        // The update still handles obstacle impact and publishes the ground snap.
-        let endpoint = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
-        let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: endpoint,
-            trajectory_origin: endpoint.to_map(),
-            target: EntityId::Pc(crate::entity_id::PcId(1)),
-            target_pos: endpoint.to_map(),
-            trajectory: vec![],
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664),
-        }) else {
-            panic!("spawn_arrow returned a non-projectile entity");
-        };
-        arrow.element.set_position(endpoint);
-        arrow
-            .element
-            .set_position_map_preserving_3d(endpoint.to_map());
-        arrow.element.set_direction_instantly(10);
-        arrow.projectile.trajectory.clear();
-        arrow.projectile.trajectory_frame_count = 0;
-        arrow.projectile.launch_segment_start = None;
-        arrow.projectile.flying = true;
+    // Savegame_linux2/Profile_002/Savegame_017/replay-016, frame 566:
+    // the arrow reaches a ground endpoint a fraction below zero.  Its
+    // shield-deflection trajectory is empty, but Original's nested
+    // The update still handles obstacle impact and publishes the ground snap.
+    let endpoint = WorldPoint3D::new(98.988_8, 861.410_2, -0.000_000_953_674_3);
+    let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
+        bow_point: endpoint,
+        trajectory_origin: endpoint.to_map(),
+        target: EntityId::Pc(crate::entity_id::PcId(1)),
+        target_pos: endpoint.to_map(),
+        trajectory: vec![],
+        damage: 30,
+        layer: 0,
+        lands_in_hole: false,
+        initial_velocity: WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664),
+    }) else {
+        panic!("spawn_arrow returned a non-projectile entity");
+    };
+    arrow.element.set_position(endpoint);
+    arrow
+        .element
+        .set_position_map_preserving_3d(endpoint.to_map());
+    arrow.element.set_direction_instantly(10);
+    arrow.projectile.trajectory.clear();
+    arrow.projectile.trajectory_frame_count = 0;
+    arrow.projectile.launch_segment_start = None;
+    arrow.projectile.flying = true;
 
-        make_arrow_falling_down(sim, &mut arrow, true, None);
+    make_arrow_falling_down(&mut arrow, true, None);
 
-        let position = arrow.element.position();
-        assert_eq!(position.x.to_bits(), endpoint.x.to_bits());
-        assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
-        assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
-        assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
-        assert_eq!(arrow.element.optional_layer(), None);
-        assert_eq!(arrow.element.sector(), None);
-        assert!(!arrow.projectile.flying);
-        assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);
-        assert_eq!(arrow.projectile.velocity_increment, WorldVec3D::ZERO);
-        assert_eq!(
-            arrow.element.sprite.position_iface.map_position()
-                - arrow.element.sprite.position_iface.old_map_position(),
-            MapVec::new(0.0, -0.000_976_562_5)
-        );
-    });
+    let position = arrow.element.position();
+    assert_eq!(position.x.to_bits(), endpoint.x.to_bits());
+    assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
+    assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
+    assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
+    assert_eq!(arrow.element.optional_layer(), None);
+    assert_eq!(arrow.element.sector(), None);
+    assert!(!arrow.projectile.flying);
+    assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);
+    assert_eq!(arrow.projectile.velocity_increment, WorldVec3D::ZERO);
+    assert_eq!(
+        arrow.element.sprite.position_iface.map_position()
+            - arrow.element.sprite.position_iface.old_map_position(),
+        MapVec::new(0.0, -0.000_976_562_5)
+    );
 }
 
 #[test]
@@ -4374,8 +4225,6 @@ fn ground_crossing_is_attributed_to_first_front_facing_shield() {
 /// stops flying on the landing tick and despawns.
 #[test]
 fn tick_arrows_miss_and_land_despawns() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let trajectory = vec![TrajectoryPoint {
         position: WorldPoint3D {
             x: 10.0,
@@ -4409,11 +4258,7 @@ fn tick_arrows_miss_and_land_despawns() {
 
     let mut despawn = false;
     for _ in 0..10 {
-        for r in tick_arrows(
-            sim,
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-        ) {
+        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
             if r.despawn && r.hit_target.is_none() && r.shield_hit.is_none() {
                 despawn = true;
             }
@@ -4489,11 +4334,7 @@ fn one_waypoint_falling_arrow_into_hole_disappears_without_ground_snap() {
         Some(make_pc(100.0, 100.0)),
         Some(Entity::Projectile(arrow)),
     ]);
-    let results = tick_arrows(
-        &crate::sim_rng::test_context(),
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
     assert!(results.iter().any(|result| result.despawn));
     let Entity::Projectile(arrow) = entities.get_at_index(1).unwrap().1 else {
@@ -4540,11 +4381,7 @@ fn falling_arrow_into_water_retires_without_ground_snap() {
         Some(make_pc(100.0, 100.0)),
         Some(Entity::Projectile(arrow)),
     ]);
-    let results = tick_arrows(
-        &crate::sim_rng::test_context(),
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-    );
+    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
     assert!(results.iter().any(|result| result.despawn));
     let Entity::Projectile(arrow) = entities.get_at_index(1).unwrap().1 else {

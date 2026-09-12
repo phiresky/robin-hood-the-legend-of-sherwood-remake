@@ -50,7 +50,7 @@ fn begin_interactive_frame(
     // captured; otherwise replay starts from a post-command checkpoint and
     // applies the journaled commands twice. The recorder hash samples this
     // same boundary so recording and playback remain in lockstep.
-    runtime.open_frame(&mut frame, &manager.engine, assets.as_ref());
+    runtime.open_frame(&mut frame, &manager.engine);
     frame.stage_commands().commands.extend(net_inputs);
 
     // Re-derive the corner HUD layout every frame so resolution

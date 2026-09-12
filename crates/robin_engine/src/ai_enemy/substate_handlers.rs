@@ -2081,9 +2081,7 @@ impl EnemyAi {
                 self.seeking_combat_alert(sim, stimulus_type, global, ctx, tick)
             }
 
-            Substate::SeekingGotStopEvent => {
-                self.seeking_got_stop_event(sim, stimulus_type, ctx, tick)
-            }
+            Substate::SeekingGotStopEvent => self.seeking_got_stop_event(stimulus_type, ctx),
 
             Substate::SeekingWaitForAlertingCivilian => {
                 self.seeking_wait_for_alerting_civilian(sim, stimulus, stimulus_type, ctx, tick)
@@ -3306,13 +3304,7 @@ impl EnemyAi {
         false
     }
 
-    fn seeking_got_stop_event(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        stimulus_type: StimulusType,
-        ctx: &AiContext,
-        _tick: &AiPerTickData,
-    ) -> bool {
+    fn seeking_got_stop_event(&mut self, stimulus_type: StimulusType, ctx: &AiContext) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             // Original adopts the authored alert path before leaving the
             // stopped-seeking state. This explicit gate is required because

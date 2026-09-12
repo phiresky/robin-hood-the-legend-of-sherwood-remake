@@ -1034,6 +1034,133 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn walkers_preserve_distinct_collection_and_bundle_filters() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("nested")).unwrap();
+        fs::write(temp.path().join("nested/a.CFG"), b"configuration").unwrap();
+        fs::write(temp.path().join("extra.bin"), b"large asset").unwrap();
+        let mut files = Vec::new();
+        super::collect_files_recursive(temp.path(), &mut files).unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            [
+                temp.path().join("extra.bin"),
+                temp.path().join("nested/a.CFG")
+            ]
+        );
+        let mut boot = super::ShippingDatadir::default();
+        super::walk_and_bundle_small(
+            &mut boot,
+            temp.path(),
+            temp.path(),
+            &["cfg"],
+            InterfaceImageFormat::Raw,
+        )
+        .unwrap();
+        assert_eq!(boot.raw.len(), 1);
+        assert_eq!(boot.raw["nested/a.cfg"], b"configuration");
+        let mut locale = ShippingLocale::default();
+        walk_and_bundle_locale(
+            &mut locale,
+            temp.path(),
+            temp.path(),
+            InterfaceImageFormat::Raw,
+        )
+        .unwrap();
+        assert_eq!(locale.raw.len(), 2);
+        assert_eq!(locale.raw["extra.bin"], b"large asset");
+    }
+
+    #[test]
+    fn optional_directories_preserve_absent_and_non_directory_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file");
+        fs::write(&file, []).unwrap();
+        assert!(super::optional_directory(temp.path()).unwrap());
+        for path in [
+            temp.path().join("missing"),
+            file.clone(),
+            file.join("child"),
+        ] {
+            assert!(!super::optional_directory(&path).unwrap());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn walkers_continue_following_file_and_directory_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        // Genuine non-files remain excluded by the collector/locale policy;
+        // the small bundle retains its extension filter.
+        let _socket = std::os::unix::net::UnixListener::bind(root.join("socket.tmp")).unwrap();
+        fs::write(outside.join("source.cfg"), b"linked bytes").unwrap();
+        std::os::unix::fs::symlink(outside.join("source.cfg"), root.join("file.cfg")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("directory")).unwrap();
+        let mut files = Vec::new();
+        super::collect_files_recursive(&root, &mut files).unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            [root.join("directory/source.cfg"), root.join("file.cfg")]
+        );
+        let mut boot = super::ShippingDatadir::default();
+        super::walk_and_bundle_small(&mut boot, &root, &root, &["cfg"], InterfaceImageFormat::Raw)
+            .unwrap();
+        let mut locale = ShippingLocale::default();
+        walk_and_bundle_locale(&mut locale, &root, &root, InterfaceImageFormat::Raw).unwrap();
+        for key in ["file.cfg", "directory/source.cfg"] {
+            assert_eq!(boot.raw[key], b"linked bytes");
+            assert_eq!(locale.raw[key], b"linked bytes");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn walkers_report_broken_targets_and_optional_roots_report_other_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let broken = temp.path().join("broken.ignored");
+        std::os::unix::fs::symlink(temp.path().join("absent"), &broken).unwrap();
+        // Even an excluded extension cannot conceal a failed entry inspection.
+        let results = [
+            super::collect_files_recursive(temp.path(), &mut Vec::new()),
+            super::walk_and_bundle_small(
+                &mut super::ShippingDatadir::default(),
+                temp.path(),
+                temp.path(),
+                &["cfg"],
+                InterfaceImageFormat::Raw,
+            ),
+            walk_and_bundle_locale(
+                &mut ShippingLocale::default(),
+                temp.path(),
+                temp.path(),
+                InterfaceImageFormat::Raw,
+            ),
+        ];
+        for result in results {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&broken.display().to_string())
+            );
+        }
+        let looping = temp.path().join("loop");
+        std::os::unix::fs::symlink(&looping, &looping).unwrap();
+        assert!(
+            super::optional_directory(&looping)
+                .unwrap_err()
+                .to_string()
+                .contains(&looping.display().to_string())
+        );
+    }
+
+    #[test]
     fn discovery_level_pair_preserves_resolution_and_parser_error_context() {
         let temp = tempfile::tempdir().unwrap();
         let data = temp.path().join("Data");
@@ -2030,7 +2157,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             .map(|locale| locale.data_dir.join("Sounds/Menu")),
     );
     for root in menu_roots {
-        if !root.is_dir() {
+        if !optional_directory(&root)? {
             continue;
         }
         let mut files = Vec::new();
@@ -2509,7 +2636,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         .map(|path| robin_util::asset_fs::bundle_key(Path::new(path)))
         .collect();
     let sounds_root = data_in.join("Sounds");
-    if sounds_root.is_dir() {
+    if optional_directory(&sounds_root)? {
         let mut files = Vec::new();
         collect_files_recursive(&sounds_root, &mut files)?;
         files.sort();
@@ -2564,7 +2691,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         .collect();
     let mut exclamation_metadata = ShippingMission::default();
     let exclamation_root = data_in.join("Sounds/Exclamations");
-    if exclamation_root.is_dir() {
+    if optional_directory(&exclamation_root)? {
         let mut files = Vec::new();
         collect_files_recursive(&exclamation_root, &mut files)?;
         files.sort();
@@ -2954,12 +3081,33 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     write_json_pretty(&data_out.join("conversion-plan.json"), &dependency_plan)
 }
 
+fn optional_directory(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect optional directory {}", path.display()))
+        }
+    }
+}
+
 fn collect_files_recursive(src: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
-        let path = entry?.path();
-        if path.is_dir() {
+        let path = entry
+            .with_context(|| format!("read entry in {}", src.display()))?
+            .path();
+        let metadata =
+            fs::metadata(&path).with_context(|| format!("inspect {}", path.display()))?;
+        if metadata.is_dir() {
             collect_files_recursive(&path, files)?;
-        } else if path.is_file() {
+        } else if metadata.is_file() {
             files.push(path);
         }
     }
@@ -2986,9 +3134,11 @@ fn walk_and_bundle_small(
     interface_image_format: InterfaceImageFormat,
 ) -> Result<()> {
     for entry in fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
-        let entry = entry?;
+        let entry = entry.with_context(|| format!("read entry in {}", src.display()))?;
         let path = entry.path();
-        if path.is_dir() {
+        let metadata =
+            fs::metadata(&path).with_context(|| format!("inspect {}", path.display()))?;
+        if metadata.is_dir() {
             walk_and_bundle_small(dd, root, &path, exts, interface_image_format)?;
             continue;
         }
@@ -3037,11 +3187,11 @@ fn walk_and_bundle_small(
         }
         let bytes = match ext.as_str() {
             "pak" => transcode_pak_drop_bzip(&path)
-                .with_context(|| format!("transcode pak {}: keeping raw bytes", path.display()))?,
+                .with_context(|| format!("transcode pak {}", path.display()))?,
             "res" => transcode_res_drop_bzip(&path)
-                .with_context(|| format!("transcode res {}: keeping raw bytes", path.display()))?,
+                .with_context(|| format!("transcode res {}", path.display()))?,
             "sxt" => transcode_sxt_drop_bzip(&path)
-                .with_context(|| format!("transcode sxt {}: keeping raw bytes", path.display()))?,
+                .with_context(|| format!("transcode sxt {}", path.display()))?,
             "bfn" => transcode_bfn_drop_bzip(&path)
                 .with_context(|| format!("transcode bfn {}", path.display()))?,
             _ => fs::read(&path)
@@ -3062,13 +3212,15 @@ fn walk_and_bundle_locale(
     interface_image_format: InterfaceImageFormat,
 ) -> Result<()> {
     for entry in fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
-        let entry = entry?;
+        let entry = entry.with_context(|| format!("read entry in {}", src.display()))?;
         let path = entry.path();
-        if path.is_dir() {
+        let metadata =
+            fs::metadata(&path).with_context(|| format!("inspect {}", path.display()))?;
+        if metadata.is_dir() {
             walk_and_bundle_locale(locale, root, &path, interface_image_format)?;
             continue;
         }
-        if !path.is_file() {
+        if !metadata.is_file() {
             tracing::warn!("skipping non-file locale asset {}", path.display());
             continue;
         }

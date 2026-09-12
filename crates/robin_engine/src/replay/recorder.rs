@@ -75,27 +75,6 @@ impl ReplayRecorder {
         )
     }
 
-    /// Backward-compatible name for [`Self::new`]. Every recorder requires a
-    /// campaign snapshot.
-    pub fn new_with_campaign(
-        path: &str,
-        mission_id: String,
-        mission_assets: crate::mission_assets::MissionAssetDescriptor,
-        rng_seed: u64,
-        sim_config: crate::engine::SimConfig,
-        campaign: &crate::campaign::Campaign,
-    ) -> std::io::Result<Self> {
-        let file = std::fs::File::create(path)?;
-        Self::with_writer(
-            Box::new(file),
-            mission_id,
-            mission_assets,
-            rng_seed,
-            sim_config,
-            campaign,
-        )
-    }
-
     /// Create a recorder that streams to an arbitrary `Write` sink.
     /// Lets the caller tee the recording through a shared in-memory
     /// buffer (so the script-RPC `get-replay` can serialize the bytes

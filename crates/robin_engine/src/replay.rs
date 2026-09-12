@@ -1642,7 +1642,7 @@ mod tests {
         campaign.values[CampaignValue::Score] = 12_345;
         campaign.ares = 4;
         {
-            let mut rec = ReplayRecorder::new_with_campaign(
+            let mut rec = ReplayRecorder::new(
                 &path,
                 "campaign".into(),
                 test_mission_assets("campaign"),
