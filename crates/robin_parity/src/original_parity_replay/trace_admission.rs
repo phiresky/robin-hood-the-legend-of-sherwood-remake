@@ -206,24 +206,29 @@ pub(super) fn validate_trace_frame_with_legacy_additive_omissions(
     validate_sequence_diagnostic_order(frame);
 }
 
-pub(super) fn parse_trace_frame(line: &str, line_number: usize) -> Option<TraceFrame> {
+pub(super) fn parse_trace_frame(
+    line: &str,
+    line_number: usize,
+) -> Result<Option<TraceFrame>, String> {
     match serde_json::from_str(line) {
         Ok(frame) => {
             let frame: TraceFrame = frame;
-            assert_eq!(
-                frame.record_type, "frame",
-                "invalid parity frame record type on line {line_number}"
-            );
-            Some(frame)
+            if frame.record_type != "frame" {
+                return Err(format!(
+                    "invalid parity frame record type on line {line_number}"
+                ));
+            }
+            Ok(Some(frame))
         }
         Err(frame_error) => {
-            let marker: TraceRecordMarker = serde_json::from_str(line).unwrap_or_else(|_| {
-                panic!("parse trace frame on line {line_number}: {frame_error}")
-            });
+            let marker: TraceRecordMarker = serde_json::from_str(line)
+                .map_err(|_| format!("parse trace frame on line {line_number}: {frame_error}"))?;
             if marker.record_type.as_deref() == Some("rng_suffix") {
-                None
+                Ok(None)
             } else {
-                panic!("parse trace frame on line {line_number}: {frame_error}");
+                Err(format!(
+                    "parse trace frame on line {line_number}: {frame_error}"
+                ))
             }
         }
     }
