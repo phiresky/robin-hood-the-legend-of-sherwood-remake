@@ -1039,7 +1039,6 @@ mod tests {
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
     use robin_rs::multiplayer::content_identity::WebContentEdition;
     use std::fs;
-    use std::path::Path;
 
     #[test]
     fn walkers_preserve_distinct_collection_and_bundle_filters() {
