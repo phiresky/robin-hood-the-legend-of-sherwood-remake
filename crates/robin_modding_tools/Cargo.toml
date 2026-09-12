@@ -31,6 +31,7 @@ png = { version = "0.18", optional = true }
 robin_assets.workspace = true
 robin_data_io.workspace = true
 robin_engine.workspace = true
+robin_util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true
