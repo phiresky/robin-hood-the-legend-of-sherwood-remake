@@ -25,6 +25,7 @@ pub struct Responder {
     deadline: Option<std::time::Instant>,
 }
 
+#[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
 #[derive(Serialize)]
 pub(super) struct ReplyWait {
     #[serde(skip)]
@@ -33,6 +34,7 @@ pub(super) struct ReplyWait {
 }
 
 robin_util::deny_deserialize!(Responder, "live RPC responder cannot be deserialized");
+#[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
 robin_util::deny_deserialize!(ReplyWait, "live RPC reply wait cannot be deserialized");
 
 impl Responder {
@@ -42,6 +44,7 @@ impl Responder {
         self.tx.is_closed()
     }
 
+    #[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
     pub(super) fn channel() -> (Self, ReplyWait) {
         let (tx, rx) = async_channel::bounded(1);
         let phase = Arc::new(Mutex::new(Phase::Queued));
@@ -57,18 +60,19 @@ impl Responder {
         )
     }
 
+    #[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
     pub(super) fn with_router(mut self, router: &super::Queue) -> Self {
         self.router = Some(Arc::downgrade(router));
         self
     }
 
-    #[cfg(all(test, not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
     pub(super) fn cancellation_observer(&self) -> Box<dyn Fn() -> bool> {
         let phase = self.phase.clone();
         Box::new(move || *phase.lock().expect("RPC lifetime poisoned") == Phase::Cancelled)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(any(test, feature = "script-rpc"), not(target_arch = "wasm32")))]
     pub(super) fn with_deadline(mut self, deadline: std::time::Instant) -> Self {
         self.deadline = Some(deadline);
         self
@@ -132,6 +136,7 @@ impl Responder {
     }
 }
 
+#[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
 impl ReplyWait {
     pub(super) async fn recv(&self) -> Result<Reply, async_channel::RecvError> {
         self.rx.recv().await
@@ -156,6 +161,7 @@ impl ReplyWait {
     }
 }
 
+#[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
 impl Drop for ReplyWait {
     fn drop(&mut self) {
         let mut phase = self.phase.lock().expect("RPC lifetime poisoned");

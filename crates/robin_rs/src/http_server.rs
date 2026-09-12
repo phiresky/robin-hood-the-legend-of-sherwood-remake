@@ -87,7 +87,7 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::thread;
-#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
+#[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
 use std::time::Duration;
 
 use robin_engine::engine::{Engine, LevelAssets};
@@ -408,6 +408,7 @@ impl From<serde_json::Value> for ReplyBody {
 pub type Reply = Result<ReplyBody, RpcError>;
 
 pub mod diagnostics;
+#[cfg(any(test, all(feature = "script-rpc", not(target_arch = "wasm32"))))]
 pub mod query;
 pub mod screenshot;
 
@@ -418,6 +419,7 @@ use dispatch::dispatch_query;
 use dispatch::start_replay_export;
 pub use error::{RpcError, RpcErrorKind};
 
+#[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
 async fn resolve_deferred_reply(reply: Reply) -> Reply {
     match reply? {
         ReplyBody::ReplayExport(result) => result
@@ -451,6 +453,7 @@ mod ingress;
 mod native_routes;
 #[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
 mod native_transport;
+#[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
 mod request_decode;
 use ingress::RequestRouter;
 pub use ingress::SessionIngress;

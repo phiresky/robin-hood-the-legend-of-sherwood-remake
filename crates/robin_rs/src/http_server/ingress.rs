@@ -41,6 +41,7 @@ impl RequestRouter {
     pub(super) fn is_retired(&self) -> bool {
         self.retired
     }
+    #[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
     pub(super) fn retirement_receiver(&self) -> async_channel::Receiver<()> {
         self.retirement.1.clone()
     }
@@ -64,6 +65,7 @@ impl RequestRouter {
     pub(super) fn take_idle(&mut self) -> VecDeque<HttpRequest> {
         std::mem::take(&mut self.idle)
     }
+    #[cfg(any(test, feature = "script-rpc", target_arch = "wasm32"))]
     pub(super) fn push_back(&mut self, request: HttpRequest) {
         if self.retired {
             request
@@ -131,7 +133,7 @@ impl SessionIngress {
         Self::with_router(None)
     }
 
-    #[cfg(all(test, not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "script-rpc", not(target_arch = "wasm32")))]
     pub(super) fn enqueue_for_test(&mut self, payload: HttpPayload) -> request_lifetime::ReplyWait {
         let (response_tx, receiver) = Responder::channel();
         self.requests
