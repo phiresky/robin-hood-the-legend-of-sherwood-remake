@@ -6,11 +6,6 @@ export const PAUSED_QUERY_KEY = 'paused';
 
 export type RobinRpc = <T = unknown>(method: string, params?: unknown) => Promise<T>;
 
-export type IsolatedReplayAdmission = {
-    readonly validate: (content: string) => Promise<void>;
-    readonly markValidated: (content: string) => void;
-};
-
 export type ReplayQuery = { readonly content: string; readonly paused: boolean };
 export type PreparedReplay = ReplayQuery & { readonly buildBase: string };
 
@@ -22,18 +17,6 @@ export function replayFromQuery(params = new URLSearchParams(window.location.sea
     const pausedRaw = params.get(PAUSED_QUERY_KEY);
     const paused = pausedRaw === null || !/^(0|false|no|off)$/i.test(pausedRaw);
     return { content, paused };
-}
-
-export async function applyReplayFromQuery(
-    rpc: RobinRpc,
-    admission: IsolatedReplayAdmission,
-): Promise<boolean> {
-    const replay = replayFromQuery();
-    if (replay === null) {
-        return false;
-    }
-    const prepared = await prepareReplay(replay, '', admission.validate);
-    return applyPreparedReplay(rpc, admission.markValidated, prepared, '');
 }
 
 /** Validation is bound to this exact query snapshot and selected artifact. */

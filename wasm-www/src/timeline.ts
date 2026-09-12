@@ -10,7 +10,6 @@ type ReplayStatus = {
 };
 
 type StateReply = {
-    readonly frame: number;
     readonly replay?: ReplayStatus | null;
 };
 
@@ -63,7 +62,6 @@ export function installTimeline(container: HTMLElement, rpc: RobinRpc): void {
         });
     });
 
-    let liveMax = 0;
     const intervalId = window.setInterval(poll, POLL_INTERVAL_MS);
 
     function poll(): void {
@@ -72,7 +70,6 @@ export function installTimeline(container: HTMLElement, rpc: RobinRpc): void {
                 const reply = await rpc<StateReply>('state');
                 const replay = reply.replay ?? null;
                 if (replay === null) {
-                    liveMax = Math.max(liveMax, reply.frame);
                     container.style.display = 'none';
                     return;
                 }
