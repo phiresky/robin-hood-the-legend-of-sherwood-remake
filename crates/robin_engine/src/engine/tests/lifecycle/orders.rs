@@ -68,11 +68,11 @@ fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
     let mut engine = EngineInner::new();
     engine.mission_domain.state.quit_won = true;
 
-    begin_hourglass_phase_capture();
-    let result = engine
-        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
-        .code;
-    let phases = end_hourglass_phase_capture();
+    let (result, phases) = capture_hourglass_phases(|| {
+        engine
+            .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+            .code
+    });
 
     assert_eq!(result, GameCode::LevelSucceeded);
     assert_eq!(
@@ -93,11 +93,11 @@ fn blocking_fade_frame_runs_before_rng_clock_and_phase_dispatch() {
     engine.set_fade_freeze_frames_remaining(1);
     let rng_seed = engine.rng_seed();
 
-    begin_hourglass_phase_capture();
-    let result = engine
-        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
-        .code;
-    let phases = end_hourglass_phase_capture();
+    let (result, phases) = capture_hourglass_phases(|| {
+        engine
+            .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+            .code
+    });
 
     assert_eq!(result, GameCode::LevelInProgress);
     assert_eq!(engine.control.frame_counter, 0);
