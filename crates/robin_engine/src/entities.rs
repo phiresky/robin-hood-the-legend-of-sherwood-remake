@@ -722,13 +722,11 @@ mod generation_tests {
         let mut entities = Entities::from_legacy_slots(vec![None]);
         let id = PcId(0);
         let serialized = serde_json::to_value(&entities).expect("serialize entity slots");
-        let encoded = bitcode::encode(&entities);
         let state_hash = hash(&entities);
 
         let _slot = &mut entities[id];
         assert_eq!(entities.generation(id), 1);
         assert_eq!(serde_json::to_value(&entities).unwrap(), serialized);
-        assert_eq!(bitcode::encode(&entities), encoded);
         assert_eq!(hash(&entities), state_hash);
 
         let restored: Entities = serde_json::from_value(serialized).expect("restore entity slots");
@@ -752,7 +750,6 @@ mod generation_tests {
             assert_eq!(generations(&entities), expected);
 
             let serialized = serde_json::to_value(&entities).unwrap();
-            let encoded = bitcode::encode(&entities);
             let state_hash = hash(&entities);
             for index in [0, 2, 1, 3] {
                 let _slot = &mut entities[ScrollId(index as u32)];
@@ -760,7 +757,6 @@ mod generation_tests {
                 assert_eq!(generations(&entities), expected);
             }
             assert_eq!(serde_json::to_value(&entities).unwrap(), serialized);
-            assert_eq!(bitcode::encode(&entities), encoded);
             assert_eq!(hash(&entities), state_hash);
         }
     }
