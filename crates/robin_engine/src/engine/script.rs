@@ -4215,223 +4215,27 @@ impl EngineInner {
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
                 crate::ai::AiOwnerWork::ActorEffects(prefix) => {
-                    // This prefix was authored before the next synchronous
-                    // owner statement (currently stop-all). Detach its later
-                    // tail, settle it through the ordinary actor fixed point,
-                    // then restore the tail. In particular, a movement prefix
-                    // must launch before the following Halt can select and
-                    // cancel its new sequence.
-                    let (
-                        later_work,
-                        later_actor_effects,
-                        later_self_stimuli,
-                        later_cross_npc_actions,
-                    ) = {
-                        let ai = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "actor-effect owner {} vanished before settlement",
-                                    owner.index()
-                                )
-                            });
-                        (
-                            std::mem::take(&mut ai.outbox.reentrant.owner_work),
-                            std::mem::replace(&mut ai.outbox.actor, prefix),
-                            std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
-                            std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions),
-                        )
-                    };
-                    self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
-                    let ai = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "actor-effect owner {} vanished after settlement",
-                                owner.index()
-                            )
-                        });
-                    debug_assert!(
-                        !ai.outbox.actor.has_boundary_work(),
-                        "owner-local actor prefix left undrained effects"
-                    );
-                    debug_assert!(
-                        ai.outbox.reentrant.owner_work.is_empty(),
-                        "owner-local actor prefix left undrained owner work"
-                    );
-                    debug_assert!(
-                        ai.outbox.reentrant.self_stimuli.is_empty(),
-                        "owner-local actor prefix left undrained self stimuli"
-                    );
-                    let mut prefix_cross_npc_actions =
-                        std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions);
-                    prefix_cross_npc_actions.extend(later_cross_npc_actions);
-                    ai.outbox.actor = later_actor_effects;
-                    ai.outbox.reentrant.owner_work = later_work;
-                    ai.outbox.reentrant.self_stimuli = later_self_stimuli;
-                    ai.outbox.reentrant.cross_npc_actions = prefix_cross_npc_actions;
+                    self.owner_work_actor_effects(sim, assets, owner, policy, prefix);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer => {
-                    // Original resumes DECISION_LOOK_4_HELP only after
-                    // The officer alert's synchronous approach has returned. Build
-                    // the typed owner context before borrowing the AI again;
-                    // the continuation consumes route failure itself or emits
-                    // the successful remark in the original statement order.
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!("look-for-help owner {} disappeared", owner.index())
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let ai_global = &mut self.ai.global;
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!("look-for-help owner {} lost Enemy AI", owner.index())
-                        });
-                    enemy.base.outbox.reentrant.look_for_help_completion_pending = false;
-                    enemy.resume_battle_look_for_help_after_alert_officer(
-                        sim, ai_global, &ctx, &tick,
+                    self.owner_work_resume_battle_look_for_help_after_alert_officer(
+                        sim, assets, owner,
                     );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeDeadBodyAlertAfterAlertOfficer { center, radius } => {
-                    // Corpse-alert processing resumes immediately after
-                    // the officer alert's synchronous approach and consumes its
-                    // route result before decision-tick completion may surface an event.
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!("dead-body-alert owner {} disappeared", owner.index())
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let ai_global = &mut self.ai.global;
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!("dead-body-alert owner {} lost Enemy AI", owner.index())
-                        });
-                    enemy
-                        .base
-                        .outbox
-                        .reentrant
-                        .dead_body_alert_completion_pending = false;
-                    enemy.resume_dead_body_alert_after_alert_officer(
-                        sim, center, radius, ai_global, &ctx, &tick,
+                    self.owner_work_resume_dead_body_alert_after_alert_officer(
+                        sim, assets, owner, center, radius,
                     );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeCivilianReportAfterAlertOfficer { seek_position } => {
-                    // Original resumes the soldier report statement directly
-                    // after the officer alert's synchronous approach result.
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!("civilian-report owner {} disappeared", owner.index())
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let ai_global = &mut self.ai.global;
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!("civilian-report owner {} lost Enemy AI", owner.index())
-                        });
-                    enemy
-                        .base
-                        .outbox
-                        .reentrant
-                        .civilian_report_alert_officer_completion_pending = false;
-                    enemy.resume_civilian_report_after_alert_officer(
+                    self.owner_work_resume_civilian_report_after_alert_officer(
                         sim,
+                        assets,
+                        owner,
                         seek_position,
-                        ai_global,
-                        &ctx,
-                        &tick,
                     );
                     continue;
                 }
@@ -4440,57 +4244,13 @@ impl EngineInner {
                     check_door_path,
                     failure,
                 } => {
-                    // The original game's soldier alert observes the nearby-route result in
-                    // the same call, retries once with CHECK_DOOR_PATH, and
-                    // returns that final verdict to its caller. Rebuild the
-                    // live context after path construction, but consume the
-                    // failure latch here rather than emitting an independent
-                    // EVENT_COULDNT_REACHPOINT.
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!("soldier-alert owner {} disappeared", owner.index())
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let doors = self.script_domains.interactables.doors.as_slice();
-                    let friendly = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::friendly_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!("soldier-alert owner {} lost Friendly AI", owner.index())
-                        });
-                    friendly.resume_alert_soldier_after_go_near(
+                    self.owner_work_resume_friendly_alert_soldier_after_go_near(
                         sim,
+                        assets,
+                        owner,
                         center,
                         check_door_path,
                         failure,
-                        &ctx,
-                        Some(&self.world.fast_grid),
-                        Some(doors),
                     );
                     continue;
                 }
@@ -4504,168 +4264,11 @@ impl EngineInner {
                     continue;
                 }
                 crate::ai::AiOwnerWork::NearbyCiviliansPanic180 => {
-                    tracing::trace!(
-                        target: "parity_nearby_panic",
-                        owner = owner.index(),
-                        "drain synchronous brawl NearbyCiviliansPanic180 callback"
-                    );
-                    self.nearby_civilians_panic_180(sim, assets, owner);
-
-                    // Original finishes every civilian Think, then calls
-                    // officer combat-observation checks synchronously, and only
-                    // afterward executes the brawler's remaining state tail.
-                    // The ordinary drain policy consumes all owner-work
-                    // before cross-NPC work, so stage these boundaries here.
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!("brawl-hitting owner {} disappeared", owner.index())
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            self.control.frame_counter,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        )
-                    };
-                    ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!("brawl-hitting owner {} lost Enemy AI", owner.index())
-                        })
-                        .brawl_hitting_notify_officer(&ctx, &tick);
-                    ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
-
-                    // No brawler tail is queued yet, so this recursively
-                    // settles only the officer call and anything it causes.
-                    self.process_synchronous_reentrant_actions_for(sim, owner, assets);
-
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!(
-                                "brawl-hitting owner {} disappeared after officer",
-                                owner.index()
-                            )
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            self.control.frame_counter,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        )
-                    };
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "brawl-hitting owner {} lost Enemy AI after officer",
-                                owner.index()
-                            )
-                        })
-                        .resume_brawl_hitting_after_officer(&ctx, &tick);
-                    let ai = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "brawl-hitting owner {} lost AI at completion",
-                                owner.index()
-                            )
-                        });
-                    ai.outbox.reentrant.brawl_hitting_completion_pending = false;
-                    ai.resolve_engine_completion_verdict();
+                    self.owner_work_nearby_civilians_panic180(sim, assets, owner);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ConsiderToBeginParade { attacker } => {
-                    let attacker =
-                        self.expect_entity_id_for_index(attacker, "EVENT_SWORDSTRIKE attacker");
-                    let command_strike = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(attacker)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                        })
-                        .and_then(|element| {
-                            crate::weapons::SwordStrike::from_command(element.command)
-                        });
-                    let Some(command_strike) = command_strike else {
-                        continue;
-                    };
-                    let recognized = self
-                        .world
-                        .entities
-                        .get(owner)
-                        .and_then(Entity::enemy_ai)
-                        .is_some_and(|ai| {
-                            [
-                                ai.known_enemy_strike_1,
-                                ai.known_enemy_strike_2,
-                                ai.known_enemy_strike_3,
-                            ]
-                            .contains(&Some(command_strike))
-                        });
-                    if !recognized {
-                        continue;
-                    }
-                    let animation = self.live_actor_animation(attacker).unwrap_or_else(|| {
-                        panic!(
-                            "recognized EVENT_SWORDSTRIKE owner {} attacker {} has no live animation",
-                            owner.index(),
-                            attacker.index(),
-                        )
-                    });
-                    let animation_strike =
-                        crate::engine::melee::sword_strike_from_animation(animation)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "recognized EVENT_SWORDSTRIKE owner {} attacker {} has unmapped animation {animation:?}",
-                                    owner.index(),
-                                    attacker.index(),
-                                )
-                            });
-                    self.consider_to_begin_parade(
-                        sim,
-                        assets,
-                        owner,
-                        attacker,
-                        Some(command_strike),
-                        animation_strike,
-                    );
+                    self.owner_work_consider_to_begin_parade(sim, assets, owner, attacker);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint {
@@ -4684,202 +4287,15 @@ impl EngineInner {
                     owner_position_before_callback,
                     mut owner_boundary_positions,
                 } => {
-                    // Isolate exactly patrol-path assignment's synchronous
-                    // callback A. Pre-existing sibling stimuli and owner work
-                    // belong after CMD_CHANGE_WAY's explicit tail B; work A
-                    // creates remains visible and settles depth-first here.
-                    let mut boundary_handles = owner_boundary_positions
-                        .iter()
-                        .map(|(handle, _)| *handle)
-                        .collect::<Vec<_>>();
-                    if !boundary_handles.contains(&owner.index()) {
-                        // The original game's change-way command always reads the actor through
-                        // world position independently of the surrounding
-                        // actor-boundary snapshot. A focused continuation may
-                        // therefore have no frozen entity views while its
-                        // owner still needs exact live mutation tracking.
-                        boundary_handles.push(owner.index());
-                    }
-                    let raw_positions_before_callback = collect_raw_owner_boundary_positions(
-                        self,
-                        boundary_handles.iter().copied(),
-                    );
-                    let effective_positions_before_callback = self
-                        .build_owner_context_scratch_without_forecast(assets)
-                        .ai_entity_views;
-                    let raw_owner_position_before_callback = raw_positions_before_callback
-                        .get(&owner.index())
-                        .copied()
-                        .and_then(raw_owner_boundary_position_to_ai)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "ChangeWay owner {} disappeared or lost its layer before assignment callback",
-                                owner.index()
-                            )
-                        });
-                    let (later_self_stimuli, later_owner_work) = {
-                        let ai = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!("ChangeWay continuation owner {} lost its AI", owner.index())
-                            });
-                        (
-                            std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
-                            std::mem::take(&mut ai.outbox.reentrant.owner_work),
-                        )
-                    };
-                    if let Some(callback) = assignment_callback {
-                        self.world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!("ChangeWay callback owner {} lost its AI", owner.index())
-                            })
-                            .outbox
-                            .reentrant
-                            .self_stimuli
-                            .push(callback.into());
-                        if policy.without_forecast() {
-                            self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
-                        } else {
-                            self.drain_self_stimuli_for_npc(sim, owner, assets);
-                        }
-                    }
-
-                    // A synchronous callback can move another actor before B
-                    // reads it. Preserve the originating legacy-slot snapshot
-                    // for unchanged actors, but overlay exact live positions
-                    // for actors A actually changed on this call stack.
-                    let raw_positions_after_callback = collect_raw_owner_boundary_positions(
-                        self,
-                        boundary_handles.iter().copied(),
-                    );
-                    let effective_positions_after_callback = self
-                        .build_owner_context_scratch_without_forecast(assets)
-                        .ai_entity_views;
-                    let raw_owner_position_after_callback = raw_positions_after_callback
-                        .get(&owner.index())
-                        .copied()
-                        .and_then(raw_owner_boundary_position_to_ai)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "ChangeWay owner {} disappeared or lost its layer during assignment callback",
-                                owner.index()
-                            )
-                        });
-                    let effective_owner_position_before_callback =
-                        effective_positions_before_callback
-                            .get(&owner.index())
-                            .map(|view| view.position);
-                    let effective_owner_position_after_callback =
-                        effective_positions_after_callback
-                            .get(&owner.index())
-                            .map(|view| view.position);
-                    let owner_position_for_tail = if raw_owner_position_before_callback
-                        != raw_owner_position_after_callback
-                        || effective_owner_position_before_callback
-                            != effective_owner_position_after_callback
-                    {
-                        effective_owner_position_after_callback
-                            .unwrap_or(raw_owner_position_after_callback)
-                    } else {
-                        owner_position_before_callback
-                    };
-                    owner_boundary_positions.retain_mut(|(handle, position)| {
-                        let before = raw_positions_before_callback.get(handle).copied();
-                        let after = raw_positions_after_callback.get(handle).copied();
-                        let effective_before = effective_positions_before_callback
-                            .get(handle)
-                            .map(|view| view.position);
-                        let effective_after = effective_positions_after_callback
-                            .get(handle)
-                            .map(|view| view.position);
-                        match (before, after) {
-                            (Some(before), Some(after))
-                                if before != after || effective_before != effective_after =>
-                            {
-                                // Mutation ownership is detected strictly from
-                                // raw element coordinates and the effective
-                                // selected-door position. Once owned by A, B
-                                // observes original-game actor-position semantics.
-                                if let Some(after) = effective_after
-                                    .or_else(|| raw_owner_boundary_position_to_ai(after))
-                                {
-                                    *position = after;
-                                    true
-                                } else {
-                                    // A callback may legitimately move a
-                                    // projectile or detached object into the
-                                    // legacy no-layer state. Such an entity is
-                                    // absent from a freshly built AI context,
-                                    // so its frozen boundary overlay must be
-                                    // absent as well.
-                                    false
-                                }
-                            }
-                            (Some(_), Some(_)) => true,
-                            // A removed actor is absent from B's freshly built
-                            // context. Drop its frozen entry rather than
-                            // resurrecting it through the boundary overlay.
-                            (Some(_), None) => false,
-                            // Callback-created actors were never frozen and
-                            // therefore remain live in the fresh B scratch.
-                            (None, Some(_)) | (None, None) => true,
-                        }
-                    });
-                    if let Some((_, position)) = owner_boundary_positions
-                        .iter_mut()
-                        .find(|(handle, _)| *handle == owner.index())
-                    {
-                        *position = owner_position_for_tail;
-                    } else {
-                        owner_boundary_positions.push((owner.index(), owner_position_for_tail));
-                    }
-
-                    {
-                        let ai = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::ai_controller_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "ChangeWay explicit tail owner {} lost its AI",
-                                    owner.index()
-                                )
-                            });
-                        // Preserve the opcode's explicit second macro interruption
-                        // after callback A, even though the assignment helper
-                        // already performed the same call in its prologue.
-                        ai.break_macro();
-                    }
-                    self.virtual_return_to_duty_for_npc(
+                    self.owner_work_change_way_assignment_think_then_explicit_tail(
                         sim,
-                        owner,
                         assets,
-                        crate::ai::DutyFlags::empty(),
-                        Some(owner_position_for_tail),
-                        &owner_boundary_positions,
+                        owner,
+                        policy,
+                        assignment_callback,
+                        owner_position_before_callback,
+                        owner_boundary_positions,
                     );
-                    self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
-
-                    let ai = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "ChangeWay continuation owner {} vanished before tail restore",
-                                owner.index()
-                            )
-                        });
-                    ai.outbox.reentrant.self_stimuli.extend(later_self_stimuli);
-                    ai.outbox.reentrant.owner_work.extend(later_owner_work);
                     continue;
                 }
                 crate::ai::AiOwnerWork::VirtualReturnToDuty {
@@ -4901,49 +4317,16 @@ impl EngineInner {
                     defer_clear_patrol_close_post,
                     owner_boundary_positions,
                 } => {
-                    self.resume_return_to_duty_after_patrol_init_for_npc(
+                    self.owner_work_resume_return_to_duty_after_patrol_init(
                         sim,
-                        owner,
                         assets,
+                        owner,
+                        policy,
+                        completion_boundary,
                         flags,
-                        false,
-                        &owner_boundary_positions,
+                        defer_clear_patrol_close_post,
+                        owner_boundary_positions,
                     );
-                    if defer_clear_patrol_close_post {
-                        // Patrol clearing's forced return leaves a close idle
-                        // member in DEFAULT_GOTOPOST at this native boundary:
-                        // Original records neither a Move nor the nested
-                        // reach-point/completion/boredom-timing chain.
-                        let ai = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(crate::element::Entity::ai_controller_mut)
-                            .expect("patrol-clearing return continuation lost its AI owner");
-                        if ai.current_state == crate::ai::AiState::Default
-                            && ai.current_substate == crate::ai::Substate::DefaultGotoPost
-                            && ai.outbox.actor.orders.is_empty()
-                            && ai
-                                .outbox
-                                .reentrant
-                                .self_stimuli
-                                .last()
-                                .map(|queued| queued.stimulus_type)
-                                == Some(crate::ai::StimulusType::EventReachPoint)
-                        {
-                            ai.outbox.reentrant.self_stimuli.pop();
-                        }
-                    } else {
-                        // Ordinary return-to-duty handling resumes on the same call stack
-                        // and recursively closes its completion callbacks.
-                        if completion_boundary.surfaces_completion() {
-                            self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
-                        } else {
-                            self.drain_direct_ai_owner_prefix_boundary_mode(
-                                sim, owner, assets, policy,
-                            );
-                        }
-                    }
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
@@ -4962,49 +4345,9 @@ impl EngineInner {
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty => {
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!(
-                                "sleeping-enemy continuation owner {} disappeared",
-                                owner.index()
-                            )
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "sleeping-enemy continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        })
-                        .resume_kill_nearby_sleeping_enemies_after_return_to_duty(sim, &ctx, &tick);
+                    self.owner_work_resume_kill_nearby_sleeping_enemies_after_return_to_duty(
+                        sim, assets, owner,
+                    );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ConsumeTowerGuardAlertOfficerRouteFailure => {
@@ -5042,96 +4385,11 @@ impl EngineInner {
                     target,
                     target_position,
                 } => {
-                    let couldnt_reachpoint = self
-                        .world
-                        .entities
-                        .get(owner)
-                        .and_then(Entity::enemy_ai)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "battle-observe continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        })
-                        .base
-                        .couldnt_reachpoint;
-                    let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
-                        panic!(
-                            "battle-observe continuation owner {} has stale target {}",
-                            owner.index(),
-                            target
-                        )
-                    });
-                    let avenger_wait_position = if couldnt_reachpoint {
-                        assert!(
-                            self.scripts.mission.is_some(),
-                            "battle-observe roof recovery requires an installed mission script"
-                        );
-                        crate::engine::ai::precompute_avenger_on_roof_wait_position(
-                            &self.world.entities,
-                            self.script_domains.interactables.doors.as_slice(),
-                            &self.orders.sequence_manager,
-                            owner,
-                            target_id,
-                            |element| crate::engine::ai::ai_view_position_sector(self, element),
-                            &|sector| self.building_sector_is_authorized(sector),
-                            &|sector| self.get_sector_lift_type(sector),
-                        )
-                    } else {
-                        None
-                    };
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!(
-                                "battle-observe continuation owner {} disappeared",
-                                owner.index()
-                            )
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "battle-observe continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        });
-                    enemy
-                        .base
-                        .outbox
-                        .reentrant
-                        .battle_observe_completion_pending = false;
-                    enemy.resume_battle_observe_after_go_near(
+                    self.owner_work_resume_battle_observe_after_go_near(
+                        assets,
+                        owner,
                         target,
                         target_position,
-                        avenger_wait_position,
-                        &ctx,
                     );
                     continue;
                 }
@@ -5139,220 +4397,20 @@ impl EngineInner {
                     target,
                     target_position,
                 } => {
-                    let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
-                        && crate::ai_enemy::decision_path_debug_matches_raw(
-                            self.control.frame_counter,
-                            owner.index(),
-                        );
-                    let couldnt_reachpoint = self
-                        .world
-                        .entities
-                        .get(owner)
-                        .and_then(Entity::enemy_ai)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "reconsider-approach continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        })
-                        .base
-                        .couldnt_reachpoint;
-                    if debug_decision_path {
-                        let owner_work = self
-                            .world
-                            .entities
-                            .get(owner)
-                            .and_then(Entity::ai_controller)
-                            .map(|ai| format!("{:?}", ai.outbox.reentrant.owner_work))
-                            .unwrap_or_else(|| {
-                                panic!("diagnostic owner {} lost AI", owner.index())
-                            });
-                        eprintln!(
-                            "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider target={} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} remaining_owner_work={}",
-                            self.control.frame_counter,
-                            owner.index(),
-                            target,
-                            target_position.x.to_bits(),
-                            target_position.y.to_bits(),
-                            target_position.sector,
-                            target_position.level,
-                            couldnt_reachpoint,
-                            owner_work,
-                        );
-                    }
-                    let avenger_wait_position = if couldnt_reachpoint {
-                        assert!(
-                            self.scripts.mission.is_some(),
-                            "AI roof recovery requires an installed mission script"
-                        );
-                        let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
-                            panic!(
-                                "reconsider-approach continuation owner {} has stale target {}",
-                                owner.index(),
-                                target
-                            )
-                        });
-                        crate::engine::ai::precompute_avenger_on_roof_wait_position(
-                            &self.world.entities,
-                            self.script_domains.interactables.doors.as_slice(),
-                            &self.orders.sequence_manager,
-                            owner,
-                            target_id,
-                            |element| crate::engine::ai::ai_view_position_sector(self, element),
-                            &|sector| self.building_sector_is_authorized(sector),
-                            &|sector| self.get_sector_lift_type(sector),
-                        )
-                    } else {
-                        None
-                    };
-                    if debug_decision_path {
-                        eprintln!(
-                            "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider_wait_position value={avenger_wait_position:?}",
-                            self.control.frame_counter,
-                            owner.index(),
-                        );
-                    }
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!(
-                                "reconsider-approach continuation owner {} disappeared",
-                                owner.index()
-                            )
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "reconsider-approach continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        });
-                    enemy
-                        .base
-                        .outbox
-                        .reentrant
-                        .reconsider_approach_completion_pending = false;
-                    enemy.resume_reconsider_enemy_approach_after_go_near(
+                    self.owner_work_resume_reconsider_enemy_approach_after_go_near(
+                        assets,
+                        owner,
+                        target,
                         target_position,
-                        avenger_wait_position,
-                        &ctx,
                     );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeBattleFightAfterReconsider => {
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!(
-                                "battle-fight continuation owner {} disappeared",
-                                owner.index()
-                            )
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "battle-fight continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        });
-                    enemy.resume_battle_fight_after_reconsider(
-                        sim,
-                        &mut self.ai.global,
-                        &ctx,
-                        &tick,
-                    );
+                    self.owner_work_resume_battle_fight_after_reconsider(sim, assets, owner);
                     continue;
                 }
                 crate::ai::AiOwnerWork::Speech(attempt) => {
-                    // A rejected Say invokes MYTALK synchronously before Say
-                    // returns. Detach the outer statement tail so recursive
-                    // Think work and its logs settle ahead of that tail.
-                    let later_work = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
-                        .unwrap_or_else(|| {
-                            panic!("speech owner {} vanished before settlement", owner.index())
-                        });
-                    let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
-                    if settlement.invoke_finished_callback {
-                        if policy.without_forecast() {
-                            self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
-                        } else {
-                            self.drain_self_stimuli_for_npc(sim, owner, assets);
-                        }
-                    }
-                    if let Some(finalization) = settlement.category_rejection {
-                        self.finalize_category_speech_rejection(owner, finalization);
-                    }
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("speech owner {} vanished after settlement", owner.index())
-                        })
-                        .outbox
-                        .reentrant
-                        .owner_work
-                        .extend(later_work);
+                    self.owner_work_speech(sim, assets, owner, policy, attempt);
                     continue;
                 }
                 crate::ai::AiOwnerWork::RestoreDetectableObjects {
@@ -5415,134 +4473,21 @@ impl EngineInner {
                     officer,
                     current_frame,
                 } => {
-                    let reporter = owner.index();
-                    self.world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("give-report owner {} lost its AI", owner.index())
-                        })
-                        .outbox
-                        .reentrant
-                        .cross_npc_actions
-                        .insert(
-                            0,
-                            crate::ai::CrossNpcAction::SendStimulus {
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                                target: officer,
-                                stimulus_type: crate::ai::StimulusType::CallReport,
-                                info: crate::ai::StimulusInfo::Human(
-                                    crate::ai::AiEntityHandle::new(reporter),
-                                ),
-                            },
-                        );
-                    self.process_synchronous_reentrant_actions_for(sim, owner, assets);
-                    let ai = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "give-report owner {} vanished after CALL_REPORT",
-                                owner.index()
-                            )
-                        });
-                    ai.outbox.reentrant.owner_work.splice(
-                        0..0,
-                        [
-                            crate::ai::AiOwnerWork::Speech(crate::ai::AiSpeechAttempt {
-                                remark: crate::ai::Remark::TellsOfficerNothing,
-                                flags: crate::ai::SpeechFlags::MYTALK_1.bits(),
-                            }),
-                            crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech {
-                                current_frame,
-                            },
-                        ],
+                    self.owner_work_begin_soldier_give_report(
+                        sim,
+                        assets,
+                        owner,
+                        officer,
+                        current_frame,
                     );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame } => {
-                    let later_work = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::ai_controller_mut)
-                        .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
-                        .unwrap_or_else(|| {
-                            panic!("give-report owner {} lost its AI", owner.index())
-                        });
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "give-report continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        });
-                    enemy.set_state(
-                        crate::ai::AiState::Seeking,
-                        crate::ai::Substate::SeekingSoldierGiveReportToOfficer,
-                    );
-                    enemy.base.outbox.reentrant.owner_work.push(
-                        crate::ai::AiOwnerWork::LaunchTimer {
-                            frames: 100,
-                            current_frame,
-                        },
-                    );
-                    enemy.base.outbox.reentrant.owner_work.extend(later_work);
+                    self.owner_work_resume_soldier_give_report_after_speech(owner, current_frame);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeSendCharlyAfterSpeech { charly } => {
-                    let frame = self.control.frame_counter;
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let in_uninterruptible_command = self.is_very_very_busy(owner);
-                    let mut ctx = {
-                        let entity = self.world.entities.get(owner).unwrap_or_else(|| {
-                            panic!(
-                                "send-charly continuation owner {} disappeared",
-                                owner.index()
-                            )
-                        });
-                        let building_sector =
-                            self.entity_building_sector(entity.element_data().sector());
-                        let mut ctx = crate::engine::ai::build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            building_sector,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        );
-                        ctx.in_uninterruptible_command = in_uninterruptible_command;
-                        ctx
-                    };
-                    self.refresh_selected_default_wait_identity(owner, &mut ctx);
-                    let enemy = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .and_then(Entity::enemy_ai_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "send-charly continuation owner {} lost Enemy AI",
-                                owner.index()
-                            )
-                        });
-                    enemy.base.friend_in_trouble = Some(crate::ai::AiEntityHandle::new(charly));
-                    enemy.base.face_entity(charly, &ctx);
+                    self.owner_work_resume_send_charly_after_speech(assets, owner, charly);
                     continue;
                 }
             };
@@ -5561,6 +4506,1237 @@ impl EngineInner {
             "AI owner {} exceeded recursive FIFO bound {MAX_OWNER_WORK}",
             owner.index()
         );
+    }
+
+    fn owner_work_actor_effects(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        prefix: crate::ai::AiActorOutbox,
+    ) {
+        // This prefix was authored before the next synchronous
+        // owner statement (currently stop-all). Detach its later
+        // tail, settle it through the ordinary actor fixed point,
+        // then restore the tail. In particular, a movement prefix
+        // must launch before the following Halt can select and
+        // cancel its new sequence.
+        let (later_work, later_actor_effects, later_self_stimuli, later_cross_npc_actions) = {
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "actor-effect owner {} vanished before settlement",
+                        owner.index()
+                    )
+                });
+            (
+                std::mem::take(&mut ai.outbox.reentrant.owner_work),
+                std::mem::replace(&mut ai.outbox.actor, prefix),
+                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
+                std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions),
+            )
+        };
+        self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+        let ai = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "actor-effect owner {} vanished after settlement",
+                    owner.index()
+                )
+            });
+        debug_assert!(
+            !ai.outbox.actor.has_boundary_work(),
+            "owner-local actor prefix left undrained effects"
+        );
+        debug_assert!(
+            ai.outbox.reentrant.owner_work.is_empty(),
+            "owner-local actor prefix left undrained owner work"
+        );
+        debug_assert!(
+            ai.outbox.reentrant.self_stimuli.is_empty(),
+            "owner-local actor prefix left undrained self stimuli"
+        );
+        let mut prefix_cross_npc_actions =
+            std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions);
+        prefix_cross_npc_actions.extend(later_cross_npc_actions);
+        ai.outbox.actor = later_actor_effects;
+        ai.outbox.reentrant.owner_work = later_work;
+        ai.outbox.reentrant.self_stimuli = later_self_stimuli;
+        ai.outbox.reentrant.cross_npc_actions = prefix_cross_npc_actions;
+    }
+
+    fn owner_work_resume_battle_look_for_help_after_alert_officer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        // Original resumes DECISION_LOOK_4_HELP only after
+        // The officer alert's synchronous approach has returned. Build
+        // the typed owner context before borrowing the AI again;
+        // the continuation consumes route failure itself or emits
+        // the successful remark in the original statement order.
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self
+                .world
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("look-for-help owner {} disappeared", owner.index()));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let ai_global = &mut self.ai.global;
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("look-for-help owner {} lost Enemy AI", owner.index()));
+        enemy.base.outbox.reentrant.look_for_help_completion_pending = false;
+        enemy.resume_battle_look_for_help_after_alert_officer(sim, ai_global, &ctx, &tick);
+    }
+
+    fn owner_work_resume_dead_body_alert_after_alert_officer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        center: crate::ai::Position,
+        radius: u16,
+    ) {
+        // Corpse-alert processing resumes immediately after
+        // the officer alert's synchronous approach and consumes its
+        // route result before decision-tick completion may surface an event.
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity =
+                self.world.entities.get(owner).unwrap_or_else(|| {
+                    panic!("dead-body-alert owner {} disappeared", owner.index())
+                });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let ai_global = &mut self.ai.global;
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("dead-body-alert owner {} lost Enemy AI", owner.index()));
+        enemy
+            .base
+            .outbox
+            .reentrant
+            .dead_body_alert_completion_pending = false;
+        enemy.resume_dead_body_alert_after_alert_officer(
+            sim, center, radius, ai_global, &ctx, &tick,
+        );
+    }
+
+    fn owner_work_resume_civilian_report_after_alert_officer(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seek_position: crate::ai::Position,
+    ) {
+        // Original resumes the soldier report statement directly
+        // after the officer alert's synchronous approach result.
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity =
+                self.world.entities.get(owner).unwrap_or_else(|| {
+                    panic!("civilian-report owner {} disappeared", owner.index())
+                });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let ai_global = &mut self.ai.global;
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("civilian-report owner {} lost Enemy AI", owner.index()));
+        enemy
+            .base
+            .outbox
+            .reentrant
+            .civilian_report_alert_officer_completion_pending = false;
+        enemy.resume_civilian_report_after_alert_officer(
+            sim,
+            seek_position,
+            ai_global,
+            &ctx,
+            &tick,
+        );
+    }
+
+    fn owner_work_resume_friendly_alert_soldier_after_go_near(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        center: crate::ai::Position,
+        check_door_path: bool,
+        failure: crate::ai_friendly::AlertSoldierFailureContinuation,
+    ) {
+        // The original game's soldier alert observes the nearby-route result in
+        // the same call, retries once with CHECK_DOOR_PATH, and
+        // returns that final verdict to its caller. Rebuild the
+        // live context after path construction, but consume the
+        // failure latch here rather than emitting an independent
+        // EVENT_COULDNT_REACHPOINT.
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self
+                .world
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("soldier-alert owner {} disappeared", owner.index()));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let doors = self.script_domains.interactables.doors.as_slice();
+        let friendly = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::friendly_ai_mut)
+            .unwrap_or_else(|| panic!("soldier-alert owner {} lost Friendly AI", owner.index()));
+        friendly.resume_alert_soldier_after_go_near(
+            sim,
+            center,
+            check_door_path,
+            failure,
+            &ctx,
+            Some(&self.world.fast_grid),
+            Some(doors),
+        );
+    }
+
+    fn owner_work_nearby_civilians_panic180(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        tracing::trace!(
+            target: "parity_nearby_panic",
+            owner = owner.index(),
+            "drain synchronous brawl NearbyCiviliansPanic180 callback"
+        );
+        self.nearby_civilians_panic_180(sim, assets, owner);
+
+        // Original finishes every civilian Think, then calls
+        // officer combat-observation checks synchronously, and only
+        // afterward executes the brawler's remaining state tail.
+        // The ordinary drain policy consumes all owner-work
+        // before cross-NPC work, so stage these boundaries here.
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let ctx = {
+            let entity = self
+                .world
+                .entities
+                .get(owner)
+                .unwrap_or_else(|| panic!("brawl-hitting owner {} disappeared", owner.index()));
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            )
+        };
+        ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
+        self.world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| panic!("brawl-hitting owner {} lost Enemy AI", owner.index()))
+            .brawl_hitting_notify_officer(&ctx, &tick);
+        ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
+
+        // No brawler tail is queued yet, so this recursively
+        // settles only the officer call and anything it causes.
+        self.process_synchronous_reentrant_actions_for(sim, owner, assets);
+
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let ctx = {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "brawl-hitting owner {} disappeared after officer",
+                    owner.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                self.control.frame_counter,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            )
+        };
+        self.world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "brawl-hitting owner {} lost Enemy AI after officer",
+                    owner.index()
+                )
+            })
+            .resume_brawl_hitting_after_officer(&ctx, &tick);
+        let ai = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "brawl-hitting owner {} lost AI at completion",
+                    owner.index()
+                )
+            });
+        ai.outbox.reentrant.brawl_hitting_completion_pending = false;
+        ai.resolve_engine_completion_verdict();
+    }
+
+    fn owner_work_consider_to_begin_parade(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        attacker: crate::ai::HumanHandle,
+    ) {
+        let attacker = self.expect_entity_id_for_index(attacker, "EVENT_SWORDSTRIKE attacker");
+        let command_strike = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(attacker)
+            .and_then(|(sequence_id, element_index)| {
+                self.orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)
+            })
+            .and_then(|element| crate::weapons::SwordStrike::from_command(element.command));
+        let Some(command_strike) = command_strike else {
+            return;
+        };
+        let recognized = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::enemy_ai)
+            .is_some_and(|ai| {
+                [
+                    ai.known_enemy_strike_1,
+                    ai.known_enemy_strike_2,
+                    ai.known_enemy_strike_3,
+                ]
+                .contains(&Some(command_strike))
+            });
+        if !recognized {
+            return;
+        }
+        let animation = self.live_actor_animation(attacker).unwrap_or_else(|| {
+            panic!(
+                "recognized EVENT_SWORDSTRIKE owner {} attacker {} has no live animation",
+                owner.index(),
+                attacker.index(),
+            )
+        });
+        let animation_strike =
+            crate::engine::melee::sword_strike_from_animation(animation)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "recognized EVENT_SWORDSTRIKE owner {} attacker {} has unmapped animation {animation:?}",
+                        owner.index(),
+                        attacker.index(),
+                    )
+                });
+        self.consider_to_begin_parade(
+            sim,
+            assets,
+            owner,
+            attacker,
+            Some(command_strike),
+            animation_strike,
+        );
+    }
+
+    fn owner_work_change_way_assignment_think_then_explicit_tail(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        assignment_callback: Option<crate::ai::StimulusType>,
+        owner_position_before_callback: crate::ai::Position,
+        owner_boundary_positions: Vec<(u32, crate::ai::Position)>,
+    ) {
+        // Isolate exactly patrol-path assignment's synchronous
+        // callback A. Pre-existing sibling stimuli and owner work
+        // belong after CMD_CHANGE_WAY's explicit tail B; work A
+        // creates remains visible and settles depth-first here.
+        let mut boundary_handles = owner_boundary_positions
+            .iter()
+            .map(|(handle, _)| *handle)
+            .collect::<Vec<_>>();
+        if !boundary_handles.contains(&owner.index()) {
+            // The original game's change-way command always reads the actor through
+            // world position independently of the surrounding
+            // actor-boundary snapshot. A focused continuation may
+            // therefore have no frozen entity views while its
+            // owner still needs exact live mutation tracking.
+            boundary_handles.push(owner.index());
+        }
+        let raw_positions_before_callback =
+            collect_raw_owner_boundary_positions(self, boundary_handles.iter().copied());
+        let effective_positions_before_callback = self
+            .build_owner_context_scratch_without_forecast(assets)
+            .ai_entity_views;
+        let raw_owner_position_before_callback = raw_positions_before_callback
+            .get(&owner.index())
+            .copied()
+            .and_then(raw_owner_boundary_position_to_ai)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ChangeWay owner {} disappeared or lost its layer before assignment callback",
+                    owner.index()
+                )
+            });
+        let (later_self_stimuli, later_owner_work) = {
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!("ChangeWay continuation owner {} lost its AI", owner.index())
+                });
+            (
+                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
+                std::mem::take(&mut ai.outbox.reentrant.owner_work),
+            )
+        };
+        if let Some(callback) = assignment_callback {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| panic!("ChangeWay callback owner {} lost its AI", owner.index()))
+                .outbox
+                .reentrant
+                .self_stimuli
+                .push(callback.into());
+            if policy.without_forecast() {
+                self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+            } else {
+                self.drain_self_stimuli_for_npc(sim, owner, assets);
+            }
+        }
+
+        // A synchronous callback can move another actor before B
+        // reads it. Preserve the originating legacy-slot snapshot
+        // for unchanged actors, but overlay exact live positions
+        // for actors A actually changed on this call stack.
+        let raw_positions_after_callback =
+            collect_raw_owner_boundary_positions(self, boundary_handles.iter().copied());
+        let effective_positions_after_callback = self
+            .build_owner_context_scratch_without_forecast(assets)
+            .ai_entity_views;
+        let raw_owner_position_after_callback = raw_positions_after_callback
+            .get(&owner.index())
+            .copied()
+            .and_then(raw_owner_boundary_position_to_ai)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ChangeWay owner {} disappeared or lost its layer during assignment callback",
+                    owner.index()
+                )
+            });
+        let effective_owner_position_before_callback = effective_positions_before_callback
+            .get(&owner.index())
+            .map(|view| view.position);
+        let effective_owner_position_after_callback = effective_positions_after_callback
+            .get(&owner.index())
+            .map(|view| view.position);
+        let owner_position_for_tail = if raw_owner_position_before_callback
+            != raw_owner_position_after_callback
+            || effective_owner_position_before_callback != effective_owner_position_after_callback
+        {
+            effective_owner_position_after_callback.unwrap_or(raw_owner_position_after_callback)
+        } else {
+            owner_position_before_callback
+        };
+        owner_boundary_positions.retain_mut(|(handle, position)| {
+            let before = raw_positions_before_callback.get(handle).copied();
+            let after = raw_positions_after_callback.get(handle).copied();
+            let effective_before = effective_positions_before_callback
+                .get(handle)
+                .map(|view| view.position);
+            let effective_after = effective_positions_after_callback
+                .get(handle)
+                .map(|view| view.position);
+            match (before, after) {
+                (Some(before), Some(after))
+                    if before != after || effective_before != effective_after =>
+                {
+                    // Mutation ownership is detected strictly from
+                    // raw element coordinates and the effective
+                    // selected-door position. Once owned by A, B
+                    // observes original-game actor-position semantics.
+                    if let Some(after) =
+                        effective_after.or_else(|| raw_owner_boundary_position_to_ai(after))
+                    {
+                        *position = after;
+                        true
+                    } else {
+                        // A callback may legitimately move a
+                        // projectile or detached object into the
+                        // legacy no-layer state. Such an entity is
+                        // absent from a freshly built AI context,
+                        // so its frozen boundary overlay must be
+                        // absent as well.
+                        false
+                    }
+                }
+                (Some(_), Some(_)) => true,
+                // A removed actor is absent from B's freshly built
+                // context. Drop its frozen entry rather than
+                // resurrecting it through the boundary overlay.
+                (Some(_), None) => false,
+                // Callback-created actors were never frozen and
+                // therefore remain live in the fresh B scratch.
+                (None, Some(_)) | (None, None) => true,
+            }
+        });
+        if let Some((_, position)) = owner_boundary_positions
+            .iter_mut()
+            .find(|(handle, _)| *handle == owner.index())
+        {
+            *position = owner_position_for_tail;
+        } else {
+            owner_boundary_positions.push((owner.index(), owner_position_for_tail));
+        }
+
+        {
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::ai_controller_mut)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "ChangeWay explicit tail owner {} lost its AI",
+                        owner.index()
+                    )
+                });
+            // Preserve the opcode's explicit second macro interruption
+            // after callback A, even though the assignment helper
+            // already performed the same call in its prologue.
+            ai.break_macro();
+        }
+        self.virtual_return_to_duty_for_npc(
+            sim,
+            owner,
+            assets,
+            crate::ai::DutyFlags::empty(),
+            Some(owner_position_for_tail),
+            &owner_boundary_positions,
+        );
+        self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+
+        let ai = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ChangeWay continuation owner {} vanished before tail restore",
+                    owner.index()
+                )
+            });
+        ai.outbox.reentrant.self_stimuli.extend(later_self_stimuli);
+        ai.outbox.reentrant.owner_work.extend(later_owner_work);
+    }
+
+    fn owner_work_resume_return_to_duty_after_patrol_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        completion_boundary: crate::engine::ai::CompletionBoundary,
+        flags: crate::ai::DutyFlags,
+        defer_clear_patrol_close_post: bool,
+        owner_boundary_positions: Vec<(u32, crate::ai::Position)>,
+    ) {
+        self.resume_return_to_duty_after_patrol_init_for_npc(
+            sim,
+            owner,
+            assets,
+            flags,
+            false,
+            &owner_boundary_positions,
+        );
+        if defer_clear_patrol_close_post {
+            // Patrol clearing's forced return leaves a close idle
+            // member in DEFAULT_GOTOPOST at this native boundary:
+            // Original records neither a Move nor the nested
+            // reach-point/completion/boredom-timing chain.
+            let ai = self
+                .world
+                .entities
+                .get_mut(owner)
+                .and_then(crate::element::Entity::ai_controller_mut)
+                .expect("patrol-clearing return continuation lost its AI owner");
+            if ai.current_state == crate::ai::AiState::Default
+                && ai.current_substate == crate::ai::Substate::DefaultGotoPost
+                && ai.outbox.actor.orders.is_empty()
+                && ai
+                    .outbox
+                    .reentrant
+                    .self_stimuli
+                    .last()
+                    .map(|queued| queued.stimulus_type)
+                    == Some(crate::ai::StimulusType::EventReachPoint)
+            {
+                ai.outbox.reentrant.self_stimuli.pop();
+            }
+        } else {
+            // Ordinary return-to-duty handling resumes on the same call stack
+            // and recursively closes its completion callbacks.
+            if completion_boundary.surfaces_completion() {
+                self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+            } else {
+                self.drain_direct_ai_owner_prefix_boundary_mode(sim, owner, assets, policy);
+            }
+        }
+    }
+
+    fn owner_work_resume_kill_nearby_sleeping_enemies_after_return_to_duty(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "sleeping-enemy continuation owner {} disappeared",
+                    owner.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        self.world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "sleeping-enemy continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            })
+            .resume_kill_nearby_sleeping_enemies_after_return_to_duty(sim, &ctx, &tick);
+    }
+
+    fn owner_work_resume_battle_observe_after_go_near(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        target: crate::ai::HumanHandle,
+        target_position: crate::ai::Position,
+    ) {
+        let couldnt_reachpoint = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::enemy_ai)
+            .unwrap_or_else(|| {
+                panic!(
+                    "battle-observe continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            })
+            .base
+            .couldnt_reachpoint;
+        let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+            panic!(
+                "battle-observe continuation owner {} has stale target {}",
+                owner.index(),
+                target
+            )
+        });
+        let avenger_wait_position = if couldnt_reachpoint {
+            assert!(
+                self.scripts.mission.is_some(),
+                "battle-observe roof recovery requires an installed mission script"
+            );
+            crate::engine::ai::precompute_avenger_on_roof_wait_position(
+                &self.world.entities,
+                self.script_domains.interactables.doors.as_slice(),
+                &self.orders.sequence_manager,
+                owner,
+                target_id,
+                |element| crate::engine::ai::ai_view_position_sector(self, element),
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| self.get_sector_lift_type(sector),
+            )
+        } else {
+            None
+        };
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "battle-observe continuation owner {} disappeared",
+                    owner.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "battle-observe continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            });
+        enemy
+            .base
+            .outbox
+            .reentrant
+            .battle_observe_completion_pending = false;
+        enemy.resume_battle_observe_after_go_near(
+            target,
+            target_position,
+            avenger_wait_position,
+            &ctx,
+        );
+    }
+
+    fn owner_work_resume_reconsider_enemy_approach_after_go_near(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        target: crate::ai::HumanHandle,
+        target_position: crate::ai::Position,
+    ) {
+        let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
+            && crate::ai_enemy::decision_path_debug_matches_raw(
+                self.control.frame_counter,
+                owner.index(),
+            );
+        let couldnt_reachpoint = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::enemy_ai)
+            .unwrap_or_else(|| {
+                panic!(
+                    "reconsider-approach continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            })
+            .base
+            .couldnt_reachpoint;
+        if debug_decision_path {
+            let owner_work = self
+                .world
+                .entities
+                .get(owner)
+                .and_then(Entity::ai_controller)
+                .map(|ai| format!("{:?}", ai.outbox.reentrant.owner_work))
+                .unwrap_or_else(|| panic!("diagnostic owner {} lost AI", owner.index()));
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider target={} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} remaining_owner_work={}",
+                self.control.frame_counter,
+                owner.index(),
+                target,
+                target_position.x.to_bits(),
+                target_position.y.to_bits(),
+                target_position.sector,
+                target_position.level,
+                couldnt_reachpoint,
+                owner_work,
+            );
+        }
+        let avenger_wait_position = if couldnt_reachpoint {
+            assert!(
+                self.scripts.mission.is_some(),
+                "AI roof recovery requires an installed mission script"
+            );
+            let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                panic!(
+                    "reconsider-approach continuation owner {} has stale target {}",
+                    owner.index(),
+                    target
+                )
+            });
+            crate::engine::ai::precompute_avenger_on_roof_wait_position(
+                &self.world.entities,
+                self.script_domains.interactables.doors.as_slice(),
+                &self.orders.sequence_manager,
+                owner,
+                target_id,
+                |element| crate::engine::ai::ai_view_position_sector(self, element),
+                &|sector| self.building_sector_is_authorized(sector),
+                &|sector| self.get_sector_lift_type(sector),
+            )
+        } else {
+            None
+        };
+        if debug_decision_path {
+            eprintln!(
+                "AIDECISION frame={} owner={} stage=owner_work_resume_reconsider_wait_position value={avenger_wait_position:?}",
+                self.control.frame_counter,
+                owner.index(),
+            );
+        }
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "reconsider-approach continuation owner {} disappeared",
+                    owner.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "reconsider-approach continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            });
+        enemy
+            .base
+            .outbox
+            .reentrant
+            .reconsider_approach_completion_pending = false;
+        enemy.resume_reconsider_enemy_approach_after_go_near(
+            target_position,
+            avenger_wait_position,
+            &ctx,
+        );
+    }
+
+    fn owner_work_resume_battle_fight_after_reconsider(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "battle-fight continuation owner {} disappeared",
+                    owner.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "battle-fight continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            });
+        enemy.resume_battle_fight_after_reconsider(sim, &mut self.ai.global, &ctx, &tick);
+    }
+
+    fn owner_work_speech(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        attempt: crate::ai::AiSpeechAttempt,
+    ) {
+        // A rejected Say invokes MYTALK synchronously before Say
+        // returns. Detach the outer statement tail so recursive
+        // Think work and its logs settle ahead of that tail.
+        let later_work = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
+            .unwrap_or_else(|| panic!("speech owner {} vanished before settlement", owner.index()));
+        let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
+        if settlement.invoke_finished_callback {
+            if policy.without_forecast() {
+                self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+            } else {
+                self.drain_self_stimuli_for_npc(sim, owner, assets);
+            }
+        }
+        if let Some(finalization) = settlement.category_rejection {
+            self.finalize_category_speech_rejection(owner, finalization);
+        }
+        self.world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| panic!("speech owner {} vanished after settlement", owner.index()))
+            .outbox
+            .reentrant
+            .owner_work
+            .extend(later_work);
+    }
+
+    fn owner_work_begin_soldier_give_report(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        officer: crate::ai::NpcHandle,
+        current_frame: u32,
+    ) {
+        let reporter = owner.index();
+        self.world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| panic!("give-report owner {} lost its AI", owner.index()))
+            .outbox
+            .reentrant
+            .cross_npc_actions
+            .insert(
+                0,
+                crate::ai::CrossNpcAction::SendStimulus {
+                    fallback_to_sender: None,
+                    to_whole_patrol: false,
+                    target: officer,
+                    stimulus_type: crate::ai::StimulusType::CallReport,
+                    info: crate::ai::StimulusInfo::Human(crate::ai::AiEntityHandle::new(reporter)),
+                },
+            );
+        self.process_synchronous_reentrant_actions_for(sim, owner, assets);
+        let ai = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "give-report owner {} vanished after CALL_REPORT",
+                    owner.index()
+                )
+            });
+        ai.outbox.reentrant.owner_work.splice(
+            0..0,
+            [
+                crate::ai::AiOwnerWork::Speech(crate::ai::AiSpeechAttempt {
+                    remark: crate::ai::Remark::TellsOfficerNothing,
+                    flags: crate::ai::SpeechFlags::MYTALK_1.bits(),
+                }),
+                crate::ai::AiOwnerWork::ResumeSoldierGiveReportAfterSpeech { current_frame },
+            ],
+        );
+    }
+
+    fn owner_work_resume_soldier_give_report_after_speech(
+        &mut self,
+        owner: EntityId,
+        current_frame: u32,
+    ) {
+        let later_work = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+            .map(|ai| std::mem::take(&mut ai.outbox.reentrant.owner_work))
+            .unwrap_or_else(|| panic!("give-report owner {} lost its AI", owner.index()));
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "give-report continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            });
+        enemy.set_state(
+            crate::ai::AiState::Seeking,
+            crate::ai::Substate::SeekingSoldierGiveReportToOfficer,
+        );
+        enemy
+            .base
+            .outbox
+            .reentrant
+            .owner_work
+            .push(crate::ai::AiOwnerWork::LaunchTimer {
+                frames: 100,
+                current_frame,
+            });
+        enemy.base.outbox.reentrant.owner_work.extend(later_work);
+    }
+
+    fn owner_work_resume_send_charly_after_speech(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        charly: crate::ai::NpcHandle,
+    ) {
+        let frame = self.control.frame_counter;
+        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let in_uninterruptible_command = self.is_very_very_busy(owner);
+        let mut ctx = {
+            let entity = self.world.entities.get(owner).unwrap_or_else(|| {
+                panic!(
+                    "send-charly continuation owner {} disappeared",
+                    owner.index()
+                )
+            });
+            let building_sector = self.entity_building_sector(entity.element_data().sector());
+            let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                entity,
+                frame,
+                building_sector,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
+                self.ai.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.world.fast_grid,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
+                &self.ai.global.all_soldier_handles,
+                self.control.sim_config.difficulty,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            ctx
+        };
+        self.refresh_selected_default_wait_identity(owner, &mut ctx);
+        let enemy = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::enemy_ai_mut)
+            .unwrap_or_else(|| {
+                panic!(
+                    "send-charly continuation owner {} lost Enemy AI",
+                    owner.index()
+                )
+            });
+        enemy.base.friend_in_trouble = Some(crate::ai::AiEntityHandle::new(charly));
+        enemy.base.face_entity(charly, &ctx);
     }
 
     /// Settle one synchronous state callback before reattaching its caller tail.
