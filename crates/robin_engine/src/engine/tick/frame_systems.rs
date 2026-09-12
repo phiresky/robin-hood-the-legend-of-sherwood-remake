@@ -232,11 +232,7 @@ impl EngineInner {
     /// Capture fighter state before the live owner walk. Runtime slot order,
     /// Original creation identity, and portrait priority are distinct; the
     /// subsequent owner coordinator preserves its explicit slot contract.
-    pub(super) fn hourglass_phase_entities(
-        &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
-    ) -> bool {
+    pub(super) fn hourglass_phase_entities(&mut self) -> bool {
         // Snapshot pre-hourglass swordfight state so we can detect a
         // swordfight→non-swordfight transition across this tick and
         // raise the ignore-mouse-event bracket on the falling edge.

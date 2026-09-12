@@ -799,7 +799,6 @@ impl EngineInner {
         }
         if completed {
             self.complete_melee_strike(
-                sim,
                 assets,
                 attacker_id,
                 Some(selected.seq_id),
@@ -893,7 +892,6 @@ impl EngineInner {
 
     pub(super) fn complete_melee_strike(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         sequence_id: Option<crate::sequence::SequenceId>,
@@ -1372,7 +1370,6 @@ impl EngineInner {
         // Phase 3: notify the sequence manager before the next creation slot.
         for completed_strike in completed {
             self.complete_melee_strike(
-                sim,
                 assets,
                 completed_strike.actor_id,
                 completed_strike.sequence_id,
@@ -4921,7 +4918,6 @@ mod tests {
 
     #[test]
     fn push_rechecks_current_relationship_before_queueing_enter_swordfight() {
-        let sim = crate::sim_rng::test_context();
         // Only push-strike execution walks the sword-strike victim list at
         // terminated motion, so the completing strike has to be a push.
         let mut profile_manager = crate::profiles::ProfileManager::new();
@@ -4951,7 +4947,7 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .pending_push_swordfight = vec![victim_id];
-        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, Some(1));
+        engine.complete_melee_strike(&assets, attacker_id, None, 0, SwordStrike::A, Some(1));
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
 
         if let Entity::Soldier(soldier) = engine.get_entity_mut(victim_id).unwrap() {
@@ -4963,7 +4959,7 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .pending_push_swordfight = vec![victim_id];
-        engine.complete_melee_strike(&sim, &assets, attacker_id, None, 0, SwordStrike::A, Some(1));
+        engine.complete_melee_strike(&assets, attacker_id, None, 0, SwordStrike::A, Some(1));
 
         let sequence = engine
             .orders

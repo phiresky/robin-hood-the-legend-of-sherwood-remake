@@ -7679,7 +7679,6 @@ mod tests {
 
     fn record_interaction_quick_action(
         engine: &mut EngineInner,
-        _assets: &LevelAssets,
         pc: EntityId,
         target: EntityId,
         command: Command,
@@ -7846,7 +7845,7 @@ mod tests {
             };
             soldier.npc.life_points = 100;
 
-            let titbit = record_interaction_quick_action(&mut engine, &assets, pc, target, command);
+            let titbit = record_interaction_quick_action(&mut engine, pc, target, command);
             assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
             engine
@@ -7864,8 +7863,7 @@ mod tests {
     fn quick_action_take_rechecks_allocated_object_state() {
         let (mut engine, assets, pc) = setup_pc_engine(&[(Action::Bow, 4)]);
         let target = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
-        let titbit =
-            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::Take);
+        let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::Take);
         assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
         engine
@@ -7902,8 +7900,7 @@ mod tests {
             .element
             .set_position_map(crate::coordinates::MapPoint::new(500.0, 0.0));
         let target = engine.add_entity(Entity::Soldier(target));
-        let titbit =
-            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::SearchCmd);
+        let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::SearchCmd);
         assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
         engine
@@ -7921,8 +7918,7 @@ mod tests {
         let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
         configure_valid_bow_quick_action(&mut engine, &mut assets, pc, target);
 
-        let titbit =
-            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::ShootBow);
+        let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::ShootBow);
         assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
         engine
@@ -7938,8 +7934,7 @@ mod tests {
         let (mut engine, mut assets, pc) = setup_pc_engine(&[(Action::Bow, 10)]);
         let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
         configure_valid_bow_quick_action(&mut engine, &mut assets, pc, target);
-        let titbit =
-            record_interaction_quick_action(&mut engine, &assets, pc, target, Command::ShootBow);
+        let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::ShootBow);
         assert!(quick_action_slot_is_valid(&engine, &assets, pc));
         engine
             .get_entity_mut(pc)

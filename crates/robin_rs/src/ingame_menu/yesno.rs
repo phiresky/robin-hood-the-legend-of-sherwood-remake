@@ -351,30 +351,6 @@ impl YesNoModalState {
     }
 }
 
-/// Formats the hardcoded English prompt `"Unable to find the file '%s' !
-/// Would you like to try to load the file again ?"` (exact punctuation
-/// and spacing preserved) and presents the standard Yes/No modal.
-/// Returns `true` if the player wants to retry the load.
-///
-/// Reuses the caller's current frame plus the shared `dim_screen`
-/// overlay. The original standalone file-not-found menu
-/// constructs a fresh menu screen and uses the same prompt; Rust exposes
-/// the modal helper at the menu boundary so resource retry loops can opt
-/// into it without coupling low-level loaders to UI state.
-pub async fn show_file_not_found(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
-    path: &str,
-) -> bool {
-    let message = format!(
-        "Unable to find the file '{}' ! Would you like to try to load the file again ?",
-        path
-    );
-    show_yesno(event_pump, renderer, resources, cursor, &message).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
