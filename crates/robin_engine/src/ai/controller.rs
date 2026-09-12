@@ -5101,7 +5101,6 @@ impl AiController {
         ctx: &AiContext,
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
-        let hiking_paths = &ctx.hiking_paths;
 
         match self.current_substate {
             // ─── Return to post ─────────────────────────────────────
@@ -5160,186 +5159,7 @@ impl AiController {
 
             // ─── Walking along route ────────────────────────────────
             Substate::DefaultGotoRouteTurn | Substate::DefaultEnroute => {
-                let is_route_turn = self.current_substate == Substate::DefaultGotoRouteTurn;
-                let is_enroute = self.current_substate == Substate::DefaultEnroute;
-
-                if (stimulus_type == StimulusType::EventDone && is_route_turn)
-                    || (stimulus_type == StimulusType::EventReachPoint && is_enroute)
-                {
-                    if let Some(ref mut path) = self.patrol_path {
-                        if path.size == 0 {
-                            // Path was eliminated (by script?) — return to duty.
-                            self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                            return false;
-                        }
-
-                        // Dispatch `EventSyncCharly` to every
-                        // synchronizing actor waiting on this NPC's patrol.
-                        // Drop entries whose substate has already advanced
-                        // away from `DefaultSynchronizing`. We dispatch
-                        // via the pending-cross-npc drain so the
-                        // post-dispatch re-check happens on the next
-                        // arrival rather than inline. Net effect: at
-                        // worst an extra redundant `EventSyncCharly`
-                        // fires one cycle after the actor has left the
-                        // wait state.
-                        if !self.synchronizing_actors.is_empty() {
-                            let wp_idx = path.current_waypoint_index;
-                            let mut keep = Vec::with_capacity(self.synchronizing_actors.len());
-                            for &guy in &self.synchronizing_actors {
-                                let substate = ctx
-                                    .entity_view(guy)
-                                    .map(|v| v.ai_substate)
-                                    .unwrap_or(Substate::DefaultGotoPost);
-                                if substate == Substate::DefaultSynchronizing {
-                                    self.outbox.reentrant.cross_npc_actions.push(
-                                        CrossNpcAction::SendStimulus {
-                                            target: guy,
-                                            stimulus_type: StimulusType::EventSyncCharly,
-                                            info: StimulusInfo::Index(wp_idx.into()),
-                                            fallback_to_sender: None,
-                                            to_whole_patrol: false,
-                                        },
-                                    );
-                                    keep.push(guy);
-                                }
-                            }
-                            self.synchronizing_actors = keep;
-                        }
-
-                        let wp_command = path
-                            .current_waypoint(hiking_paths)
-                            .map(|wp| wp.command.clone())
-                            .unwrap_or(crate::level_data::WaypointCommand::None);
-
-                        match wp_command {
-                            crate::level_data::WaypointCommand::None => {
-                                // Simple waypoint — advance to next.
-                                path.advance();
-
-                                // Default boredom processing only applies while
-                                // on post. Turning toward or following the route
-                                // therefore requires no boredom response here.
-
-                                if let Some(next_wp) = path.current_waypoint(hiking_paths) {
-                                    if path.size == 1 {
-                                        // One-point path → treat as post.
-                                        // Snap the post anchor to the
-                                        // current location; otherwise
-                                        // `return_to_duty_common_stuff`
-                                        // would walk back to the
-                                        // level-load spawn.
-                                        self.has_patrol_path = false;
-                                        self.initial_position = ctx.position;
-                                        // Storing initial NPC position parameters
-                                        // stores a unit vector with the default
-                                        // aspect, then return-to-post facing bins
-                                        // that vector with ASPECT_RATIO. Diagonal
-                                        // body sectors therefore do not always
-                                        // round-trip (sector 3 becomes 2).
-                                        let initial_view_vector =
-                                            crate::shadow_polygon::sector_to_direction(
-                                                (ctx.direction & 0x0F) as i16,
-                                            );
-                                        self.initial_view_direction =
-                                            crate::position_interface::vector_to_sector_0_to_15(
-                                                initial_view_vector[0]
-                                                    * crate::position_interface::ASPECT_RATIO,
-                                                initial_view_vector[1],
-                                            ) as u16;
-                                        if ctx.self_is_soldier {
-                                            // The common original-game route handler calls the
-                                            // actor-specific return to duty here. A soldier must
-                                            // enter EnemyAi::return_to_duty so its inline
-                                            // Patrol initialization runs before the common
-                                            // tail. Resume that response at the owner
-                                            // boundary, where the containing Enemy AI and
-                                            // engine patrol geometry are both available.
-                                            self.outbox.reentrant.owner_work.push(
-                                                AiOwnerWork::VirtualReturnToDuty {
-                                                    flags: DutyFlags::empty(),
-                                                    owner_boundary_positions: ctx
-                                                        .entity_views
-                                                        .iter()
-                                                        .map(|(&handle, view)| {
-                                                            (handle, view.position)
-                                                        })
-                                                        .collect(),
-                                                },
-                                            );
-                                        } else {
-                                            self.return_to_duty_common_stuff(
-                                                sim,
-                                                DutyFlags::empty(),
-                                                ctx,
-                                            );
-                                        }
-                                    } else {
-                                        let next_wp = next_wp.clone();
-                                        let path_index = path.hiking_path_index;
-                                        let waypoint_index = path.current_waypoint_index;
-                                        let mut walk_flags = self.default_path_walking_flags;
-                                        if !self.will_stop_at_next_waypoint_debug(
-                                            sim,
-                                            hiking_paths,
-                                            ctx,
-                                            WillStopCaller::SimpleWaypoint,
-                                        ) {
-                                            walk_flags |= GotoFlags::DONT_STOP;
-                                        }
-                                        if is_enroute {
-                                            walk_flags |= GotoFlags::STRAIGHT;
-                                        }
-                                        self.set_ai_state(AiState::Default);
-                                        self.current_substate = Substate::DefaultEnroute;
-                                        let dest = Position {
-                                            x: next_wp.x as f32,
-                                            y: next_wp.y as f32,
-                                            sector: ctx.hiking_waypoint_sector(
-                                                usize::from(path_index),
-                                                usize::from(waypoint_index),
-                                                next_wp.sector,
-                                            ),
-                                            level: next_wp.level,
-                                        };
-                                        self.go_to(dest, walk_flags, ctx);
-                                    }
-                                } else {
-                                    // No next waypoint — done.
-                                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                                }
-                            }
-                            crate::level_data::WaypointCommand::Script(_script) => {
-                                // Hand off to the per-waypoint VM.
-                                // `execute_waypoint_script` queues a
-                                // `ReachPoint(actor)` dispatch against
-                                // the instance bound at level load;
-                                // the engine closes it at the raw Think
-                                // boundary and fires `EventAfterScriptGoOn`
-                                // if the script didn't lock us into
-                                // `DefaultScriptDriven`.
-                                let path_idx = path.hiking_path_index;
-                                let wp_idx = path.current_waypoint_index;
-                                self.execute_waypoint_script(path_idx, wp_idx);
-                            }
-                            crate::level_data::WaypointCommand::Macro(macro_data) => {
-                                // Full waypoint-macro dispatch. If
-                                // `launch_waypoint_macro` returns false,
-                                // no section matched this traversal
-                                // direction / roll — proceed along the
-                                // path like a simple waypoint.
-                                let launched = self.launch_waypoint_macro(sim, &macro_data, ctx);
-                                if !launched {
-                                    self.proceed_on_path(sim, hiking_paths, ctx);
-                                }
-                            }
-                        }
-                    } else {
-                        // No patrol path — fall back to post.
-                        self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
-                        return false;
-                    }
-                }
+                return self.expected_common_default_goto_route_turn(sim, stimulus, ctx);
             }
 
             // ─── In macro ───────────────────────────────────────────
@@ -5355,40 +5175,7 @@ impl AiController {
 
             // ─── Fleeing ────────────────────────────────────────────
             Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    if panic_debug_matches(ctx.frame) {
-                        eprintln!(
-                            "[AIHIDE f={} co={:?} substate={:?}]",
-                            ctx.frame, ctx.original_creation_order, self.current_substate,
-                        );
-                    }
-                    self.set_ai_state(AiState::Fleeing);
-                    self.current_substate = Substate::FleeingHiding;
-                    self.set_alert_status(AlertLevel::Yellow);
-                    self.clear_emoticon();
-                    // The original game clears the blinking enemy
-                    // unconditionally on entry to FleeingHiding. Clearing
-                    // both visibility latches makes a still-visible enemy a
-                    // fresh EVENT_VIEW on the next detection pass.
-                    self.outbox.actor.blink_all_enemies = true;
-                    // Face panic center and wait.
-                    self.face_position_with_ctx(
-                        Position {
-                            x: self.panic_center_x,
-                            y: self.panic_center_y,
-                            sector: None,
-                            level: 0,
-                        },
-                        ctx,
-                    );
-                    let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
-                        + crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::AiPanic,
-                            0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
-                        );
-                    self.launch_timer(hiding_time, ctx.frame);
-                }
+                return self.expected_common_fleeing_run_to_hide(sim, stimulus, ctx);
             }
 
             // ─── Panic-run state machine ────────────────────────────
@@ -5396,181 +5183,7 @@ impl AiController {
             // into `FleeingHiding` (panic is spent) or pick a new run
             // direction and move along it.
             Substate::FleeingPanic => {
-                if stimulus_type != StimulusType::EventReachPoint
-                    && stimulus_type != StimulusType::EventCouldntReachPoint
-                {
-                    return false;
-                }
-                if panic_debug_matches(ctx.frame) {
-                    eprintln!(
-                        "[AIPANIC f={} me={} co={:?} stim={:?} runs={} directed={} first_try={}]",
-                        ctx.frame,
-                        self.me,
-                        ctx.original_creation_order,
-                        stimulus_type,
-                        self.lasting_panic_runs,
-                        self.directed_panic,
-                        self.first_try,
-                    );
-                }
-
-                if self.lasting_panic_runs == 0 {
-                    // Panic is over — transition to hiding.
-                    self.set_ai_state(AiState::Fleeing);
-                    self.current_substate = Substate::FleeingHiding;
-                    if self.directed_panic {
-                        // Look back at the panic source.
-                        self.face_position_with_ctx(
-                            Position {
-                                x: self.panic_center_x,
-                                y: self.panic_center_y,
-                                sector: None,
-                                level: 0,
-                            },
-                            ctx,
-                        );
-                    } else {
-                        // Look in a random direction.
-                        self.face_direction(
-                            crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16)
-                                as u16,
-                            ctx,
-                        );
-                    }
-                    self.clear_emoticon();
-                    self.set_alert_status(AlertLevel::Yellow);
-                    // Original-game AI fleeing-panic completion
-                    // clears the blinking enemy even when the alert level did
-                    // not change. The resulting next-frame EVENT_VIEW can
-                    // immediately start another panic while the enemy stays
-                    // visible.
-                    self.outbox.actor.blink_all_enemies = true;
-                    let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
-                        + crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::AiPanic,
-                            0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
-                        );
-                    self.launch_timer(hiding_time, ctx.frame);
-                    return true;
-                }
-
-                if stimulus_type == StimulusType::EventReachPoint {
-                    // Decrement panic runs and start new movement toward
-                    // a fresh escape vector.
-                    self.lasting_panic_runs = self.lasting_panic_runs.saturating_sub(1);
-
-                    let sector_index = if !self.directed_panic {
-                        // Undirected panic — any direction.
-                        (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) & 15)
-                            as u8
-                    } else {
-                        // Directed panic — run away from panic center.
-                        let dx = ctx.position.x - self.panic_center_x;
-                        let dy = ctx.position.y - self.panic_center_y;
-                        let base =
-                            crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-                        if self.first_try {
-                            // ±2 sector jitter around the base.
-                            let jitter =
-                                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..5)
-                                    as i32
-                                    - 2)
-                                .rem_euclid(16) as u8;
-                            base.wrapping_add(jitter) & 15
-                        } else {
-                            // Previous attempt failed — rotate 90° to
-                            // the side determined by creation-order
-                            // parity, with ±3 sector jitter.
-                            let original_creation_order = ctx.original_creation_order.expect(
-                                "panic retry owner is missing its authoritative creation order",
-                            );
-                            let side = panic_retry_side(original_creation_order);
-                            let jitter =
-                                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..7)
-                                    as i32
-                                    - 3)
-                                .rem_euclid(16) as u8;
-                            base.wrapping_add(side).wrapping_add(jitter) & 15
-                        }
-                    };
-
-                    let (vx, vy) = crate::element::direction_vector_16(sector_index as i16);
-                    let segment = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
-                        + crate::sim_rng::u32(
-                            sim,
-                            crate::sim_rng::RngSite::AiPanic,
-                            0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
-                        )) as f32;
-                    let dest = Position {
-                        x: ctx.position.x + vx * segment,
-                        y: ctx.position.y + vy * segment,
-                        sector: ctx.position.sector,
-                        level: ctx.position.level,
-                    };
-
-                    if panic_debug_matches(ctx.frame) {
-                        let origin =
-                            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
-                        let destination = crate::coordinates::MapPoint::new(dest.x, dest.y);
-                        let destination_box = ctx.move_box.translated(destination);
-                        let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(
-                            ctx.move_box.x_max(),
-                            ctx.move_box.y_max(),
-                        );
-                        eprintln!(
-                            "[AIPANIC-GEOMETRY f={} me={} sector={} distance_bits={:08x} origin_bits={:08x},{:08x} destination_bits={:08x},{:08x} layer={} move_box={:?} position_authorized={} reachable_thick={} straight_authorized={}]",
-                            ctx.frame,
-                            self.me,
-                            sector_index,
-                            segment.to_bits(),
-                            origin.x.to_bits(),
-                            origin.y.to_bits(),
-                            destination.x.to_bits(),
-                            destination.y.to_bits(),
-                            ctx.position.level,
-                            ctx.move_box,
-                            ctx.fast_grid
-                                .is_position_authorized(&destination_box, ctx.position.level,),
-                            ctx.fast_grid.is_reachable_thick(
-                                origin,
-                                destination,
-                                ctx.position.level,
-                                half_diagonal,
-                            ),
-                            ctx.fast_grid.is_straight_movement_authorized(
-                                origin,
-                                destination,
-                                ctx.position.level,
-                                &ctx.move_box,
-                            ),
-                        );
-                    }
-
-                    // Next time around we're no longer on the first try.
-                    self.first_try = true;
-
-                    let mut flags = GotoFlags::RUN | GotoFlags::STRAIGHT | GotoFlags::ASK_OBSTACLE;
-                    if self.lasting_panic_runs > 0 {
-                        flags |= GotoFlags::DONT_STOP;
-                    }
-                    self.go_to(dest, flags, ctx);
-                } else {
-                    // EventCouldntReachPoint — the random direction
-                    // was blocked. Flip `first_try` so the next run
-                    // uses the 90° side-step branch, and queue a
-                    // `SeekPoint` fallback for the engine to drain.
-                    // The engine has the `seek_points` array; the
-                    // `AiController` here doesn't, so we hand off via
-                    // `pending_panic_seek_fallback` and let
-                    // `process_pending_panic_seek_fallback_for` pick
-                    // the anchor + call `go_to` (RUN|DONT_STOP mid-run,
-                    // RUN on the last segment). If no seek point is
-                    // found, the engine drain re-fires the self
-                    // `EventReachPoint` as an emergency fall-through.
-                    self.first_try = false;
-                    self.outbox.actor.panic_seek_fallback = true;
-                }
+                return self.expected_common_fleeing_panic(sim, stimulus, ctx);
             }
 
             Substate::FleeingHiding => {
@@ -5996,5 +5609,415 @@ impl AiController {
                 source,
                 actor_effects_before_callback,
             }));
+    }
+}
+
+impl AiController {
+    fn expected_common_default_goto_route_turn(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        let hiking_paths = &ctx.hiking_paths;
+        let is_route_turn = self.current_substate == Substate::DefaultGotoRouteTurn;
+        let is_enroute = self.current_substate == Substate::DefaultEnroute;
+
+        if (stimulus_type == StimulusType::EventDone && is_route_turn)
+            || (stimulus_type == StimulusType::EventReachPoint && is_enroute)
+        {
+            if let Some(ref mut path) = self.patrol_path {
+                if path.size == 0 {
+                    // Path was eliminated (by script?) — return to duty.
+                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                    return false;
+                }
+
+                // Dispatch `EventSyncCharly` to every
+                // synchronizing actor waiting on this NPC's patrol.
+                // Drop entries whose substate has already advanced
+                // away from `DefaultSynchronizing`. We dispatch
+                // via the pending-cross-npc drain so the
+                // post-dispatch re-check happens on the next
+                // arrival rather than inline. Net effect: at
+                // worst an extra redundant `EventSyncCharly`
+                // fires one cycle after the actor has left the
+                // wait state.
+                if !self.synchronizing_actors.is_empty() {
+                    let wp_idx = path.current_waypoint_index;
+                    let mut keep = Vec::with_capacity(self.synchronizing_actors.len());
+                    for &guy in &self.synchronizing_actors {
+                        let substate = ctx
+                            .entity_view(guy)
+                            .map(|v| v.ai_substate)
+                            .unwrap_or(Substate::DefaultGotoPost);
+                        if substate == Substate::DefaultSynchronizing {
+                            self.outbox.reentrant.cross_npc_actions.push(
+                                CrossNpcAction::SendStimulus {
+                                    target: guy,
+                                    stimulus_type: StimulusType::EventSyncCharly,
+                                    info: StimulusInfo::Index(wp_idx.into()),
+                                    fallback_to_sender: None,
+                                    to_whole_patrol: false,
+                                },
+                            );
+                            keep.push(guy);
+                        }
+                    }
+                    self.synchronizing_actors = keep;
+                }
+
+                let wp_command = path
+                    .current_waypoint(hiking_paths)
+                    .map(|wp| wp.command.clone())
+                    .unwrap_or(crate::level_data::WaypointCommand::None);
+
+                match wp_command {
+                    crate::level_data::WaypointCommand::None => {
+                        // Simple waypoint — advance to next.
+                        path.advance();
+
+                        // Default boredom processing only applies while
+                        // on post. Turning toward or following the route
+                        // therefore requires no boredom response here.
+
+                        if let Some(next_wp) = path.current_waypoint(hiking_paths) {
+                            if path.size == 1 {
+                                // One-point path → treat as post.
+                                // Snap the post anchor to the
+                                // current location; otherwise
+                                // `return_to_duty_common_stuff`
+                                // would walk back to the
+                                // level-load spawn.
+                                self.has_patrol_path = false;
+                                self.initial_position = ctx.position;
+                                // Storing initial NPC position parameters
+                                // stores a unit vector with the default
+                                // aspect, then return-to-post facing bins
+                                // that vector with ASPECT_RATIO. Diagonal
+                                // body sectors therefore do not always
+                                // round-trip (sector 3 becomes 2).
+                                let initial_view_vector =
+                                    crate::shadow_polygon::sector_to_direction(
+                                        (ctx.direction & 0x0F) as i16,
+                                    );
+                                self.initial_view_direction =
+                                    crate::position_interface::vector_to_sector_0_to_15(
+                                        initial_view_vector[0]
+                                            * crate::position_interface::ASPECT_RATIO,
+                                        initial_view_vector[1],
+                                    ) as u16;
+                                if ctx.self_is_soldier {
+                                    // The common original-game route handler calls the
+                                    // actor-specific return to duty here. A soldier must
+                                    // enter EnemyAi::return_to_duty so its inline
+                                    // Patrol initialization runs before the common
+                                    // tail. Resume that response at the owner
+                                    // boundary, where the containing Enemy AI and
+                                    // engine patrol geometry are both available.
+                                    self.outbox.reentrant.owner_work.push(
+                                        AiOwnerWork::VirtualReturnToDuty {
+                                            flags: DutyFlags::empty(),
+                                            owner_boundary_positions: ctx
+                                                .entity_views
+                                                .iter()
+                                                .map(|(&handle, view)| (handle, view.position))
+                                                .collect(),
+                                        },
+                                    );
+                                } else {
+                                    self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                                }
+                            } else {
+                                let next_wp = next_wp.clone();
+                                let path_index = path.hiking_path_index;
+                                let waypoint_index = path.current_waypoint_index;
+                                let mut walk_flags = self.default_path_walking_flags;
+                                if !self.will_stop_at_next_waypoint_debug(
+                                    sim,
+                                    hiking_paths,
+                                    ctx,
+                                    WillStopCaller::SimpleWaypoint,
+                                ) {
+                                    walk_flags |= GotoFlags::DONT_STOP;
+                                }
+                                if is_enroute {
+                                    walk_flags |= GotoFlags::STRAIGHT;
+                                }
+                                self.set_ai_state(AiState::Default);
+                                self.current_substate = Substate::DefaultEnroute;
+                                let dest = Position {
+                                    x: next_wp.x as f32,
+                                    y: next_wp.y as f32,
+                                    sector: ctx.hiking_waypoint_sector(
+                                        usize::from(path_index),
+                                        usize::from(waypoint_index),
+                                        next_wp.sector,
+                                    ),
+                                    level: next_wp.level,
+                                };
+                                self.go_to(dest, walk_flags, ctx);
+                            }
+                        } else {
+                            // No next waypoint — done.
+                            self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                        }
+                    }
+                    crate::level_data::WaypointCommand::Script(_script) => {
+                        // Hand off to the per-waypoint VM.
+                        // `execute_waypoint_script` queues a
+                        // `ReachPoint(actor)` dispatch against
+                        // the instance bound at level load;
+                        // the engine closes it at the raw Think
+                        // boundary and fires `EventAfterScriptGoOn`
+                        // if the script didn't lock us into
+                        // `DefaultScriptDriven`.
+                        let path_idx = path.hiking_path_index;
+                        let wp_idx = path.current_waypoint_index;
+                        self.execute_waypoint_script(path_idx, wp_idx);
+                    }
+                    crate::level_data::WaypointCommand::Macro(macro_data) => {
+                        // Full waypoint-macro dispatch. If
+                        // `launch_waypoint_macro` returns false,
+                        // no section matched this traversal
+                        // direction / roll — proceed along the
+                        // path like a simple waypoint.
+                        let launched = self.launch_waypoint_macro(sim, &macro_data, ctx);
+                        if !launched {
+                            self.proceed_on_path(sim, hiking_paths, ctx);
+                        }
+                    }
+                }
+            } else {
+                // No patrol path — fall back to post.
+                self.return_to_duty_common_stuff(sim, DutyFlags::empty(), ctx);
+                return false;
+            }
+        }
+        false
+    }
+
+    fn expected_common_fleeing_run_to_hide(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        if stimulus_type == StimulusType::EventReachPoint {
+            if panic_debug_matches(ctx.frame) {
+                eprintln!(
+                    "[AIHIDE f={} co={:?} substate={:?}]",
+                    ctx.frame, ctx.original_creation_order, self.current_substate,
+                );
+            }
+            self.set_ai_state(AiState::Fleeing);
+            self.current_substate = Substate::FleeingHiding;
+            self.set_alert_status(AlertLevel::Yellow);
+            self.clear_emoticon();
+            // The original game clears the blinking enemy
+            // unconditionally on entry to FleeingHiding. Clearing
+            // both visibility latches makes a still-visible enemy a
+            // fresh EVENT_VIEW on the next detection pass.
+            self.outbox.actor.blink_all_enemies = true;
+            // Face panic center and wait.
+            self.face_position_with_ctx(
+                Position {
+                    x: self.panic_center_x,
+                    y: self.panic_center_y,
+                    sector: None,
+                    level: 0,
+                },
+                ctx,
+            );
+            let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                + crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::AiPanic,
+                    0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
+                );
+            self.launch_timer(hiding_time, ctx.frame);
+        }
+        false
+    }
+
+    fn expected_common_fleeing_panic(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        if stimulus_type != StimulusType::EventReachPoint
+            && stimulus_type != StimulusType::EventCouldntReachPoint
+        {
+            return false;
+        }
+        if panic_debug_matches(ctx.frame) {
+            eprintln!(
+                "[AIPANIC f={} me={} co={:?} stim={:?} runs={} directed={} first_try={}]",
+                ctx.frame,
+                self.me,
+                ctx.original_creation_order,
+                stimulus_type,
+                self.lasting_panic_runs,
+                self.directed_panic,
+                self.first_try,
+            );
+        }
+
+        if self.lasting_panic_runs == 0 {
+            // Panic is over — transition to hiding.
+            self.set_ai_state(AiState::Fleeing);
+            self.current_substate = Substate::FleeingHiding;
+            if self.directed_panic {
+                // Look back at the panic source.
+                self.face_position_with_ctx(
+                    Position {
+                        x: self.panic_center_x,
+                        y: self.panic_center_y,
+                        sector: None,
+                        level: 0,
+                    },
+                    ctx,
+                );
+            } else {
+                // Look in a random direction.
+                self.face_direction(
+                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u16,
+                    ctx,
+                );
+            }
+            self.clear_emoticon();
+            self.set_alert_status(AlertLevel::Yellow);
+            // Original-game AI fleeing-panic completion
+            // clears the blinking enemy even when the alert level did
+            // not change. The resulting next-frame EVENT_VIEW can
+            // immediately start another panic while the enemy stays
+            // visible.
+            self.outbox.actor.blink_all_enemies = true;
+            let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
+                + crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::AiPanic,
+                    0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
+                );
+            self.launch_timer(hiding_time, ctx.frame);
+            return true;
+        }
+
+        if stimulus_type == StimulusType::EventReachPoint {
+            // Decrement panic runs and start new movement toward
+            // a fresh escape vector.
+            self.lasting_panic_runs = self.lasting_panic_runs.saturating_sub(1);
+
+            let sector_index = if !self.directed_panic {
+                // Undirected panic — any direction.
+                (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) & 15) as u8
+            } else {
+                // Directed panic — run away from panic center.
+                let dx = ctx.position.x - self.panic_center_x;
+                let dy = ctx.position.y - self.panic_center_y;
+                let base = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+                if self.first_try {
+                    // ±2 sector jitter around the base.
+                    let jitter = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..5)
+                        as i32
+                        - 2)
+                    .rem_euclid(16) as u8;
+                    base.wrapping_add(jitter) & 15
+                } else {
+                    // Previous attempt failed — rotate 90° to
+                    // the side determined by creation-order
+                    // parity, with ±3 sector jitter.
+                    let original_creation_order = ctx
+                        .original_creation_order
+                        .expect("panic retry owner is missing its authoritative creation order");
+                    let side = panic_retry_side(original_creation_order);
+                    let jitter = (crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..7)
+                        as i32
+                        - 3)
+                    .rem_euclid(16) as u8;
+                    base.wrapping_add(side).wrapping_add(jitter) & 15
+                }
+            };
+
+            let (vx, vy) = crate::element::direction_vector_16(sector_index as i16);
+            let segment = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
+                + crate::sim_rng::u32(
+                    sim,
+                    crate::sim_rng::RngSite::AiPanic,
+                    0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
+                )) as f32;
+            let dest = Position {
+                x: ctx.position.x + vx * segment,
+                y: ctx.position.y + vy * segment,
+                sector: ctx.position.sector,
+                level: ctx.position.level,
+            };
+
+            if panic_debug_matches(ctx.frame) {
+                let origin = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
+                let destination = crate::coordinates::MapPoint::new(dest.x, dest.y);
+                let destination_box = ctx.move_box.translated(destination);
+                let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(
+                    ctx.move_box.x_max(),
+                    ctx.move_box.y_max(),
+                );
+                eprintln!(
+                    "[AIPANIC-GEOMETRY f={} me={} sector={} distance_bits={:08x} origin_bits={:08x},{:08x} destination_bits={:08x},{:08x} layer={} move_box={:?} position_authorized={} reachable_thick={} straight_authorized={}]",
+                    ctx.frame,
+                    self.me,
+                    sector_index,
+                    segment.to_bits(),
+                    origin.x.to_bits(),
+                    origin.y.to_bits(),
+                    destination.x.to_bits(),
+                    destination.y.to_bits(),
+                    ctx.position.level,
+                    ctx.move_box,
+                    ctx.fast_grid
+                        .is_position_authorized(&destination_box, ctx.position.level,),
+                    ctx.fast_grid.is_reachable_thick(
+                        origin,
+                        destination,
+                        ctx.position.level,
+                        half_diagonal,
+                    ),
+                    ctx.fast_grid.is_straight_movement_authorized(
+                        origin,
+                        destination,
+                        ctx.position.level,
+                        &ctx.move_box,
+                    ),
+                );
+            }
+
+            // Next time around we're no longer on the first try.
+            self.first_try = true;
+
+            let mut flags = GotoFlags::RUN | GotoFlags::STRAIGHT | GotoFlags::ASK_OBSTACLE;
+            if self.lasting_panic_runs > 0 {
+                flags |= GotoFlags::DONT_STOP;
+            }
+            self.go_to(dest, flags, ctx);
+        } else {
+            // EventCouldntReachPoint — the random direction
+            // was blocked. Flip `first_try` so the next run
+            // uses the 90° side-step branch, and queue a
+            // `SeekPoint` fallback for the engine to drain.
+            // The engine has the `seek_points` array; the
+            // `AiController` here doesn't, so we hand off via
+            // `pending_panic_seek_fallback` and let
+            // `process_pending_panic_seek_fallback_for` pick
+            // the anchor + call `go_to` (RUN|DONT_STOP mid-run,
+            // RUN on the last segment). If no seek point is
+            // found, the engine drain re-fires the self
+            // `EventReachPoint` as an emergency fall-through.
+            self.first_try = false;
+            self.outbox.actor.panic_seek_fallback = true;
+        }
+        false
     }
 }
