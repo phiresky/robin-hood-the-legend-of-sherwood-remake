@@ -66,18 +66,24 @@ pub fn apply_with_files<T: Serialize + DeserializeOwned>(
     path: &str,
 ) -> Result<Option<T>, String> {
     let layers = read_layers(files, path)?;
-    if layers.is_empty() {
+    let Some((last, preceding)) = layers.split_last() else {
         return Ok(None);
-    }
+    };
     let mut document = serde_json::to_value(base).map_err(|error| error.to_string())?;
-    for (index, bytes) in layers.iter().enumerate() {
+    for (index, bytes) in preceding.iter().enumerate() {
         apply_value(&mut document, bytes)
             .map_err(|error| format!("{path}, layer {index}: {error}"))?;
         // Reject a bad layer even if a later mod happens to remove its mistake.
         let _: T =
             decode(document.clone()).map_err(|error| format!("{path}, layer {index}: {error}"))?;
     }
-    decode(document).map(Some)
+    let index = preceding.len();
+    apply_value(&mut document, last).map_err(|error| format!("{path}, layer {index}: {error}"))?;
+    // The final validation is also the returned value; only intermediate
+    // layers need a copy of the document for the next patch to modify.
+    decode(document)
+        .map(Some)
+        .map_err(|error| format!("{path}, layer {index}: {error}"))
 }
 
 const NAMED_FAMILIES: [(&str, &str, &str); 4] = [
@@ -248,6 +254,117 @@ mod tests {
     use super::*;
     use crate::profiles::{CharacterProfile, ProfileManager, SoldierProfile};
     use serde_json::json;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod ordinary_layers {
+        use super::*;
+        use serde::Deserialize;
+        use std::cell::Cell;
+
+        thread_local! {
+            static DECODES: Cell<usize> = const { Cell::new(0) };
+        }
+
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Content {
+            #[serde(deserialize_with = "counted_value")]
+            value: u32,
+        }
+
+        fn counted_value<'de, D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<u32, D::Error> {
+            DECODES.with(|count| count.set(count.get() + 1));
+            u32::deserialize(deserializer)
+        }
+
+        const PATH: &str = "ordinary.patch.json";
+
+        fn files(layers: &[&str]) -> (crate::sbfile::SbFileSystem, Vec<tempfile::TempDir>) {
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            if let Some(first) = layers.first() {
+                vfs.install_preloaded_asset(PATH, first.as_bytes().to_vec())
+                    .unwrap();
+            }
+            let files = crate::sbfile::SbFileSystem::new(vfs);
+            let mut roots = Vec::new();
+            for layer in layers.iter().skip(1) {
+                let root = tempfile::tempdir().unwrap();
+                std::fs::write(root.path().join(PATH), layer).unwrap();
+                assert_eq!(files.add_overlay_path(root.path().to_str().unwrap()), 0);
+                roots.push(root);
+            }
+            (files, roots)
+        }
+
+        #[test]
+        fn zero_one_and_multiple_layers_decode_once_per_layer_in_mount_order() {
+            let patches = [
+                r#"[{"op":"replace","path":"/value","value":2}]"#,
+                r#"[{"op":"test","path":"/value","value":2},{"op":"replace","path":"/value","value":3}]"#,
+                r#"[{"op":"test","path":"/value","value":3},{"op":"replace","path":"/value","value":4}]"#,
+            ];
+            for count in 0..=patches.len() {
+                let (files, _roots) = files(&patches[..count]);
+                let base = Content { value: 1 };
+                DECODES.with(|value| value.set(0));
+                let result = apply_with_files(&base, &files, PATH).unwrap();
+                assert_eq!(
+                    result,
+                    (count != 0).then_some(Content {
+                        value: count as u32 + 1
+                    })
+                );
+                assert_eq!(DECODES.with(Cell::get), count);
+                assert_eq!(base, Content { value: 1 });
+            }
+        }
+
+        #[test]
+        fn invalid_intermediate_layers_are_rejected_even_if_later_repaired() {
+            for (invalid, repair, detail) in [
+                (
+                    r#"[{"op":"replace","path":"/value","value":"bad"}]"#,
+                    r#"[{"op":"replace","path":"/value","value":2}]"#,
+                    "content has invalid types",
+                ),
+                (
+                    r#"[{"op":"add","path":"/typo","value":2}]"#,
+                    r#"[{"op":"remove","path":"/typo"}]"#,
+                    "unknown content fields",
+                ),
+            ] {
+                let (files, _roots) = files(&[invalid, repair]);
+                let base = Content { value: 1 };
+                let error = apply_with_files(&base, &files, PATH).unwrap_err();
+                assert!(
+                    error.starts_with("ordinary.patch.json, layer 0:"),
+                    "{error}"
+                );
+                assert!(error.contains(detail), "{error}");
+                assert_eq!(base, Content { value: 1 });
+            }
+        }
+
+        #[test]
+        fn final_layer_errors_keep_path_index_and_leave_base_unchanged() {
+            for invalid in [
+                "not JSON",
+                r#"[{"op":"remove","path":"/missing"}]"#,
+                r#"[{"op":"replace","path":"/value","value":null}]"#,
+                r#"[{"op":"add","path":"/typo","value":2}]"#,
+            ] {
+                let (files, _roots) = files(&["[]", invalid]);
+                let base = Content { value: 1 };
+                let error = apply_with_files(&base, &files, PATH).unwrap_err();
+                assert!(
+                    error.starts_with("ordinary.patch.json, layer 1:"),
+                    "{error}"
+                );
+                assert_eq!(base, Content { value: 1 });
+            }
+        }
+    }
 
     #[test]
     fn canonical_disk_document_round_trips_slots_and_supports_plain_json_patch() {
