@@ -2531,64 +2531,55 @@ impl EngineInner {
             })
             .collect();
 
-        let _ = self.with_script_session(sim, assets, |script, script_domains, capabilities| {
-            // ── Phase 1: Per-actor Initialize ──
+        let _ = self.with_script_session(sim, assets, |script, _, _| {
+            // Bind every instance before dispatching Initialize through the shared driver.
+            // ── Phase 1: Per-actor binding ──
             // Each actor's script class gets a ScriptInstance that persists for the
             // actor's lifetime — the heap (member variables) survives across calls
             // to Initialize, ActionChange, HandleEvent, FilterAIEvent, ProcessMessage.
-            // Each VM receives a short-lived native context over the same
-            // canonical capability bundle.
+            // Binding stores the VM; callback execution below receives native capabilities.
             let mut init_count = 0u32;
             for (handle, class_name) in &per_actor_scripts {
-                if script.bind_actor(*handle, class_name, script_domains, capabilities) {
-                    init_count += 1;
-                }
+                script.bind_actor(*handle, class_name);
+                init_count += 1;
             }
             if init_count > 0 {
                 tracing::info!(
-                    "Ran per-actor Initialize on {init_count} entities \
+                    "Bound per-actor scripts on {init_count} entities \
                      ({} instances persisted)",
                     script.actor_instances.len()
                 );
             }
 
-            // ── Phase 1b: Per-target Initialize ──
-            // Run `IElementTargetScript::Initialize()` during
-            // mission-stream initialization.
+            // ── Phase 1b: Per-target binding ──
             let mut target_init_count = 0u32;
             for (handle, class_name) in &per_target_scripts {
-                if script.bind_target(*handle, class_name, script_domains, capabilities) {
-                    target_init_count += 1;
-                }
+                script.bind_target(*handle, class_name);
+                target_init_count += 1;
             }
             if target_init_count > 0 {
                 tracing::info!(
-                    "Ran per-target Initialize on {target_init_count} targets \
+                    "Bound per-target scripts on {target_init_count} targets \
                      ({} instances persisted)",
                     script.target_instances.len()
                 );
             }
 
-            // ── Phase 1c: Per-scroll Initialize ──
-            // Walk every scroll and run its script's `Initialize()` callback
-            // on the bound class.
+            // ── Phase 1c: Per-scroll binding ──
             let mut scroll_init_count = 0u32;
             for (handle, class_name) in &per_scroll_scripts {
-                if script.bind_scroll(*handle, class_name, script_domains, capabilities) {
-                    scroll_init_count += 1;
-                }
+                script.bind_scroll(*handle, class_name);
+                scroll_init_count += 1;
             }
             if scroll_init_count > 0 {
                 tracing::info!(
-                    "Ran per-scroll Initialize on {scroll_init_count} scrolls \
+                    "Bound per-scroll scripts on {scroll_init_count} scrolls \
                      ({} instances persisted)",
                     script.scroll_instances.len()
                 );
             }
 
-            // ── Phase 1d: Per-waypoint Initialize ──
-            // For each scripted waypoint, call `Bind(class)` +
-            // `IWaypointScript::Initialize()` during mission load.
+            // ── Phase 1d: Per-waypoint binding ──
             // Each waypoint is its own VM instance so the heap
             // persists across traversals.
             let mut wp_init_count = 0u32;
@@ -2604,20 +2595,13 @@ impl EngineInner {
                     let Some(pid) = crate::ai::PathId::new(path_idx as u16) else {
                         continue;
                     };
-                    if script.bind_waypoint(
-                        pid,
-                        wp_idx as u8,
-                        class_name,
-                        script_domains,
-                        capabilities,
-                    ) {
-                        wp_init_count += 1;
-                    }
+                    script.bind_waypoint(pid, wp_idx as u8, class_name);
+                    wp_init_count += 1;
                 }
             }
             if wp_init_count > 0 {
                 tracing::info!(
-                    "Ran per-waypoint Initialize on {wp_init_count} waypoints \
+                    "Bound per-waypoint scripts on {wp_init_count} waypoints \
                      ({} instances persisted)",
                     script.waypoint_instances.len()
                 );

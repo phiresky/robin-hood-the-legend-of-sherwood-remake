@@ -53,6 +53,17 @@ impl ReplayPlayer {
         &mut self,
         timeline_frame: TimelineFrame,
     ) -> Result<ReplayFrameOrdinal, String> {
+        let ordinal = self.resolve_timeline_frame(timeline_frame)?;
+        self.current_frame = ordinal.number();
+        Ok(ordinal)
+    }
+
+    /// Resolve the same current-segment boundary as [`Self::seek_timeline_frame`]
+    /// without changing playback position, on either success or failure.
+    pub fn resolve_timeline_frame(
+        &self,
+        timeline_frame: TimelineFrame,
+    ) -> Result<ReplayFrameOrdinal, String> {
         let timeline_frame = timeline_frame.number();
         let segment_start = self
             .data
@@ -79,7 +90,6 @@ impl ReplayPlayer {
             .ok_or_else(|| {
                 format!("replay has no host transaction at timeline frame {timeline_frame}")
             })?;
-        self.current_frame = ordinal;
         Ok(ReplayFrameOrdinal::from_wire(ordinal))
     }
 

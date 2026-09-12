@@ -1149,7 +1149,6 @@ fn entropy_temporal(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result
     let (_sig, profiles) = SpriteScriptor::load_all_profiles_legacy(path.to_str().unwrap())
         .map_err(|e| anyhow!("load rhs {}: {e}", path.display()))?;
     let mut n_syms = 0u64;
-    let mut n_tiles_total = 0u64;
     let mut n_pairs = 0u64;
     let mut n_pairs_misaligned = 0u64;
     let mut n_exact = 0u64;
@@ -1196,7 +1195,6 @@ fn entropy_temporal(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result
                 }
                 let dtx = dx / 4;
                 let (cols_c, cols_p) = ((sc.width / 4) as i32, (sp.width / 4) as i32);
-                n_tiles_total += pc.len() as u64;
                 for (i, &x) in pc.iter().enumerate() {
                     let (col, row) = ((i as i32) % cols_c, (i as i32) / cols_c);
                     let above = if row > 0 {
@@ -1245,7 +1243,6 @@ fn entropy_temporal(holder: &FrameHolder, data_dir: &Path, name: &str) -> Result
             bits * n_syms as f64 / 8.0
         );
     }
-    let _ = n_tiles_total;
     Ok(())
 }
 
@@ -2904,11 +2901,13 @@ fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("mission {mission} not in manifest"))?;
     let mut total = 0u64;
     let mut by_bucket: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+    let mut sized = Vec::with_capacity(mission_ref.files.len());
     for rel in &mission_ref.files {
         let size = fs::metadata(data_out.join(rel))
             .with_context(|| format!("stat {rel}"))?
             .len();
         total += size;
+        sized.push((size, rel));
         let bucket = rel.split('/').next().unwrap_or("?").to_string();
         let e = by_bucket.entry(bucket).or_default();
         e.0 += 1;
@@ -2925,18 +2924,6 @@ fn mission_closure(data_out: &std::path::Path, mission: &str) -> Result<()> {
         mission_ref.files.len(),
         manifest_bytes + total
     );
-    let mut sized: Vec<(u64, &String)> = mission_ref
-        .files
-        .iter()
-        .map(|rel| {
-            (
-                fs::metadata(data_out.join(rel))
-                    .map(|m| m.len())
-                    .unwrap_or(0),
-                rel,
-            )
-        })
-        .collect();
     sized.sort_unstable_by(|a, b| b.cmp(a));
     for (size, rel) in sized.iter().take(20) {
         println!("    {size:>10}  {rel}");

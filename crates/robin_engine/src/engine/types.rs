@@ -2065,8 +2065,8 @@ impl<'de> Deserialize<'de> for MissionScript {
 /// Which instance map a bound script class belongs to.
 ///
 /// Used by [`MissionScript::bind_actor`] / [`MissionScript::bind_target`]
-/// / [`MissionScript::bind_scroll`] to reuse the same host-transfer and
-/// Initialize-dispatch plumbing across all three entity flavours.
+/// / [`MissionScript::bind_scroll`] to select the instance map for all three entity flavours.
+/// Initialization runs separately through the engine callback driver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptBindKind {
     Actor,
@@ -2468,71 +2468,28 @@ impl MissionScript {
     /// The resulting instance is inserted into `actor_instances` keyed by
     /// `handle`, so the Engine-owned [`ScriptVmKey::Actor`] driver finds it.
     ///
-    /// Returns `true` when the class was found and the instance was
-    /// stored. A referenced missing class is structural level corruption.
-    pub(crate) fn bind_actor(
-        &mut self,
-        handle: i32,
-        class_name: &str,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> bool {
-        self.bind_and_init(
-            handle,
-            class_name,
-            ScriptBindKind::Actor,
-            script_domains,
-            capabilities,
-        )
+    /// A referenced missing class is structural level corruption unless
+    /// virtual Spellforge bindings are enabled.
+    pub(crate) fn bind_actor(&mut self, handle: i32, class_name: &str) {
+        self.bind_instance(handle, class_name, ScriptBindKind::Actor)
     }
 
     /// Target analogue of [`bind_actor`]. Stores the created instance in
     /// `target_instances`; initialization is driven by `EngineInner`.
-    pub(crate) fn bind_target(
-        &mut self,
-        handle: i32,
-        class_name: &str,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> bool {
-        self.bind_and_init(
-            handle,
-            class_name,
-            ScriptBindKind::Target,
-            script_domains,
-            capabilities,
-        )
+    pub(crate) fn bind_target(&mut self, handle: i32, class_name: &str) {
+        self.bind_instance(handle, class_name, ScriptBindKind::Target)
     }
 
     /// Scroll analogue of [`bind_actor`]. Stores the created instance in
     /// `scroll_instances`; initialization is driven by `EngineInner`.
-    pub(crate) fn bind_scroll(
-        &mut self,
-        handle: i32,
-        class_name: &str,
-        script_domains: &mut super::ScriptDomains,
-        capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> bool {
-        self.bind_and_init(
-            handle,
-            class_name,
-            ScriptBindKind::Scroll,
-            script_domains,
-            capabilities,
-        )
+    pub(crate) fn bind_scroll(&mut self, handle: i32, class_name: &str) {
+        self.bind_instance(handle, class_name, ScriptBindKind::Scroll)
     }
 
     /// Shared implementation for [`bind_actor`], [`bind_target`], and
     /// [`bind_scroll`]: look up the class, create an instance, and insert it
     /// into the appropriate map.
-    fn bind_and_init(
-        &mut self,
-        handle: i32,
-        class_name: &str,
-        kind: ScriptBindKind,
-        _script_domains: &mut super::ScriptDomains,
-        _capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> bool {
+    fn bind_instance(&mut self, handle: i32, class_name: &str, kind: ScriptBindKind) {
         let class_idx = match self.manager.find_class(class_name) {
             Some(idx) => idx,
             None if self.spellforge_virtual_bindings_enabled => {
@@ -2542,7 +2499,7 @@ impl MissionScript {
                     ScriptBindKind::Scroll => ScriptVmKey::Scroll(handle),
                 };
                 self.spellforge_virtual_instances.insert(key);
-                return true;
+                return;
             }
             None => {
                 panic!("{kind:?} script class '{class_name}' not found in SCB (handle {handle})")
@@ -2561,7 +2518,6 @@ impl MissionScript {
                 self.scroll_instances.insert(handle, inst);
             }
         }
-        true
     }
 
     /// True if `handle` has a bound actor script that defines `fn_name`.
@@ -2581,22 +2537,20 @@ impl MissionScript {
     /// pair, creating a persistent `ScriptInstance`. `EngineInner` invokes
     /// `Initialize()` through the shared driver.
     ///
-    /// Returns `true` when the instance is stored; missing referenced classes
-    /// are structural level errors.
+    /// Missing referenced classes are structural level errors unless
+    /// virtual Spellforge bindings are enabled.
     pub(crate) fn bind_waypoint(
         &mut self,
         path_idx: crate::ai::PathId,
         wp_idx: u8,
         class_name: &str,
-        _script_domains: &mut super::ScriptDomains,
-        _capabilities: &crate::natives::NativeSessionCapabilities<'_>,
-    ) -> bool {
+    ) {
         let class_idx = match self.manager.find_class(class_name) {
             Some(idx) => idx,
             None if self.spellforge_virtual_bindings_enabled => {
                 self.spellforge_virtual_instances
                     .insert(ScriptVmKey::Waypoint(path_idx, wp_idx));
-                return true;
+                return;
             }
             None => panic!(
                 "Waypoint script class '{class_name}' (path {path_idx}, wp {wp_idx}) not found in SCB"
@@ -2604,7 +2558,6 @@ impl MissionScript {
         };
         let inst = self.manager.create_instance_idx(class_idx);
         self.waypoint_instances.insert((path_idx, wp_idx), inst);
-        true
     }
 
     /// Get a mutable reference to the ordered script effects.

@@ -4940,27 +4940,8 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
 fn bind_waypoint_inserts_instance() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
 
-    assert!(script.bind_waypoint(
-        crate::ai::PathId::new(2).unwrap(),
-        3,
-        "TestWaypoint",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_waypoint(crate::ai::PathId::new(2).unwrap(), 3, "TestWaypoint");
     assert!(
         script
             .waypoint_instances
@@ -4969,29 +4950,35 @@ fn bind_waypoint_inserts_instance() {
 }
 
 #[test]
+fn script_binding_registers_virtual_instances_without_scb_classes() {
+    let mut script = MissionScript::from_scb(scripted_waypoint_scb()).expect("from_scb");
+    script.enable_spellforge_virtual_bindings();
+    let path = crate::ai::PathId::new(2).unwrap();
+
+    script.bind_actor(10, "VirtualActor");
+    script.bind_target(20, "VirtualTarget");
+    script.bind_scroll(30, "VirtualScroll");
+    script.bind_waypoint(path, 3, "VirtualWaypoint");
+
+    for key in [
+        super::ScriptVmKey::Actor(10),
+        super::ScriptVmKey::Target(20),
+        super::ScriptVmKey::Scroll(30),
+        super::ScriptVmKey::Waypoint(path, 3),
+    ] {
+        assert!(
+            script.has_script_vm(key),
+            "virtual binding missing: {key:?}"
+        );
+        assert!(!script.has_scb_script_vm(key), "unexpected SCB VM: {key:?}");
+    }
+}
+
+#[test]
 #[should_panic(expected = "Waypoint script class 'NonExistent'")]
 fn bind_waypoint_rejects_missing_referenced_class() {
     let mut script = MissionScript::from_scb(scripted_waypoint_scb()).expect("from_scb");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
-    script.bind_waypoint(
-        crate::ai::PathId::new(4).unwrap(),
-        0,
-        "NonExistent",
-        &mut script_domains,
-        &capabilities,
-    );
+    script.bind_waypoint(crate::ai::PathId::new(4).unwrap(), 0, "NonExistent");
 }
 
 /// The Engine driver dispatches `ReachPoint(actor)` against the bound
@@ -5004,19 +4991,9 @@ fn waypoint_driver_dispatches_and_distinguishes_missing_vm() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(
-            &crate::sim_rng::test_context(),
-            &assets,
-            |script, script_domains, capabilities| {
-                assert!(script.bind_waypoint(
-                    crate::ai::PathId::new(0).unwrap(),
-                    0,
-                    "TestWaypoint",
-                    script_domains,
-                    capabilities,
-                ));
-            },
-        )
+        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
+            script.bind_waypoint(crate::ai::PathId::new(0).unwrap(), 0, "TestWaypoint");
+        })
         .expect("mission installed");
 
     // Bound: call dispatches cleanly.
@@ -5228,26 +5205,7 @@ fn waypoint_script_heap_round_trips_through_serde() {
     };
 
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
-    assert!(script.bind_waypoint(
-        crate::ai::PathId::new(3).unwrap(),
-        7,
-        "HeapWaypoint",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_waypoint(crate::ai::PathId::new(3).unwrap(), 7, "HeapWaypoint");
 
     // Poke distinct bytes into the heap so a zero reset is detectable.
     script

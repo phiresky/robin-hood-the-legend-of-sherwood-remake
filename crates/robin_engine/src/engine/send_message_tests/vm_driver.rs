@@ -787,27 +787,12 @@ fn shared_driver_preserves_a_b_a_activation_stack() {
     let assets = LevelAssets::new();
     let relay_id = engine.add_entity(scripted_soldier("RelayReceiver"));
     let b_handle = ScriptHandleCodec::actor_handle(relay_id);
-    let simulation = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("script installed")
-            .bind_actor(
-                b_handle,
-                "RelayReceiver",
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .bind_actor(b_handle, "RelayReceiver");
 
     engine
         .call_script_vm(
