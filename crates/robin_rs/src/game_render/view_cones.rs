@@ -137,7 +137,7 @@ struct ViewConeRenderSlice {
     projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
 }
 
-pub(super) fn view_cone_polys_for_render(
+fn view_cone_polys_for_render(
     viewer: GroundPoint,
     params: &crate::shadow_polygon::ViewParameters,
     obstacles_view: &engine_sight_obstacle::ObstacleList<'_>,
