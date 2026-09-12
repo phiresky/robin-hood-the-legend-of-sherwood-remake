@@ -196,8 +196,7 @@ impl Renderer {
     /// to the line direction — so diagonal lines render as a real line
     /// rather than the bounding-box outline placeholder. Used by the
     /// view-cone outlines and debug overlays.
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_gpu_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, r: u8, g: u8, b: u8) {
+    pub fn render_gpu_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, [r, g, b]: [u8; 3]) {
         let tint = Color::rgb(r, g, b).to_f32_srgb();
         // Axis-aligned single-pixel strips stay on the rect path to avoid
         // half-pixel rounding from the perpendicular offset.
@@ -275,8 +274,7 @@ impl Renderer {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_gpu_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8, a: u8) {
+    pub fn render_gpu_rect(&mut self, x: i32, y: i32, w: i32, h: i32, [r, g, b, a]: [u8; 4]) {
         self.frame.queued.push(QueuedDraw {
             dst: Rect { x, y, w, h },
             corners: None,
@@ -295,7 +293,7 @@ impl Renderer {
     /// BR]`) emits one real triangle `(A, B, C)` followed by a
     /// zero-area triangle `(C, B, C)`. Used by the debug shadow /
     /// view-cone overlays.
-    pub fn render_gpu_triangle(&mut self, pts: [(f32, f32); 3], r: u8, g: u8, b: u8, a: u8) {
+    pub fn render_gpu_triangle(&mut self, pts: [(f32, f32); 3], [r, g, b, a]: [u8; 4]) {
         self.frame.queued.push(QueuedDraw {
             dst: Rect {
                 x: 0,
