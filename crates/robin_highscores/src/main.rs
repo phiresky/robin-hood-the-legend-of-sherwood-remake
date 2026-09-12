@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use robin_highscores::{
     CampaignStore, Database, ReplayStore, ServerConfig, garbage_collect_campaigns,

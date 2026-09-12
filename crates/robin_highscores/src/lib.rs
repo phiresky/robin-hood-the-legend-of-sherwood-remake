@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Public high-score API, durable admission queue, and replay storage.
 //!
 //! The HTTP process never decides that a run is valid. It admits signed replay

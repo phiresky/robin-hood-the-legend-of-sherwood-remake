@@ -12,11 +12,11 @@ name = "robin-replay-verifier"
 path = "src/bin/robin-replay-verifier.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 anyhow.workspace = true
 bitcode.workspace = true
-ed25519-dalek = "3.0.0"
-nix = { version = "0.31", features = ["fs", "resource"] }
+ed25519-dalek.workspace = true
+nix = { workspace = true, features = ["fs", "resource"] }
 robin_engine.workspace = true
 robin_util.workspace = true
 robin_replay_format.workspace = true
@@ -31,7 +31,7 @@ walkdir = "2"
 
 [dev-dependencies]
 tempfile.workspace = true
-rand = "0.10"
+rand.workspace = true
 
 [lints]
 workspace = true
