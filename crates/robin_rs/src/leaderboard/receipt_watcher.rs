@@ -1122,6 +1122,7 @@ fn classify_service_error(error: LeaderboardServiceError) -> ReceiptWatcherOpera
         | Error::MissingStartingCampaign
         | Error::InvalidCompactReplay(_)
         | Error::UnexpectedContentType { .. }
+        | Error::MissingContentType
         | Error::RequestEncoding(_)
         | Error::HttpStatus { .. }
         | Error::Transport(_) => ReceiptWatcherOperationError::Permanent(error.to_string()),
