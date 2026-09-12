@@ -1849,34 +1849,61 @@ impl ShippingDatadir {
         self.asset_vfs().selection_snapshot().locale
     }
 
+    /// Capture selection once for the entire lookup. An installed active
+    /// identity must resolve; only an unselected locale or an absent asset is
+    /// optional. The borrowed pack stays valid if selection changes later.
+    fn active_locale(&self) -> Option<&ShippingLocale> {
+        let name = self.active_locale_name()?;
+        Some(
+            self.locale(&name)
+                .unwrap_or_else(|error| {
+                    panic!("invalid active shipping locale {name:?}: {error:#}")
+                })
+                .unwrap_or_else(|| panic!("active shipping locale {name:?} is not installed")),
+        )
+    }
+
     pub fn active_resource(&self, path: &str) -> Option<&ResourceManager> {
         if !is_locale_overlay_key(path) {
             return None;
         }
-        let locale = self.active_locale_name()?;
-        self.locale_resource(&locale, path).ok().flatten()
+        let locale = self.active_locale()?;
+        locale.res_files.get(&canonical_shipping_asset_key(path))
     }
 
     pub fn active_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
-        let locale = self.active_locale_name()?;
-        self.locale_pak(&locale, path).ok().flatten()
+        let locale = self.active_locale()?;
+        locale
+            .pak_files
+            .get(&canonical_shipping_asset_key(path))
+            .map(Vec::as_slice)
     }
 
     pub fn localized_pak(&self, path: &str) -> Option<&[EncodedPicture]> {
-        if self.active_locale_name().is_some() {
+        self.localized_pak_for_locale(path, self.active_locale())
+    }
+
+    fn localized_pak_for_locale<'a>(
+        &'a self,
+        path: &str,
+        locale: Option<&'a ShippingLocale>,
+    ) -> Option<&'a [EncodedPicture]> {
+        let key = canonical_shipping_asset_key(path);
+        if let Some(locale) = locale {
             // PAKs under locale roots commonly bake translated titles into
             // their pixels. A v5 manifest must not substitute the top-level
             // compatibility pack when the selected locale omitted one.
-            self.active_pak(path)
+            locale.pak_files.get(&key).map(Vec::as_slice)
         } else {
-            let key = canonical_shipping_asset_key(path);
             self.pak_files.get(&key).map(Vec::as_slice)
         }
     }
 
     pub fn active_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
-        let locale = self.active_locale_name()?;
-        self.locale_level_descriptors(&locale, path).ok().flatten()
+        let locale = self.active_locale()?;
+        let key = canonical_shipping_asset_key(path);
+        let filename = key.rsplit('/').next().unwrap_or(&key);
+        locale.red_files.get(filename)
     }
 
     /// Resolve locale-specific metadata first, then the shared descriptor.
@@ -1884,12 +1911,19 @@ impl ShippingDatadir {
     /// Level.res strings live in the locale overlay. Reusing those indices is
     /// not permission to fall back to another locale's strings or resources.
     pub fn localized_level_descriptors(&self, path: &str) -> Option<&LevelDescriptors> {
-        let localized = self.active_locale_name().is_some();
-        if localized && let Some(descriptor) = self.active_level_descriptors(path) {
-            return Some(descriptor);
-        }
+        self.localized_level_descriptors_for_locale(path, self.active_locale())
+    }
+
+    fn localized_level_descriptors_for_locale<'a>(
+        &'a self,
+        path: &str,
+        locale: Option<&'a ShippingLocale>,
+    ) -> Option<&'a LevelDescriptors> {
         let key = canonical_shipping_asset_key(path);
         let filename = key.rsplit('/').next().unwrap_or(&key);
+        if let Some(descriptor) = locale.and_then(|assets| assets.red_files.get(filename)) {
+            return Some(descriptor);
+        }
         // Existing shipping producers retain the original mixed-case RED
         // filename in the shared map; locale maps use canonical keys. Accept
         // both without changing the payload format or regenerating stock data.
@@ -1902,7 +1936,7 @@ impl ShippingDatadir {
             matches.next().is_none(),
             "ambiguous shared level descriptor {filename}"
         );
-        if localized
+        if locale.is_some()
             && (descriptor.custom_popup_texts.iter().any(Option::is_some)
                 || descriptor
                     .custom_short_briefings
@@ -1922,10 +1956,7 @@ impl ShippingDatadir {
     /// titles. Engine construction must use the language-independent top-level
     /// `profiles` index so a client locale cannot alter simulation data.
     pub fn active_profiles(&self) -> Option<&ProfileManager> {
-        let locale = self.active_locale_name()?;
-        self.locales
-            .get(&locale)
-            .and_then(|assets| assets.profiles.as_ref())
+        self.active_locale()?.profiles.as_ref()
     }
 
     /// Parse a shipping datadir blob: zstd decompress + native bitcode decode.
@@ -3005,6 +3036,99 @@ mod tests {
         let ShippingAssets { datadir, .. } =
             ShippingAssets::install(Arc::new(datadir), Arc::new(AssetVfs::new())).unwrap();
         Arc::try_unwrap(datadir).unwrap()
+    }
+
+    #[test]
+    fn captured_locale_keeps_pak_and_descriptor_policy_after_selection_changes() {
+        let mut datadir = ShippingDatadir::default();
+        datadir
+            .pak_files
+            .insert("interface/title.pak".into(), vec![]);
+        datadir
+            .pak_files
+            .insert("interface/missing.pak".into(), vec![]);
+        let mut shared = LevelDescriptors::default();
+        shared.custom_short_briefings.push(Some("Base text".into()));
+        datadir.red_files.insert("RHLevelSB.red".into(), shared);
+        let mut locale = ShippingLocale::default();
+        locale.pak_files.insert(
+            "interface/title.pak".into(),
+            vec![EncodedPicture::jxl_rgba565_keyed(vec![1])],
+        );
+        datadir.locales.insert("de-DE".into(), locale);
+        let datadir = install_fixture(datadir);
+        datadir.set_active_locale(Some("de-DE")).unwrap();
+        let captured = datadir.active_locale();
+        datadir.set_active_locale(None).unwrap();
+
+        assert_eq!(
+            datadir
+                .localized_pak_for_locale("Data/Interface/Title.pak", captured)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            datadir
+                .localized_pak_for_locale("Data/Interface/Missing.pak", captured)
+                .is_none()
+        );
+        assert!(
+            datadir
+                .localized_level_descriptors_for_locale("RHLevelSB.red", captured)
+                .is_none()
+        );
+        // Subsequent independent lookups see the newly selected base assets.
+        assert_eq!(
+            datadir
+                .localized_pak("Data/Interface/Title.pak")
+                .unwrap()
+                .len(),
+            0
+        );
+        assert!(
+            datadir
+                .localized_level_descriptors("RHLevelSB.red")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn valid_selected_locale_keeps_missing_assets_optional() {
+        let mut datadir = ShippingDatadir::default();
+        datadir
+            .locales
+            .insert("de-DE".into(), ShippingLocale::default());
+        let datadir = install_fixture(datadir);
+        datadir.set_active_locale(Some("de-DE")).unwrap();
+        assert!(datadir.active_resource("Data/Text/Level.res").is_none());
+        assert!(datadir.active_pak("Data/Interface/Missing.pak").is_none());
+        assert!(datadir.active_level_descriptors("missing.red").is_none());
+        assert!(datadir.active_profiles().is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid active shipping locale")]
+    fn invalid_active_locale_cannot_masquerade_as_missing_resource() {
+        let datadir = install_fixture(ShippingDatadir::default());
+        // Generic VFS selection can be configured independently of this
+        // manifest. Shipping lookup must detect that broken invariant.
+        datadir
+            .asset_vfs()
+            .select_locale(Some("@bad@".into()), None)
+            .unwrap();
+        datadir.active_resource("Data/Text/Level.res");
+    }
+
+    #[test]
+    #[should_panic(expected = "is not installed")]
+    fn uninstalled_active_locale_cannot_fall_back_to_shared_descriptors() {
+        let datadir = install_fixture(ShippingDatadir::default());
+        datadir
+            .asset_vfs()
+            .select_locale(Some("de-DE".into()), None)
+            .unwrap();
+        datadir.localized_level_descriptors("RHLevelSB.red");
     }
 
     #[test]
