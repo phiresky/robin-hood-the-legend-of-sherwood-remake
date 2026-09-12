@@ -618,13 +618,13 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
 
         let body = make_test_ai_soldier(Camp::Lacklandists);
         let observer = make_test_ai_soldier(Camp::Lacklandists);
-        let (body_id, observer_id) = if body_before_observer {
-            (engine.add_entity(body), engine.add_entity(observer))
-        } else {
-            let observer_id = engine.add_entity(observer);
-            let body_id = engine.add_entity(body);
-            (body_id, observer_id)
-        };
+        let (body_id, observer_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                body,
+                observer,
+                body_before_observer,
+            );
 
         for (id, x) in [(observer_id, 0.0), (body_id, 40.0)] {
             let Entity::Soldier(soldier) = engine
@@ -1241,13 +1241,13 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
 
         let attacker = make_test_ai_soldier(Camp::Lacklandists);
         let officer = make_test_ai_soldier(Camp::Lacklandists);
-        let (attacker_id, officer_id) = if attacker_before_officer {
-            (engine.add_entity(attacker), engine.add_entity(officer))
-        } else {
-            let officer_id = engine.add_entity(officer);
-            let attacker_id = engine.add_entity(attacker);
-            (attacker_id, officer_id)
-        };
+        let (attacker_id, officer_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                attacker,
+                officer,
+                attacker_before_officer,
+            );
         let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
 
         for (id, x) in [(officer_id, 0.0), (attacker_id, 120.0)] {
@@ -2345,13 +2345,13 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
 
         let source = make_test_ai_soldier(Camp::Royalists);
         let listener = make_test_ai_soldier(Camp::Royalists);
-        let (source_id, listener_id) = if source_before_listener {
-            (engine.add_entity(source), engine.add_entity(listener))
-        } else {
-            let listener_id = engine.add_entity(listener);
-            let source_id = engine.add_entity(source);
-            (source_id, listener_id)
-        };
+        let (source_id, listener_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                source,
+                listener,
+                source_before_listener,
+            );
         let target_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
 
         for (id, x) in [(source_id, 0.0), (listener_id, 20.0), (target_id, 80.0)] {

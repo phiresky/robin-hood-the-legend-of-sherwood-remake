@@ -159,14 +159,7 @@ fn build_scb() -> ScbFile {
         quads: reject_quads,
     };
 
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -1031,14 +1024,7 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
         quads: inner_quads,
     };
 
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,

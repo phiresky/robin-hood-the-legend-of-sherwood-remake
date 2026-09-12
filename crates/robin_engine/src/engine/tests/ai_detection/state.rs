@@ -684,13 +684,13 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
             .extend([Camp::Royalists, Camp::Lacklandists]);
         let waker = make_test_ai_soldier(Camp::Royalists);
         let observer = make_test_ai_soldier(Camp::Lacklandists);
-        let (waker_id, observer_id) = if waker_before_observer {
-            (engine.add_entity(waker), engine.add_entity(observer))
-        } else {
-            let observer_id = engine.add_entity(observer);
-            let waker_id = engine.add_entity(waker);
-            (waker_id, observer_id)
-        };
+        let (waker_id, observer_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                waker,
+                observer,
+                waker_before_observer,
+            );
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
