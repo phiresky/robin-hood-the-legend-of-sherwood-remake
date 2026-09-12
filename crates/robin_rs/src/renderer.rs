@@ -833,11 +833,6 @@ impl Renderer {
         self.frame.is_gpu_phase()
     }
 
-    /// Resolve the "surface 1 means surface 0" alias.
-    fn resolve_id(&self, id: u32) -> u32 {
-        GpuResources::resolve_surface_id(id)
-    }
-
     pub fn create_color_16(r: u8, g: u8, b: u8) -> u16 {
         robin_util::color::rgb565(r, g, b)
     }
