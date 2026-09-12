@@ -199,8 +199,8 @@ pub(super) fn begin_capture_frame_rgba(
         });
     frame.encode_pass1_to_rt(&mut encoder, pipelines, resources);
     tracing::info!(target: "fps", residency = ?resources.sprite_residency_stats(),
-        quads = frame.queued.len(), drawcalls = super::bind_counter::take_draw_calls(),
-        binds = super::bind_counter::take_count(), "capture residency");
+        quads = frame.queued.len(), drawcalls = frame.diagnostics.take_draw_calls(),
+        binds = frame.diagnostics.take_binds(), "capture residency");
     let submitted = submit(gpu, frame, encoder);
     // Submission consumes commands even when subsequent mapping fails.
     frame.clear_recording();

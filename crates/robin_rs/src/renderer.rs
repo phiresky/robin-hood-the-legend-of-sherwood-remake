@@ -991,6 +991,7 @@ impl Renderer {
             rgb565_to_color_shadow_rgba(pixels, TRANSPARENT_COLOR_KEY_16);
         let (opaque_texture, opaque_view) = upload_rgba_texture(
             &self.gpu,
+            &self.resources.uploads,
             &opaque_rgba,
             width as u32,
             height as u32,
@@ -1005,6 +1006,7 @@ impl Renderer {
         );
         let (color_texture, color_view) = upload_rgba_texture(
             &self.gpu,
+            &self.resources.uploads,
             &color_rgba,
             width as u32,
             height as u32,
@@ -1020,6 +1022,7 @@ impl Renderer {
         let (shadow_texture, shadow_view, shadow_bg) = if let Some(shadow_rgba) = shadow_rgba {
             let (texture, view) = upload_rgba_texture(
                 &self.gpu,
+                &self.resources.uploads,
                 &shadow_rgba,
                 width as u32,
                 height as u32,
@@ -1282,8 +1285,14 @@ impl Renderer {
         } else {
             rgb565_to_rgba_opaque(pixels, width as usize, height as usize)
         };
-        let (texture, view) =
-            upload_rgba_texture(&self.gpu, &rgba, width as u32, height as u32, label);
+        let (texture, view) = upload_rgba_texture(
+            &self.gpu,
+            &self.resources.uploads,
+            &rgba,
+            width as u32,
+            height as u32,
+            label,
+        );
         let bind_group = make_tex_bg(
             &self.gpu.device,
             &self.resources.bgl_tex,
@@ -1317,8 +1326,14 @@ impl Renderer {
             );
             return None;
         }
-        let (texture, view) =
-            upload_rgba_texture(&self.gpu, rgba, width as u32, height as u32, label);
+        let (texture, view) = upload_rgba_texture(
+            &self.gpu,
+            &self.resources.uploads,
+            rgba,
+            width as u32,
+            height as u32,
+            label,
+        );
         let bind_group = make_tex_bg(
             &self.gpu.device,
             &self.resources.bgl_tex,
@@ -1838,8 +1853,14 @@ impl Renderer {
                 );
                 mask.generation = generation;
             } else {
-                let (texture, view) =
-                    upload_rgba_texture(&self.gpu, &rgba, width, height, "smooth fog mask");
+                let (texture, view) = upload_rgba_texture(
+                    &self.gpu,
+                    &self.resources.uploads,
+                    &rgba,
+                    width,
+                    height,
+                    "smooth fog mask",
+                );
                 let bind_group = make_tex_bg(
                     &self.gpu.device,
                     &self.resources.bgl_tex,
@@ -2349,6 +2370,7 @@ impl Renderer {
 
         let (_texture, view) = upload_rgba_texture(
             &self.gpu,
+            &self.resources.uploads,
             &rgba,
             out_w as u32,
             out_h as u32,
@@ -2526,7 +2548,14 @@ impl Renderer {
         let pitch = (w as usize) * 4;
         let mut rgba = vec![0u8; pitch * h as usize];
         font.render_to_rgba(&mut rgba, w as i32, h as i32, pitch, text, 0, 0);
-        let (_tex, view) = upload_rgba_texture(&self.gpu, &rgba, w, h, "tt scratch");
+        let (_tex, view) = upload_rgba_texture(
+            &self.gpu,
+            &self.resources.uploads,
+            &rgba,
+            w,
+            h,
+            "tt scratch",
+        );
         let tex_idx = self.queue_frame_texture(&view);
         self.frame.queued.push(QueuedDraw {
             dst: Rect {
@@ -2588,7 +2617,14 @@ impl Renderer {
         height: u32,
         label: &str,
     ) -> (wgpu::Texture, wgpu::TextureView) {
-        upload_rgba_texture(&self.gpu, rgba, width, height, label)
+        upload_rgba_texture(
+            &self.gpu,
+            &self.resources.uploads,
+            rgba,
+            width,
+            height,
+            label,
+        )
     }
 
     /// Read access to the wgpu context — needed by callers that want
@@ -2906,14 +2942,15 @@ fn rgb565_to_color_shadow_rgba(src: &[u16], color_key: u16) -> (Vec<u8>, Option<
 }
 
 /// Allocate a `Rgba8UnormSrgb` 2D texture and upload `rgba` into it.
-pub(crate) fn upload_rgba_texture(
+fn upload_rgba_texture(
     gpu: &GpuContext,
+    uploads: &diagnostics::UploadCounters,
     rgba: &[u8],
     width: u32,
     height: u32,
     label: &str,
 ) -> (wgpu::Texture, wgpu::TextureView) {
-    upload_counter::inc(label);
+    uploads.inc(label);
     let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -3021,190 +3058,6 @@ fn clip_dst_to_uv(dst: Rect, clip: Rect) -> Option<(Rect, [f32; 4])> {
     let u1 = (x1 - i64::from(dst.x)) as f32 / dw;
     let v1 = (y1 - i64::from(dst.y)) as f32 / dh;
     Some((clipped, [u0, v0, u1, v1]))
-}
-
-/// Per-second FPS counter + per-frame draw / upload counts logged at
-/// debug level. One mutex take per `present`; residency keys are scanned only
-/// at reporting cadence. Run with `RUST_LOG=fps=debug`.
-fn log_fps(
-    draws_this_frame: usize,
-    uploads_this_frame: usize,
-    binds_this_frame: usize,
-    draw_calls_this_frame: usize,
-    present_us: u64,
-    resources: &GpuResources,
-) {
-    use std::sync::OnceLock;
-    static STATE: OnceLock<std::sync::Mutex<FpsState>> = OnceLock::new();
-    struct FpsState {
-        frames: u32,
-        draws_total: usize,
-        uploads_total: usize,
-        binds_total: usize,
-        draw_calls_total: usize,
-        present_total_us: u64,
-        last: web_time::Instant,
-    }
-    let m = STATE.get_or_init(|| {
-        std::sync::Mutex::new(FpsState {
-            frames: 0,
-            draws_total: 0,
-            uploads_total: 0,
-            binds_total: 0,
-            draw_calls_total: 0,
-            present_total_us: 0,
-            last: web_time::Instant::now(),
-        })
-    });
-    let mut g = m.lock().unwrap();
-    g.frames += 1;
-    g.draws_total += draws_this_frame;
-    g.uploads_total += uploads_this_frame;
-    g.binds_total += binds_this_frame;
-    g.draw_calls_total += draw_calls_this_frame;
-    g.present_total_us = g.present_total_us.wrapping_add(present_us);
-    if g.last.elapsed().as_secs() >= 1 {
-        let atlas = resources.sprite_atlas.stats();
-        let residency = resources.sprite_residency_stats();
-        let avg_draws = g.draws_total / g.frames as usize;
-        let avg_uploads = g.uploads_total / g.frames as usize;
-        let avg_binds = g.binds_total / g.frames as usize;
-        let avg_draw_calls = g.draw_calls_total / g.frames as usize;
-        let present_avg_us = g.present_total_us / u64::from(g.frames);
-        let upload_labels = upload_counter::take_labels();
-        tracing::debug!(
-            target: "fps",
-            sprite_cache_entries = residency.entries,
-            distinct_sprite_frames = residency.distinct_frames,
-            resident_sprite_bytes = residency.resident_bytes,
-            atlas_packing_efficiency = atlas.packing_efficiency(),
-            "{} fps  quads/f={}  drawcalls/f={}  binds/f={}  uploads/f={}  \
-             present={:.2}ms  atlas={}L/{:.0}MiB/{:.0}%occ/{}spr  upload_labels={}",
-            g.frames, avg_draws, avg_draw_calls, avg_binds, avg_uploads,
-            present_avg_us as f32 / 1000.0,
-            atlas.layers,
-            atlas.bytes() as f32 / (1024.0 * 1024.0),
-            atlas.occupancy() * 100.0,
-            atlas.sprites,
-            upload_labels,
-        );
-        g.frames = 0;
-        g.draws_total = 0;
-        g.uploads_total = 0;
-        g.binds_total = 0;
-        g.draw_calls_total = 0;
-        g.present_total_us = 0;
-        g.last = web_time::Instant::now();
-    }
-}
-
-/// Per-frame upload counter. `upload_rgba_texture` bumps it; `present`
-/// drains it into the `fps` log line so we can see the rate of
-/// fresh GPU texture allocations.
-mod upload_counter {
-    use std::collections::HashMap;
-    use std::fmt::Write as _;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, OnceLock};
-
-    static N: AtomicUsize = AtomicUsize::new(0);
-    static LABELS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
-
-    pub fn inc(label: &str) {
-        N.fetch_add(1, Ordering::Relaxed);
-        let labels = LABELS.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut labels = labels.lock().unwrap();
-        if let Some(count) = labels.get_mut(label) {
-            *count += 1;
-        } else {
-            labels.insert(label.to_owned(), 1);
-        }
-    }
-
-    pub fn take_count() -> usize {
-        N.swap(0, Ordering::Relaxed)
-    }
-
-    pub fn take_labels() -> String {
-        let Some(labels) = LABELS.get() else {
-            return "-".to_string();
-        };
-        let entries = {
-            let mut labels = labels.lock().unwrap();
-            labels.drain().collect()
-        };
-        format_labels(entries)
-    }
-
-    fn format_labels(mut entries: Vec<(String, usize)>) -> String {
-        if entries.is_empty() {
-            return "-".to_string();
-        }
-        entries.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        let mut summary = String::new();
-        for (index, (label, count)) in entries.into_iter().take(6).enumerate() {
-            if index > 0 {
-                summary.push(',');
-            }
-            write!(summary, "{label}:{count}").expect("writing to a String cannot fail");
-        }
-        summary
-    }
-
-    #[test]
-    fn label_summary_preserves_count_order_ties_limit_and_empty_marker() {
-        assert_eq!(format_labels(Vec::new()), "-");
-        let entries = [
-            ("z", 2),
-            ("f", 1),
-            ("a", 2),
-            ("e", 1),
-            ("b", 3),
-            ("d", 1),
-            ("c", 1),
-        ]
-        .into_iter()
-        .map(|(label, count)| (label.to_owned(), count))
-        .collect();
-        assert_eq!(format_labels(entries), "b:3,a:2,z:2,c:1,d:1,e:1");
-        assert_eq!(
-            format_labels(vec![("font atlas".to_owned(), 1)]),
-            "font atlas:1"
-        );
-    }
-}
-
-/// Counts `set_bind_group(1, …)` calls issued while encoding the scene
-/// pass.
-///
-/// This is the number the sprite atlas is meant to move: before it,
-/// every sprite owned a texture and so forced its own texture bind, and
-/// `binds/f` tracked `draws/f` almost exactly. Packed into shared
-/// layers, a run of sprites from one layer costs a single bind.
-/// …and the `draw` calls actually recorded, which is not the same as
-/// the number of queued quads once consecutive same-state draws are
-/// coalesced into one contiguous vertex range.
-mod bind_counter {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static BINDS: AtomicUsize = AtomicUsize::new(0);
-    static DRAW_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-    pub fn inc() {
-        BINDS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn inc_draw_call() {
-        DRAW_CALLS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn take_count() -> usize {
-        BINDS.swap(0, Ordering::Relaxed)
-    }
-
-    pub fn take_draw_calls() -> usize {
-        DRAW_CALLS.swap(0, Ordering::Relaxed)
-    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -4238,3 +4091,5 @@ mod tests {
         assert_eq!(rgba[2], 0);
     }
 }
+
+mod diagnostics;
