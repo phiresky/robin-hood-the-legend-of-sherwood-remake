@@ -1817,7 +1817,7 @@ impl EngineInner {
             rotation_per_frame: signed_rotation,
             direction,
             strike,
-            attacker_profile_idx: profile_idx,
+            attacker_profile_idx: Some(profile_idx),
             gesture_quality,
             strike_kind,
         };
