@@ -3314,66 +3314,13 @@ impl EngineInner {
             // estimation.  Use `INVERSE_SWORDFIGHT_ASPECT_RATIO`
             // (= 1.0): the isometric correction is intentionally
             // disabled for sword-fight math.
-            let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
-            let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
-            let nearby: Vec<crate::combat::NearbyVictim> = self
-                .world
-                .entities
-                .humans()
-                .filter_map(|(eid, e)| {
-                    let elem = e.element_data();
-                    if !should_collect_strike_estimation_human(
-                        eid.into(),
-                        attack.soldier_id,
-                        Some(attack.target_id),
-                        elem.active,
-                    ) {
-                        return None;
-                    }
-                    let eligible_for_regular_strikes = is_possible_sword_strike_victim(
-                        &self.world.entities,
-                        attack.soldier_id,
-                        e,
-                        eid,
-                        &assets.profile_manager,
-                        &self.world.fast_grid,
-                        obstacles,
-                    );
-                    let vdx = elem.position_map().x - attack.attacker_pos.0;
-                    let vdy = (elem.position_map().y - attack.attacker_pos.1) * inv_aspect;
-                    let dist = (vdx * vdx + vdy * vdy).sqrt();
-                    let sector =
-                        crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
-                    let def_wid = get_hth_weapon_id_full(e, &assets.profile_manager);
-                    let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
-                    let lp = get_life_points(e);
-                    // Check if this victim is walking with a sword (for
-                    // circle-strike approach tolerance).
-                    let is_walking_with_sword = e
-                        .actor_data()
-                        .map(|a| a.action_state == ActionState::MovingSword)
-                        .unwrap_or(false);
-                    Some(crate::combat::NearbyVictim {
-                        is_active: elem.active,
-                        eligible_for_regular_strikes,
-                        dx: vdx,
-                        dy_stretched: vdy,
-                        distance: dist,
-                        direction_sector: sector,
-                        camp: e.camp(),
-                        facing_direction: elem.direction(),
-                        elevation: elem.position().z,
-                        life_points: lp,
-                        defender_profile: def_prof,
-                        is_primary_target: eid == attack.target_id,
-                        is_walking_with_sword,
-                    })
-                })
-                .collect();
+            let nearby = self.collect_strike_estimation_victims(
+                assets,
+                attack.soldier_id,
+                attack.attacker_pos,
+                Some(attack.target_id),
+                attack.target_id,
+            );
 
             let ctx = crate::combat::StrikeSelectionContext {
                 attacker_profile,
