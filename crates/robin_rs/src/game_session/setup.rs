@@ -664,7 +664,7 @@ pub(super) fn load_mission_sprites(
     // ── Titbit renderer ──
     // Upload and retain the GPU textures for every titbit sprite row.
     let mut titbit_renderer = TitbitRenderer::new();
-    titbit_renderer.load(cursor_res, renderer.gpu(), visual_shadow_color);
+    titbit_renderer.load(cursor_res, renderer, visual_shadow_color);
     // Row frame counts were absorbed by the engine at construction via
     // `EngineArgs::titbit_row_frame_counts`; no post-load setter needed.
     timer.step("titbit renderer");

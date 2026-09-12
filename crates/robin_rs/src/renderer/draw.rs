@@ -6,16 +6,16 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub fn draw_rect_outline_screen(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u16) {
         let (r, g, b) = rgb565_to_rgb8(color);
-        self.render_gpu_line(x1, y1, x2, y1, r, g, b);
-        self.render_gpu_line(x2, y1, x2, y2, r, g, b);
-        self.render_gpu_line(x2, y2, x1, y2, r, g, b);
-        self.render_gpu_line(x1, y2, x1, y1, r, g, b);
+        self.render_gpu_line(x1, y1, x2, y1, [r, g, b]);
+        self.render_gpu_line(x2, y1, x2, y2, [r, g, b]);
+        self.render_gpu_line(x2, y2, x1, y2, [r, g, b]);
+        self.render_gpu_line(x1, y2, x1, y1, [r, g, b]);
     }
 
     /// Draw a line on the GPU overlay layer. RGB565 color in.
     pub fn draw_line_screen(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u16) {
         let (r, g, b) = rgb565_to_rgb8(color);
-        self.render_gpu_line(x1, y1, x2, y2, r, g, b);
+        self.render_gpu_line(x1, y1, x2, y2, [r, g, b]);
     }
 
     /// Fill a rect on the GPU overlay layer. `rect=None` fills the
@@ -31,7 +31,7 @@ impl Renderer {
             ),
             None => (0, 0, self.frame.width as i32, self.frame.height as i32),
         };
-        self.render_gpu_rect(x, y, w, h, r, g, b, 255);
+        self.render_gpu_rect(x, y, w, h, [r, g, b, 255]);
         true
     }
 

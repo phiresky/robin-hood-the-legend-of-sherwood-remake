@@ -376,7 +376,7 @@ impl Renderer {
         height_field: &crate::loading_screen::HeightField,
     ) -> Option<crate::loading_dissolve_gpu::LoadingDissolveTextures> {
         crate::loading_dissolve_gpu::upload_textures(
-            &self.gpu,
+            self,
             width,
             height,
             initial_pixels,

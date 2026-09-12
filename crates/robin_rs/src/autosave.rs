@@ -9,6 +9,7 @@
 use crate::game::Game;
 use crate::host::Host;
 use crate::save_file::{GameSaveFile, SaveProvenance, Thumbnail};
+#[cfg(test)]
 pub(crate) use crate::savegame::autosave_store::payload_exists;
 use crate::savegame::autosave_store::*;
 pub use crate::savegame::autosave_store::{AUTOSAVE_SLOT_COUNT, AutosaveManifest};

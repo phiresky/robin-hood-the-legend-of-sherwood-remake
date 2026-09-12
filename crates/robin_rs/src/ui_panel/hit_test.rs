@@ -191,7 +191,7 @@ pub fn hit_test_portrait_detailed(
 
         let entity = engine.get_entity(pc_id);
         if entity.is_none() {
-            tracing::warn!(pc_id, "portrait hit test references a missing entity");
+            tracing::warn!(?pc_id, "portrait hit test references a missing entity");
             continue;
         }
         let is_selected = engine.hero_selection(local_seat).contains(&pc_id);

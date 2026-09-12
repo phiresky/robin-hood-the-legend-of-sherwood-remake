@@ -1,5 +1,5 @@
 use crate::loading_screen::HeightField;
-use crate::renderer::{rgb565_to_rgb8, upload_rgba_texture};
+use crate::renderer::{Renderer, rgb565_to_rgb8};
 use crate::window::GpuContext;
 
 pub struct LoadingDissolveTextures {
@@ -102,7 +102,7 @@ pub(crate) fn build_pipeline(
 }
 
 pub(crate) fn upload_textures(
-    gpu: &GpuContext,
+    renderer: &Renderer,
     width: u32,
     height: u32,
     initial_pixels: impl ExactSizeIterator<Item = u16>,
@@ -128,16 +128,17 @@ pub(crate) fn upload_textures(
     let mut rgba = Vec::with_capacity(expected * 4);
     rgb565_to_rgba_opaque(initial_pixels, &mut rgba);
     let (initial_texture, initial_view) =
-        upload_rgba_texture(gpu, &rgba, width, height, "loading initial");
+        renderer.create_static_rgba_texture(&rgba, width, height, "loading initial");
     rgb565_to_rgba_opaque(final_pixels, &mut rgba);
     let (final_texture, final_view) =
-        upload_rgba_texture(gpu, &rgba, width, height, "loading final");
+        renderer.create_static_rgba_texture(&rgba, width, height, "loading final");
     rgba.clear();
     for &h in &height_field.data {
         rgba.extend_from_slice(&[h, h, h, 255]);
     }
 
-    let (mask_texture, mask_view) = upload_rgba_texture(gpu, &rgba, width, height, "loading mask");
+    let (mask_texture, mask_view) =
+        renderer.create_static_rgba_texture(&rgba, width, height, "loading mask");
 
     Some(LoadingDissolveTextures {
         _initial_texture: initial_texture,
