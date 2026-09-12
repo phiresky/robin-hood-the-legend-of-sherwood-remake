@@ -1086,10 +1086,8 @@ impl MissionEndLeaderboardController {
                 PeerCoSignPoll::Signing(progress) => {
                     MissionSubmissionState::AwaitingParticipantSignatures(progress)
                 }
-                PeerCoSignPoll::ResponseSent(progress) => {
-                    let _ = progress;
-                    MissionSubmissionState::Uploading
-                }
+                // Signature progress is complete; the UI now follows upload status.
+                PeerCoSignPoll::ResponseSent(_) => MissionSubmissionState::Uploading,
                 PeerCoSignPoll::Accepted(accepted) => MissionSubmissionState::Queued(accepted),
                 PeerCoSignPoll::Failed(error) => MissionSubmissionState::Failed(error),
             });

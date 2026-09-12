@@ -1514,25 +1514,10 @@ impl RankedSessionHost {
             ));
         }
         let expected_genesis = self.genesis.canonical_digest().map_err(invalid_document)?;
-        if claim.session_genesis_sha256 != expected_genesis
-            || claim.host_endpoint_id != self.genesis.claim.host_public_key
-            || claim.replay_session_id != self.genesis.claim.replay_session_id
-            || claim.host_nonce != self.genesis.claim.host_nonce
+        if !claim_binds_genesis(claim, &self.genesis, expected_genesis)
             || claim.join_event_ordinal
                 != u32::try_from(self.observations.len()).unwrap_or(u32::MAX)
             || claim.connection_epoch != 0
-            || claim.mission_id != self.genesis.claim.ranked_session.mission_id
-            || claim.content_manifest_sha256
-                != self.genesis.claim.ranked_session.content_manifest_sha256
-            || claim.rules_config_sha256 != self.genesis.claim.ranked_session.rules_config_sha256
-            || claim.ruleset_manifest_sha256
-                != self.genesis.claim.ranked_session.ruleset_manifest_sha256
-            || claim.competition_manifest_sha256
-                != self
-                    .genesis
-                    .claim
-                    .ranked_session
-                    .competition_manifest_sha256
             || claim.seat == 0
             || self.participants.contains_key(&claim.seat)
             || self.owner_seats.contains_key(&claim.public_key)
@@ -1599,22 +1584,7 @@ impl RankedSessionHost {
             || claim.connection_epoch != expected_epoch
             || claim.join_event_ordinal
                 != u32::try_from(self.observations.len()).unwrap_or(u32::MAX)
-            || claim.session_genesis_sha256 != expected_genesis
-            || claim.host_endpoint_id != self.genesis.claim.host_public_key
-            || claim.replay_session_id != self.genesis.claim.replay_session_id
-            || claim.host_nonce != self.genesis.claim.host_nonce
-            || claim.mission_id != self.genesis.claim.ranked_session.mission_id
-            || claim.content_manifest_sha256
-                != self.genesis.claim.ranked_session.content_manifest_sha256
-            || claim.rules_config_sha256 != self.genesis.claim.ranked_session.rules_config_sha256
-            || claim.ruleset_manifest_sha256
-                != self.genesis.claim.ranked_session.ruleset_manifest_sha256
-            || claim.competition_manifest_sha256
-                != self
-                    .genesis
-                    .claim
-                    .ranked_session
-                    .competition_manifest_sha256
+            || !claim_binds_genesis(claim, &self.genesis, expected_genesis)
         {
             return Err(RankedSessionError::ParticipantNotAdmitted(
                 "reconnect claim does not match the current ranked session boundary".to_string(),
@@ -2960,4 +2930,22 @@ struct SeatClaimIdentity {
     participant_instance_id: Digest32,
     seat: u16,
     connection_epoch: u32,
+}
+
+/// Compare immutable session bindings; fresh/reconnect lifecycle checks stay at their callers.
+fn claim_binds_genesis(
+    claim: &NamedSeatJoinClaimV1,
+    genesis: &ReplaySessionGenesisV1,
+    expected_digest: Digest32,
+) -> bool {
+    claim.session_genesis_sha256 == expected_digest
+        && claim.host_endpoint_id == genesis.claim.host_public_key
+        && claim.replay_session_id == genesis.claim.replay_session_id
+        && claim.host_nonce == genesis.claim.host_nonce
+        && claim.mission_id == genesis.claim.ranked_session.mission_id
+        && claim.content_manifest_sha256 == genesis.claim.ranked_session.content_manifest_sha256
+        && claim.rules_config_sha256 == genesis.claim.ranked_session.rules_config_sha256
+        && claim.ruleset_manifest_sha256 == genesis.claim.ranked_session.ruleset_manifest_sha256
+        && claim.competition_manifest_sha256
+            == genesis.claim.ranked_session.competition_manifest_sha256
 }
