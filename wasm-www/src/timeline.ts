@@ -13,7 +13,8 @@ type StateReply = {
     readonly replay?: ReplayStatus | null;
 };
 
-export function installTimeline(container: HTMLElement, rpc: RobinRpc): void {
+/** The owner must dispose before replacing the runtime or removing its UI. */
+export function installTimeline(container: HTMLElement, rpc: RobinRpc): () => void {
     container.replaceChildren();
 
     const current = document.createElement('span');
@@ -38,36 +39,70 @@ export function installTimeline(container: HTMLElement, rpc: RobinRpc): void {
 
     container.append(playPause, current, scrub, total);
 
+    let disposed = false;
+    let polling = false;
+    let seeking = false;
+    let pendingSeek: number | undefined;
+    // An interaction invalidates a state request sent before it.
+    let revision = 0;
     let scrubbing = false;
-    scrub.addEventListener('pointerdown', () => { scrubbing = true; });
+    const startScrub = (): void => { scrubbing = true; };
+    scrub.addEventListener('pointerdown', startScrub);
     const endScrub = (): void => { scrubbing = false; };
     scrub.addEventListener('pointerup', endScrub);
     scrub.addEventListener('pointercancel', endScrub);
     scrub.addEventListener('blur', endScrub);
 
-    scrub.addEventListener('input', () => {
+    const seek = (): void => {
+        if (disposed) return;
         const frame = Number(scrub.value);
         current.textContent = formatTime(frame);
-        void rpc('go-to-frame', { frame, auto_dismiss: true }).catch((e: unknown) => {
-            console.warn('timeline: go-to-frame failed:', e);
-        });
-    });
+        revision++;
+        pendingSeek = frame;
+        void drainSeeks();
+    };
+    scrub.addEventListener('input', seek);
 
-    playPause.addEventListener('click', () => {
+    async function drainSeeks(): Promise<void> {
+        if (seeking) return;
+        seeking = true;
+        try {
+            while (!disposed && pendingSeek !== undefined) {
+                const frame = pendingSeek;
+                pendingSeek = undefined;
+                try {
+                    await rpc('go-to-frame', { frame, auto_dismiss: true });
+                } catch (e) {
+                    if (!disposed) console.warn('timeline: go-to-frame failed:', e);
+                }
+            }
+        } finally {
+            seeking = false;
+        }
+    }
+
+    const togglePaused = (): void => {
+        if (disposed) return;
+        revision++;
         const paused = playPause.dataset.paused !== 'true';
         playPause.dataset.paused = String(paused);
         playPause.textContent = paused ? 'Play' : 'Pause';
         void rpc('set-paused', { paused }).catch((e: unknown) => {
-            console.warn('timeline: set-paused failed:', e);
+            if (!disposed) console.warn('timeline: set-paused failed:', e);
         });
-    });
+    };
+    playPause.addEventListener('click', togglePaused);
 
     const intervalId = window.setInterval(poll, POLL_INTERVAL_MS);
 
     function poll(): void {
+        if (disposed || polling || seeking) return;
+        polling = true;
+        const requestedRevision = revision;
         void (async (): Promise<void> => {
             try {
                 const reply = await rpc<StateReply>('state');
+                if (disposed || revision !== requestedRevision) return;
                 const replay = reply.replay ?? null;
                 if (replay === null) {
                     container.style.display = 'none';
@@ -85,21 +120,39 @@ export function installTimeline(container: HTMLElement, rpc: RobinRpc): void {
                     current.textContent = formatTime(frame);
                 }
             } catch (e) {
-                if (e instanceof Error && e.message.includes('unknown method: state')) {
-                    window.clearInterval(intervalId);
-                    container.style.display = 'none';
+                if (disposed || revision !== requestedRevision) return;
+                const message = e instanceof Error ? e.message : String(e);
+                if (message.includes('unknown method: state')) {
+                    dispose();
                     return;
                 }
-                if (e instanceof Error && e.message.includes('engine not ready')) {
+                if (message.includes('engine not ready')) {
                     container.style.display = 'none';
                     return;
                 }
                 console.warn('timeline: state poll failed:', e);
+            } finally {
+                polling = false;
             }
         })();
     }
 
+    function dispose(): void {
+        if (disposed) return;
+        disposed = true;
+        pendingSeek = undefined;
+        window.clearInterval(intervalId);
+        scrub.removeEventListener('pointerdown', startScrub);
+        scrub.removeEventListener('pointerup', endScrub);
+        scrub.removeEventListener('pointercancel', endScrub);
+        scrub.removeEventListener('blur', endScrub);
+        scrub.removeEventListener('input', seek);
+        playPause.removeEventListener('click', togglePaused);
+        container.style.display = 'none';
+    }
+
     poll();
+    return dispose;
 }
 
 function formatTime(frames: number): string {

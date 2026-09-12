@@ -27,6 +27,7 @@ import {
     type RobinRpc,
 } from './replay.js';
 import { installTimeline } from './timeline.js';
+import { createRpcClient } from './rpc-client.js';
 
 declare global {
     // Optional test/dev override for loading binaries from a local checkout.
@@ -123,8 +124,12 @@ if (gameCanvas === null) {
     throw new Error('main.ts: missing #canvas element in index.html');
 }
 const { sync: syncCanvasBackingStore, dispose: disposeCanvasBackingStore } = installCanvasBackingStore(gameCanvas);
+let disposeTimeline: (() => void) | undefined;
 window.addEventListener('pagehide', event => {
-    if (!event.persisted) disposeCanvasBackingStore();
+    if (!event.persisted) {
+        disposeCanvasBackingStore();
+        disposeTimeline?.();
+    }
 });
 
 const logOk = (t: string): void => appendLogLine(logEl, t);
@@ -349,11 +354,13 @@ async function main(): Promise<void> {
                 }
                 wasm.wasm_mark_compact_replay_validated(content);
             }, preparedReplay, buildBase);
+            bootAbort.signal.throwIfAborted();
             if (replayLoaded) {
                 performance.mark('robin-replay-queue-accepted');
                 logOk('[replay queued from URL]');
                 if (replayTimeline !== null && !new URL(location.href).searchParams.has('notimeline')) {
-                    installTimeline(replayTimeline, rpc);
+                    disposeTimeline?.();
+                    disposeTimeline = installTimeline(replayTimeline, rpc);
                 }
             }
         },
@@ -405,13 +412,9 @@ async function loadWasmModule(
 }
 
 function installRpcClient(wasm: RobinWasmModule): RobinRpc {
-    if (wasm.rh_rpc === undefined) {
-        throw new Error('wasm module does not export rh_rpc');
-    }
-    const rhRpc = wasm.rh_rpc;
-    const rpc: RobinRpc = <T = unknown>(method: string, params: unknown = null): Promise<T> => {
-        return rhRpc<T>({ method, params });
-    };
+    disposeTimeline?.();
+    disposeTimeline = undefined;
+    const rpc = createRpcClient(wasm);
     globalThis.robinRpc = rpc;
     return rpc;
 }
