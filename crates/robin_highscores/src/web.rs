@@ -4649,19 +4649,18 @@ fn internal_json(error: serde_json::Error) -> ApiError {
 mod tests {
     use super::*;
     use crate::test_support::{
-        artifact, published_ruleset_fixture, viewer_build, viewer_build_v2,
-        viewer_content_manifest, viewer_profile,
+        published_ruleset_fixture, viewer_build, viewer_build_v2, viewer_content_manifest,
+        viewer_profile,
     };
     use bytes::Bytes;
     use ed25519_dalek::SigningKey;
     use futures_util::stream;
     use http_body_util::BodyExt as _;
     use robin_run_protocol::{
-        AnonymousParticipantPolicyV1, ArtifactRefV1, CanonicalCampaignStateKindV1,
-        CanonicalCampaignStatePinV1, CanonicalCampaignStateRequirementV1, ImmutablePolicyKindV1,
-        LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1,
-        OfficialContentEditionV1, OfficialContentSubjectV1, PublishedRulesetV1,
-        RulesConfigConstraintV1,
+        ArtifactRefV1, CanonicalCampaignStateKindV1, CanonicalCampaignStatePinV1,
+        CanonicalCampaignStateRequirementV1, LeaderboardCoSignInstanceV1,
+        LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1, OfficialContentEditionV1,
+        OfficialContentSubjectV1, PublishedRulesetV1,
     };
     use sha2::Sha256;
     use std::sync::atomic::{AtomicBool, Ordering};
