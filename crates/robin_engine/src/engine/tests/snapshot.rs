@@ -137,7 +137,7 @@ fn engine_state_hash_is_deterministic_within_the_current_build() {
 
 #[test]
 fn engine_creation() {
-    let mut display = HostDisplayState::default();
+    let display = HostDisplayState::default();
     let engine = EngineInner::new();
     assert_eq!(engine.feedback.cutscene_camera.zoom_factor, 1.0);
     assert_eq!(engine.control.frame_counter, 0);

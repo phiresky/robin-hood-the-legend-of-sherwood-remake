@@ -1273,7 +1273,7 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     }
     engine.world.pathfinder.states = vec![vec![0x5555_5555]];
 
-    let mut launch_waiting_move = |engine: &mut EngineInner, owner| {
+    let launch_waiting_move = |engine: &mut EngineInner, owner| {
         let mut movement = SequenceElement::new_movement(
             1,
             Command::MoveWaiting,
