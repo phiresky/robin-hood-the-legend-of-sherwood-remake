@@ -8,6 +8,8 @@
 mod immediate;
 mod instruct_commands;
 mod owner_dispatch;
+mod owner_preflight;
+use owner_preflight::PreparedOwnerInstruction;
 mod phase;
 mod script_sync;
 mod teleport;
