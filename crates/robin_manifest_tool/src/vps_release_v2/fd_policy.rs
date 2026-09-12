@@ -9,8 +9,17 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::os::fd::RawFd;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
 pub(super) struct InheritedFd(pub(super) RawFd);
+
+impl<'de> Deserialize<'de> for InheritedFd {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "an inherited descriptor must be acquired from a live process, not deserialized",
+        ))
+    }
+}
 
 impl InheritedFd {
     pub(super) fn duplicate(fd: RawFd) -> Result<Self> {
