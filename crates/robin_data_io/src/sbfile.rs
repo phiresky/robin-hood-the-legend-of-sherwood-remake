@@ -634,11 +634,10 @@ fn try_resolve_case_insensitive(path: &Path) -> Result<Option<PathBuf>, i32> {
         else {
             return Ok(None);
         };
-        // The selected spelling may itself be a broken/cyclic symlink. Do
-        // not turn its metadata failure into success (or select a later alias).
-        if !candidate_exists(&found)? {
-            return Ok(None);
-        }
+        // Once an entry matches, even disappearance or a dangling symlink is
+        // a failed selected asset, not absence permitting a lower-priority one.
+        fs::metadata(&found)
+            .map_err(|error| path_resolution_error("selected entry metadata", &found, error))?;
         resolved = found;
     }
     Ok(Some(resolved))
@@ -2352,6 +2351,42 @@ mod tests {
             files.list_overlay_dir(higher.path().to_str().unwrap(), "Blocker"),
             Err(SBFILE_ERROR_READ)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_selected_overlay_does_not_fall_back_to_lower_file() {
+        use std::os::unix::fs::symlink;
+        let lower = tempfile::tempdir().unwrap();
+        let higher = tempfile::tempdir().unwrap();
+        write_layer_file(lower.path(), "Asset", b"must not substitute");
+        symlink("missing-target", higher.path().join("Asset")).unwrap();
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        for root in [lower.path(), higher.path()] {
+            assert_eq!(
+                files.add_overlay_path(root.to_str().unwrap()),
+                SBFILE_NO_ERROR
+            );
+        }
+        for path in ["Asset", "asset"] {
+            assert_eq!(files.read_all(path), Err(SBFILE_ERROR_READ));
+            assert_eq!(files.try_exists(path), Err(SBFILE_ERROR_READ));
+            assert_eq!(
+                files.read_overlay(higher.path().to_str().unwrap(), path),
+                Err(SBFILE_ERROR_READ)
+            );
+            assert!(matches!(
+                files.list_overlay_dir(higher.path().to_str().unwrap(), path),
+                Err(SBFILE_ERROR_READ)
+            ));
+        }
+        let confined = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            confined.lock_ranked_verifier_primary_path(higher.path()),
+            SBFILE_NO_ERROR
+        );
+        assert!(matches!(confined.open("asset"), Err(SBFILE_ERROR_READ)));
+        assert_eq!(confined.try_exists("asset"), Err(SBFILE_ERROR_READ));
     }
 
     #[cfg(unix)]
