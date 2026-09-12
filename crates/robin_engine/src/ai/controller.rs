@@ -1,16 +1,12 @@
 use super::*;
 
 fn panic_debug_matches(frame: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_AI_PANIC").is_none() {
-        return false;
-    }
-    std::env::var("PARITY_DEBUG_AI_PANIC_FRAME")
-        .ok()
-        .is_none_or(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid PARITY_DEBUG_AI_PANIC_FRAME={value:?}: {error}")
-            }) == frame
-        })
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<1>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env("PARITY_DEBUG_AI_PANIC", ["PARITY_DEBUG_AI_PANIC_FRAME"])
+    });
+    gate.enabled() && gate.matches_required([Some(frame)])
 }
 
 #[inline]
@@ -58,102 +54,42 @@ fn bored_boundary_debug_config() -> &'static BoredBoundaryDebugConfig {
     })
 }
 
-#[derive(Debug)]
-struct ConsiderReportDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    owner: Option<u32>,
-}
-
-fn consider_report_debug_config() -> &'static ConsiderReportDebugConfig {
-    static CONFIG: std::sync::OnceLock<ConsiderReportDebugConfig> = std::sync::OnceLock::new();
+fn consider_report_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static CONFIG: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
     CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_CONSIDER_REPORT").is_some();
-        if !enabled {
-            return ConsiderReportDebugConfig {
-                enabled: false,
-                frame: None,
-                owner: None,
-            };
-        }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for CONSIDERREPORT diagnostic: {error}")
-                })
-            })
-        };
-        ConsiderReportDebugConfig {
-            enabled: true,
-            frame: parse("PARITY_DEBUG_CONSIDER_REPORT_FRAME"),
-            owner: parse("PARITY_DEBUG_CONSIDER_REPORT_OWNER"),
-        }
+        ParityGate::from_env(
+            "PARITY_DEBUG_CONSIDER_REPORT",
+            [
+                "PARITY_DEBUG_CONSIDER_REPORT_FRAME",
+                "PARITY_DEBUG_CONSIDER_REPORT_OWNER",
+            ],
+        )
     })
 }
 
-#[derive(Debug)]
-struct WillStopDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    owner: Option<u32>,
-}
-
-fn will_stop_debug_config() -> &'static WillStopDebugConfig {
-    static CONFIG: std::sync::OnceLock<WillStopDebugConfig> = std::sync::OnceLock::new();
+fn will_stop_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static CONFIG: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
     CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_WILLSTOP").is_some();
-        if !enabled {
-            return WillStopDebugConfig {
-                enabled: false,
-                frame: None,
-                owner: None,
-            };
-        }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for WILLSTOP diagnostic: {error}")
-                })
-            })
-        };
-        WillStopDebugConfig {
-            enabled: true,
-            frame: parse("PARITY_DEBUG_WILLSTOP_FRAME"),
-            owner: parse("PARITY_DEBUG_WILLSTOP_OWNER"),
-        }
+        ParityGate::from_env(
+            "PARITY_DEBUG_WILLSTOP",
+            ["PARITY_DEBUG_WILLSTOP_FRAME", "PARITY_DEBUG_WILLSTOP_OWNER"],
+        )
     })
 }
 
-#[derive(Debug)]
-struct MacroLifecycleDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    owner: Option<u32>,
-}
-
-fn macro_lifecycle_debug_config() -> &'static MacroLifecycleDebugConfig {
-    static CONFIG: std::sync::OnceLock<MacroLifecycleDebugConfig> = std::sync::OnceLock::new();
+fn macro_lifecycle_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static CONFIG: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
     CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_MACRO_LIFECYCLE").is_some();
-        if !enabled {
-            return MacroLifecycleDebugConfig {
-                enabled: false,
-                frame: None,
-                owner: None,
-            };
-        }
-        let parse = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for MACROLIFE diagnostic: {error}")
-                })
-            })
-        };
-        MacroLifecycleDebugConfig {
-            enabled: true,
-            frame: parse("PARITY_DEBUG_MACRO_LIFECYCLE_FRAME"),
-            owner: parse("PARITY_DEBUG_MACRO_LIFECYCLE_OWNER"),
-        }
+        ParityGate::from_env(
+            "PARITY_DEBUG_MACRO_LIFECYCLE",
+            [
+                "PARITY_DEBUG_MACRO_LIFECYCLE_FRAME",
+                "PARITY_DEBUG_MACRO_LIFECYCLE_OWNER",
+            ],
+        )
     })
 }
 
@@ -168,9 +104,7 @@ pub(crate) enum WillStopCaller {
 
 pub(crate) fn consider_report_debug_matches(frame: u32, owner: u32) -> bool {
     let config = consider_report_debug_config();
-    config.enabled
-        && config.frame.is_none_or(|expected| expected == frame)
-        && config.owner.is_none_or(|expected| expected == owner)
+    config.matches_required([Some(frame), Some(owner)])
 }
 
 /// Reproduce the Original's mixed signed/unsigned waypoint expression:
@@ -1587,12 +1521,7 @@ impl AiController {
         reason: impl std::fmt::Debug,
     ) {
         let config = macro_lifecycle_debug_config();
-        if !config.enabled
-            || !config.frame.is_none_or(|frame| frame == ctx.frame)
-            || !config
-                .owner
-                .is_none_or(|owner| ctx.original_creation_order == Some(owner))
-        {
+        if !config.matches_required([Some(ctx.frame), ctx.original_creation_order]) {
             return;
         }
         eprintln!(
@@ -4850,11 +4779,7 @@ impl AiController {
         caller: WillStopCaller,
     ) -> bool {
         let config = will_stop_debug_config();
-        let debug = config.enabled
-            && config.frame.is_none_or(|frame| frame == ctx.frame)
-            && config
-                .owner
-                .is_none_or(|owner| ctx.original_creation_order == Some(owner));
+        let debug = config.matches_required([Some(ctx.frame), ctx.original_creation_order]);
         let before = debug.then(|| {
             let path = self.patrol_path.as_ref();
             let waypoint = path.and_then(|path| path.current_waypoint(hiking_paths));

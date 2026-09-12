@@ -13,19 +13,18 @@ use super::util::{ai_max_norm_distance, ai_square_distance, enemy_is_below_me};
 use super::{EnemyAi, ProfileRank, SeekFlags, UNDEFINED_DIRECTION, combat, task_priority};
 
 fn good_strike_lifecycle_debug_matches(ctx: &AiContext) -> bool {
-    if std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == ctx.frame)
-        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
-            .is_none_or(|expected| ctx.original_creation_order == Some(expected))
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE",
+            [
+                "PARITY_DEBUG_GOOD_STRIKE_FRAME",
+                "PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(ctx.frame), ctx.original_creation_order])
 }
 
 impl EnemyAi {

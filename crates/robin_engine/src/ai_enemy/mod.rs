@@ -81,19 +81,18 @@ pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
 /// Environment reads and stderr output deliberately stay outside serialized AI
 /// state and do not consume simulation RNG.
 pub(super) fn them_lifecycle_debug_matches(ctx: &AiContext) -> bool {
-    if std::env::var_os("PARITY_DEBUG_THEM_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for THEM diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_THEM_FRAME").is_none_or(|frame| frame == ctx.frame)
-        && parse_filter("PARITY_DEBUG_THEM_CREATION_ORDER")
-            .is_none_or(|creation_order| ctx.original_creation_order == Some(creation_order))
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_THEM_LIFECYCLE",
+            [
+                "PARITY_DEBUG_THEM_FRAME",
+                "PARITY_DEBUG_THEM_CREATION_ORDER",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(ctx.frame), ctx.original_creation_order])
 }
 
 /// Master switch for the opt-in primary-target selection/swap diagnostic.

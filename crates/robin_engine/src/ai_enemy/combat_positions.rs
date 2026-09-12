@@ -24,20 +24,18 @@ use super::{
 };
 
 fn reconsider_observation_debug_matches(frame: u32, owner: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_RECONSIDER_OBSERVATION").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for RECONSIDER diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME")
-        .is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE")
-            .is_none_or(|expected| owner == expected)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_RECONSIDER_OBSERVATION",
+            [
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME",
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(frame), Some(owner)])
 }
 
 /// Opt-in trace for the event-driven swordfight reposition decision. Keep the
@@ -48,24 +46,19 @@ pub(super) fn reconsider_position_debug_matches(
     creation_order: impl FnOnce() -> Option<u32>,
     owner: impl FnOnce() -> u32,
 ) -> bool {
-    if std::env::var_os("PARITY_DEBUG_RECONSIDER_POSITION").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for RECONSIDER_POSITION diagnostic: {error}")
-            })
-        })
-    };
-    let frame = frame();
-    let creation_order = creation_order();
-    let owner = owner();
-    parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_FRAME").is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_CREATION_ORDER")
-            .is_none_or(|expected| creation_order == Some(expected))
-        && parse_filter("PARITY_DEBUG_RECONSIDER_POSITION_OWNER_HANDLE")
-            .is_none_or(|expected| owner == expected)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_RECONSIDER_POSITION",
+            [
+                "PARITY_DEBUG_RECONSIDER_POSITION_FRAME",
+                "PARITY_DEBUG_RECONSIDER_POSITION_CREATION_ORDER",
+                "PARITY_DEBUG_RECONSIDER_POSITION_OWNER_HANDLE",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(frame()), creation_order(), Some(owner())])
 }
 
 /// Opt-in trace for the periodic shield-protection decision. The master gate
@@ -75,21 +68,18 @@ fn arrow_protection_debug_matches(
     frame: impl FnOnce() -> u32,
     owner: impl FnOnce() -> u32,
 ) -> bool {
-    if std::env::var_os("PARITY_DEBUG_ARROW_PROTECTION").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for ARROW_PROTECTION diagnostic: {error}")
-            })
-        })
-    };
-    let frame = frame();
-    let owner = owner();
-    parse_filter("PARITY_DEBUG_ARROW_PROTECTION_FRAME").is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_ARROW_PROTECTION_OWNER_HANDLE")
-            .is_none_or(|expected| owner == expected)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_ARROW_PROTECTION",
+            [
+                "PARITY_DEBUG_ARROW_PROTECTION_FRAME",
+                "PARITY_DEBUG_ARROW_PROTECTION_OWNER_HANDLE",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(frame()), Some(owner())])
 }
 
 /// Resolve the stored shield-danger point.

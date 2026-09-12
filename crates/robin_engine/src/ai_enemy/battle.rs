@@ -27,21 +27,19 @@ fn archer_step_back_lifecycle_debug_matches(
     creation_order: Option<u32>,
     owner_handle: u32,
 ) -> bool {
-    if std::env::var_os("PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for ARCHERSTEP diagnostic: {error}")
-            })
-        })
-    };
-    parse("PARITY_DEBUG_ARCHER_STEP_BACK_FRAME").is_none_or(|expected| expected == frame)
-        && parse("PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER")
-            .is_none_or(|expected| Some(expected) == creation_order)
-        && parse("PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE")
-            .is_none_or(|expected| expected == owner_handle)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE",
+            [
+                "PARITY_DEBUG_ARCHER_STEP_BACK_FRAME",
+                "PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER",
+                "PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(frame), creation_order, Some(owner_handle)])
 }
 
 /// Enemy-approach reconsideration uses raw saved-position map coordinates and stores
