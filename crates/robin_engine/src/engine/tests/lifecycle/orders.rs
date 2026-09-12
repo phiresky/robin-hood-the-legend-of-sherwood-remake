@@ -299,7 +299,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     }
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
+    let assets = assets_with_test_pc_profile();
     for _ in 0..8 {
         engine.tick_actor_animation_action_change_slots(&sim, &assets);
         if engine.get_entity(carrier).unwrap().posture() == Posture::Upright {

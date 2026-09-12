@@ -1411,7 +1411,11 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     engine.drain_direct_ai_owner_boundary(&sim, officer_id, &assets);
     engine.drain_direct_ai_owner_boundary(&sim, soldier_id, &assets);
 
-    let sector = crate::position_interface::SectorHandle::new(1);
+    let sector = Some(crate::engine::test_support::ensure_ordinary_sector(
+        &mut engine,
+        1,
+        0,
+    ));
     let officer = engine
         .get_entity_mut(officer_id)
         .expect("call-rejection officer exists");
