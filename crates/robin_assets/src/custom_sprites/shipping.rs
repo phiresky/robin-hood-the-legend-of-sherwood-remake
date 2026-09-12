@@ -7,17 +7,17 @@ use assets_frame_holder::{RuntimeSprite, TRANSPARENT_COLOR_16};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
-const MAGIC: &[u8] = b"RHMODVQ1";
+const MAGIC: &[u8] = b"RHMODVQ2";
 // Bound dictionaries below the u16 alphabet limit without lossy quantization.
 const GROUP_TILES: usize = 60_000;
 
-#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(Serialize, Deserialize)]
 struct Bundle {
     metadata: HackableRhsCache,
     groups: Vec<Group>,
 }
 
-#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(Serialize, Deserialize)]
 struct Group {
     dictionary: Vec<[u16; 4]>,
     sizes: Vec<(u16, u16)>,
@@ -154,8 +154,7 @@ pub fn read(path: &Path) -> Result<HackableRhsCache> {
 
 pub fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
     let bytes = admission::decompress(compressed)?;
-    ensure!(bytes.starts_with(MAGIC), "unsupported custom VQ format");
-    let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..])?;
+    let mut bundle: Bundle = admission::decode_document(&bytes, MAGIC)?;
     drop(bytes);
     admission::validate_frames(
         bundle
@@ -220,14 +219,15 @@ pub fn encode_custom_sprite_dir(source: &Path, destination: &Path) -> Result<usi
     if start < frames.len() {
         groups.push(encode_group(&frames[start..])?);
     }
-    let mut encoded = MAGIC.to_vec();
-    encoded.extend(bitcode::encode(&Bundle {
-        metadata: cache,
-        groups,
-    }));
+    let encoded = admission::encode_document(
+        MAGIC,
+        &Bundle {
+            metadata: cache,
+            groups,
+        },
+    )?;
     let compressed = zstd::stream::encode_all(encoded.as_slice(), 19)?;
-    std::fs::write(destination, compressed)?;
-    let decoded = read(destination)?;
+    let decoded = read_bytes(&compressed, &destination.display().to_string())?;
     ensure!(
         bitcode::encode(&decoded.profiles) == profile_bytes,
         "animation metadata changed"
@@ -241,6 +241,7 @@ pub fn encode_custom_sprite_dir(source: &Path, destination: &Path) -> Result<usi
             "frame {index} changed during VQ round trip"
         );
     }
+    std::fs::write(destination, compressed)?;
     Ok(frames.len())
 }
 
@@ -266,7 +267,7 @@ mod tests {
             }],
         };
         let mut bytes = MAGIC.to_vec();
-        bytes.extend(bitcode::encode(&bundle));
+        serde_json::to_writer(&mut bytes, &bundle).unwrap();
         let compressed = zstd::stream::encode_all(bytes.as_slice(), 1).unwrap();
         let error = read_bytes(&compressed, "oversized fixture").unwrap_err();
         assert!(error.to_string().contains("pixels"), "{error:#}");
@@ -316,10 +317,10 @@ mod tests {
         // portable bundles: their direction order is already part of the file.
         let compressed = std::fs::read(&output).unwrap();
         let bytes = zstd::stream::decode_all(compressed.as_slice()).unwrap();
-        let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..]).unwrap();
+        let mut bundle: Bundle = admission::decode_document(&bytes, MAGIC).unwrap();
         bundle.metadata.version = 2;
         let mut bytes = MAGIC.to_vec();
-        bytes.extend(bitcode::encode(&bundle));
+        serde_json::to_writer(&mut bytes, &bundle).unwrap();
         let version_two = zstd::stream::encode_all(bytes.as_slice(), 1).unwrap();
         let decoded = read_bytes(&version_two, "version two bundle").unwrap();
         assert_eq!(bitcode::encode(&decoded), bitcode::encode(&loaded));
@@ -353,6 +354,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sprites.vq.zst");
         assert!(read(&path).is_err());
+        let old = zstd::stream::encode_all(&b"RHMODVQ1"[..], 1).unwrap();
+        assert!(
+            read_bytes(&old, "old")
+                .unwrap_err()
+                .to_string()
+                .contains("encode_mod_sprites")
+        );
+        for malformed in [
+            &b"RHMODVQ2{"[..],
+            &b"RHMODVQ2{\"groups\":18446744073709551615}"[..],
+        ] {
+            let compressed = zstd::stream::encode_all(malformed, 1).unwrap();
+            assert!(read_bytes(&compressed, "malformed").is_err());
+        }
         std::fs::write(
             &path,
             zstd::stream::encode_all(&b"bad format"[..], 1).unwrap(),

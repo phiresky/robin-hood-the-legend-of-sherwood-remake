@@ -12,10 +12,10 @@ use std::{
     sync::Arc,
 };
 
-const MAGIC: &[u8] = b"RHMODVF2";
+const MAGIC: &[u8] = b"RHMODVF3";
 const GROUP_TILES: usize = 1_048_576;
 
-#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(Serialize, Deserialize)]
 struct Character {
     name: String,
     metadata: HackableRhsCache,
@@ -24,7 +24,7 @@ struct Character {
     widths: Vec<u16>,
 }
 
-#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(Serialize, Deserialize)]
 struct Family {
     characters: Vec<Character>,
     bank: ShippingSpriteBank,
@@ -102,11 +102,7 @@ pub fn read_selected_bytes(
     selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<(String, HackableRhsCache)>> {
     let bytes = admission::decompress(compressed)?;
-    ensure!(
-        bytes.starts_with(MAGIC),
-        "unsupported custom VQ family format"
-    );
-    let mut family: Family = bitcode::decode(&bytes[MAGIC.len()..])?;
+    let mut family: Family = admission::decode_document(&bytes, MAGIC)?;
     drop(bytes);
     admission::validate_frames(
         family
@@ -495,11 +491,9 @@ pub fn encode_custom_sprite_family(sources: &[PathBuf], destination: &Path) -> R
         .iter()
         .map(|c| bitcode::encode(&c.metadata.profiles))
         .collect();
-    let mut encoded = MAGIC.to_vec();
-    encoded.extend(bitcode::encode(&Family { characters, bank }));
+    let encoded = admission::encode_document(MAGIC, &Family { characters, bank })?;
     let compressed = zstd::stream::encode_all(encoded.as_slice(), 22)?;
-    std::fs::write(destination, compressed)?;
-    let decoded = read(destination)?;
+    let decoded = read_selected_bytes(&compressed, None)?;
     ensure!(decoded.len() == originals.len(), "character count changed");
     let mut count = 0;
     for (index, (name, cache)) in decoded.iter().enumerate() {
@@ -521,6 +515,7 @@ pub fn encode_custom_sprite_family(sources: &[PathBuf], destination: &Path) -> R
         }
         count += cache.frames.len();
     }
+    std::fs::write(destination, compressed)?;
     println!(
         "Verified {count} frames: {} ({} bytes)",
         destination.display(),
@@ -588,8 +583,56 @@ mod tests {
 
     fn encoded(family: &Family) -> Vec<u8> {
         let mut bytes = MAGIC.to_vec();
-        bytes.extend(bitcode::encode(family));
+        serde_json::to_writer(&mut bytes, family).unwrap();
         zstd::stream::encode_all(bytes.as_slice(), 1).unwrap()
+    }
+
+    #[test]
+    fn json_family_preserves_exact_numeric_and_unicode_metadata() {
+        for value in [
+            f32::from_bits(1),
+            f32::from_bits(0x3f800001),
+            f32::MAX,
+            -0.0,
+        ] {
+            let mut original = family(HACKABLE_RHS_CACHE_VERSION, u32::MAX);
+            original.characters[0].name = "Robin—森林".into();
+            original.characters[0].metadata.manifest_hash = [255; 32];
+            Arc::make_mut(&mut original.characters[0].metadata.profiles[0].info.scripts)[0]
+                .average_speed = value;
+            original.bank.signature = u32::MAX;
+            let bytes = admission::encode_document(MAGIC, &original).unwrap();
+            let decoded: Family = admission::decode_document(&bytes, MAGIC).unwrap();
+            assert_eq!(decoded.characters[0].name, original.characters[0].name);
+            assert_eq!(
+                bitcode::encode(&decoded.characters[0].metadata),
+                bitcode::encode(&original.characters[0].metadata)
+            );
+            assert_eq!(decoded.bank.signature, u32::MAX);
+        }
+        for non_finite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut invalid = family(HACKABLE_RHS_CACHE_VERSION, 0);
+            Arc::make_mut(&mut invalid.characters[0].metadata.profiles[0].info.scripts)[0]
+                .average_speed = non_finite;
+            assert!(admission::encode_document(MAGIC, &invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn old_family_format_requires_regeneration_and_json_must_be_complete() {
+        let old = zstd::stream::encode_all(&b"RHMODVF2"[..], 1).unwrap();
+        let error = read_selected_bytes(&old, None).unwrap_err();
+        assert!(error.to_string().contains("encode_mod_sprites"));
+        let mut bytes =
+            admission::encode_document(MAGIC, &family(HACKABLE_RHS_CACHE_VERSION, 0)).unwrap();
+        bytes.extend_from_slice(b" {}");
+        assert!(
+            read_selected_bytes(
+                &zstd::stream::encode_all(bytes.as_slice(), 1).unwrap(),
+                None
+            )
+            .is_err()
+        );
     }
 
     fn chunked_family() -> Family {
@@ -733,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn persistent_v2_and_current_families_preserve_authored_rows() {
+    fn metadata_v2_and_current_families_preserve_authored_rows() {
         for version in [2, HACKABLE_RHS_CACHE_VERSION] {
             let result = read_selected_bytes(&encoded(&family(version, 0)), None).unwrap();
             assert_eq!(result[0].1.version, HACKABLE_RHS_CACHE_VERSION);
