@@ -5844,14 +5844,13 @@ impl EngineInner {
             if couldnt_reachpoint {
                 self.world
                     .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
+                    .expect_ai_controller_mut(
+                        npc_id,
+                        format_args!(
                             "panic owner {} lost AI after failed movement",
                             npc_id.index()
-                        )
-                    })
+                        ),
+                    )
                     .couldnt_reachpoint = false;
                 if directed_after_door_pick
                     && let Some((retry_door, _)) = pick_door(&self.ai.global.door_seek_infos, false)
@@ -5885,11 +5884,13 @@ impl EngineInner {
                     }
                     self.world
                         .entities
-                        .get_mut(npc_id)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("panic owner {} lost AI after failed retry", npc_id.index())
-                        })
+                        .expect_ai_controller_mut(
+                            npc_id,
+                            format_args!(
+                                "panic owner {} lost AI after failed retry",
+                                npc_id.index()
+                            ),
+                        )
                         .couldnt_reachpoint = false;
                     self.begin_panic_no_door_branch(
                         sim,
@@ -5998,17 +5999,13 @@ impl EngineInner {
                 // and remains deferred to the normal path-request processing phase.
                 self.launch_pending_orders_for_npc(sim, assets, npc_id);
                 let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "panic seek fallback owner {} disappeared after movement",
-                            npc_id.index()
-                        )
-                    });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!(
+                        "panic seek fallback owner {} disappeared after movement",
+                        npc_id.index()
+                    ),
+                );
                 if ai.couldnt_reachpoint {
                     // Emergency-case retry — decrement runs and
                     // self-fire `EventReachPoint` so the common-stuff
@@ -6110,14 +6107,13 @@ impl EngineInner {
             self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!(
                         "panic owner {} lost AI after recursive Think",
                         npc_id.index()
-                    )
-                })
+                    ),
+                )
                 .outbox
                 .reentrant
                 .self_stimuli
@@ -6215,14 +6211,13 @@ impl EngineInner {
         let static_ai_frozen = self.ai.global.freeze;
         self.world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "SetAIState post-filter decision-entry owner {} lost its typed AI",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .start_no_event_post_filter(static_ai_frozen, self_is_dead, self_is_unconscious)
     }
 
@@ -6237,14 +6232,13 @@ impl EngineInner {
         let normal_depth_complete = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "SetAIState decision-completion owner {} lost its typed AI",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .end_think_completion_events();
         if normal_depth_complete {
             return;
@@ -6357,17 +6351,13 @@ impl EngineInner {
             })
         };
 
-        let enemy_ai = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "accepted SetAIState SEEKING owner {} requires Enemy AI",
-                    npc_id.index()
-                )
-            });
+        let enemy_ai = self.world.entities.expect_enemy_ai_mut(
+            npc_id,
+            format_args!(
+                "accepted SetAIState SEEKING owner {} requires Enemy AI",
+                npc_id.index()
+            ),
+        );
         if crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_enabled()
             && crate::ai_enemy::EnemyAi::seek_area_phase6_caller_debug_matches(
                 ctx.frame,

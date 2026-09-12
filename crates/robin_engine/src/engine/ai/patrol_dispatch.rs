@@ -584,11 +584,10 @@ impl EngineInner {
                 crate::ai::AlertContinuation::SoldierSawOfficer => self
                     .world
                     .entities
-                    .get_mut(source_id)
-                    .and_then(Entity::enemy_ai_mut)
-                    .unwrap_or_else(|| {
-                        panic!("soldier CALL_ALERT caller {caller} lost its EnemyAi")
-                    })
+                    .expect_enemy_ai_mut(
+                        source_id,
+                        format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
+                    )
                     .resolve_alert_request(sim, accepted, continuation, &source_ctx, &source_tick),
             }
         }

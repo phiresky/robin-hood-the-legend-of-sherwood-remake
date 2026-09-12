@@ -890,17 +890,13 @@ impl EngineInner {
             }
         }
 
-        let npc = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_actor_data_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "recovery owner {} lost AI actor data before RestoreDetectableObjects",
-                    npc_id.index()
-                )
-            });
+        let npc = self.world.entities.expect_ai_actor_data_mut(
+            npc_id,
+            format_args!(
+                "recovery owner {} lost AI actor data before RestoreDetectableObjects",
+                npc_id.index()
+            ),
+        );
         let objects = npc
             .detectable_lists
             .get_mut(DetectableType::Object as usize)

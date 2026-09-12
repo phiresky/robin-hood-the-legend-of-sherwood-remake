@@ -2972,28 +2972,20 @@ impl EngineInner {
         for shield_bearer in shield_bearers {
             let shield_bearer_id =
                 self.expect_human_id_for_ai_handle(shield_bearer, "dead AI owner's shield bearer");
-            let enemy = self
-                .world
-                .entities
-                .get_mut(shield_bearer_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "dead AI owner {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi"
-                    )
-                });
+            let enemy = self.world.entities.expect_enemy_ai_mut(
+                shield_bearer_id,
+                format_args!(
+                    "dead AI owner {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi"
+                ),
+            );
             enemy.archer_behind_me = None;
         }
         for archer in archers {
             let archer_id = self.expect_human_id_for_ai_handle(archer, "dead AI owner's archer");
-            let enemy = self
-                .world
-                .entities
-                .get_mut(archer_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!("dead AI owner {victim_id:?}'s archer {archer} has no EnemyAi")
-                });
+            let enemy = self.world.entities.expect_enemy_ai_mut(
+                archer_id,
+                format_args!("dead AI owner {victim_id:?}'s archer {archer} has no EnemyAi"),
+            );
             enemy.shield_bearer_before_me = None;
         }
 
@@ -3002,17 +2994,13 @@ impl EngineInner {
                 left_neighbour,
                 "dead AI owner's left combat neighbour",
             );
-            let enemy = self
-                .world
-                .entities
-                .get_mut(left_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "dead AI owner {victim_id:?}'s left combat neighbour {left_neighbour} has \
+            let enemy = self.world.entities.expect_enemy_ai_mut(
+                left_id,
+                format_args!(
+                    "dead AI owner {victim_id:?}'s left combat neighbour {left_neighbour} has \
                          no EnemyAi"
-                    )
-                });
+                ),
+            );
             enemy.right_combat_neighbour = None;
         }
         for right_neighbour in right_neighbours {
@@ -3020,17 +3008,13 @@ impl EngineInner {
                 right_neighbour,
                 "dead AI owner's right combat neighbour",
             );
-            let enemy = self
-                .world
-                .entities
-                .get_mut(right_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "dead AI owner {victim_id:?}'s right combat neighbour {right_neighbour} has \
+            let enemy = self.world.entities.expect_enemy_ai_mut(
+                right_id,
+                format_args!(
+                    "dead AI owner {victim_id:?}'s right combat neighbour {right_neighbour} has \
                          no EnemyAi"
-                    )
-                });
+                ),
+            );
             enemy.left_combat_neighbour = None;
         }
 

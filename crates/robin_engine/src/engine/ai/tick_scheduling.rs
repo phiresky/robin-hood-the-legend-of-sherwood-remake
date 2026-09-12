@@ -682,14 +682,10 @@ impl EngineInner {
         }
 
         if focus_channel_fired {
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!("pending-drain owner {} lost AI after focus", npc_id.index())
-                });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI after focus", npc_id.index()),
+            );
             ai.last_synced_focus_target = ai.primary_target;
         }
 
@@ -728,17 +724,13 @@ impl EngineInner {
         // Facing authored after the state change is held until that transition has
         // launched, matching the two distinct original-game orders.
         let orders_after_attentive = {
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "pending-drain owner {} lost AI before Face split",
-                        npc_id.index()
-                    )
-                });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!(
+                    "pending-drain owner {} lost AI before Face split",
+                    npc_id.index()
+                ),
+            );
             let orders = std::mem::take(&mut ai.outbox.actor.orders);
             let (before, after) = orders
                 .into_iter()
@@ -755,17 +747,13 @@ impl EngineInner {
         let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
 
         if !orders_after_attentive.is_empty() {
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "pending-drain owner {} lost AI after attentive mode",
-                        npc_id.index()
-                    )
-                });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!(
+                    "pending-drain owner {} lost AI after attentive mode",
+                    npc_id.index()
+                ),
+            );
             ai.outbox.actor.orders.extend(orders_after_attentive);
             // EnterAttentiveMode is registered but remains Todo until the
             // sequence-manager instruction phase. Register following Turns
@@ -870,11 +858,12 @@ impl EngineInner {
             );
             self.world
                 .entities
-                .get_mut(target_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!("set-reported-to-officer target human {target_handle} has no EnemyAi")
-                })
+                .expect_enemy_ai_mut(
+                    target_id,
+                    format_args!(
+                        "set-reported-to-officer target human {target_handle} has no EnemyAi"
+                    ),
+                )
                 .reported_to_officer = value;
         }
 
@@ -894,14 +883,13 @@ impl EngineInner {
             if refill {
                 self.world
                     .entities
-                    .get_mut(npc_id)
-                    .and_then(Entity::ai_actor_data_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
+                    .expect_ai_actor_data_mut(
+                        npc_id,
+                        format_args!(
                             "bow-ammo refill owner {} lost AI actor data",
                             npc_id.index()
-                        )
-                    })
+                        ),
+                    )
                     .number_of_arrows = crate::parameters_ai::MAX_NPC_ARROWS as u16;
             }
         }
@@ -1192,14 +1180,10 @@ impl EngineInner {
             // the sequence so the soldier's gaze drops its lock for
             // the head-turn animation.  Centralise it here instead of
             // patching every caller.
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("pending-drain owner {} lost AI actor data", npc_id.index())
-                });
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI actor data", npc_id.index()),
+            );
             crate::ai_vision::unfocus(npc);
             let mut seq = crate::sequence::Sequence::new();
             for (i, cmd) in cmds.iter().enumerate() {
@@ -1327,14 +1311,10 @@ impl EngineInner {
                 });
                 (owner.camp(), owner.enemy_ai().is_some())
             };
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("pending-drain owner {} lost AI actor data", npc_id.index())
-                });
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI actor data", npc_id.index()),
+            );
             for (mutation, target_info) in
                 effects.detectable_mutations.iter().zip(enemy_target_info)
             {
@@ -1535,14 +1515,10 @@ impl EngineInner {
             // Enemy blinking belongs to NPC actors, not the soldier
             // subclass. ScriptGoOn therefore reaches this path for both
             // soldiers and civilians.
-            let npc = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("pending-drain owner {} lost AI actor data", npc_id.index())
-                });
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("pending-drain owner {} lost AI actor data", npc_id.index()),
+            );
             let idx = crate::element::DetectableType::Enemy as usize;
             let list = npc.detectable_lists.get_mut(idx).unwrap_or_else(|| {
                 panic!(
