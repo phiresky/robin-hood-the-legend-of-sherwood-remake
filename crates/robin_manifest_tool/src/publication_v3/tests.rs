@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_fixtures::fact;
 
 #[cfg(target_os = "linux")]
 fn synthetic_validated_staging_v3(
@@ -300,14 +301,6 @@ fn make_test_tree_writable(root: &Path) -> Result<()> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
-}
-
-fn fact(label: &[u8]) -> ArtifactRefV1 {
-    ArtifactRefV1 {
-        sha256: Digest32::digest_bytes(label),
-        byte_length: label.len() as u64,
-        media_type: "application/octet-stream".into(),
-    }
 }
 
 fn pinned_json(label: &[u8]) -> PinnedArtifactSourceV3 {

@@ -21,6 +21,9 @@ pub mod validation;
 pub mod verification_result;
 pub mod verifier_job;
 
+#[cfg(test)]
+mod test_fixtures;
+
 #[cfg(feature = "authentication")]
 pub use authentication::{SignatureVerificationError, verify_ed25519_strict};
 pub use offer_binding::validate_offer_binding;

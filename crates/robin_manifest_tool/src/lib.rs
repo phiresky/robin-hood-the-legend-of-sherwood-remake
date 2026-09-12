@@ -8,6 +8,8 @@
 //! component objects are copied into the public static tree.
 
 mod fs_util;
+#[cfg(test)]
+mod test_fixtures;
 use fs_util::{read_regular_file_bounded, validate_regular_file};
 pub mod campaign_template_v1;
 pub mod plan_v3;

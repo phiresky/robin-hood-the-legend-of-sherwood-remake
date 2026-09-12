@@ -145,6 +145,16 @@ pub trait CanonicalDocument: Validate + Serialize {
 
 impl<T> CanonicalDocument for T where T: Validate + Serialize {}
 
+/// A claim with one signing domain. Multi-party claims with different host and
+/// controller domains intentionally expose separate methods instead.
+pub trait DomainSignedClaim: CanonicalDocument + Sized {
+    const DOMAIN: &'static [u8];
+
+    fn signing_bytes(&self) -> Result<Vec<u8>, CanonicalError> {
+        domain_separated_bytes(Self::DOMAIN, self)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CanonicalDocumentError {
     #[error(transparent)]

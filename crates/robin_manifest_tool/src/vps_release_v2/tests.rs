@@ -1,12 +1,5 @@
 use super::*;
-
-fn fact(bytes: &[u8]) -> ArtifactRefV1 {
-    ArtifactRefV1 {
-        sha256: Digest32::digest_bytes(bytes),
-        byte_length: bytes.len() as u64,
-        media_type: "application/octet-stream".into(),
-    }
-}
+use crate::test_fixtures::fact;
 
 struct SourceConsumeFixture {
     sandbox: tempfile::TempDir,
