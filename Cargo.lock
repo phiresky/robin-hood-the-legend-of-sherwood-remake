@@ -6319,6 +6319,7 @@ version = "0.0.0"
 dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
+ "hex",
  "semver",
  "serde",
  "serde_json",
@@ -6331,6 +6332,7 @@ dependencies = [
 name = "robin_spellforge"
 version = "0.0.0"
 dependencies = [
+ "hex",
  "rilua",
  "robin_engine",
  "serde",
