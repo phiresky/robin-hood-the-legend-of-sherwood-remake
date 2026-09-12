@@ -1050,7 +1050,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let selected = "Nested/German/DATA/Levels/ColdMission.rhm";
         let archive = zip(&[(selected, rhm("ColdMap", 7))]);
-        let shared = zip(&[("Data/Text/shared.res", b"shared".to_vec())]);
         let validated = crate::distributed_mod::DistributedModPackage::build(
             "cold-mod".into(),
             "Cold Mod".into(),
@@ -1063,7 +1062,7 @@ mod tests {
             "ColdMap".into(),
             false,
             archive.clone(),
-            Some(shared.clone()),
+            None,
         )
         .unwrap();
         let encoded = validated.package.encode().unwrap();
@@ -1077,11 +1076,11 @@ mod tests {
             ArchiveMissionAssets {
                 mission_archive: identity(&archive),
                 selected_rhm_entry: selected.into(),
-                shared_archive: Some(identity(&shared)),
+                shared_archive: None,
                 installed: Some(InstalledArchiveLocator {
                     root: InstalledModsRoot::ConfiguredMods,
                     mission_relative_path: "not-installed/v1.zip".into(),
-                    shared_relative_path: Some("not-installed/shared.zip".into()),
+                    shared_relative_path: None,
                 }),
                 distributed_cache: Some(DistributedCacheIdentity {
                     schema_version: DISTRIBUTED_MOD_SCHEMA_VERSION,
@@ -1108,10 +1107,6 @@ mod tests {
         assert!(Arc::ptr_eq(
             resolved.mission_archive().unwrap(),
             &retained.mission_archive
-        ));
-        assert!(Arc::ptr_eq(
-            resolved.shared_archive().unwrap(),
-            retained.shared_library_archive.as_ref().unwrap()
         ));
         assert!(
             cache.clear().is_err(),
@@ -1190,6 +1185,7 @@ mod tests {
         let files = independent_files();
         let temp = tempfile::tempdir().unwrap();
         let selected = "Data/Levels/ColdMission.rhm";
+        let shared = zip(&[("Data/Text/shared.res", b"shared".to_vec())]);
         let archive = zip(&[
             (selected, rhm("ColdMap", 8)),
             (
@@ -1209,7 +1205,7 @@ mod tests {
             "ColdMap".into(),
             true,
             archive.clone(),
-            None,
+            Some(shared.clone()),
         )
         .unwrap();
         let authoritative_package = validated.spellforge_package.clone().unwrap();
@@ -1224,7 +1220,7 @@ mod tests {
             ArchiveMissionAssets {
                 mission_archive: identity(&archive),
                 selected_rhm_entry: selected.into(),
-                shared_archive: None,
+                shared_archive: Some(identity(&shared)),
                 installed: None,
                 distributed_cache: Some(DistributedCacheIdentity {
                     schema_version: DISTRIBUTED_MOD_SCHEMA_VERSION,
@@ -1256,6 +1252,11 @@ mod tests {
         )
         .unwrap();
         assert!(resolved.is_archive());
+        let retained = &resolved.cache_lease.as_ref().unwrap().validated.package;
+        assert!(Arc::ptr_eq(
+            resolved.shared_archive().unwrap(),
+            retained.shared_library_archive.as_ref().unwrap()
+        ));
         drop(resolved);
         assert!(files.read_all("Data/Levels/ColdMission.rhm").is_err());
     }

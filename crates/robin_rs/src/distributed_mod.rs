@@ -894,6 +894,20 @@ mod tests {
                 .shared_library_archive
                 .as_ref()
                 .map(|bytes| Sha256::digest(bytes).into());
+            if wire.shared_library_archive.is_some() {
+                wire.manifest.requires_spellforge = true;
+                wire.mission_archive = archive(&[
+                    ("English/Data/Levels/Mission.rhm", rhm("Map")),
+                    (
+                        "English/Data/Levels/Mission.lua",
+                        b"function StartUp() return 1 end".to_vec(),
+                    ),
+                ]);
+                wire.manifest.mission_archive_bytes = wire.mission_archive.len() as u64;
+                wire.manifest.mission_archive_sha256 = Sha256::digest(&wire.mission_archive).into();
+                wire.manifest.spellforge_package_sha256 =
+                    Some(wire.build_spellforge_package().unwrap().sha256);
+            }
             wire.manifest.full_mod_sha256 = wire.compute_full_mod_sha256();
             let encoded = wire.encode().unwrap();
             let json = serde_json::to_value(&wire).unwrap();
