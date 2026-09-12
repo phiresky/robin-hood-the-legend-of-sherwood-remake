@@ -1034,29 +1034,18 @@ where
 }
 
 fn publish_private_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<StatusPublicationOutcome> {
-    publish_private_atomic_with(path, bytes, sync_cap_directory)
+    publish_private_atomic_with_hooks(path, bytes, sync_cap_directory, || Ok(()))
 }
 
-fn publish_private_atomic_with<F>(
+fn publish_private_atomic_with_hooks<S, R>(
     path: &Path,
     bytes: &[u8],
-    sync_parent: F,
+    sync_parent: S,
+    before_rename: R,
 ) -> anyhow::Result<StatusPublicationOutcome>
 where
-    F: FnOnce(&cap_std::fs::Dir) -> anyhow::Result<()>,
-{
-    publish_private_atomic_with_hooks(path, bytes, sync_parent, || Ok(()))
-}
-
-fn publish_private_atomic_with_hooks<F, G>(
-    path: &Path,
-    bytes: &[u8],
-    sync_parent: F,
-    before_rename: G,
-) -> anyhow::Result<StatusPublicationOutcome>
-where
-    F: FnOnce(&cap_std::fs::Dir) -> anyhow::Result<()>,
-    G: FnOnce() -> anyhow::Result<()>,
+    S: FnOnce(&cap_std::fs::Dir) -> anyhow::Result<()>,
+    R: FnOnce() -> anyhow::Result<()>,
 {
     let parent = path
         .parent()
