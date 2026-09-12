@@ -10,7 +10,6 @@ use crate::audio_backend::KiraAudioBackend;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, show_options};
-use crate::key_config_store::ProfileKeyConfig;
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
 use robin_engine::engine as engine_api;
@@ -35,24 +34,21 @@ pub(crate) async fn show_main_menu_options(
     resources: &IngameMenuResources,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
 ) -> bool {
-    let (active_profile_id, mut graphic, mut gameplay, mut multiplayer, mut sound_cfg) =
+    let (active_profile_id, mut graphic, mut gameplay, mut multiplayer, mut sound_cfg, mut key_cfg) =
         application_context
-            .with_active_profile(|profile| {
+            .with_active_profile_and_keys(|profile, keys| {
                 (
                     profile.id,
                     profile.graphic_config.clone(),
                     profile.gameplay_config,
                     profile.multiplayer_config,
                     profile.sound_config,
+                    keys.clone(),
                 )
             })
             .unwrap_or_else(|error| {
-                panic!("Main menu Options requires an active profile: {error}")
+                panic!("Main menu Options requires an active profile and key configs: {error}")
             });
-    let (active, custom) = application_context
-        .active_key_configs()
-        .unwrap_or_else(|error| panic!("Main menu Options requires active key configs: {error}"));
-    let mut key_cfg = ProfileKeyConfig { active, custom };
 
     // Short-lived audio setup so slider ticks play at the main menu.
     // Audio is optional, but missing authority/device failures remain visible.
