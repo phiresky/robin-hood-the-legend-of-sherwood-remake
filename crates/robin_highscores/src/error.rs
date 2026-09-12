@@ -20,6 +20,8 @@ pub enum ApiError {
     PayloadTooLarge(String),
     #[error("submission queue is temporarily full")]
     QueueFull,
+    #[error("request rate limit exceeded; retry after {retry_after_ms} ms")]
+    RateLimited { retry_after_ms: u64 },
     #[error("service temporarily unavailable")]
     Unavailable,
     #[error("internal server error")]
@@ -69,6 +71,12 @@ impl IntoResponse for ApiError {
                 "submission_queue_full",
                 self.to_string(),
                 None,
+            ),
+            Self::RateLimited { retry_after_ms } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                format!("request rate limit exceeded; retry after {retry_after_ms} ms"),
+                Some(retry_after_ms),
             ),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -202,5 +210,18 @@ mod tests {
         .into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
         assert_eq!(response.headers().get(RETRY_AFTER).unwrap(), "3");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_has_its_own_code_and_retry_after() {
+        let response = ApiError::RateLimited {
+            retry_after_ms: 1_001,
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers().get(RETRY_AFTER).unwrap(), "2");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["error"]["code"], "rate_limited");
     }
 }

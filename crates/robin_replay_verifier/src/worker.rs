@@ -149,10 +149,15 @@ fn admit_request(
         ));
     };
 
-    let request = match crate::strict_json::from_slice::<VerificationRequestV1>(&request_bytes) {
+    let request = match robin_run_protocol::strict_json::from_slice::<VerificationRequestV1>(
+        &request_bytes,
+    ) {
         Ok(request) => request,
         Err(error) => {
-            let detail = if matches!(error, crate::strict_json::StrictJsonError::DuplicateKey(_)) {
+            let detail = if matches!(
+                error,
+                robin_run_protocol::strict_json::StrictJsonError::DuplicateKey(_)
+            ) {
                 "duplicate_json_key"
             } else {
                 "malformed_json"

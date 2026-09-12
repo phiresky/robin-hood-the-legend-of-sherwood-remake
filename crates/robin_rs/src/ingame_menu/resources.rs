@@ -1145,8 +1145,12 @@ impl IngameMenuResources {
         // table.  Attach it here on a scratch manager if it's missing so
         // `MenuText::load` has a table to read.
         let mut text_res = ResourceManager::with_files(files.clone());
-        let _ = text_res.attach_or_from_shipping("Data/Text/Level.res", shipping);
-        let _ = text_res.attach_or_from_shipping("Data/Interface/Start.sxt", shipping);
+        for path in ["Data/Text/Level.res", "Data/Interface/Start.sxt"] {
+            if let Err(error) = text_res.try_attach_or_from_shipping(path, shipping) {
+                tracing::warn!("Cannot load menu text archive {path}: {error:#}");
+                return None;
+            }
+        }
         let menu_text = MenuText::load(&mut text_res);
         timer.step("menu text");
 

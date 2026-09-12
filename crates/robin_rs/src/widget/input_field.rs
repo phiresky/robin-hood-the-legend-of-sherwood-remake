@@ -3,8 +3,7 @@
 //! Folds together a generic input-field state machine with the menu-
 //! specific extras the game needs: noisy-event mapping (focus/activation
 //! sounds via [`WidgetInputField::play_noise`]), EditField font lookup
-//! on creation, and [`WidgetFocusable`] integration so Tab navigation
-//! can enter edit mode. The font is supplied by the caller via
+//! on creation, and explicit edit-mode transitions. The font is supplied by the caller via
 //! `resources.edit_field_font()`.
 //!
 //! State machine:
@@ -548,33 +547,6 @@ impl WidgetInputField {
     }
 }
 
-// ── WidgetFocusable trait impl ─────────────────────────────────────
-//
-// Glue for `FocusManager` so an input field can be dropped into the
-// focusable chain via `add_focusable`. The `active` argument is
-// ignored: `set_focusable_active` always calls `enter_edit_mode()`,
-// which is itself gated on `state != SelectedEditable`. Truth table:
-// already in edit mode → no-op; otherwise → enter edit mode.
-
-impl crate::focus_manager::WidgetFocusable for WidgetInputField {
-    fn widget_id(&self) -> crate::focus_manager::WidgetId {
-        self.base.id as crate::focus_manager::WidgetId
-    }
-
-    fn set_focusable_active(&mut self, _active: bool) -> Vec<crate::focus_manager::UiEvent> {
-        self.enter_edit_mode();
-        Vec::new()
-    }
-
-    /// Entering edit mode disables the focus manager's shortcuts and
-    /// navigation; leaving re-enables them. Routed through the trait
-    /// so the focus manager owns the toggle without needing a
-    /// back-pointer.
-    fn suppresses_navigation_while_active(&self) -> bool {
-        true
-    }
-}
-
 /// Convert a character index into a byte offset within a UTF-8 string.
 ///
 /// `char_index == s.chars().count()` maps to `s.len()` (one past the end),
@@ -858,47 +830,6 @@ mod tests {
     }
 
     #[test]
-    fn focusable_active_enters_edit_mode() {
-        use crate::focus_manager::WidgetFocusable;
-        let mut f = WidgetInputField::new(42);
-        f.set_text("start");
-        let events = f.set_focusable_active(true);
-        assert!(events.is_empty());
-        assert_eq!(f.base.state, UiState::SelectedEditable);
-        assert_eq!(f.saved_text, "start");
-        // widget_id passes through.
-        let fcs: &dyn WidgetFocusable = &f;
-        assert_eq!(fcs.widget_id(), 42);
-    }
-
-    #[test]
-    fn focusable_active_while_editing_is_noop() {
-        // Re-entering edit mode while already editing must not clobber
-        // saved_text or snap the caret.
-        use crate::focus_manager::WidgetFocusable;
-        let mut f = make_editable_field();
-        f.saved_text = "orig".to_string();
-        f.edit_text = "typed".to_string();
-        f.caret_offset = 2;
-        f.set_focusable_active(true);
-        assert_eq!(f.saved_text, "orig");
-        assert_eq!(f.caret_offset, 2);
-        assert_eq!(f.base.state, UiState::SelectedEditable);
-    }
-
-    #[test]
-    fn focusable_inactive_outside_edit_mode_enters_edit() {
-        // `set_focusable_active` ignores its argument, so passing false
-        // while in a non-editable state must still enter edit mode.
-        use crate::focus_manager::WidgetFocusable;
-        let mut f = WidgetInputField::new(5);
-        f.set_text("hello");
-        f.set_focusable_active(false);
-        assert_eq!(f.base.state, UiState::SelectedEditable);
-        assert_eq!(f.saved_text, "hello");
-    }
-
-    #[test]
     fn validate_and_cancel_snap_caret_to_end() {
         // Hiding the caret on exit snaps it to end of buffer.
         let mut f = make_editable_field();
@@ -949,19 +880,6 @@ mod tests {
         assert!(!f.insert_character('c'));
         assert_eq!(f.edit_text, "ab");
         assert_eq!(f.caret_offset, 2);
-    }
-
-    #[test]
-    fn focusable_inactive_while_editing_is_noop() {
-        // The field stays in edit mode; an earlier impl had an
-        // implicit-commit-on-focus-loss which has since been removed.
-        use crate::focus_manager::WidgetFocusable;
-        let mut f = make_editable_field();
-        f.base.id = 5;
-        f.edit_text = "typed".to_string();
-        f.set_focusable_active(false);
-        assert_eq!(f.base.state, UiState::SelectedEditable);
-        assert_eq!(f.base.text, "");
     }
 }
 

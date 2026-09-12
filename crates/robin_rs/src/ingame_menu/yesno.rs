@@ -160,13 +160,6 @@ impl YesNoModalState {
 
         let mut input_state = ModalInputState::new();
         input_state.seed_mouse_from_window(event_pump, transform);
-        // UiKeyboard's first refresh only establishes its baseline. Do that
-        // before polling so a key pressed on the modal's first visible frame
-        // is not swallowed.
-        {
-            let _ = input_state.as_widget_input();
-        }
-        input_state.end_frame();
 
         Self {
             message,
@@ -368,11 +361,7 @@ mod tests {
         focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
         focus.add_shortcut(ID_NO, KeyCode::Escape);
 
-        let mut input_state = ModalInputState::new();
-        {
-            let _ = input_state.as_widget_input();
-        }
-        input_state.end_frame();
+        let input_state = ModalInputState::new();
 
         YesNoModalState {
             message: "Continue?".to_string(),

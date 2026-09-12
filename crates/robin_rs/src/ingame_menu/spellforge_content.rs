@@ -368,7 +368,7 @@ pub async fn show_host_distribution_attestation(
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -599,7 +599,7 @@ pub async fn show_spellforge_consent(
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -1002,7 +1002,7 @@ pub async fn show_spellforge_content_settings(
             resources,
             cursor.as_ref(),
         ) {
-            SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ms(16).await,
+            SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ui_frame().await,
             SpellforgeContentSettingsOutcome::Closed
             | SpellforgeContentSettingsOutcome::ExitRequested => return,
         }

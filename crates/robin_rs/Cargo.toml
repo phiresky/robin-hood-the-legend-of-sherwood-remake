@@ -267,7 +267,7 @@ multiplayer = [
 # Developer conversion/inspection binaries are built only on demand.
 tools = ["dep:ogg", "dep:rayon"]
 android = ["audio"]
-audio = ["dep:kira", "dep:lru", "dep:mint", "dep:rayon", "dep:ogg"]
+audio = ["dep:kira", "dep:lru", "dep:mint", "dep:ogg"]
 dialogs = ["dep:rfd"]
 gamepad = ["dep:gilrs"]
 hardware-info = ["dep:sysinfo"]
@@ -309,6 +309,7 @@ required-features = ["tools"]
 [[bin]]
 name = "convert_datadir"
 path = "src/bin/convert_datadir.rs"
+# Its unit tests run explicitly with --bin convert_datadir; see docs/TESTING.md.
 test = false
 required-features = ["tools"]
 

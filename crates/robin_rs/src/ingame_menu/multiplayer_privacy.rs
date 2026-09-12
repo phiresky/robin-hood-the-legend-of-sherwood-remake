@@ -152,7 +152,7 @@ pub async fn show_multiplayer_privacy(
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 
     if accepted && dirty && working != *config {

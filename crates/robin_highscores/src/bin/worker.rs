@@ -594,6 +594,13 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                             lease_ttl,
                         )
                         .await
+                        .map_err(|error| {
+                            tracing::warn!(
+                                error_code = error.safe_log_code(),
+                                "skipping campaign maintenance: could not acquire write lease"
+                            );
+                            error
+                        })
                         .ok();
                     if let Some(maintenance_lease) = maintenance_lease {
                         run_with_write_lease_heartbeat(

@@ -1,18 +1,5 @@
 use super::*;
-use crate::ui::UiKeyboard;
-
-fn make_input(mouse_x: f32, mouse_y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
-    // Leak a keyboard for test convenience (tests are short-lived).
-    let kb = Box::leak(Box::new(UiKeyboard::default()));
-    WidgetInput {
-        mouse_position: ScreenPoint::new(mouse_x, mouse_y),
-        mouse_z: 0,
-        mouse_button: buttons,
-        keyboard: kb,
-        text_input: "",
-        capture: None,
-    }
-}
+use crate::widget::test_support::mouse_input as make_input;
 
 fn make_input_with_capture<'a>(
     mouse_x: f32,
@@ -20,14 +7,9 @@ fn make_input_with_capture<'a>(
     buttons: MouseButtons,
     capture: &'a super::super::CaptureSlot,
 ) -> WidgetInput<'a> {
-    let kb = Box::leak(Box::new(UiKeyboard::default()));
     WidgetInput {
-        mouse_position: ScreenPoint::new(mouse_x, mouse_y),
-        mouse_z: 0,
-        mouse_button: buttons,
-        keyboard: kb,
-        text_input: "",
         capture: Some(capture),
+        ..make_input(mouse_x, mouse_y, buttons)
     }
 }
 
@@ -439,16 +421,4 @@ fn activate_disabled_silent() {
     btn.base.enabled = false;
     let events = btn.activate();
     assert!(events.is_empty());
-}
-
-#[test]
-fn groupable_trait_routes() {
-    use crate::focus_manager::{UiEventType, WidgetGroupable};
-    let mut btn = make_menu_button();
-    let g: &mut dyn WidgetGroupable = &mut btn;
-    assert_eq!(g.widget_id(), 1);
-    assert!(g.is_enabled());
-    let events = g.activate();
-    assert_eq!(events[0].msg_type, UiEventType::Activated);
-    assert_eq!(events[0].origin, 1);
 }

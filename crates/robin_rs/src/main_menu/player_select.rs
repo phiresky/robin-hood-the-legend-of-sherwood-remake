@@ -1648,7 +1648,7 @@ async fn show_difficulty_prompt(
             cursor.draw(renderer, transform, &input_state);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

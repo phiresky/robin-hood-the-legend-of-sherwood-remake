@@ -8,7 +8,6 @@
 use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
-use crate::focus_manager::WidgetGroupable;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{
@@ -269,7 +268,7 @@ impl WidgetRadioButton {
     ///
     /// Group exclusion is applied by callers that own the sibling list:
     /// `FrameWnd::process_input` for mouse dispatch and
-    /// `FocusManager::apply_group_activation` for keyboard/shortcut
+    /// the frame input dispatcher for keyboard/shortcut
     /// dispatch.
     pub fn activate(&mut self) -> Vec<UiEvent> {
         if !self.base.enabled || self.base.state != UiState::SelectedFirst {
@@ -319,76 +318,5 @@ impl WidgetRadioButton {
     /// when no mask is attached.
     pub fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         self.base.is_inside(point)
-    }
-}
-
-// ── WidgetGroupable trait impl ─────────────────────────────────────
-//
-// Glue for `FocusManager` so a radio button can be dropped into the
-// group navigation chain.
-//
-// `focus_manager` uses its own `UiEvent` / `UiEventType` pair (a
-// slimmer subset without data payload) rather than `ui::UiEvent`; we
-// translate via the `ui_event_to_focus_event` shape below.
-
-fn ui_event_to_focus_event(event: UiEvent) -> Option<crate::focus_manager::UiEvent> {
-    use crate::focus_manager::{UiEvent as FmEvent, UiEventType as FmType};
-    let msg_type = match event.msg_type {
-        UiMsg::WidgetFocused | UiMsg::WidgetUnfocused => FmType::FocusChanged,
-        UiMsg::WidgetActivated => FmType::Activated,
-        UiMsg::WidgetReactivated => FmType::SelectionChanged,
-        _ => return None,
-    };
-    Some(FmEvent {
-        msg_type,
-        origin: event.origin_widget_id as crate::focus_manager::WidgetId,
-    })
-}
-
-fn translate(events: Vec<UiEvent>) -> Vec<crate::focus_manager::UiEvent> {
-    events
-        .into_iter()
-        .filter_map(ui_event_to_focus_event)
-        .collect()
-}
-
-impl WidgetGroupable for WidgetRadioButton {
-    fn widget_id(&self) -> crate::focus_manager::WidgetId {
-        self.base.id as crate::focus_manager::WidgetId
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.base.enabled
-    }
-
-    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
-        WidgetRadioButton::is_mouse_inside(self, point)
-    }
-
-    fn hide_focus(&mut self, hide: bool) {
-        WidgetRadioButton::hide_focus(self, hide);
-    }
-
-    fn set_group_focused(&mut self, focused: bool) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetRadioButton::set_group_focused(self, focused))
-    }
-
-    fn set_group_selected(&mut self, selected: bool) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetRadioButton::set_group_selected(self, selected))
-    }
-
-    fn activate(&mut self) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetRadioButton::activate(self))
-    }
-
-    fn group_members(&self) -> Vec<crate::focus_manager::WidgetId> {
-        self.group_members
-            .iter()
-            .map(|&id| id as crate::focus_manager::WidgetId)
-            .collect()
-    }
-
-    fn set_active_other(&mut self) {
-        WidgetRadioButton::set_active_other(self);
     }
 }
