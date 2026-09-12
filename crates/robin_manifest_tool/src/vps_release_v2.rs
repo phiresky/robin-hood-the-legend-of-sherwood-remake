@@ -405,6 +405,8 @@ mod tests;
 
 mod bundle;
 
+mod fd_policy;
+use fd_policy::InheritedFd;
 mod activation;
 
 mod sources;
@@ -499,8 +501,6 @@ use bundle::canonical_file_mode;
 pub use activation::project_vps_publication_lock_v2;
 
 use activation::load_pinned_vps_plan;
-
-use activation::NixOwnedFdV2;
 
 pub use activation::exec_vps_deploy_activation_v2;
 
