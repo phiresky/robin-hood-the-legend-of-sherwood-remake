@@ -8,27 +8,12 @@ fn nested_sequence_actions_finish_before_parent_tail() {
     ordering.element_data_mut().blipped = true;
     let ordering_id = engine.add_entity(ordering);
     let ordering_handle = ScriptHandleCodec::actor_handle(ordering_id);
-    let simulation = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("script installed")
-            .bind_actor(
-                ordering_handle,
-                "OrderingReceiver",
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .bind_actor(ordering_handle, "OrderingReceiver");
 
     engine
         .call_script_vm(
@@ -153,28 +138,12 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
         .element_data_mut()
         .blipped = true;
 
-    let simulation = crate::sim_rng::test_context();
-
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("script installed")
-            .bind_scroll(
-                scroll_handle,
-                "OpenScrollFailure",
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .bind_scroll(scroll_handle, "OpenScrollFailure");
 
     let mut open_scroll = SequenceElement::new_generic(1, Command::OpenScroll, None);
     open_scroll.set_property(Field::Scroll, FieldValue::Element(scroll_id));
@@ -252,27 +221,12 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
     scroll.element.active = true;
     let scroll_id = engine.add_entity(Entity::Scroll(scroll));
     let scroll_handle = ScriptHandleCodec::actor_handle(scroll_id);
-    let simulation = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("script installed")
-            .bind_scroll(
-                scroll_handle,
-                "OpenScrollLocalFailure",
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .bind_scroll(scroll_handle, "OpenScrollLocalFailure");
 
     let mut open_scroll = SequenceElement::new_generic(1, Command::OpenScroll, None);
     open_scroll.set_property(Field::Scroll, FieldValue::Element(scroll_id));
@@ -326,27 +280,9 @@ fn scroll_send_message_preserves_this_scroll_through_child_and_resume() {
     let observer_id = engine.add_entity(scripted_soldier("ScrollObserver"));
     let observer_handle = ScriptHandleCodec::actor_handle(observer_id);
     let scroll_handle = 0x1A2B_3C4D;
-    let simulation = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
     let script = engine.scripts.mission.as_mut().expect("script installed");
-    assert!(script.bind_actor(
-        observer_handle,
-        "ScrollObserver",
-        &mut engine.script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_scroll(
-        scroll_handle,
-        "ScrollRelay",
-        &mut engine.script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(observer_handle, "ScrollObserver");
+    script.bind_scroll(scroll_handle, "ScrollRelay");
 
     let frame = crate::natives::ScriptCallFrame::default()
         .with_script_this(scroll_handle)
@@ -372,25 +308,12 @@ fn scroll_ownerless_send_message_preserves_this_scroll_in_global_and_parent() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
     let scroll_handle = 0x1020_3040;
-    let simulation = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
     engine
         .scripts
         .mission
         .as_mut()
         .expect("script installed")
-        .bind_scroll(
-            scroll_handle,
-            "ScrollRelay",
-            &mut engine.script_domains,
-            &capabilities,
-        );
+        .bind_scroll(scroll_handle, "ScrollRelay");
     let frame = crate::natives::ScriptCallFrame::default()
         .with_script_this(scroll_handle)
         .with_current_scroll(scroll_handle);

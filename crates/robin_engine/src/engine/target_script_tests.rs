@@ -221,27 +221,11 @@ pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
     });
     let target_id = engine.add_entity(target);
 
-    // Bind the target to its script class.  In production this runs
-    // during per-target Initialize (see `script.rs:568-584`).
+    // Bind the target to its script class. Production binds instances before
+    // dispatching Initialize through the shared engine driver.
     let handle = crate::natives::ScriptHandleCodec::actor_handle(target_id);
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
     if let Some(ref mut script) = engine.scripts.mission {
-        assert!(
-            script.bind_target(
-                handle,
-                "TestTarget",
-                &mut engine.script_domains,
-                &capabilities,
-            ),
-            "bind_target"
-        );
+        script.bind_target(handle, "TestTarget");
     }
 
     (engine, target_id)

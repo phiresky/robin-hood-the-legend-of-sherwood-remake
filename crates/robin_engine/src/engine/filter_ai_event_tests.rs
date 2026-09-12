@@ -298,27 +298,9 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
     let sensitive_handle = crate::natives::ScriptHandleCodec::actor_handle(sensitive_id);
     let noov_handle = crate::natives::ScriptHandleCodec::actor_handle(noov_id);
 
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
     if let Some(ref mut s) = engine.scripts.mission {
-        assert!(s.bind_actor(
-            sensitive_handle,
-            "SourceSensitive",
-            &mut engine.script_domains,
-            &capabilities,
-        ));
-        assert!(s.bind_actor(
-            noov_handle,
-            "NoOverride",
-            &mut engine.script_domains,
-            &capabilities,
-        ));
+        s.bind_actor(sensitive_handle, "SourceSensitive");
+        s.bind_actor(noov_handle, "NoOverride");
     }
 
     (engine, robin_handle, sensitive_handle, noov_handle)
@@ -879,25 +861,16 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.attach_script_bindings(&assets);
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
     let mission = engine
         .scripts
         .mission
         .as_mut()
         .expect("closure-review mission remains loaded");
     for id in candidates.iter().take(3) {
-        assert!(mission.bind_actor(
+        mission.bind_actor(
             crate::natives::ScriptHandleCodec::actor_handle(*id),
             "RejectAll",
-            &mut engine.script_domains,
-            &capabilities,
-        ));
+        );
     }
 
     let scratch = engine.build_sim_scratch(&assets);
@@ -1394,14 +1367,10 @@ fn nested_callback_keeps_the_canonical_query_views() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(
-            &crate::sim_rng::test_context(),
-            &assets,
-            |script, domains, capabilities| {
-                assert!(script.bind_actor(outer_handle, "OuterCaller", domains, capabilities));
-                assert!(script.bind_actor(inner_handle, "InnerTarget", domains, capabilities));
-            },
-        )
+        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
+            script.bind_actor(outer_handle, "OuterCaller");
+            script.bind_actor(inner_handle, "InnerTarget");
+        })
         .expect("mission installed");
     let result = engine
         .call_script_vm(
@@ -1421,26 +1390,8 @@ fn nested_callback_keeps_the_canonical_query_views() {
 fn ordinary_actor_callback_binds_this_to_the_target_actor() {
     let scb = build_nested_scb_with_inner_this(true);
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
     let inner_handle = 22;
-    assert!(script.bind_actor(
-        inner_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(inner_handle, "InnerTarget");
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
@@ -1474,26 +1425,8 @@ fn ordinary_actor_callback_binds_this_to_the_target_actor() {
 fn scroll_callback_binds_this_scroll_and_unwinds_the_frame() {
     let scb = build_nested_scb_with_inner_native(Some(crate::natives::NativeFn::ThisScroll));
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
     let scroll_handle = 23;
-    assert!(script.bind_scroll(
-        scroll_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_scroll(scroll_handle, "InnerTarget");
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
@@ -1532,33 +1465,10 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
     // Preserve the original game's callback order.
     let scb = build_nested_scb_with_inner_this(true);
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
     let outer_handle = 11;
     let prototype_handle = 22;
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        prototype_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(outer_handle, "OuterCaller");
+    script.bind_actor(prototype_handle, "InnerTarget");
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
@@ -1606,37 +1516,14 @@ fn prototype_filter_event_preserves_the_outer_this_actor() {
 fn prototype_filter_event_dispatches_to_target_actor_script() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
 
     // Bind two synthetic actor instances. Their entity handles don't need to
     // map to real engine entities because these scripts never invoke an
     // entity-lookup native.
     let outer_handle = 1;
     let inner_handle = 2;
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        inner_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(outer_handle, "OuterCaller");
+    script.bind_actor(inner_handle, "InnerTarget");
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
@@ -1664,33 +1551,10 @@ fn prototype_filter_event_dispatches_to_target_actor_script() {
 fn recursive_prototype_filter_event_stops_at_call_stack_limit() {
     let mut script =
         MissionScript::from_scb(build_recursive_nested_scb()).expect("recursive SCB builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
     let actor_a = 1;
     let actor_b = 2;
-    assert!(script.bind_actor(
-        actor_a,
-        "RecursiveCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        actor_b,
-        "RecursiveCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(actor_a, "RecursiveCaller");
+    script.bind_actor(actor_b, "RecursiveCaller");
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
@@ -1733,9 +1597,9 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
     engine.attach_script_bindings(&assets);
 
     engine
-        .with_script_session(sim, &assets, |script, script_domains, capabilities| {
-            assert!(script.bind_actor(outer_handle, "OuterCaller", script_domains, capabilities));
-            assert!(script.bind_actor(inner_handle, "InnerTarget", script_domains, capabilities));
+        .with_script_session(sim, &assets, |script, _, _| {
+            script.bind_actor(outer_handle, "OuterCaller");
+            script.bind_actor(inner_handle, "InnerTarget");
         })
         .expect("mission script stays present");
 
@@ -1762,33 +1626,10 @@ fn script_session_preserves_nested_pending_call_resume_and_restoration() {
 fn prototype_filter_event_missing_override_uses_actor_base_default() {
     let scb = build_nested_scb_with_default_inner();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
     let outer_handle = 1;
     let prototype_handle = 2;
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        prototype_handle,
-        "DefaultInnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(outer_handle, "OuterCaller");
+    script.bind_actor(prototype_handle, "DefaultInnerTarget");
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(script);
@@ -1815,36 +1656,16 @@ fn prototype_filter_event_missing_override_uses_actor_base_default() {
 fn nested_prototype_callback_observes_outer_native_entity_mutation() {
     let scb = build_nested_entity_mutation_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
     let prototype_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(1);
-    let mut entity_store = crate::entities::Entities::from_legacy_slots(vec![
+    let entity_store = crate::entities::Entities::from_legacy_slots(vec![
         Some(make_scripted_soldier("OuterCaller")),
         Some(make_scripted_soldier("InnerTarget")),
     ]);
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        prototype_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    let ai_global = crate::ai::AiGlobalState::default();
+    let fast_grid = crate::fast_find_grid::FastFindGrid::default();
+    script.bind_actor(outer_handle, "OuterCaller");
+    script.bind_actor(prototype_handle, "InnerTarget");
 
     let mut engine = EngineInner::new();
     engine.world.entities = entity_store;
@@ -1884,35 +1705,12 @@ fn nested_prototype_callback_observes_outer_native_entity_mutation() {
 
 #[test]
 fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
-    let sim_context = crate::sim_rng::test_context();
     let mut script = MissionScript::from_scb(build_nested_ai_global_mutation_scb())
         .expect("nested AI-global SCB builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
     let outer_handle = 1;
     let prototype_handle = 2;
-    let mut entities = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim_context,
-        &mut entities,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
-    assert!(script.bind_actor(
-        prototype_handle,
-        "InnerTarget",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(outer_handle, "OuterCaller");
+    script.bind_actor(prototype_handle, "InnerTarget");
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
@@ -1952,27 +1750,9 @@ fn nested_prototype_callback_observes_canonical_ai_global_mutation() {
 fn prototype_filter_event_unbound_target_is_a_required_vm_error() {
     let scb = build_nested_scb();
     let mut script = MissionScript::from_scb(scb).expect("scb builds");
-    let mut script_domains = crate::engine::ScriptDomains::default();
-    let mut entity_store = crate::entities::Entities::new();
-    let mut ai_global = crate::ai::AiGlobalState::default();
-    let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
-    let mut globals = Vec::new();
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut entity_store,
-        &mut ai_global,
-        &mut fast_grid,
-        &mut globals,
-    );
 
     let outer_handle = 1;
-    assert!(script.bind_actor(
-        outer_handle,
-        "OuterCaller",
-        &mut script_domains,
-        &capabilities,
-    ));
+    script.bind_actor(outer_handle, "OuterCaller");
     // Note: don't bind anyone for handle 99.
 
     let mut engine = EngineInner::new();
@@ -2330,13 +2110,9 @@ fn bind_action_observer(engine: &mut EngineInner, assets: &LevelAssets, actor: E
     );
     engine.attach_script_bindings(assets);
     engine
-        .with_script_session(
-            &crate::sim_rng::test_context(),
-            assets,
-            |script, domains, capabilities| {
-                assert!(script.bind_actor(handle, "ActionObserver", domains, capabilities));
-            },
-        )
+        .with_script_session(&crate::sim_rng::test_context(), assets, |script, _, _| {
+            script.bind_actor(handle, "ActionObserver");
+        })
         .expect("action-observer mission remains installed");
 }
 
@@ -2368,21 +2144,10 @@ fn action_change_ordering_engine(
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(
-            &crate::sim_rng::test_context(),
-            &assets,
-            |script, domains, capabilities| {
-                assert!(
-                    script.bind_actor(mutator_handle, "PostureMutator", domains, capabilities,)
-                );
-                assert!(script.bind_actor(
-                    observer_handle,
-                    "ActionObserver",
-                    domains,
-                    capabilities,
-                ));
-            },
-        )
+        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
+            script.bind_actor(mutator_handle, "PostureMutator");
+            script.bind_actor(observer_handle, "ActionObserver");
+        })
         .expect("action-change mission remains installed");
 
     install_test_action(
@@ -2507,13 +2272,9 @@ fn action_change_self_mutation_stores_live_post_callback_animation() {
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(
-            &crate::sim_rng::test_context(),
-            &assets,
-            |script, domains, capabilities| {
-                assert!(script.bind_actor(handle, "SelfPostureMutator", domains, capabilities,));
-            },
-        )
+        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
+            script.bind_actor(handle, "SelfPostureMutator");
+        })
         .expect("self-mutation mission remains installed");
     install_test_action(
         &mut engine,
@@ -2885,13 +2646,9 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     engine
-        .with_script_session(
-            &crate::sim_rng::test_context(),
-            &assets,
-            |script, domains, capabilities| {
-                assert!(script.bind_actor(first_handle, "WaitProbe", domains, capabilities));
-            },
-        )
+        .with_script_session(&crate::sim_rng::test_context(), &assets, |script, _, _| {
+            script.bind_actor(first_handle, "WaitProbe");
+        })
         .expect("wait-isolation mission remains installed");
 
     engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
@@ -5546,27 +5303,12 @@ fn install_state_change_script(engine: &mut EngineInner, scb: ScbFile) -> LevelA
 
 fn bind_state_change_actor(engine: &mut EngineInner, actor: EntityId, class_name: &str) -> i32 {
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("state-change script installed")
-            .bind_actor(
-                handle,
-                class_name,
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("state-change script installed")
+        .bind_actor(handle, class_name);
     engine
         .world
         .entities

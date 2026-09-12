@@ -1023,27 +1023,12 @@ pub(super) fn bind_script_actor(
     class_name: &str,
 ) -> i32 {
     let handle = ScriptHandleCodec::actor_handle(actor_id);
-    let simulation = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &simulation,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("script installed")
-            .bind_actor(
-                handle,
-                class_name,
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .bind_actor(handle, class_name);
     handle
 }
 
@@ -1069,27 +1054,12 @@ pub(super) fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, 
     engine.attach_script_bindings(&LevelAssets::new());
     let receiver = engine.add_entity(scripted_receiver());
     let handle = ScriptHandleCodec::actor_handle(receiver);
-    let sim = crate::sim_rng::test_context();
-    let capabilities = crate::natives::NativeSessionCapabilities::new(
-        &sim,
-        &mut engine.world.entities,
-        &mut engine.ai.global,
-        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
-        &mut engine.scripts.globals,
-    );
-    assert!(
-        engine
-            .scripts
-            .mission
-            .as_mut()
-            .expect("script installed")
-            .bind_actor(
-                handle,
-                "MessageReceiver",
-                &mut engine.script_domains,
-                &capabilities,
-            )
-    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .expect("script installed")
+        .bind_actor(handle, "MessageReceiver");
     (engine, receiver, handle)
 }
 
