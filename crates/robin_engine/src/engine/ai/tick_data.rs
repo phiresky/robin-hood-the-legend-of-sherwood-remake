@@ -446,6 +446,15 @@ impl EngineInner {
         let building_authorizations = self.building_authorizations_for_ai_views();
         std::sync::Arc::new(AiEntityViews {
             entities,
+            unavailable_entities: self
+                .world
+                .entities
+                .occupied()
+                .filter_map(|(id, entity)| {
+                    crate::ai_entity_view::entity_view_unavailable(entity)
+                        .map(|reason| (id.index(), reason))
+                })
+                .collect(),
             building_authorizations,
             diplomacy: self.mission_domain.diplomacy.clone(),
         })

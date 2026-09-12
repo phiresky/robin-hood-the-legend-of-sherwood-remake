@@ -3931,7 +3931,8 @@ pub(super) fn build_my_exit_door_info(
 /// positions / states. Includes every PC, soldier, civilian, and active
 /// object-hierarchy entity. Human views include inactive actors because normal
 /// Human detection ignores activity in its same-building branch; inactive
-/// objects remain excluded.
+/// objects remain excluded. All views require a populated layer; the shared
+/// snapshot separately records present entities excluded by that requirement.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     build_entity_views_and_stamps(engine).0
 }
@@ -4543,13 +4544,7 @@ fn entity_has_ai_view(entity: &Entity) -> bool {
     // membership. This occurs transiently for projectiles and can be retained
     // by loaded actor state; neither has a valid AI Position until a real
     // layer is installed again.
-    if entity.element_data().optional_layer().is_none() {
-        return false;
-    }
-    match entity {
-        Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => true,
-        _ => entity.object_data().is_some() && entity.element_data().active,
-    }
+    crate::ai_entity_view::entity_view_unavailable(entity).is_none()
 }
 
 fn refresh_prepared_entity_views(
@@ -4583,9 +4578,11 @@ fn refresh_prepared_entity_views(
         panic!("prepared AI entity views escaped their synchronous owner dispatch")
     });
 
+    views.unavailable_entities.clear();
     let mut rebuilt = 0;
     for (entity_id, entity) in engine.world.entities.occupied() {
-        if !entity_has_ai_view(entity) {
+        if let Some(reason) = crate::ai_entity_view::entity_view_unavailable(entity) {
+            views.unavailable_entities.insert(entity_id.index(), reason);
             continue;
         }
         let index = entity_id.index();
@@ -4678,6 +4675,86 @@ mod prepared_entity_view_cache_tests {
             },
             soldier: SoldierData::default(),
         })
+    }
+
+    #[test]
+    fn observation_classification_tracks_layer_admission_and_removal() {
+        use crate::ai_entity_view::AiObservationUnavailable as Unavailable;
+        let mut engine = EngineInner::new();
+        let observed = engine.add_entity(active_bonus(10.0));
+        let missing_layer = engine.add_entity(active_soldier_without_layer());
+        let mut excluded = active_bonus(20.0);
+        excluded.element_data_mut().active = false;
+        let excluded = engine.add_entity(excluded);
+        let mut cache = PreparedAiEntityViewCache::default();
+        refresh_prepared_entity_views(&engine, &mut cache);
+
+        {
+            let ctx = AiContext {
+                entity_views: cache.views.as_ref().unwrap().clone(),
+                ..AiContext::test_fixture()
+            };
+            assert!(ctx.entity_observation(observed.index()).is_ok());
+            assert_eq!(
+                ctx.entity_observation(missing_layer.index()).unwrap_err(),
+                Unavailable::MissingLayer
+            );
+            assert_eq!(
+                ctx.entity_observation(excluded.index()).unwrap_err(),
+                Unavailable::ExcludedEntity
+            );
+            assert_eq!(
+                ctx.entity_observation(u32::MAX).unwrap_err(),
+                Unavailable::EntityAbsent
+            );
+            assert_eq!(
+                ctx.entity_observation(None::<crate::ai::AiEntityHandle>)
+                    .unwrap_err(),
+                Unavailable::NoHandle
+            );
+        }
+
+        engine
+            .world
+            .entities
+            .get_mut(missing_layer)
+            .unwrap()
+            .element_data_mut()
+            .set_layer(0);
+        engine
+            .world
+            .entities
+            .get_mut(observed)
+            .unwrap()
+            .element_data_mut()
+            .clear_layer();
+        engine.world.entities.remove(excluded).unwrap();
+        refresh_prepared_entity_views(&engine, &mut cache);
+        {
+            let ctx = AiContext {
+                entity_views: cache.views.as_ref().unwrap().clone(),
+                ..AiContext::test_fixture()
+            };
+            assert!(ctx.entity_observation(missing_layer.index()).is_ok());
+            assert_eq!(
+                ctx.entity_observation(observed.index()).unwrap_err(),
+                Unavailable::MissingLayer
+            );
+            assert_eq!(
+                ctx.entity_observation(excluded.index()).unwrap_err(),
+                Unavailable::EntityAbsent
+            );
+        }
+        engine.world.entities.remove(observed).unwrap();
+        refresh_prepared_entity_views(&engine, &mut cache);
+        let ctx = AiContext {
+            entity_views: cache.views.as_ref().unwrap().clone(),
+            ..AiContext::test_fixture()
+        };
+        assert_eq!(
+            ctx.entity_observation(observed.index()).unwrap_err(),
+            Unavailable::EntityAbsent
+        );
     }
 
     #[test]

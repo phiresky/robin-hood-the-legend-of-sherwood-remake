@@ -430,12 +430,41 @@ impl AiEntityView {
 /// via an [`Arc`] so building a new `AiContext` is O(1).
 pub type AiEntityViewMap = HashMap<u32, AiEntityView>;
 
-/// Per-tick AI-readable world snapshot. Building authorization lives beside
-/// the entity map because both must be captured from the same canonical engine
-/// boundary before immutable AI handlers run.
+/// Why a handle cannot supply spatial AI state at this snapshot boundary.
+/// This is observation availability, not visibility or combat eligibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AiObservationUnavailable {
+    /// The caller supplied `None`, rather than a handle (slot zero is valid).
+    NoHandle,
+    /// No entity occupies this handle (removed or never allocated).
+    EntityAbsent,
+    /// An entity exists, but its Original layer is cleared (0xFFFF).
+    MissingLayer,
+    /// A non-human entity is inactive or has no AI-facing object data.
+    ExcludedEntity,
+}
+
+/// Keep admission and absence diagnostics on exactly the same predicate.
+pub(crate) fn entity_view_unavailable(entity: &Entity) -> Option<AiObservationUnavailable> {
+    if entity.element_data().optional_layer().is_none() {
+        return Some(AiObservationUnavailable::MissingLayer);
+    }
+    match entity {
+        Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => None,
+        _ if entity.object_data().is_some() && entity.element_data().active => None,
+        _ => Some(AiObservationUnavailable::ExcludedEntity),
+    }
+}
+
+/// Per-tick AI-readable world snapshot. Presence/admission reasons and building
+/// authorization live beside the entity map because all must be captured from
+/// the same canonical engine boundary before immutable AI handlers run.
 #[derive(Debug, Clone, Default)]
 pub struct AiEntityViews {
     pub entities: AiEntityViewMap,
+    /// Present entities excluded from `entities`, captured at the same boundary.
+    /// Absent slots are deliberately not retained across snapshot refreshes.
+    pub unavailable_entities: HashMap<u32, AiObservationUnavailable>,
     pub building_authorizations: HashMap<crate::sector::SectorNumber, bool>,
     /// Relationship data captured at the same deterministic boundary as the
     /// entity views.
@@ -470,11 +499,13 @@ impl AiEntityViews {
 pub type SharedAiEntityViews = Arc<AiEntityViews>;
 
 /// Test/helper constructor for snapshots that do not exercise building-gate
-/// routing. Production snapshots are built by `EngineInner` and always carry
-/// the exact building authorization map.
+/// routing or unavailable-but-present entities. Unlisted fixture handles count
+/// as absent. Production snapshots are built by `EngineInner` and always carry
+/// the exact admission reasons and building authorization map.
 pub fn shared_entity_views(entities: AiEntityViewMap) -> SharedAiEntityViews {
     Arc::new(AiEntityViews {
         entities,
+        unavailable_entities: HashMap::new(),
         building_authorizations: HashMap::new(),
         diplomacy: Default::default(),
     })
