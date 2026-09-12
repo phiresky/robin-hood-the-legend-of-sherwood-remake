@@ -80,7 +80,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 47 removes unused computed-location dummy, object repulsive-point,
 /// and engine-camera scratch fields (save 81 / replay 39). Removing hash-skipped
 /// fields also removes their markers from the state-hash stream.
-pub const NET_PROTOCOL_VERSION: u32 = 47;
+/// Protocol 48 removes duplicate AI soldier-presence flags from snapshots and
+/// hashes, retaining the initial soldier-camp set (save 82 / replay 40).
+pub const NET_PROTOCOL_VERSION: u32 = 48;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1830,7 +1832,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_version_excludes_unused_location_and_object_fields() {
+    fn protocol_version_uses_canonical_initial_soldier_camps() {
         // Version 38 combines typed nullable runtime handles, exact spatial
         // and save provenance, authenticated browser seats, exact-byte
         // prepare/ready/commit snapshot transitions, canonical speech timing,
@@ -1858,7 +1860,9 @@ mod tests {
         // Version 47 removes the unused computed-location dummy, object
         // repulsive-point copy, and engine-camera scratch fields. Hash-skipped
         // fields emitted markers, so removing them also changes state hashes.
-        assert_eq!(NET_PROTOCOL_VERSION, 47);
+        // Version 48 removes duplicate royalist/lacklandist presence flags,
+        // retaining the soldier-camp set as the initial authority.
+        assert_eq!(NET_PROTOCOL_VERSION, 48);
     }
 
     #[test]

@@ -30,8 +30,6 @@ impl EngineInner {
 
         // Reset global AI state
         // think-method recursion depth = 0
-        self.ai.global.there_are_royalist_soldiers = false;
-        self.ai.global.there_are_lacklandist_soldiers = false;
         self.ai.global.soldier_camps.clear();
         self.ai.global.overall_alert_status = crate::ai::AlertLevel::Green;
         self.ai.global.overall_villain_alert_status = crate::ai::AlertLevel::Green;
@@ -399,22 +397,10 @@ impl EngineInner {
                 npc.initial_view_direction.y = dir_vec[1];
             }
 
-            // Switch on the NPC's camp to set the static camp-present
-            // flags (`there_are_royalist_soldiers` /
-            // `there_are_lacklandist_soldiers`).  Reading
-            // `npcs_can_be_enemies()` later gates mixed-camp soldier
-            // hostility on both flags being true.  The life-point
-            // Easy/Hard scaling on the Lacklandist arm is already
-            // applied at spawn time in `level_loading::spawn_soldier`.
-            if is_enemy {
-                if self_camp != Camp::Error {
-                    self.ai.global.soldier_camps.insert(self_camp);
-                }
-                match self_camp {
-                    Camp::Royalists => self.ai.global.there_are_royalist_soldiers = true,
-                    Camp::Lacklandists => self.ai.global.there_are_lacklandist_soldiers = true,
-                    _ => {}
-                }
+            // Preserve initialization-time camp presence for later mixed-camp
+            // hostility checks; this is not a live census of surviving NPCs.
+            if is_enemy && self_camp != Camp::Error {
+                self.ai.global.soldier_camps.insert(self_camp);
             }
 
             // Enemy-specific state.

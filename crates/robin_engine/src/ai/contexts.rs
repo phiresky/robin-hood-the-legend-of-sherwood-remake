@@ -177,34 +177,59 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_soldier_camps_override_legacy_presence_flags() {
-        let mut global = AiGlobalState {
-            there_are_royalist_soldiers: true,
-            there_are_lacklandist_soldiers: true,
-            ..Default::default()
-        };
-        global.soldier_camps.extend([
-            crate::element::Camp::Royalists,
-            crate::element::Camp::Lacklandists,
-        ]);
-        let diplomacy = crate::diplomacy::DiplomacyState::from_definition(
+    fn initialized_soldier_camps_control_hostility_after_snapshots() {
+        use crate::diplomacy::{DiplomacyDefinition, DiplomacyRule, DiplomacyState, Relationship};
+        use crate::element::Camp;
+
+        let ordinary = DiplomacyState::default();
+        let neutral = DiplomacyState::from_definition(
             true,
             true,
-            Some(&crate::diplomacy::DiplomacyDefinition {
+            Some(&DiplomacyDefinition {
                 player_coalition: vec![0],
-                relationships: vec![crate::diplomacy::DiplomacyRule {
+                relationships: vec![DiplomacyRule {
                     first: 0,
                     second: 1,
-                    relationship: crate::diplomacy::Relationship::Neutral,
+                    relationship: Relationship::Neutral,
                 }],
             }),
         )
         .unwrap();
-
-        assert!(!global.npcs_can_be_enemies(&diplomacy));
-        global.soldier_camps.clear();
-        assert!(!global.npcs_can_be_enemies(&diplomacy));
-        assert!(global.npcs_can_be_enemies(&crate::diplomacy::DiplomacyState::default()));
+        let mut disabled = neutral.clone();
+        disabled.set_npc_faction_wars(false);
+        for (camps, expected_ordinary, expected_neutral) in [
+            (vec![], false, false),
+            (vec![Camp::Royalists], false, false),
+            (vec![Camp::Lacklandists], false, false),
+            (vec![Camp::Custom(2)], false, false),
+            (vec![Camp::Royalists, Camp::Lacklandists], true, false),
+            (vec![Camp::Custom(2), Camp::Custom(3)], true, true),
+            (
+                vec![Camp::Royalists, Camp::Lacklandists, Camp::Custom(2)],
+                true,
+                true,
+            ),
+        ] {
+            let global = AiGlobalState {
+                soldier_camps: camps.into_iter().collect(),
+                ..Default::default()
+            };
+            let json = serde_json::to_value(&global).unwrap();
+            assert!(json.get("there_are_royalist_soldiers").is_none());
+            assert!(json.get("there_are_lacklandist_soldiers").is_none());
+            let from_json: AiGlobalState = serde_json::from_value(json).unwrap();
+            let from_native: AiGlobalState = bitcode::decode(&bitcode::encode(&global)).unwrap();
+            for restored in [&global, &from_json, &from_native] {
+                assert_eq!(restored.soldier_camps, global.soldier_camps);
+                assert_eq!(
+                    robin_util::state_hash::compute(restored),
+                    robin_util::state_hash::compute(&global)
+                );
+                assert_eq!(restored.npcs_can_be_enemies(&ordinary), expected_ordinary);
+                assert_eq!(restored.npcs_can_be_enemies(&neutral), expected_neutral);
+                assert!(!restored.npcs_can_be_enemies(&disabled));
+            }
+        }
     }
 }
 
@@ -1589,11 +1614,9 @@ pub struct AiGlobalState {
     pub yellow_alert_soldiers: u16,
     pub red_alert_soldiers: u16,
 
-    pub there_are_royalist_soldiers: bool,
-    pub there_are_lacklandist_soldiers: bool,
-    /// All valid soldier allegiances present in the mission. This replaces
-    /// Original's two booleans for multi-team hostility decisions while the
-    /// booleans remain for legacy state/parity surfaces.
+    /// Valid soldier allegiances sampled during mission AI initialization.
+    /// Like Original's camp-presence flags, this is not recomputed after
+    /// deaths or camp changes. The set also supports multi-team hostility.
     pub soldier_camps: std::collections::BTreeSet<crate::element_kinds::Camp>,
 
     pub stupid_soldiers_cheat: bool,
@@ -1687,8 +1710,6 @@ impl Default for AiGlobalState {
             green_alert_soldiers: 0,
             yellow_alert_soldiers: 0,
             red_alert_soldiers: 0,
-            there_are_royalist_soldiers: false,
-            there_are_lacklandist_soldiers: false,
             soldier_camps: std::collections::BTreeSet::new(),
             stupid_soldiers_cheat: false,
             freeze: false,
@@ -1724,22 +1745,12 @@ impl AiGlobalState {
         if !diplomacy.npc_faction_wars() {
             return false;
         }
-        if !self.soldier_camps.is_empty() {
-            return self.soldier_camps.iter().enumerate().any(|(index, camp)| {
-                self.soldier_camps
-                    .iter()
-                    .skip(index + 1)
-                    .any(|other| diplomacy.is_hostile(*camp, *other))
-            });
-        }
-        // Old snapshots predate `soldier_camps`; retain their two-flag
-        // fallback only when the authoritative set is genuinely absent.
-        self.there_are_royalist_soldiers
-            && self.there_are_lacklandist_soldiers
-            && diplomacy.is_hostile(
-                crate::element::Camp::Royalists,
-                crate::element::Camp::Lacklandists,
-            )
+        self.soldier_camps.iter().enumerate().any(|(index, camp)| {
+            self.soldier_camps
+                .iter()
+                .skip(index + 1)
+                .any(|other| diplomacy.is_hostile(*camp, *other))
+        })
     }
 
     pub fn overall_villain_alert(&self) -> AlertLevel {

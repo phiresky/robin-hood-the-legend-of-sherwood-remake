@@ -224,7 +224,7 @@ fn main() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn bench_maps(data_dir: &Path, tmp: &Path, max: usize, codec: CodecOpts) -> Result<()> {
-    let mut maps: Vec<PathBuf> = walk_ext(data_dir.join("DATA/Levels"), "map");
+    let mut maps: Vec<PathBuf> = walk_ext(data_dir.join("DATA/Levels"), "map")?;
     maps.sort();
     if max > 0 {
         maps.truncate(max);
@@ -312,7 +312,7 @@ fn bench_anim_samples(
     let mut candidates: Vec<Candidate> = Vec::new();
 
     let chars_dir = data_dir.join("DATA/Characters");
-    let mut rhs_files: Vec<PathBuf> = walk_ext(chars_dir, "rhs");
+    let mut rhs_files: Vec<PathBuf> = walk_ext(chars_dir, "rhs")?;
     rhs_files.sort();
 
     for rhs_path in &rhs_files {
@@ -847,7 +847,7 @@ fn bench_whole_bank(data_dir: &Path) -> Result<()> {
     // characters, append any bank IDs not yet seen (unreferenced by any
     // .rhs — e.g. menu/HUD sprites) in bank order.
     let chars_dir = data_dir.join("DATA/Characters");
-    let mut rhs_files: Vec<PathBuf> = walk_ext(chars_dir, "rhs");
+    let mut rhs_files: Vec<PathBuf> = walk_ext(chars_dir, "rhs")?;
     rhs_files.sort();
 
     let mut seen = HashSet::<u32>::new();
@@ -1021,26 +1021,7 @@ fn bench_sprite_breakdown(data_dir: &Path) -> Result<()> {
     .iter()
     .enumerate()
     {
-        let root = data_dir.join(rel);
-        if !root.exists() {
-            continue;
-        }
-        let files: Vec<PathBuf> = walk_ext(root, "rhs");
-        file_counts[idx] = files.len();
-        for p in &files {
-            let Ok((_sig, profiles)) =
-                SpriteScriptor::load_all_profiles_legacy(p.to_str().unwrap())
-            else {
-                continue;
-            };
-            for (_p, info) in &profiles {
-                for s in info.scripts.iter() {
-                    for &id in &s.frame_ids {
-                        referenced.entry(id).or_insert(tag);
-                    }
-                }
-            }
-        }
+        file_counts[idx] = collect_breakdown_references(&data_dir.join(rel), tag, &mut referenced)?;
     }
     eprintln!(
         "# scanned {} Characters/*.rhs + {} Animations/**/*.rhs",
@@ -1734,21 +1715,122 @@ fn rgb565_to_rgba_keyed(rgb565: &[u8], w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-fn walk_ext(root: PathBuf, ext: &str) -> Vec<PathBuf> {
+fn collect_breakdown_references(
+    root: &Path,
+    tag: &'static str,
+    referenced: &mut std::collections::HashMap<u32, &'static str>,
+) -> Result<usize> {
+    // A source bucket may be absent, but an unreadable or malformed present
+    // bucket cannot truthfully classify its sprites as unreferenced.
+    match fs::metadata(root) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", root.display())),
+    }
+    let files = walk_ext(root.to_path_buf(), "rhs")?;
+    for path in &files {
+        let path_text = path
+            .to_str()
+            .with_context(|| format!("non-UTF-8 RHS path {}", path.display()))?;
+        let (_, profiles) = SpriteScriptor::load_all_profiles_legacy(path_text)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("load RHS for exhaustive breakdown {}", path.display()))?;
+        for (_, info) in &profiles {
+            for script in info.scripts.iter() {
+                for &id in &script.frame_ids {
+                    referenced.entry(id).or_insert(tag);
+                }
+            }
+        }
+    }
+    Ok(files.len())
+}
+
+fn walk_ext(root: PathBuf, ext: &str) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
-    fn rec(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = fs::read_dir(dir) else { return };
-        for entry in rd.flatten() {
+    fn rec(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) -> Result<()> {
+        let entries =
+            fs::read_dir(dir).with_context(|| format!("read directory {}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.with_context(|| format!("read entry in {}", dir.display()))?;
             let p = entry.path();
-            if p.is_dir() {
-                rec(&p, ext, out);
+            let metadata = fs::metadata(&p).with_context(|| format!("inspect {}", p.display()))?;
+            if metadata.is_dir() {
+                rec(&p, ext, out)?;
             } else if p.extension().and_then(|s| s.to_str()) == Some(ext) {
                 out.push(p);
             }
         }
+        Ok(())
     }
-    rec(&root, ext, &mut out);
-    out
+    rec(&root, ext, &mut out)?;
+    Ok(out)
+}
+
+#[cfg(test)]
+mod traversal_tests {
+    use super::*;
+
+    #[test]
+    fn walk_preserves_empty_and_nested_extension_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            walk_ext(dir.path().to_path_buf(), "rhs")
+                .unwrap()
+                .is_empty()
+        );
+        fs::create_dir(dir.path().join("nested.rhs")).unwrap();
+        for file in ["a.rhs", "nested.rhs/b.rhs", "ignored.RHS", "ignored.txt"] {
+            fs::write(dir.path().join(file), []).unwrap();
+        }
+        let mut files = walk_ext(dir.path().to_path_buf(), "rhs").unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            [
+                dir.path().join("a.rhs"),
+                dir.path().join("nested.rhs/b.rhs")
+            ]
+        );
+    }
+
+    #[test]
+    fn walk_rejects_missing_and_non_directory_roots_with_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        fs::write(&file, []).unwrap();
+        for root in [dir.path().join("missing"), file] {
+            let error = walk_ext(root.clone(), "rhs").unwrap_err();
+            assert!(error.to_string().contains(&root.display().to_string()));
+        }
+    }
+
+    #[test]
+    fn breakdown_allows_absent_bucket_but_rejects_present_corrupt_rhs() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut referenced = std::collections::HashMap::new();
+        assert_eq!(
+            collect_breakdown_references(&dir.path().join("absent"), "character", &mut referenced)
+                .unwrap(),
+            0
+        );
+        let corrupt = dir.path().join("corrupt.rhs");
+        fs::write(&corrupt, b"not an RHS file").unwrap();
+        let error =
+            collect_breakdown_references(dir.path(), "character", &mut referenced).unwrap_err();
+        assert!(error.to_string().contains(&corrupt.display().to_string()));
+        assert!(collect_breakdown_references(&corrupt, "character", &mut referenced).is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn walk_reports_metadata_errors_instead_of_skipping_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = dir.path().join("broken.rhs");
+        std::os::unix::fs::symlink(dir.path().join("missing"), &broken).unwrap();
+        let error = walk_ext(dir.path().to_path_buf(), "rhs").unwrap_err();
+        assert!(error.to_string().contains(&broken.display().to_string()));
+    }
 }
 
 fn sanitize(s: &str) -> String {

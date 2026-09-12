@@ -1825,6 +1825,113 @@ fn cm2(holder: &FrameHolder, data_dir: &Path, a: &str, b: &str) -> Result<()> {
     Ok(())
 }
 
+/// Enumerate completely before selecting a deterministic probe input set.
+fn directory_paths_with_extension(directory: &Path, extension: &str) -> Result<Vec<PathBuf>> {
+    let entries = fs::read_dir(directory)
+        .with_context(|| format!("read directory {}", directory.display()))?;
+    select_directory_paths(
+        directory,
+        entries.map(|entry| entry.map(|entry| entry.path())),
+        extension,
+    )
+}
+
+fn select_directory_paths(
+    directory: &Path,
+    entries: impl IntoIterator<Item = std::io::Result<PathBuf>>,
+    extension: &str,
+) -> Result<Vec<PathBuf>> {
+    // Complete enumeration must succeed before a partial corpus can be used.
+    let mut paths = entries
+        .into_iter()
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("enumerate directory {}", directory.display()))?;
+    paths.retain(|path| path.extension().is_some_and(|value| value == extension));
+    paths.sort();
+    Ok(paths)
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+
+    #[test]
+    fn empty_directory_is_valid_but_missing_and_file_roots_are_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(
+            directory_paths_with_extension(directory.path(), "rhs")
+                .unwrap()
+                .is_empty()
+        );
+        let file = directory.path().join("not-directory");
+        fs::write(&file, b"fixture").unwrap();
+        for path in [file, directory.path().join("missing")] {
+            let error = directory_paths_with_extension(&path, "zst").unwrap_err();
+            assert!(error.to_string().contains("read directory"));
+            assert!(error.to_string().contains(path.to_str().unwrap()));
+        }
+    }
+
+    #[test]
+    fn selection_preserves_case_sensitive_extensions_and_sorted_path_policy() {
+        let directory = tempfile::tempdir().unwrap();
+        for name in [
+            "z.rhs",
+            "B.rhs",
+            "a.rhs",
+            "ignored.RHS",
+            "ignored.rhs.bak",
+            "z.zst",
+            "a.zst",
+            "ignored.ZST",
+        ] {
+            fs::write(directory.path().join(name), []).unwrap();
+        }
+        // Historical selection uses names/extensions, not file-type filtering.
+        fs::create_dir(directory.path().join("folder.rhs")).unwrap();
+        for (extension, names) in [
+            ("rhs", vec!["B.rhs", "a.rhs", "folder.rhs", "z.rhs"]),
+            ("zst", vec!["a.zst", "z.zst"]),
+        ] {
+            let expected: Vec<_> = names
+                .iter()
+                .map(|name| directory.path().join(name))
+                .collect();
+            assert_eq!(
+                directory_paths_with_extension(directory.path(), extension).unwrap(),
+                expected
+            );
+            let mut reversed = expected.clone();
+            reversed.reverse();
+            assert_eq!(
+                select_directory_paths(directory.path(), reversed.into_iter().map(Ok), extension)
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn enumeration_failure_rejects_partial_selection_with_directory_context() {
+        let directory = Path::new("fixture-corpus");
+        let entries = [
+            Ok(directory.join("valid.rhs")),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected enumeration error",
+            )),
+            Ok(directory.join("another.rhs")),
+        ];
+        let error = select_directory_paths(directory, entries, "rhs").unwrap_err();
+        let details = format!("{error:#}");
+        assert!(
+            details.contains("enumerate directory fixture-corpus"),
+            "{details}"
+        );
+        assert!(details.contains("injected enumeration error"), "{details}");
+    }
+}
+
 /// Corpus projection: every Characters/*.rhs coded standalone (cm) or, for
 /// detected variant families, against the family base (cm2). Also reports
 /// zstd-19 of the shipping-analog packed blob as the "current" reference.
@@ -1833,12 +1940,9 @@ fn corpus(holder: &FrameHolder, data_dir: &Path) -> Result<()> {
     if !chars_dir.is_dir() {
         chars_dir = data_dir.join("DATA/Characters");
     }
-    let mut names: Vec<String> = fs::read_dir(&chars_dir)?
-        .filter_map(|e| {
-            let p = e.ok()?.path();
-            (p.extension()?.to_str()? == "rhs")
-                .then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
-        })
+    let mut names: Vec<String> = directory_paths_with_extension(&chars_dir, "rhs")?
+        .into_iter()
+        .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
     names.sort();
 
@@ -2240,11 +2344,7 @@ fn verify_shipping(holder: &FrameHolder, data_out: &Path) -> Result<()> {
         .sprite_bank
         .as_ref()
         .ok_or_else(|| anyhow!("boot manifest has no sprite bank"))?;
-    let mut chunks: Vec<PathBuf> = fs::read_dir(data_out.join("rhs"))?
-        .filter_map(|e| Some(e.ok()?.path()))
-        .filter(|p| p.extension().is_some_and(|e| e == "zst"))
-        .collect();
-    chunks.sort();
+    let chunks = directory_paths_with_extension(&data_out.join("rhs"), "zst")?;
     // Schema v9 chunks carry their VQ grids in per-chunk context-model blobs,
     // family variants coded against their base chunk. Merge every chunk the
     // way the runtime merges a mission closure, then materialize the blobs
@@ -2680,12 +2780,7 @@ fn decode_bench(spec: &str) -> Result<()> {
             .map(|rel| data_out.join(rel))
             .collect()
     } else {
-        let mut all: Vec<PathBuf> = fs::read_dir(data_out.join("rhs"))?
-            .filter_map(|e| Some(e.ok()?.path()))
-            .filter(|p| p.extension().is_some_and(|e| e == "zst"))
-            .collect();
-        all.sort();
-        all
+        directory_paths_with_extension(&data_out.join("rhs"), "zst")?
     };
     let compressed: Vec<Vec<u8>> = files
         .iter()
