@@ -526,50 +526,9 @@ pub(super) async fn complete_content_admission(
                 return Err(format!("content transfer exceeded {CONTENT_DECISION_TIMEOUT:?}"));
             }
         };
-        let Some(NetMsg::ContentChunk {
-            full_mod_sha256,
-            offset,
-            total_bytes,
-            bytes,
-        }) = message
-        else {
-            return Err(format!(
-                "expected sequential ContentChunk at offset {received}, got {message:?}"
-            ));
-        };
-        if full_mod_sha256 != offer.full_mod_sha256
-            || total_bytes != offer.encoded_bytes
-            || offset != received
-            || bytes.is_empty()
-            || bytes.len() > robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT
-        {
-            return Err(format!(
-                "invalid distributed-mod chunk: hash={} offset={offset} total={total_bytes} bytes={}; expected hash={} offset={received} total={} and 1..={} bytes",
-                robin_engine::spellforge::hex_hash(&full_mod_sha256),
-                bytes.len(),
-                robin_engine::spellforge::hex_hash(&offer.full_mod_sha256),
-                offer.encoded_bytes,
-                robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT
-            ));
-        }
-        let end = received
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| "distributed-mod chunk offset overflow".to_owned())?;
-        if end > offer.encoded_bytes {
-            return Err(format!(
-                "distributed-mod chunk ends at {end}, beyond offered {} bytes",
-                offer.encoded_bytes
-            ));
-        }
-        crate::multiplayer::client_gameplay::deliver(
-            incoming_tx,
-            NetEvent::ContentChunk {
-                full_mod_sha256,
-                offset,
-                total_bytes,
-                bytes,
-            },
-        )?;
+        let (end, event) =
+            crate::multiplayer::content_transfer::accept_chunk(offer, received, message)?;
+        crate::multiplayer::client_gameplay::deliver(incoming_tx, event)?;
         received = end;
     }
 

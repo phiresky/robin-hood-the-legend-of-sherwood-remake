@@ -5,7 +5,7 @@ use super::modal_state::ActiveModal;
 use super::multiplayer::drain_mission_network;
 use super::runtime::{
     FrameCommitPolicy, FrameContractStage, FrameOutcome, FramePacing, MissionHostPhase,
-    MissionIngress, MissionMutation, MissionRuntime, TickPolicy,
+    MissionIngress, MissionRuntime, TickPolicy,
 };
 use super::session_policy::SessionModalScheduler;
 use crate::multiplayer::matchmaking::current_epoch_ms;
@@ -344,21 +344,10 @@ impl HeadlessMission {
             http,
             leaderboard: _,
         } = &mut self.runtime;
-        let MissionMutation {
-            host,
-            game,
-            manager,
-            assets,
-            dev,
-        } = world.mutation();
         let mut active_modal: Option<ActiveModal> = None;
         drain_steps(
             http.take_pending_steps(),
-            manager,
-            host,
-            assets,
-            dev,
-            game,
+            world.mutation(),
             timeline,
             &mut control.manual_pause,
             &mut active_modal,

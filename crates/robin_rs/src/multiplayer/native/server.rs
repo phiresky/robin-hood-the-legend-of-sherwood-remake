@@ -166,7 +166,7 @@ impl ServerHandle {
         }
     }
 
-    pub(super) fn preserve_session_for_next_mission(&mut self) {
+    pub(in crate::multiplayer) fn preserve_session_for_next_mission(&mut self) {
         self.preserve_on_shutdown = true;
     }
 }

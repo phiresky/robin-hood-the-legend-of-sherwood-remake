@@ -565,14 +565,16 @@ pub(super) fn select_campaign_receipt_from_store(
     let receipt = store
         .continuation_for_policy(
             &request.starting_campaign,
-            request.lobby.max_concurrent_players,
-            &request.lobby.participant_public_keys,
+            &crate::leaderboard_chains::CampaignContinuationKey {
+                expected_max_concurrent_players: request.lobby.max_concurrent_players,
+                participant_public_keys: request.lobby.participant_public_keys.clone(),
+                campaign_content_manifest_sha256: campaign_manifest,
+                rules_config_sha256: request.ranked_session.rules_config_sha256,
+                ruleset_manifest_sha256: request.ranked_session.ruleset_manifest_sha256,
+                competition_manifest_sha256: request.ranked_session.competition_manifest_sha256,
+                campaign_controller_public_key: local_public_key,
+            },
             request.roster_continuity,
-            campaign_manifest,
-            request.ranked_session.rules_config_sha256,
-            request.ranked_session.ruleset_manifest_sha256,
-            request.ranked_session.competition_manifest_sha256,
-            local_public_key,
         )
         .map_err(|error| error.to_string())?
         .cloned();
@@ -1743,16 +1745,18 @@ async fn fetch_campaign_authority(
     let receipt = store
         .continuation_for_exact_campaign_policy(
             &starting_campaign_bytes,
-            1,
-            &participant_public_keys,
+            &crate::leaderboard_chains::CampaignContinuationKey {
+                expected_max_concurrent_players: 1,
+                participant_public_keys: participant_public_keys.to_vec(),
+                campaign_content_manifest_sha256: *campaign_content_manifest_sha256,
+                rules_config_sha256: rules_config
+                    .canonical_digest()
+                    .map_err(|error| error.to_string())?,
+                ruleset_manifest_sha256: facet.ruleset_manifest_sha256,
+                competition_manifest_sha256: None,
+                campaign_controller_public_key: local_public_key,
+            },
             published_ruleset.manifest.campaign_roster_continuity,
-            *campaign_content_manifest_sha256,
-            rules_config
-                .canonical_digest()
-                .map_err(|error| error.to_string())?,
-            facet.ruleset_manifest_sha256,
-            None,
-            local_public_key,
         )
         .map_err(|error| error.to_string())?
         .cloned();
