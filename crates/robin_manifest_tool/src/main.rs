@@ -43,13 +43,13 @@ enum Command {
     ProbeSandbox,
     /// Validate a digest-bearing canonical document without rewriting it.
     ValidateDocument {
-        #[arg(long)]
+        #[arg(long, value_enum)]
         kind: DocumentKind,
         input: PathBuf,
     },
     /// Strict-parse, validate and write canonical JSON without overwriting.
     Canonicalize {
-        #[arg(long)]
+        #[arg(long, value_enum)]
         kind: DocumentKind,
         input: PathBuf,
         output: PathBuf,
