@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
+import replay_evidence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -239,6 +241,84 @@ class ReplayStateDatabaseTests(unittest.TestCase):
         (result / "log").write_text("changed\n")
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             DB.import_result(self.connection, result, self.root / "audit", None, "host-a")
+
+    def test_import_consumes_verified_snapshot_despite_file_replacement(self) -> None:
+        result = self.evidence("sealed", "0", f"{DB.EOF_MARKER}\n")
+        replacement = self.evidence("replacement", "124", "timeout\n", runner_trust="9" * 64)
+        manifest_sha = DB.sha256_file(result / "MANIFEST.sha256")
+        verify = DB.read_evidence_snapshot
+
+        def verify_then_replace(*args, **kwargs):
+            snapshot = verify(*args, **kwargs)  # Real verification, not a mocked success.
+            for member in ("attestation.env", "status", "log", "trace.path", "MANIFEST.sha256"):
+                (replacement / member).replace(result / member)
+            return snapshot
+
+        with patch.object(DB, "read_evidence_snapshot", side_effect=verify_then_replace):
+            DB.import_result(self.connection, result, self.root / "audit", None, "test")
+        row = self.connection.execute(
+            "SELECT * FROM replay_runs JOIN runners USING(runner_id)"
+        ).fetchone()
+        self.assertEqual(row["bundle_trust_sha256"], "2" * 64)
+        self.assertEqual(row["outcome"], "exact_eof")
+        self.assertEqual(row["evidence_tier"], "attested")
+        self.assertEqual(row["evidence_manifest_sha256"], manifest_sha)
+
+    def test_manifest_digest_is_from_parsed_bytes(self) -> None:
+        result = self.evidence("manifest-swap", "0", f"{DB.EOF_MARKER}\n")
+        replacement = self.evidence("other-manifest", "124", "timeout\n")
+        manifest_sha = DB.sha256_file(result / "MANIFEST.sha256")
+        read = replay_evidence._read_bounded
+
+        def read_then_replace(path, limit):
+            data = read(path, limit)
+            if path == result / "MANIFEST.sha256":
+                (replacement / "MANIFEST.sha256").replace(path)
+            return data
+
+        with patch.object(replay_evidence, "_read_bounded", side_effect=read_then_replace):
+            snapshot = DB.read_evidence_snapshot(result, {"status"})
+        self.assertEqual(snapshot.manifest_sha256, manifest_sha)
+        self.assertEqual(snapshot.files["status"], b"0\n")
+
+    def test_reblock_consumes_verified_snapshot_after_members_removed(self) -> None:
+        logical = "parity-save-replays/corpus/traces/save/replay-001-session-0001.jsonl.zst"
+        DB.upsert_replay(self.connection, logical, None)
+        self.connection.commit()
+        audit, _, _ = self.reblock_audit("snapshot", logical, "3" * 64, b"reblocked")
+        manifest_sha = DB.sha256_file(audit / "MANIFEST.sha256")
+        verify = DB.read_evidence_snapshot
+
+        def verify_then_remove(root, *args, **kwargs):
+            snapshot = verify(root, *args, **kwargs)
+            if root == audit:
+                for member in snapshot.files:
+                    (root / member).unlink()
+                (root / "MANIFEST.sha256").unlink()
+            return snapshot
+
+        with patch.object(DB, "read_evidence_snapshot", side_effect=verify_then_remove):
+            summary = DB.import_reblock_audit(self.connection, audit, self.root)
+        self.assertEqual(summary["artifacts"], 1)
+        row = self.connection.execute("SELECT * FROM native_reblock_audits").fetchone()
+        self.assertEqual(row["evidence_manifest_sha256"], manifest_sha)
+
+    def test_snapshot_limits_and_immutability(self) -> None:
+        result = self.evidence("bounded", "0", f"{DB.EOF_MARKER}\n")
+        members = {"attestation.env", "status", "log", "trace.path"}
+        total = sum((result / name).stat().st_size for name in members)
+        largest = max((result / name).stat().st_size for name in members)
+        manifest_size = (result / "MANIFEST.sha256").stat().st_size
+        for limit, accepted in (("MAX_SNAPSHOT_BYTES", total),
+                                ("MAX_MEMBER_BYTES", largest),
+                                ("MAX_MANIFEST_BYTES", manifest_size)):
+            with self.subTest(limit=limit), patch.object(replay_evidence, limit, accepted):
+                snapshot = DB.read_evidence_snapshot(result, members)
+                with self.assertRaises(TypeError):
+                    snapshot.files["status"] = b"124\n"
+            with patch.object(replay_evidence, limit, accepted - 1):
+                with self.assertRaisesRegex(ValueError, "admission limit"):
+                    DB.read_evidence_snapshot(result, members)
 
     def test_result_requires_complete_bounded_manifest(self) -> None:
         cases = ["absent", "empty", "duplicate", "absolute", "escaping", "alias", "symlink"]

@@ -221,8 +221,12 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 def parse_env(path: Path, allow_duplicates: bool = False) -> dict[str, str]:
+    return parse_env_bytes(path.read_bytes(), path, allow_duplicates)
+
+
+def parse_env_bytes(data: bytes, path: Path, allow_duplicates: bool = False) -> dict[str, str]:
     values: dict[str, str] = {}
-    for number, raw in enumerate(path.read_text(errors="strict").splitlines(), 1):
+    for number, raw in enumerate(data.decode().splitlines(), 1):
         if not raw or raw.startswith("#"):
             continue
         if "=" not in raw:
@@ -359,8 +363,8 @@ def upsert_legacy_replay(
     ).fetchone()[0])
 
 
-from replay_evidence import (verify_manifest, verify_sealed_manifest, _safe_manifest_path,
-                             _parse_zero_sha256_manifest, _parse_zero_paths, _verify_checksum_file)
+from replay_evidence import (read_evidence_snapshot,
+                             _parse_zero_sha256_manifest, _parse_zero_paths)
 
 
 def import_reblock_audit(
@@ -407,10 +411,11 @@ def import_reblock_audit(
     sealed_members = required | {
         str(path.relative_to(audit)) for path in log_files + status_files
     }
-    evidence_manifest_sha = verify_sealed_manifest(audit, sealed_members)
+    evidence = read_evidence_snapshot(audit, sealed_members, exact=True)
+    evidence_manifest_sha = evidence.manifest_sha256
 
-    provenance = parse_env(audit / "provenance.env")
-    complete = parse_env(audit / "COMPLETE")
+    provenance = parse_env_bytes(evidence.files["provenance.env"], audit / "provenance.env")
+    complete = parse_env_bytes(evidence.files["COMPLETE"], audit / "COMPLETE")
     required_provenance = {
         "WORKSPACE", "CORPUS", "BUNDLE", "RUNNER_RAW_SHA256",
         "RUNNER_TRUST_SHA256", "EXPECTED_COUNT", "NATIVE_PATHS_SHA256",
@@ -432,18 +437,23 @@ def import_reblock_audit(
             raise ValueError(f"reblock {label} is outside workspace") from error
     if any(path.is_symlink() for path in bundle.rglob("*")):
         raise ValueError("reblock runner bundle contains a symlink")
-    bundle_manifest_sha = _verify_checksum_file(
-        bundle, "SHA256SUMS",
-        {"original_parity_replay", "original_parity_replay.remote", "LIB_SHA256SUMS"},
+    runner_bundle = read_evidence_snapshot(
+        bundle, {"LIB_SHA256SUMS"}, manifest_name="SHA256SUMS",
     )
-    library_manifest_sha = _verify_checksum_file(bundle, "LIB_SHA256SUMS")
+    if not {"original_parity_replay", "original_parity_replay.remote"}.issubset(runner_bundle.checksums):
+        raise ValueError("reblock runner bundle is missing required executables")
+    bundle_manifest_sha = runner_bundle.manifest_sha256
+    library_manifest_sha = read_evidence_snapshot(
+        bundle, set(), manifest_name="LIB_SHA256SUMS",
+        manifest_bytes=runner_bundle.files["LIB_SHA256SUMS"],
+    ).manifest_sha256
     trust_material = (
         "schema16-runner-bundle-v1\n"
         f"SHA256SUMS={bundle_manifest_sha}\n"
         f"LIB_SHA256SUMS={library_manifest_sha}\n"
     ).encode()
     runner_trust = sha256_bytes(trust_material)
-    runner_raw = sha256_file(_safe_manifest_path(bundle, "original_parity_replay"))
+    runner_raw = runner_bundle.checksums["original_parity_replay"]
     if (runner_trust != provenance["RUNNER_TRUST_SHA256"].lower()
             or runner_raw != provenance["RUNNER_RAW_SHA256"].lower()):
         raise ValueError("reblock runner bundle does not match provenance")
@@ -451,9 +461,9 @@ def import_reblock_audit(
     paths_file = audit / "native-paths.nul"
     before_file = audit / "native-before.sha256z"
     after_file = audit / "native-after.sha256z"
-    paths = _parse_zero_paths(paths_file)
-    before = _parse_zero_sha256_manifest(before_file)
-    after = _parse_zero_sha256_manifest(after_file)
+    paths = _parse_zero_paths(paths_file, evidence.files[paths_file.name])
+    before = _parse_zero_sha256_manifest(before_file, evidence.files[before_file.name])
+    after = _parse_zero_sha256_manifest(after_file, evidence.files[after_file.name])
     expected_count = numeric(provenance["EXPECTED_COUNT"])
     complete_count = numeric(complete.get("COUNT"))
     if expected_count is None or expected_count <= 0 or complete_count != expected_count:
@@ -462,9 +472,9 @@ def import_reblock_audit(
         raise ValueError("reblock audit membership count changed")
     if paths != [name for _, name in before] or paths != [name for _, name in after]:
         raise ValueError("reblock before/after membership or order changed")
-    paths_sha = sha256_file(paths_file)
-    before_manifest_sha = sha256_file(before_file)
-    after_manifest_sha = sha256_file(after_file)
+    paths_sha = evidence.checksums[paths_file.name]
+    before_manifest_sha = evidence.checksums[before_file.name]
+    after_manifest_sha = evidence.checksums[after_file.name]
     if (paths_sha != provenance["NATIVE_PATHS_SHA256"].lower()
             or before_manifest_sha != provenance["NATIVE_BEFORE_MANIFEST_SHA256"].lower()
             or before_manifest_sha != complete.get("BEFORE_MANIFEST_SHA256", "").lower()
@@ -498,7 +508,7 @@ def import_reblock_audit(
         status_path = status_by_name.get(status_key)
         if status_path is None:
             raise ValueError(f"reblock status missing for {native}")
-        status_lines = status_path.read_text(errors="strict").splitlines()
+        status_lines = evidence.files[f"status/{status_path.name}"].decode().splitlines()
         if len(status_lines) != 1:
             raise ValueError(f"malformed reblock status: {status_path}")
         fields = status_lines[0].split("\t")
@@ -510,7 +520,7 @@ def import_reblock_audit(
             raise ValueError(f"reblock status references an invalid success log: {status_path}")
         used_success_logs.add(fields[2])
         log_path = log_by_name[fields[2]]
-        if str(native) not in log_path.read_text(errors="strict"):
+        if str(native) not in evidence.files[f"logs/{log_path.name}"].decode():
             raise ValueError(f"reblock log is not bound to expected artifact: {log_path}")
         logical = relative.as_posix().removesuffix(".parity.bitcode.zst")
         replay = connection.execute(
@@ -646,28 +656,22 @@ def import_result(
         required.add("trace.path")
     # Historical recovery is explicitly provisional, including bundles with
     # partial seals. Never let unsealed audit provenance supply trusted identity.
-    if historical:
-        for relative in required:
-            _safe_manifest_path(result.resolve(), relative)
-        manifest = result / "MANIFEST.sha256"
-        manifest_sha = (verify_manifest(result, set())
-                        if manifest.exists() or manifest.is_symlink() else None)
-    else:
-        manifest_sha = verify_manifest(result, required)
-    env = parse_env(attestation)
+    evidence = read_evidence_snapshot(result, required, historical=historical)
+    manifest_sha = evidence.manifest_sha256
+    env = parse_env_bytes(evidence.files["attestation.env"], attestation)
     for key, value in ((fallback_env or {}) if historical else {}).items():
         env.setdefault(key, value)
-    status_lines = status_path.read_text().splitlines()
+    status_lines = evidence.files["status"].decode().splitlines()
     if len(status_lines) != 1 or not status_lines[0]:
         raise ValueError(f"{status_path}: expected one nonempty status line")
     status = status_lines[0]
-    log_bytes = log_path.read_bytes()
+    log_bytes = evidence.files[log_path.name]
     log_sha = sha256_bytes(log_bytes)
     if env.get("LOG_SHA256", log_sha).lower() != log_sha:
         raise ValueError(f"{log_path}: attested log hash mismatch")
     log = log_bytes.decode(errors="replace")
-    if trace_file.is_file():
-        traces = trace_file.read_text().splitlines()
+    if "trace.path" in evidence.files:
+        traces = evidence.files["trace.path"].decode().splitlines()
         if len(traces) != 1:
             raise ValueError(f"{trace_file}: expected exactly one trace path")
         logical = workspace_relative(traces[0], workspace)

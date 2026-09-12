@@ -3,7 +3,89 @@ from __future__ import annotations
 import os
 import re
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
+
+# Admission limits, not producer limits. Refuse oversized evidence before parsing.
+MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+MAX_MEMBER_BYTES = 256 * 1024 * 1024
+MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class EvidenceSnapshot:
+    manifest_sha256: str | None
+    files: Mapping[str, bytes]
+    checksums: Mapping[str, str]
+
+
+def _read_bounded(path: Path, limit: int) -> bytes:
+    with path.open("rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"{path}: evidence exceeds {limit} byte admission limit")
+    return data
+
+
+def read_evidence_snapshot(
+    root: Path, consumed: set[str], *, historical: bool = False,
+    exact: bool = False, manifest_name: str = "MANIFEST.sha256",
+    manifest_bytes: bytes | None = None,
+) -> EvidenceSnapshot:
+    """Hash and retain the identical bytes consumers will parse.
+
+    Historical recovery may consume unsealed members, but never upgrades them
+    to attested evidence. Unconsumed members are streamed, not retained.
+    """
+    root = root.resolve()
+    manifest = root / manifest_name
+    checksums: dict[str, str] = {}
+    files: dict[str, bytes] = {}
+    remaining = MAX_SNAPSHOT_BYTES
+    raw = manifest_bytes
+    if raw is None and (not historical or manifest.exists() or manifest.is_symlink()):
+        raw = _read_bounded(_safe_manifest_path(root, manifest_name), MAX_MANIFEST_BYTES)
+    if raw is not None:
+        if len(raw) > MAX_MANIFEST_BYTES:
+            raise ValueError(f"{manifest}: manifest exceeds admission limit")
+        for number, line in enumerate(raw.decode().splitlines(), 1):
+            match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *](.+)", line)
+            if not match:
+                raise ValueError(f"{manifest}:{number}: malformed checksum")
+            expected, relative = match.groups()
+            if relative in checksums:
+                raise ValueError(f"{manifest}:{number}: duplicate path {relative}")
+            candidate = _safe_manifest_path(root, relative)
+            if relative in consumed:
+                data = _read_bounded(candidate, min(MAX_MEMBER_BYTES, remaining))
+                remaining -= len(data)
+                files[relative] = data
+                actual = hashlib.sha256(data).hexdigest()
+            else:
+                actual = sha256_file(candidate)
+            if actual != expected.lower():
+                raise ValueError(f"{manifest}:{number}: checksum mismatch for {relative}")
+            checksums[relative] = actual
+        if not checksums:
+            raise ValueError(f"{manifest}: empty checksum manifest")
+    missing = consumed - checksums.keys()
+    if not historical and missing:
+        raise ValueError(f"{manifest}: missing required bundle members {sorted(missing)}")
+    if exact and checksums.keys() != consumed:
+        raise ValueError(f"{manifest}: sealed membership mismatch")
+    if historical:
+        for relative in sorted(missing):
+            data = _read_bounded(_safe_manifest_path(root, relative),
+                                 min(MAX_MEMBER_BYTES, remaining))
+            remaining -= len(data)
+            files[relative] = data
+    return EvidenceSnapshot(
+        hashlib.sha256(raw).hexdigest() if raw is not None else None,
+        MappingProxyType(files), MappingProxyType(checksums),
+    )
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -11,10 +93,6 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-def verify_manifest(result: Path, required: set[str]) -> str:
-    """Admit a sealed result only when every consumed file is covered."""
-    return _verify_checksum_file(result.resolve(), "MANIFEST.sha256", required)
 
 
 def _safe_manifest_path(root: Path, relative: str) -> Path:
@@ -34,35 +112,10 @@ def _safe_manifest_path(root: Path, relative: str) -> Path:
     return candidate
 
 
-def verify_sealed_manifest(root: Path, expected: set[str]) -> str:
-    manifest = root / "MANIFEST.sha256"
-    if manifest.is_symlink() or not manifest.is_file():
-        raise ValueError(f"sealed audit has no regular MANIFEST.sha256: {root}")
-    observed: set[str] = set()
-    for number, line in enumerate(manifest.read_text(errors="strict").splitlines(), 1):
-        match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *](.+)", line)
-        if not match:
-            raise ValueError(f"{manifest}:{number}: malformed checksum")
-        digest, relative = match.groups()
-        if relative in observed:
-            raise ValueError(f"{manifest}:{number}: duplicate path {relative}")
-        candidate = _safe_manifest_path(root, relative)
-        if sha256_file(candidate) != digest.lower():
-            raise ValueError(f"{manifest}:{number}: checksum mismatch for {relative}")
-        observed.add(relative)
-    if observed != expected:
-        missing = sorted(expected - observed)
-        extra = sorted(observed - expected)
-        raise ValueError(
-            f"{manifest}: sealed membership mismatch; missing={missing}, extra={extra}"
-        )
-    return sha256_file(manifest)
-
-
-def _parse_zero_sha256_manifest(path: Path) -> list[tuple[str, str]]:
+def _parse_zero_sha256_manifest(path: Path, data: bytes) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     seen: set[str] = set()
-    raw_entries = path.read_bytes().split(b"\0")
+    raw_entries = data.split(b"\0")
     if not raw_entries or raw_entries[-1] != b"":
         raise ValueError(f"{path}: checksum manifest is not NUL terminated")
     for number, raw in enumerate(raw_entries[:-1], 1):
@@ -80,35 +133,11 @@ def _parse_zero_sha256_manifest(path: Path) -> list[tuple[str, str]]:
     return entries
 
 
-def _parse_zero_paths(path: Path) -> list[str]:
-    raw_entries = path.read_bytes().split(b"\0")
+def _parse_zero_paths(path: Path, data: bytes) -> list[str]:
+    raw_entries = data.split(b"\0")
     if not raw_entries or raw_entries[-1] != b"":
         raise ValueError(f"{path}: path snapshot is not NUL terminated")
     paths = [os.fsdecode(raw) for raw in raw_entries[:-1]]
     if any(not value for value in paths) or len(paths) != len(set(paths)):
         raise ValueError(f"{path}: empty or duplicate path")
     return paths
-
-
-def _verify_checksum_file(
-    root: Path, manifest_name: str, required: set[str] | None = None
-) -> str:
-    manifest = _safe_manifest_path(root, manifest_name)
-    seen: set[str] = set()
-    for number, line in enumerate(manifest.read_text(errors="strict").splitlines(), 1):
-        match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *](.+)", line)
-        if not match:
-            raise ValueError(f"{manifest}:{number}: malformed checksum")
-        expected, relative = match.groups()
-        if relative in seen:
-            raise ValueError(f"{manifest}:{number}: duplicate path {relative}")
-        candidate = _safe_manifest_path(root, relative)
-        if sha256_file(candidate) != expected.lower():
-            raise ValueError(f"{manifest}:{number}: checksum mismatch for {relative}")
-        seen.add(relative)
-    if not seen:
-        raise ValueError(f"{manifest}: empty checksum manifest")
-    if required and not required.issubset(seen):
-        raise ValueError(f"{manifest}: missing required bundle members {sorted(required - seen)}")
-    return sha256_file(manifest)
-
