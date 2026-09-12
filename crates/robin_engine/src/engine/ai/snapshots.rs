@@ -857,8 +857,9 @@ impl EngineInner {
             // Original-game soldier-profile lookup and
             // hand-to-hand profile index bounds. Preserve that invariant
             // instead of substituting generic rank/fighting/ranges.
-            let (has_formation, fighting_ability, bow_profile) =
+            let (soldier_profile, fighting_ability, bow_profile) =
                 self.soldier_profile_facts(assets, s, EntityId::from(npc_id));
+            let has_formation = soldier_profile.formation;
             let is_archer_unit = is_archer_from_bow(bow_profile);
             let bow_max_range = bow_profile
                 .map(|bow| {
@@ -1466,7 +1467,11 @@ impl EngineInner {
         assets: &'a LevelAssets,
         s: &crate::element::ActorSoldier,
         id: EntityId,
-    ) -> (bool, u16, Option<&'a crate::profiles::BowProfile>) {
+    ) -> (
+        &'a crate::profiles::SoldierProfile,
+        u16,
+        Option<&'a crate::profiles::BowProfile>,
+    ) {
         let soldier_profile = assets
             .profile_manager
             .get_soldier(s.soldier.soldier_profile_index)
@@ -1477,7 +1482,6 @@ impl EngineInner {
                     u32::from(s.soldier.soldier_profile_index)
                 )
             });
-        let has_formation = soldier_profile.formation;
         let fighting_ability = {
             let base = soldier_profile.fighting;
             if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
@@ -1508,6 +1512,6 @@ impl EngineInner {
             )
         };
 
-        (has_formation, fighting_ability, bow_profile)
+        (soldier_profile, fighting_ability, bow_profile)
     }
 }
