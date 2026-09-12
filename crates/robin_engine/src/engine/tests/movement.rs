@@ -42,10 +42,7 @@ fn tick_production_owner_coordinator(
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
 ) {
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-    }
+    let mut positions = engine.boundary_positions_snapshot();
     engine.tick_actor_owner_envelopes(sim, assets, &positions);
 }
 
@@ -902,10 +899,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
 
     // Body cadence is `(universal frame + observer creation order) % 8`.
     engine.control.frame_counter = 6;
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-    }
+    let mut positions = engine.boundary_positions_snapshot();
     let observed_body_position = std::rc::Rc::new(std::cell::Cell::new(MapPoint::ZERO));
     let observed = observed_body_position.clone();
     crate::sight_obstacle::begin_parity_visibility_capture();
@@ -3697,12 +3691,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
             (observer_id, target_id)
         };
 
-        let mut positions_before_movement =
-            crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-        for (entity_id, entity) in engine.world.entities.occupied() {
-            positions_before_movement[entity_id] =
-                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-        }
+        let mut positions_before_movement = engine.boundary_positions_snapshot();
 
         // This mutation is the smallest deterministic stand-in for the
         // globally batched tick_entity_movement between the captured input

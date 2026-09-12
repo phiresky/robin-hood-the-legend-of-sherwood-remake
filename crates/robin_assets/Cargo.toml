@@ -151,4 +151,5 @@ name = "mission_sprite_audit"
 required-features = ["engine-adapters"]
 
 [dev-dependencies]
+robin_test_support.workspace = true
 clap = { version = "4", features = ["derive"] }

@@ -123,7 +123,9 @@ backend. Install the wasm standard library with
 Ordinary tests use checked-in or synthetic fixtures. Original-data tests are
 explicitly ignored with a reason; when selected, missing/invalid fixtures fail
 setup instead of appearing as passing tests. The common resolver lives in
-`test-support/original_data.rs` and is included only by test modules.
+the dev-only `robin_test_support` crate. Fixture gates first enumerate the
+compiled tests using the same target, features and selector as execution, and
+fail if the selection is empty; renaming a fixture cannot silently remove coverage.
 
 ```sh
 ROBINHOOD_DATA_DIR=/absolute/path/to/leicester-demo bash scripts/check-quality.sh fixtures-demo

@@ -571,6 +571,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
 }
 
 #[test]
+#[ignore = "manual size and timing measurement; run with --ignored --nocapture"]
 fn measure_engine_size() {
     use std::mem;
 

@@ -8,12 +8,8 @@
 #![feature(portable_simd)]
 
 #[cfg(test)]
-#[allow(dead_code)] // Consumers use different subsets under different feature sets.
 mod original_data {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../test-support/original_data.rs"
-    ));
+    pub use robin_test_support::original_data::*;
 
     pub fn demo_scb_path() -> std::path::PathBuf {
         // scb::parse_file resolves case-insensitive original asset paths;

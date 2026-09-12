@@ -27,54 +27,12 @@ use crate::element::{
     Posture, SoldierData,
 };
 use crate::engine::EngineInner;
+use crate::engine::test_support::asm::*;
 use crate::engine::types::{LevelAssets, MissionScript};
 use crate::scb::{ClassEntry, Function, ScbFile};
 use crate::vm::{Opcode, Quad};
 
 // ───────── Quad encoders ─────────
-
-fn q_begin_function(volatile: u16, temp: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&volatile.to_le_bytes());
-    ops[2..4].copy_from_slice(&temp.to_le_bytes());
-    Quad {
-        operation: Opcode::BeginFunction as u8,
-        operands: ops,
-    }
-}
-
-fn q_end_function() -> Quad {
-    Quad {
-        operation: Opcode::EndFunction as u8,
-        operands: [0u8; 8],
-    }
-}
-
-fn q_return() -> Quad {
-    Quad {
-        operation: Opcode::Return as u8,
-        operands: [0u8; 8],
-    }
-}
-
-fn q_return_val(sym: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    Quad {
-        operation: Opcode::ReturnVal as u8,
-        operands: ops,
-    }
-}
-
-fn q_aff1_get_param(dst: u16, param_offset: i32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[4..8].copy_from_slice(&param_offset.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff1GetParam as u8,
-        operands: ops,
-    }
-}
 
 const TMP0: u16 = 0xC000;
 
@@ -233,52 +191,35 @@ fn test_campaign() -> crate::campaign::Campaign {
 }
 
 fn make_pc(robin: bool) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-        initial_element.kind = ElementKind::ActorPc;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position(WorldPoint3D::default());
-    Entity::Pc(ActorPc {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        pc: PcData {
-            life_points: 50,
-            robin,
-            profile_index: crate::profiles::CharacterProfileIdx(0),
-            campaign_description_index: Some(0),
-            ..PcData::default()
-        },
-    })
+    let mut entity = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
+    entity.position_iface_mut().clear_pathfinder_index();
+    entity.element_data_mut().active = true;
+    entity
+        .element_data_mut()
+        .set_position(WorldPoint3D::default());
+    let pc = entity.pc_data_mut().expect("PC fixture");
+    pc.life_points = 50;
+    pc.robin = robin;
+    pc.profile_index = crate::profiles::CharacterProfileIdx(0);
+    pc.campaign_description_index = Some(0);
+    entity
 }
 
 fn make_scripted_soldier(script_class: &str) -> Entity {
-    Entity::Soldier(ActorSoldier {
-        element: {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        },
-        actor: ActorData {
-            script_class: script_class.into(),
-            ..ActorData::default()
-        },
-        human: HumanData::default(),
-        npc: NpcData {
-            life_points: 50,
-            ai: crate::element::AiActorData {
-                ai_brain: AiBrain::Enemy(Box::default()),
-                ..Default::default()
-            },
-        },
-        soldier: SoldierData {
-            cached_camp: crate::element::Camp::Lacklandists,
-            ..SoldierData::default()
-        },
-    })
+    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    );
+    entity.position_iface_mut().clear_pathfinder_index();
+    entity.element_data_mut().active = true;
+    entity
+        .actor_data_mut()
+        .expect("script actor fixture")
+        .script_class = script_class.into();
+    entity
+        .npc_data_mut()
+        .expect("script soldier fixture")
+        .life_points = 50;
+    entity
 }
 
 /// Returns the engine plus the actor script handles for: robin PC, a
@@ -946,75 +887,6 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
 // `prototype.FilterAIEvent(source, event)` from inside a running
 // script — implemented via a yield-and-resume pipeline
 // (`StopReason::Yield` and the sole `EngineInner` callback driver).
-
-fn q_aff0_iconstant(dst: u16, constant: i32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[4..8].copy_from_slice(&constant.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff0IConstant as u8,
-        operands: ops,
-    }
-}
-
-fn q_native_param(sym: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    Quad {
-        operation: Opcode::NativeParam as u8,
-        operands: ops,
-    }
-}
-
-fn q_native_call(index: u32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..4].copy_from_slice(&index.to_le_bytes());
-    Quad {
-        operation: Opcode::NativeCall as u8,
-        operands: ops,
-    }
-}
-
-fn q_aff1_native_get_return(dst: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff1NativeGetReturn as u8,
-        operands: ops,
-    }
-}
-
-fn q_iadd(dst: u16, a: u16, b: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[2..4].copy_from_slice(&a.to_le_bytes());
-    ops[4..6].copy_from_slice(&b.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff2IAdd as u8,
-        operands: ops,
-    }
-}
-
-fn q_ieq(dst: u16, a: u16, b: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[2..4].copy_from_slice(&a.to_le_bytes());
-    ops[4..6].copy_from_slice(&b.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff2IEq as u8,
-        operands: ops,
-    }
-}
-
-fn q_if_not_zero_goto(sym: u16, addr: u32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    ops[4..8].copy_from_slice(&addr.to_le_bytes());
-    Quad {
-        operation: Opcode::IfNotZeroGoto as u8,
-        operands: ops,
-    }
-}
 
 const TMP1: u16 = 0xC004;
 const TMP2: u16 = 0xC008;
@@ -6105,10 +5977,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         .element_data_mut()
         .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-    }
+    let mut positions = engine.boundary_positions_snapshot();
 
     // Scratch construction prepares forecasts without drawing; the control
     // proves the unrelated door actor's alternatives would draw if resolved.
