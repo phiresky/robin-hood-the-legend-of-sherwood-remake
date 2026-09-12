@@ -245,8 +245,9 @@ fn push_u16s(out: &mut Vec<u8>, words: impl IntoIterator<Item = u16>) {
 // ---------------------------------------------------------------------------
 
 fn rhs_files_with_prefixes(dir: &Path, prefixes: &[&str]) -> Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = fs::read_dir(dir)?
-        .filter_map(|e| Some(e.ok()?.path()))
+    let entries = fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))?;
+    let files = sorted_entry_paths(dir, entries.map(|entry| entry.map(|entry| entry.path())))?
+        .into_iter()
         .filter(|p| {
             p.extension().is_some_and(|e| e == "rhs")
                 && p.file_name()
@@ -254,15 +255,24 @@ fn rhs_files_with_prefixes(dir: &Path, prefixes: &[&str]) -> Result<Vec<PathBuf>
                     .is_some_and(|n| prefixes.iter().any(|pre| n.starts_with(pre)))
         })
         .collect();
-    files.sort();
     Ok(files)
 }
 
+fn sorted_entry_paths(
+    dir: &Path,
+    entries: impl IntoIterator<Item = std::io::Result<PathBuf>>,
+) -> Result<Vec<PathBuf>> {
+    let mut paths = entries
+        .into_iter()
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("read entry in {}", dir.display()))?;
+    paths.sort();
+    Ok(paths)
+}
+
 fn rhs_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    let mut entries: Vec<PathBuf> = fs::read_dir(dir)?
-        .filter_map(|e| Some(e.ok()?.path()))
-        .collect();
-    entries.sort();
+    let entries = fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))?;
+    let entries = sorted_entry_paths(dir, entries.map(|entry| entry.map(|entry| entry.path())))?;
     for p in entries {
         if p.is_dir() {
             rhs_files_recursive(&p, out)?;
@@ -271,6 +281,74 @@ fn rhs_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod rhs_scan_tests {
+    use super::*;
+
+    #[test]
+    fn prefix_and_recursive_selection_remain_sorted_and_case_sensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recursive = Vec::new();
+        rhs_files_recursive(dir.path(), &mut recursive).unwrap();
+        assert!(recursive.is_empty());
+        assert!(
+            rhs_files_with_prefixes(dir.path(), &["TG_"])
+                .unwrap()
+                .is_empty()
+        );
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        for name in [
+            "TG_z.rhs",
+            "TG_a.rhs",
+            "BONUS_a.rhs",
+            "TG_upper.RHS",
+            "nested/x.rhs",
+        ] {
+            fs::write(dir.path().join(name), []).unwrap();
+        }
+        assert_eq!(
+            rhs_files_with_prefixes(dir.path(), &["TG_"]).unwrap(),
+            [dir.path().join("TG_a.rhs"), dir.path().join("TG_z.rhs")]
+        );
+        rhs_files_recursive(dir.path(), &mut recursive).unwrap();
+        assert_eq!(
+            recursive,
+            ["BONUS_a.rhs", "TG_a.rhs", "TG_z.rhs", "nested/x.rhs"]
+                .map(|name| dir.path().join(name))
+        );
+    }
+
+    #[test]
+    fn missing_and_file_roots_fail_in_both_scans() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        fs::write(&file, []).unwrap();
+        for root in [dir.path().join("missing"), file] {
+            let error = rhs_files_with_prefixes(&root, &["TG_"]).unwrap_err();
+            assert!(error.to_string().contains(&root.display().to_string()));
+            let error = rhs_files_recursive(&root, &mut Vec::new()).unwrap_err();
+            assert!(error.to_string().contains(&root.display().to_string()));
+        }
+    }
+
+    #[test]
+    fn entry_failure_cannot_return_a_partial_sorted_corpus() {
+        let dir = Path::new("fixture/Animations");
+        let error = sorted_entry_paths(
+            dir,
+            [
+                Ok(dir.join("TG_a.rhs")),
+                Err(std::io::Error::other("injected entry failure")),
+                Ok(dir.join("TG_z.rhs")),
+            ],
+        )
+        .unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("fixture/Animations"));
+        assert!(detail.contains("injected entry failure"));
+    }
 }
 
 /// Load every file's frame ids; each bank id is claimed by the first group
