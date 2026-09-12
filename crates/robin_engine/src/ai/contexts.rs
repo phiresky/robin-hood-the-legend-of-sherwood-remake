@@ -126,6 +126,100 @@ impl AiContext {
 mod tests {
     use super::*;
 
+    #[test]
+    fn view_radius_cache_zero_replaces_alternating_viewers() {
+        let first = crate::element::EntityId::from(crate::entity_id::SoldierId(7));
+        let second = crate::element::EntityId::from(crate::entity_id::SoldierId(9));
+        let ctx = AiContext::test_fixture();
+        for surface in [None, crate::position_interface::ObstacleHandle::new(3)] {
+            assert_eq!(
+                ctx.compute_view_radius_cached(first, surface, || 125.0),
+                125.0
+            );
+            assert_eq!(ctx.compute_view_radius_cached(second, surface, || 0.0), 0.0);
+            // Zero is a miss even for its writer; A must also recompute after B.
+            let recomputed = std::cell::Cell::new(false);
+            assert_eq!(
+                ctx.compute_view_radius_cached(second, surface, || {
+                    recomputed.set(true);
+                    0.0
+                }),
+                0.0
+            );
+            assert!(recomputed.get());
+            assert_eq!(
+                ctx.compute_view_radius_cached(first, surface, || 90.0),
+                90.0
+            );
+            assert_eq!(
+                ctx.compute_view_radius_cached(first, surface, || panic!("cache hit")),
+                90.0
+            );
+        }
+    }
+
+    #[test]
+    fn view_radius_cache_zero_survives_seed_clone_absorb_and_publication() {
+        let first = crate::element::EntityId::from(crate::entity_id::SoldierId(7));
+        let second = crate::element::EntityId::from(crate::entity_id::SoldierId(9));
+        let ctx = AiContext {
+            frame: 40,
+            ..AiContext::test_fixture()
+        };
+        let mut persistent = crate::ai_vision::ViewRadiusCache::default();
+        let surfaces = [None, crate::position_interface::ObstacleHandle::new(3)];
+        for surface in surfaces {
+            persistent.set(surface, first, 40, 125.0);
+        }
+        ctx.seed_view_radius_cache(&persistent);
+        let nested = ctx.clone();
+        for surface in surfaces {
+            assert_eq!(
+                nested.compute_view_radius_cached(second, surface, || 0.0),
+                0.0
+            );
+            // Clones stay isolated until the caller explicitly absorbs them.
+            assert_eq!(
+                ctx.compute_view_radius_cached(first, surface, || panic!("isolated parent")),
+                125.0
+            );
+            assert_eq!(persistent.get(surface, first, 40), Some(125.0));
+        }
+        ctx.absorb_view_radius_cache(&nested);
+        ctx.commit_view_radius_cache(&mut persistent);
+        for surface in surfaces {
+            assert_eq!(persistent.get(surface, first, 40), None);
+            assert_eq!(persistent.get(surface, second, 40), None);
+            assert_eq!(ctx.view_radius_cache.borrow()[&surface], (second, 0.0));
+        }
+        let next = AiContext {
+            frame: 40,
+            ..AiContext::test_fixture()
+        };
+        next.seed_view_radius_cache(&persistent);
+        for surface in surfaces {
+            assert_eq!(next.view_radius_cache.borrow()[&surface], (second, 0.0));
+            assert_eq!(
+                next.compute_view_radius_cached(second, surface, || 0.0),
+                0.0
+            );
+            assert_eq!(
+                next.compute_view_radius_cached(first, surface, || 90.0),
+                90.0
+            );
+        }
+        next.commit_view_radius_cache(&mut persistent);
+        for surface in surfaces {
+            assert_eq!(persistent.get(surface, first, 40), Some(90.0));
+        }
+        let later = AiContext {
+            frame: 41,
+            ..AiContext::test_fixture()
+        };
+        later.seed_view_radius_cache(&persistent);
+        assert!(later.view_radius_cache.borrow().is_empty());
+    }
+
     fn seek_point(x: f32) -> SeekPoint {
         SeekPoint {
             position: Position {
@@ -601,7 +695,6 @@ impl AiContext {
         let mut seed = |surface, entry: Option<crate::ai_vision::ViewRadiusCacheEntry>| {
             if let Some(entry) = entry
                 && entry.frame == self.frame
-                && entry.radius != 0.0
             {
                 values.insert(surface, (entry.viewer, entry.radius));
             }
@@ -627,6 +720,7 @@ impl AiContext {
     ) -> f32 {
         if let Some(&(stored_viewer, radius)) = self.view_radius_cache.borrow().get(&surface)
             && stored_viewer == viewer
+            && radius != 0.0
         {
             crate::ai_vision::debug_view_radius_cache_event(
                 "owner_hit",
@@ -663,12 +757,11 @@ impl AiContext {
         );
         let radius = compute();
         // Original's getter uses zero as the miss sentinel even after its
-        // setter stored a computed zero.
-        if radius != 0.0 {
-            self.view_radius_cache
-                .borrow_mut()
-                .insert(surface, (viewer, radius));
-        }
+        // setter stored a computed zero. Keep that last writer to invalidate
+        // a previous viewer's radius and publish it through clones/commits.
+        self.view_radius_cache
+            .borrow_mut()
+            .insert(surface, (viewer, radius));
         crate::ai_vision::debug_view_radius_cache_event(
             if radius == 0.0 {
                 "owner_compute_zero"
