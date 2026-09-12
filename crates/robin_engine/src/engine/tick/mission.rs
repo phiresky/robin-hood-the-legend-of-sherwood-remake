@@ -741,7 +741,6 @@ impl EngineInner {
         // Drain Pointing/RaisingShield/etc orders from NPC order queues
         // and start them as active_ai_anim. EventDone fires when the
         // sprite animation completes (detected in tick_actor_animation_for).
-        self.process_animation_orders();
 
         // TODO(original-parity): determine which queued NPC-order effects must
         // remain inside an individual NPC's creation-ordered update.

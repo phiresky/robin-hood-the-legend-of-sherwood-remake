@@ -199,21 +199,8 @@ impl EngineInner {
                     )
                 });
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
-                let mut ctx = build_ai_context_from_entity(
-                    entity,
-                    frame,
-                    building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
-                );
+                let mut ctx =
+                    self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
             };
@@ -556,21 +543,8 @@ impl EngineInner {
                 )
             });
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let mut ctx =
+                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
         };
@@ -639,21 +613,8 @@ impl EngineInner {
                 panic!("virtual ReturnToDuty owner {} disappeared", npc_id.index())
             });
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let mut ctx =
+                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             if let Some(owner_position) = owner_position_override {
                 ctx.position = owner_position;
@@ -743,21 +704,8 @@ impl EngineInner {
                 )
             });
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let mut ctx =
+                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             if let Some((_, owner_position)) = owner_boundary_positions
                 .iter()
@@ -807,21 +755,8 @@ impl EngineInner {
                 panic!("patrol-start macro owner {} disappeared", npc_id.index())
             });
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let mut ctx =
+                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx
         };
@@ -1943,21 +1878,7 @@ impl EngineInner {
                 npc_id.index()
             )
         });
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let mut ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
         ctx.in_uninterruptible_command = in_uninterruptible_command;
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {

@@ -970,21 +970,8 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 break;
             };
-            let mut ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let mut ctx =
+                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             let tick_data =
                 self.build_npc_tick_data_for_target(sim, npc_id, assets, Some(target_id));
@@ -1817,20 +1804,12 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
@@ -4489,6 +4468,31 @@ impl EngineInner {
             return;
         };
 
+        let view = ViewContext {
+            ground_position: viewer.ground_position,
+            viewer_inside_building,
+            hostile_to_player: viewer_hostile_to_player,
+            eye,
+            eye_world,
+            dir,
+            layer,
+            view_forward,
+            view_radius,
+            real_half_aperture,
+            viewer_in_building,
+            viewer_building_sector,
+            is_night_or_fog,
+            view_radius_cache,
+            eye_status,
+            view_speed,
+            modified_frame,
+            universal_frame,
+            original_creation_order,
+            golden_eye,
+            sight_obstacles: &sight_obstacles,
+            fast_grid: &self.world.fast_grid,
+        };
+
         // ── BODY pass ───────────────────────────────────────
         debug_detectable_list_bucket(
             "post_cleanup",
@@ -4524,30 +4528,7 @@ impl EngineInner {
             // Per-target pre-filter — Body has no extra check. Original
             // compares the full 3D eye/detection points across layers.
             |_t| true,
-            ViewContext {
-                ground_position: viewer.ground_position,
-                viewer_inside_building,
-                hostile_to_player: viewer_hostile_to_player,
-                eye,
-                eye_world,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                is_night_or_fog,
-                view_radius_cache,
-                eye_status,
-                view_speed,
-                modified_frame,
-                universal_frame,
-                original_creation_order,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
-            },
+            view,
         );
 
         // ── OBJECT pass ─────────────────────────────────────
@@ -4563,30 +4544,7 @@ impl EngineInner {
             // instant for Objects.
             !matches!(current_state, AiState::Sleeping | AiState::Default),
             object_targets,
-            ViewContext {
-                ground_position: viewer.ground_position,
-                viewer_inside_building,
-                hostile_to_player: viewer_hostile_to_player,
-                eye,
-                eye_world,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                is_night_or_fog,
-                view_radius_cache,
-                eye_status,
-                view_speed,
-                modified_frame,
-                universal_frame,
-                original_creation_order,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
-            },
+            view,
         );
 
         // ── FRIEND pass ─────────────────────────────────────
@@ -4618,30 +4576,7 @@ impl EngineInner {
             human_targets,
             // Per-target pre-filter: target must be able to help.
             |t| t.able_to_help,
-            ViewContext {
-                ground_position: viewer.ground_position,
-                viewer_inside_building,
-                hostile_to_player: viewer_hostile_to_player,
-                eye,
-                eye_world,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                is_night_or_fog,
-                view_radius_cache,
-                eye_status,
-                view_speed,
-                modified_frame,
-                universal_frame,
-                original_creation_order,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
-            },
+            view,
         );
 
         // ── MISSED_FRIEND pass ──────────────────────────────
@@ -4670,30 +4605,7 @@ impl EngineInner {
             human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
-            ViewContext {
-                ground_position: viewer.ground_position,
-                viewer_inside_building,
-                hostile_to_player: viewer_hostile_to_player,
-                eye,
-                eye_world,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                is_night_or_fog,
-                view_radius_cache,
-                eye_status,
-                view_speed,
-                modified_frame,
-                universal_frame,
-                original_creation_order,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
-            },
+            view,
         );
 
         // ── BEGGAR pass ─────────────────────────────────────
@@ -4776,30 +4688,7 @@ impl EngineInner {
             human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !missed_friend_or_beggar_target_blocked(t.dead, t.unconscious),
-            ViewContext {
-                ground_position: viewer.ground_position,
-                viewer_inside_building,
-                hostile_to_player: viewer_hostile_to_player,
-                eye,
-                eye_world,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                is_night_or_fog,
-                view_radius_cache,
-                eye_status,
-                view_speed,
-                modified_frame,
-                universal_frame,
-                original_creation_order,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
-            },
+            view,
         );
 
         // Original performs this reset after the complete detectable-type
@@ -5531,6 +5420,7 @@ impl OwnerViewRadiusCache {
 /// Avoids passing 18+ args to each helper.  All fields are derived
 /// from the soldier's npc/element state at the start of the per-NPC
 /// pass; nothing here mutates.
+#[derive(Clone, Copy)]
 struct ViewContext<'a> {
     ground_position: GroundPoint,
     /// Original-game inside-building test: building sector or active door transit.

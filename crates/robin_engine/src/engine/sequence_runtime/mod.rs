@@ -6,6 +6,8 @@
 //! existing [`EngineInner`] domains directly.
 
 mod immediate;
+mod instruct_commands;
+mod owner_dispatch;
 mod phase;
 mod script_sync;
 

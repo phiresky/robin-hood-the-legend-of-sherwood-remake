@@ -3228,6 +3228,35 @@ mod seek_area_friend_position_tests {
     }
 }
 
+impl EngineInner {
+    /// Build a dispatch context from the selected observation, preserving the
+    /// caller's frame and building-sector boundary rather than resampling them.
+    pub(in crate::engine) fn ai_context_from_entity(
+        &self,
+        entity: &Entity,
+        frame: u32,
+        building_sector: Option<crate::position_interface::SectorHandle>,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+    ) -> AiContext {
+        build_ai_context_from_entity(
+            entity,
+            frame,
+            building_sector,
+            self.world.weather.is_forest_level,
+            self.world.weather.ambiance,
+            self.ai.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &self.world.fast_grid,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
+            &self.ai.global.all_soldier_handles,
+            self.control.sim_config.difficulty,
+        )
+    }
+}
+
 /// Build an [`AiContext`] from a generic [`Entity`] reference.
 ///
 /// Extracts position, direction, posture, camp, building status, and
@@ -5114,20 +5143,12 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
             };
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(civ_id, &mut ctx);
@@ -5499,20 +5520,12 @@ impl EngineInner {
             };
             let entity_sector = entity.element_data().sector();
             let building_sector = self.entity_building_sector(entity_sector);
-            build_ai_context_from_entity(
+            self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             )
         };
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
