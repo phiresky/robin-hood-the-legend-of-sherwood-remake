@@ -1261,8 +1261,9 @@ fn combined_profile_reader_preserves_missing_profile_and_keys_errors() {
     assert!(services.key_configs.try_lock().is_ok());
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
+#[cfg(all(panic = "unwind", not(target_arch = "wasm32")))]
+#[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
 fn combined_profile_reader_preserves_poison_errors_and_releases_other_lock() {
     let context = context(
         0,
