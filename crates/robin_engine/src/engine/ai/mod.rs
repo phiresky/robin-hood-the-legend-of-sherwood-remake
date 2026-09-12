@@ -3263,6 +3263,21 @@ impl EngineInner {
             self.control.sim_config.difficulty,
         )
     }
+
+    /// Resolve an NPC and its current building sector at the dispatch boundary.
+    /// Split-borrow translators continue to use the entity-based primitive.
+    #[track_caller]
+    pub(in crate::engine) fn ai_context_for(
+        &self,
+        npc_id: EntityId,
+        frame: u32,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+    ) -> AiContext {
+        let entity = self.expect_entity(npc_id, "building AI dispatch context");
+        let building_sector = self.entity_building_sector(entity.element_data().sector());
+        self.ai_context_from_entity(entity, frame, building_sector, scratch, assets)
+    }
 }
 
 /// Build an [`AiContext`] from a generic [`Entity`] reference.
