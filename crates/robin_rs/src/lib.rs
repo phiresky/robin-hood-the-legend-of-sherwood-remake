@@ -23,7 +23,7 @@ use std::sync::{Mutex, OnceLock};
 ))]
 pub mod auto_update;
 pub mod gameplay_settings;
-pub use leaderboard::signing as leaderboard_signing;
+pub(crate) use leaderboard::signing as leaderboard_signing;
 pub mod localization;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_game_identity;
@@ -250,15 +250,15 @@ pub mod input;
 pub mod input_translator;
 pub mod key_config;
 pub mod key_config_store;
-pub mod leaderboard;
-pub use leaderboard::browse as leaderboard_browse;
-pub use leaderboard::chains as leaderboard_chains;
-pub use leaderboard::http as leaderboard_http;
-pub use leaderboard::mission_end as leaderboard_mission_end;
-pub use leaderboard::preferences as leaderboard_preferences;
-pub use leaderboard::ranked_session as leaderboard_ranked_session;
-pub use leaderboard::receipt_watcher as leaderboard_receipt_watcher;
-pub use leaderboard::service as leaderboard_service;
+pub(crate) mod leaderboard;
+pub(crate) use leaderboard::browse as leaderboard_browse;
+pub(crate) use leaderboard::chains as leaderboard_chains;
+pub(crate) use leaderboard::http as leaderboard_http;
+pub(crate) use leaderboard::mission_end as leaderboard_mission_end;
+pub(crate) use leaderboard::preferences as leaderboard_preferences;
+pub(crate) use leaderboard::ranked_session as leaderboard_ranked_session;
+pub(crate) use leaderboard::receipt_watcher as leaderboard_receipt_watcher;
+pub(crate) use leaderboard::service as leaderboard_service;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use leaderboard::storage as leaderboard_storage;
 pub mod loading_dissolve_gpu;

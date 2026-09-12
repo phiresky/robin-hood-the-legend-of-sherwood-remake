@@ -260,6 +260,18 @@ where
     }
 }
 
+fn poll_validated<T>(
+    task: &mut dyn ReceiptWatcherTask<T>,
+    validate: impl FnOnce(&T) -> Result<(), String>,
+) -> Option<Result<T, ReceiptWatcherOperationError>> {
+    task.try_take().map(|result| {
+        result.and_then(|value| {
+            validate(&value).map_err(ReceiptWatcherOperationError::Permanent)?;
+            Ok(value)
+        })
+    })
+}
+
 trait ReceiptWatcherBackend: Send {
     fn challenge(
         &mut self,
@@ -551,93 +563,76 @@ impl SubmissionReceiptWatcher {
                 key,
                 request,
                 mut task,
-            } => match task.try_take() {
-                None => {
-                    self.active = Some(ActiveReceiptWatcherTask::Challenge { key, request, task });
-                }
-                Some(Ok(challenge)) => {
-                    if let Err(error) = validate_challenge(&request, &challenge) {
-                        self.record_operation_error(
-                            &key,
-                            ReceiptWatcherOperationError::Permanent(error),
-                            now_unix_ms,
-                        );
-                    } else {
-                        match self.backend.sign(challenge.clone()) {
-                            Ok(task) => {
-                                self.active = Some(ActiveReceiptWatcherTask::Sign {
-                                    key,
-                                    challenge,
-                                    task,
-                                });
-                            }
-                            Err(error) => self.record_operation_error(&key, error, now_unix_ms),
-                        }
+            } => {
+                match poll_validated(task.as_mut(), |challenge| {
+                    validate_challenge(&request, challenge)
+                }) {
+                    None => {
+                        self.active =
+                            Some(ActiveReceiptWatcherTask::Challenge { key, request, task })
                     }
+                    Some(Ok(challenge)) => match self.backend.sign(challenge.clone()) {
+                        Ok(task) => {
+                            self.active = Some(ActiveReceiptWatcherTask::Sign {
+                                key,
+                                challenge,
+                                task,
+                            })
+                        }
+                        Err(error) => self.record_operation_error(&key, error, now_unix_ms),
+                    },
+                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
                 }
-                Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-            },
+            }
             ActiveReceiptWatcherTask::Sign {
                 key,
                 challenge,
                 mut task,
-            } => match task.try_take() {
-                None => {
-                    self.active = Some(ActiveReceiptWatcherTask::Sign {
-                        key,
-                        challenge,
-                        task,
-                    });
-                }
-                Some(Ok(envelope)) => {
-                    if let Err(error) = validate_envelope(&challenge, &envelope) {
-                        self.record_operation_error(
-                            &key,
-                            ReceiptWatcherOperationError::Permanent(error),
-                            now_unix_ms,
-                        );
-                    } else {
-                        match self.backend.status(envelope.clone()) {
-                            Ok(task) => {
-                                self.active = Some(ActiveReceiptWatcherTask::Status {
-                                    key,
-                                    envelope,
-                                    task,
-                                });
-                            }
-                            Err(error) => self.record_operation_error(&key, error, now_unix_ms),
-                        }
+            } => {
+                match poll_validated(task.as_mut(), |envelope| {
+                    validate_envelope(&challenge, envelope)
+                }) {
+                    None => {
+                        self.active = Some(ActiveReceiptWatcherTask::Sign {
+                            key,
+                            challenge,
+                            task,
+                        })
                     }
+                    Some(Ok(envelope)) => match self.backend.status(envelope.clone()) {
+                        Ok(task) => {
+                            self.active = Some(ActiveReceiptWatcherTask::Status {
+                                key,
+                                envelope,
+                                task,
+                            })
+                        }
+                        Err(error) => self.record_operation_error(&key, error, now_unix_ms),
+                    },
+                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
                 }
-                Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-            },
+            }
             ActiveReceiptWatcherTask::Status {
                 key,
                 envelope,
                 mut task,
-            } => match task.try_take() {
-                None => {
-                    self.active = Some(ActiveReceiptWatcherTask::Status {
-                        key,
-                        envelope,
-                        task,
-                    });
-                }
-                Some(Ok(response)) => {
-                    if let Err(error) = response.validate_against_envelope(&envelope) {
-                        self.record_operation_error(
-                            &key,
-                            ReceiptWatcherOperationError::Permanent(format!(
-                                "owner-status response mismatch: {error}"
-                            )),
-                            now_unix_ms,
-                        );
-                    } else {
-                        self.handle_status(key, response, now_unix_ms);
+            } => {
+                match poll_validated(task.as_mut(), |response| {
+                    response
+                        .validate_against_envelope(&envelope)
+                        .map_err(|error| format!("owner-status response mismatch: {error}"))
+                }) {
+                    None => {
+                        self.active = Some(ActiveReceiptWatcherTask::Status {
+                            key,
+                            envelope,
+                            task,
+                        })
                     }
+                    Some(Ok(response)) => self.handle_status(key, response, now_unix_ms),
+                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
                 }
-                Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-            },
+            }
         }
     }
 
