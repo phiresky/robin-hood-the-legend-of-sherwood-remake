@@ -1196,11 +1196,9 @@ impl EngineInner {
                 true
             }
             EngineStateRequest::ZoomingUp => {
-                // Display transition state is host-owned and supplied by
-                // the caller, so it never enters the simulation snapshot.
-                if self.is_zoom_possible_for_camera(display, seat)
-                    && self.is_zoom_up_possible_for_seat(seat)
-                {
+                // The caller temporarily holds the engine-owned camera display
+                // outside its owner; query this display, not the placeholder.
+                if self.is_zoom_possible_for_camera(display) && self.is_zoom_up_possible() {
                     display.background_transform.required_zoom_up = false;
                     // Every MSG_ZOOM_UP receipt rewrites
                     // `mechanized_zoom` from the message value;
@@ -1232,9 +1230,7 @@ impl EngineInner {
                 }
             }
             EngineStateRequest::ZoomingDown => {
-                if self.is_zoom_possible_for_camera(display, seat)
-                    && self.is_zoom_down_possible_for_seat(seat)
-                {
+                if self.is_zoom_possible_for_camera(display) && self.is_zoom_down_possible() {
                     display.background_transform.required_zoom_down = false;
                     // See ZoomingUp for the rationale on resetting
                     // `mechanized_zoom` from the message value.

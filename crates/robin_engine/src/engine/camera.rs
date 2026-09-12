@@ -597,40 +597,23 @@ impl EngineInner {
 
     // ─── Zoom ────────────────────────────────────────────────────
 
-    /// Whether a zoom operation is currently possible (no zoom in
-    /// progress) for the host seat.  Single-player + UI gating
-    /// callers use this; per-seat dispatch uses
-    /// [`Self::is_zoom_possible_for_seat`].
+    /// Whether the authoritative cutscene camera can start a zoom operation.
     pub fn is_zoom_possible(&self) -> bool {
-        self.is_camera_zoom_possible_for_seat(0)
+        self.is_zoom_possible_for_camera(&self.feedback.cutscene_camera.display)
     }
 
-    /// Per-seat variant of [`Self::is_zoom_possible`].
-    pub fn is_zoom_possible_for_seat(&self, display: &HostDisplayState, _seat: usize) -> bool {
+    /// State-change dispatch may hold the camera display outside its owner;
+    /// inspect that supplied display rather than the owner's placeholder.
+    pub(crate) fn is_zoom_possible_for_camera(&self, display: &CameraDisplayState) -> bool {
         !self.feedback.cutscene_camera.zoom_init_done
             && display.display_op != DisplayOpCode::InZoom
             && !display.background_transform.zoom_to_up
             && !display.background_transform.zoom_to_down
-    }
-
-    pub(crate) fn is_zoom_possible_for_camera(
-        &self,
-        display: &CameraDisplayState,
-        _seat: usize,
-    ) -> bool {
-        !self.feedback.cutscene_camera.zoom_init_done
-            && display.display_op != DisplayOpCode::InZoom
-            && !display.background_transform.zoom_to_up
-            && !display.background_transform.zoom_to_down
-    }
-
-    pub(super) fn is_camera_zoom_possible_for_seat(&self, seat: usize) -> bool {
-        self.is_zoom_possible_for_camera(&self.feedback.cutscene_camera.display, seat)
     }
 
     /// Whether a zoom is currently in progress.
     pub fn is_zooming(&self) -> bool {
-        !self.is_camera_zoom_possible_for_seat(0)
+        !self.is_zoom_possible()
     }
 
     /// Whether a zoom-up transition is currently in flight.  Set when
@@ -655,23 +638,13 @@ impl EngineInner {
             .zoom_to_down
     }
 
-    /// Whether zooming in (2x) is possible for the host seat.
+    /// Whether the authoritative cutscene camera can zoom in (2x).
     pub fn is_zoom_up_possible(&self) -> bool {
-        self.is_zoom_up_possible_for_seat(0)
-    }
-
-    /// Per-seat variant of [`Self::is_zoom_up_possible`].
-    pub fn is_zoom_up_possible_for_seat(&self, _seat: usize) -> bool {
         self.feedback.cutscene_camera.zoom_factor < 2.0
     }
 
-    /// Whether zooming out (0.5x) is possible for the host seat.
+    /// Whether the authoritative cutscene camera can zoom out (0.5x).
     pub fn is_zoom_down_possible(&self) -> bool {
-        self.is_zoom_down_possible_for_seat(0)
-    }
-
-    /// Per-seat variant of [`Self::is_zoom_down_possible`].
-    pub fn is_zoom_down_possible_for_seat(&self, _seat: usize) -> bool {
         if self.feedback.cutscene_camera.zoom_factor <= 0.5 {
             return false;
         }
@@ -689,8 +662,8 @@ impl EngineInner {
 
         if count >= steps {
             // Zoom animation complete — snap to target and finalize.
-            let zoom_up = self.is_zoom_up_possible_for_seat(0) as u32;
-            let zoom_down = self.is_zoom_down_possible_for_seat(0) as u32;
+            let zoom_up = self.is_zoom_up_possible() as u32;
+            let zoom_down = self.is_zoom_down_possible() as u32;
 
             self.feedback.cutscene_camera.zoom_factor = display.background_transform.zoom_to;
             let target = display.background_transform.view_to;

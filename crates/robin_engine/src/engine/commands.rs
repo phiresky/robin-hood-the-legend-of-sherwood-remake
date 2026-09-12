@@ -1108,7 +1108,7 @@ impl EngineInner {
                     level_size.x,
                     level_size.y
                 );
-                if self.is_camera_zoom_possible_for_seat(seat) {
+                if self.is_zoom_possible() {
                     self.players.seats[seat].locker_active = false;
                     self.center_on_point(seat, *point);
                 }
