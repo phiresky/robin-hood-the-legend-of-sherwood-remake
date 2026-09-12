@@ -325,13 +325,17 @@ fn add_language_folder() {
     // no `1033/`).
     let _ = SbFile::add_alternate_path(FALLBACK_LOCALE_FOLDER);
 
-    // Probe each candidate with `SbFile::exists` (which also walks already-
+    // Probe each candidate with `try_exists` (which also walks already-
     // registered alternate paths) and stop at the first hit.
     for &folder in LANGUAGE_FOLDERS {
-        if SbFile::exists(folder) {
-            tracing::info!("Detected language folder: {folder}");
-            let _ = SbFile::add_alternate_path(folder);
-            return;
+        match robin_engine::sbfile::global_file_system().try_exists(folder) {
+            Ok(true) => {
+                tracing::info!("Detected language folder: {folder}");
+                let _ = SbFile::add_alternate_path(folder);
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => tracing::warn!(folder, error, "Cannot inspect candidate language folder"),
         }
     }
     tracing::info!(
