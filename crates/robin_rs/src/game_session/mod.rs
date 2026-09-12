@@ -20,6 +20,9 @@ mod mouse_input;
 mod multiplayer;
 mod render;
 pub(crate) mod replay_init;
+mod replay_launch;
+pub(crate) use replay_launch::{PreparedReplayLaunch, prepare_replay_launch};
+use replay_launch::{choose_pending_replay, prepare_replay_mission};
 mod retirement;
 mod runtime;
 mod session_policy;
@@ -78,8 +81,9 @@ use modal_state::{
     start_active_popup_scroll_batch, start_active_sherwood_report, tick_active_modal,
 };
 use mouse_input::{
-    dispatch_corner_button_left_click, dispatch_corner_button_right_click, handle_mouse_input,
-    handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
+    allied_portrait_center, dispatch_corner_button_left_click, dispatch_corner_button_right_click,
+    handle_mouse_input, handle_pause_menu_events, handle_sherwood_campaign_map_overlay,
+    handle_sherwood_hud_buttons, request_sherwood_trading_panel, sherwood_trading_access,
 };
 use multiplayer::{drain_mission_network, setup_multiplayer_session};
 pub use render::RenderContext;
@@ -130,7 +134,6 @@ use crate::multiplayer::matchmaking::current_epoch_ms;
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
 use crate::stature_hud::{StatureButton, StatureEnable, StatureHudLayout};
-use crate::ui_panel::PortraitHitArea;
 use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButton, ZoomButtonEnable};
 use robin_engine::campaign::Campaign;
@@ -138,348 +141,6 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles::MissionLocation;
 use std::sync::Arc;
-
-/// Snapshot the three live gates shared by every player-facing route into the
-/// Sherwood trading panel. The authoritative command repeats these checks.
-fn sherwood_trading_access(
-    host: &Host,
-    engine: &Engine,
-    profiles: &engine_profiles::ProfileManager,
-) -> crate::host::SherwoodTradingAccess {
-    crate::host::SherwoodTradingAccess {
-        local_is_host: host.transport.local_seat() == engine_player_command::PlayerId::HOST,
-        enabled: engine.sim_config().sherwood_trading,
-        in_sherwood: engine.is_sherwood(profiles),
-    }
-}
-
-fn request_sherwood_trading_panel(
-    host: &mut Host,
-    engine: &Engine,
-    profiles: &engine_profiles::ProfileManager,
-) -> Result<(), robin_engine::trading::TradeRejectReason> {
-    let access = sherwood_trading_access(host, engine, profiles);
-    host.effects.request_sherwood_trading(access)
-}
-
-fn prepare_replay_mission(
-    profiles: &mut engine_profiles::ProfileManager,
-    args: &crate::main_entry::MissionLaunch,
-    data: robin_engine::replay::ReplayData,
-    paused: bool,
-) -> Result<
-    (
-        Campaign,
-        usize,
-        MissionLocation,
-        crate::main_entry::MissionLaunch,
-        u64,
-        engine_api::SimConfig,
-    ),
-    String,
-> {
-    crate::replay_format::validate_replay_data(&data)
-        .map_err(|error| format!("invalid replay: {error}"))?;
-    let campaign: Campaign = bitcode::decode(&data.header().campaign)
-        .map_err(|error| format!("failed to restore replay campaign: {error}"))?;
-    campaign
-        .validate_history_schema()
-        .map_err(|error| format!("invalid replay campaign history: {error}"))?;
-    let mission_id = data.header().mission_id.clone();
-    let mission_assets = &data.header().mission_assets;
-    let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
-        format!("replay campaign has no current mission for header mission `{mission_id}`")
-    })?;
-    let mission = campaign
-        .missions
-        .get(mission_idx)
-        .ok_or_else(|| format!("replay current mission index {mission_idx} is out of range"))?;
-    let profile_idx = mission.profile_idx.ok_or_else(|| {
-        format!("replay mission `{mission_id}` at index {mission_idx} has no profile")
-    })? as usize;
-    if profile_idx == profiles.missions.len() {
-        // Forced/custom missions append one synthetic profile immediately
-        // before recording starts. That profile is intentionally absent from
-        // the freshly loaded base ProfileManager during replay bootstrap, but
-        // its index remains in the serialized campaign.
-        let restored_idx = profiles.add_forced_mission(
-            mission_assets.proto_level_filename.clone(),
-            mission_assets.mission_basename.clone(),
-            mission_assets.mission_basename.clone(),
-        ) as usize;
-        assert_eq!(
-            restored_idx, profile_idx,
-            "forced replay profile must restore its serialized allocation"
-        );
-    } else if profile_idx > profiles.missions.len() {
-        return Err(format!(
-            "replay mission `{mission_id}` references missing profile {profile_idx}, but only {} profiles are loaded",
-            profiles.missions.len()
-        ));
-    }
-    let profile = campaign.missions[mission_idx].profile(profiles);
-    if profile.mission_filename != mission_id {
-        return Err(format!(
-            "replay campaign mission at index {mission_idx} resolves to `{}`, not header mission `{mission_id}`",
-            profile.mission_filename
-        ));
-    }
-    if !profile
-        .proto_level_filename
-        .eq_ignore_ascii_case(&mission_assets.proto_level_filename)
-    {
-        return Err(format!(
-            "replay campaign mission `{mission_id}` resolves to proto `{}`, not descriptor proto `{}`",
-            profile.proto_level_filename, mission_assets.proto_level_filename
-        ));
-    }
-    let location = profile.location;
-    let rng_seed = data.header().rng_seed;
-    let sim_config = data.header().sim_config;
-    let mut replay_args = args.clone();
-    replay_args.mission_restart = false;
-    replay_args.replay_data = Some(data);
-    replay_args.replay = None;
-    // A queued replay can supersede a live custom/multiplayer mission. Its
-    // persisted descriptor/package are the sole authority; never let ambient
-    // launch metadata trigger a second archive or Lua lookup.
-    replay_args.custom_mission = None;
-    replay_args.pending_lua_mission = None;
-    replay_args.pending_distributed_mod = None;
-    replay_args.resolved_mission_assets = None;
-    replay_args.start_paused |= paused;
-    Ok((
-        campaign,
-        mission_idx,
-        location,
-        replay_args,
-        rng_seed,
-        sim_config,
-    ))
-}
-
-/// Resolve the exact immutable mission bytes before consulting the profile
-/// manager, then reconstruct the campaign/profile selection from the admitted
-/// replay header. Every production replay entry point uses this boundary.
-pub(crate) async fn prepare_replay_launch(
-    application_context: &ApplicationContext,
-    profiles: &mut engine_profiles::ProfileManager,
-    args: &crate::main_entry::MissionLaunch,
-    data: robin_engine::replay::ReplayData,
-    paused: bool,
-) -> Result<
-    (
-        Campaign,
-        usize,
-        MissionLocation,
-        crate::main_entry::MissionLaunch,
-        u64,
-        engine_api::SimConfig,
-    ),
-    String,
-> {
-    crate::replay_format::validate_replay_data(&data)
-        .map_err(|error| format!("invalid replay: {error}"))?;
-    if args.mission_start_legacy_save.is_some() {
-        return Err(
-            "custom/current replay playback cannot be combined with Original parity save capture"
-                .to_owned(),
-        );
-    }
-    if data.header().spellforge_package.is_some()
-        && !application_context
-            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)?
-    {
-        return Err(format!(
-            "Spellforge mission `{}` is disabled in Gameplay settings; playback did not change the saved preference",
-            data.header().mission_assets.mission_basename
-        ));
-    }
-
-    let resolved = resolve_replay_mission_assets(application_context, &data).await?;
-    let mut prepared = prepare_replay_mission(profiles, args, data, paused)?;
-    prepared.3.resolved_mission_assets = Some(std::sync::Arc::new(resolved));
-    Ok(prepared)
-}
-
-async fn resolve_replay_mission_assets(
-    application_context: &ApplicationContext,
-    data: &robin_engine::replay::ReplayData,
-) -> Result<crate::mission_asset_restore::ResolvedMissionAssets, String> {
-    let descriptor = &data.header().mission_assets;
-    let package = data.header().spellforge_package.as_ref();
-    // Built-in descriptors are validated values, not mounted archives. Resolve
-    // them without granting or demanding filesystem authority; actual mission
-    // preparation still requires the application's explicit reader.
-    if matches!(
-        descriptor.source,
-        robin_engine::mission_assets::MissionAssetSource::BuiltIn
-    ) {
-        return crate::mission_asset_restore::resolve_built_in_mission_assets(descriptor, package)
-            .map_err(|error| error.to_string());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let roots = crate::mission_asset_restore::MissionAssetRoots::discover();
-        let with_cache = application_context.with_distributed_mod_cache_mut(|cache| {
-            crate::mission_asset_restore::resolve_native_mission_assets(
-                descriptor,
-                package,
-                &roots,
-                Some(cache),
-                application_context.preparation_files()?.clone(),
-            )
-            .map_err(|error| error.to_string())
-        });
-        match with_cache {
-            Ok(resolved) => Ok(resolved),
-            Err(cache_error) => crate::mission_asset_restore::resolve_native_mission_assets(
-                descriptor,
-                package,
-                &roots,
-                None,
-                application_context.preparation_files()?.clone(),
-            )
-            .map_err(|without_cache| {
-                format!(
-                    "restore replay mission assets without cache: {without_cache}; cache attempt: {cache_error}"
-                )
-            }),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use robin_engine::mission_assets::MissionAssetSource;
-        match &descriptor.source {
-            MissionAssetSource::BuiltIn => {
-                crate::mission_asset_restore::resolve_built_in_mission_assets(descriptor, package)
-                    .map_err(|error| error.to_string())
-            }
-            MissionAssetSource::Archive(archive) => {
-                let cache_identity = archive.distributed_cache.as_ref().ok_or_else(|| {
-                    format!(
-                        "browser cold replay `{}` has no exact distributed-cache identity",
-                        descriptor.mission_basename
-                    )
-                })?;
-                let lease = crate::distributed_mod_cache::acquire(cache_identity.full_mod_sha256)
-                    .await
-                    .map_err(|error| format!("acquire browser replay mission cache: {error}"))?
-                    .ok_or_else(|| {
-                        format!(
-                            "browser replay mission cache has no exact object {}",
-                            robin_engine::spellforge::hex_hash(&cache_identity.full_mod_sha256)
-                        )
-                    })?;
-                crate::mission_asset_restore::resolve_cached_mission_assets(
-                    descriptor,
-                    package,
-                    lease,
-                    application_context.preparation_files()?.clone(),
-                )
-                .map_err(|error| error.to_string())
-            }
-        }
-    }
-}
-
-fn choose_pending_replay(
-    newly_queued: Option<crate::replay_service::PendingReplay>,
-    restart_fallback: &mut Option<crate::replay_service::PendingReplay>,
-) -> Option<crate::replay_service::PendingReplay> {
-    if newly_queued.is_some() {
-        // A newly queued replay supersedes the whole prior replay lifecycle,
-        // including its restart copy. Do not leave the old recording armed
-        // for a later loop iteration after the new replay exits.
-        *restart_fallback = None;
-        newly_queued
-    } else {
-        restart_fallback.take()
-    }
-}
-
-fn center_on_reselected_portrait_pc(
-    host: &mut Host,
-    engine: &Engine,
-    local_seat: engine_player_command::PlayerId,
-    pc_id: engine_element::EntityId,
-    append: bool,
-    area: PortraitHitArea,
-) -> bool {
-    if append
-        || !matches!(
-            area,
-            PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
-        )
-        || !engine.hero_selection(local_seat).contains(&pc_id)
-    {
-        return false;
-    }
-
-    let Some(entity) = engine.get_entity(pc_id) else {
-        tracing::warn!("Portrait reselect: selected PC {:?} is missing", pc_id);
-        return false;
-    };
-
-    // Selecting an already-selected portrait is rewritten into a
-    // `MSG_CENTER_ON` before the normal `MSG_SELECT_CHARACTER_WITH_ECHO`
-    // flow continues.
-    host.frontend
-        .viewport
-        .center_on_point(entity.position_iface().map_position());
-    true
-}
-
-fn allied_portrait_center(
-    engine: &Engine,
-    members: &[engine_element::EntityId],
-) -> Option<robin_engine::coordinates::MapPoint> {
-    let mut count = 0_u32;
-    let mut sum_x = 0.0_f32;
-    let mut sum_y = 0.0_f32;
-    for member in members {
-        let Some(entity) = engine.get_entity(*member) else {
-            tracing::warn!(?member, "Allied portrait center: group member is missing");
-            continue;
-        };
-        let point = entity.position_iface().map_position();
-        count += 1;
-        sum_x += point.x;
-        sum_y += point.y;
-    }
-    (count > 0).then(|| {
-        let reciprocal = 1.0 / count as f32;
-        robin_engine::coordinates::MapPoint::new(sum_x * reciprocal, sum_y * reciprocal)
-    })
-}
-
-fn center_on_reselected_allied_portrait(
-    host: &mut Host,
-    engine: &Engine,
-    local_seat: engine_player_command::PlayerId,
-    members: &[engine_element::EntityId],
-    append: bool,
-    area: PortraitHitArea,
-) -> bool {
-    if append
-        || !matches!(
-            area,
-            PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
-        )
-        || engine.tactical_selection(local_seat) != members
-    {
-        return false;
-    }
-
-    let Some(center) = allied_portrait_center(engine, members) else {
-        tracing::warn!("Allied portrait reselect: group has no live members");
-        return false;
-    };
-    host.frontend.viewport.center_on_point(center);
-    true
-}
 
 /// Outcome of a game session (series of missions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -976,17 +637,17 @@ pub(crate) async fn run_session(
                     };
                 }
             };
-            campaign = prepared.0;
-            authoritative_rng_seed = prepared.4;
-            authoritative_sim_config = prepared.5;
-            mission_args_storage = Some(prepared.3);
+            campaign = prepared.campaign;
+            authoritative_rng_seed = prepared.rng_seed;
+            authoritative_sim_config = prepared.sim_config;
+            mission_args_storage = Some(prepared.launch);
             replay_for_restart = Some(crate::replay_service::PendingReplay {
                 data: replay_copy,
                 paused,
             });
             (
-                prepared.1,
-                prepared.2,
+                prepared.mission_idx,
+                prepared.location,
                 authoritative_rng_seed,
                 authoritative_sim_config,
             )
@@ -1648,9 +1309,13 @@ async fn prepare_pending_direct_replay(
     )
     .await
     .map_err(|error| format!("pending direct-mission replay launch failed: {error}"))?;
-    *args = prepared.3;
+    *args = prepared.launch;
     Ok(Some((
-        prepared.0, prepared.1, prepared.2, prepared.4, prepared.5,
+        prepared.campaign,
+        prepared.mission_idx,
+        prepared.location,
+        prepared.rng_seed,
+        prepared.sim_config,
     )))
 }
 
@@ -2267,7 +1932,7 @@ mod required_state_tests {
             true,
         ))
         .unwrap()
-        .3;
+        .launch;
         let old_lease = std::sync::Arc::downgrade(args.resolved_mission_assets.as_ref().unwrap());
         profiles.missions.push(MissionProfile {
             id: 18,
@@ -2419,8 +2084,14 @@ mod required_state_tests {
             ..Default::default()
         };
 
-        let (campaign, mission_idx, location, prepared_args, seed, config) =
-            prepare_replay_mission(&mut profiles, &args, data, true).unwrap();
+        let super::PreparedReplayLaunch {
+            campaign,
+            mission_idx,
+            location,
+            launch: prepared_args,
+            rng_seed: seed,
+            sim_config: config,
+        } = prepare_replay_mission(&mut profiles, &args, data, true).unwrap();
 
         assert_eq!(campaign.current_mission_idx, Some(0));
         assert_eq!(mission_idx, 0);
@@ -2461,7 +2132,10 @@ mod required_state_tests {
         data.try_edit_header(|header| header.mission_assets.map_filename = "DifferentMap".into())
             .unwrap();
 
-        let (_, _, _, prepared_args, _, _) = prepare_replay_mission(
+        let super::PreparedReplayLaunch {
+            launch: prepared_args,
+            ..
+        } = prepare_replay_mission(
             &mut profiles,
             &crate::main_entry::MissionLaunch::default(),
             data,
@@ -2507,7 +2181,7 @@ mod required_state_tests {
         })
         .unwrap();
 
-        let (_, mission_idx, _, _, _, _) = prepare_replay_mission(
+        let super::PreparedReplayLaunch { mission_idx, .. } = prepare_replay_mission(
             &mut profiles,
             &crate::main_entry::MissionLaunch::default(),
             data,

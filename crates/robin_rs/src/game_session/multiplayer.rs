@@ -5,10 +5,10 @@
 use super::runtime::TimelineFrame;
 use crate::host::Host;
 use crate::rewind::RewindBuffer;
-use crate::sim_timeline::{RestorePolicy, replay_authoritative_frame_profiled};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::player_command::PlayerInput;
+use robin_engine::sim_timeline::{RestorePolicy, replay_authoritative_frame_profiled};
 use robin_engine::spellforge::SpellforgeRuntime;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1418,11 +1418,11 @@ mod tests {
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
     use crate::rewind::RewindBuffer;
-    use crate::sim_timeline::RestorePolicy;
     use robin_engine::campaign::Campaign;
     use robin_engine::engine::{Engine, LevelAssets};
     use robin_engine::engine_manager::EngineManager;
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+    use robin_engine::sim_timeline::RestorePolicy;
     use robin_run_protocol::{
         Digest32, LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1,
         LeaderboardCoSignRequestV1,

@@ -13,19 +13,12 @@ use robin_engine::profiles::MissionLocation;
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
 use super::cli::{MissionLaunch, requested_replay_data};
 
-type ReplayLaunch = (
-    Campaign,
-    usize,
-    MissionLocation,
-    MissionLaunch,
-    u64,
-    robin_engine::engine::SimConfig,
-);
+use crate::game_session::PreparedReplayLaunch;
 
 /// In-process ownership handoff, never serialized or reconstructed from JS.
 struct PreparedInitialReplay {
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
-    launch: ReplayLaunch,
+    launch: PreparedReplayLaunch,
     #[cfg(target_arch = "wasm32")]
     downloads: Option<crate::shipping_mission::EarlyMissionDownloads>,
 }
@@ -115,11 +108,11 @@ pub fn start_browser_replay_preparation(
                     }
                     let shipping = context.shipping_arc()?;
                     let archive = launch
-                        .3
+                        .launch
                         .resolved_mission_assets
                         .as_ref()
                         .is_some_and(|resolved| resolved.is_archive());
-                    let mission = launch.0.missions[launch.1]
+                    let mission = launch.campaign.missions[launch.mission_idx]
                         .profile(&prepared_profiles)
                         .mission_filename
                         .clone();
@@ -128,7 +121,7 @@ pub fn start_browser_replay_preparation(
                             crate::shipping_mission::start_early_downloads(
                                 datadir,
                                 &mission,
-                                &launch.0,
+                                &launch.campaign,
                                 &prepared_profiles,
                             )
                             .map_err(|error| format!("early replay downloads: {error:#}"))?,
@@ -331,32 +324,38 @@ async fn run_rust_game_active(
         // are canceled if setup fails or this replay is superseded.
         #[cfg(target_arch = "wasm32")]
         let mut _early_downloads = None;
-        let (replay_campaign, idx, location, replay_args, replay_rng_seed, replay_sim_config) =
-            if let Some(prepared) = prepared_replay {
-                profiles = prepared.profiles;
-                #[cfg(target_arch = "wasm32")]
-                {
-                    _early_downloads = prepared.downloads;
-                }
-                prepared.launch
-            } else {
-                wait_for_replay_command(window, &args.global_options).await?;
-                let pending = args
-                    .global_options
-                    .replay_launches()
-                    .take_pending()
-                    .ok_or_else(|| {
-                        "--wait-for-command: replay disappeared before mission start".to_string()
-                    })?;
-                crate::game_session::prepare_replay_launch(
-                    &application_context,
-                    std::sync::Arc::make_mut(&mut profiles),
-                    args,
-                    pending.data,
-                    pending.paused,
-                )
-                .await?
-            };
+        let PreparedReplayLaunch {
+            campaign: replay_campaign,
+            mission_idx: idx,
+            location,
+            launch: replay_args,
+            rng_seed: replay_rng_seed,
+            sim_config: replay_sim_config,
+        } = if let Some(prepared) = prepared_replay {
+            profiles = prepared.profiles;
+            #[cfg(target_arch = "wasm32")]
+            {
+                _early_downloads = prepared.downloads;
+            }
+            prepared.launch
+        } else {
+            wait_for_replay_command(window, &args.global_options).await?;
+            let pending = args
+                .global_options
+                .replay_launches()
+                .take_pending()
+                .ok_or_else(|| {
+                    "--wait-for-command: replay disappeared before mission start".to_string()
+                })?;
+            crate::game_session::prepare_replay_launch(
+                &application_context,
+                std::sync::Arc::make_mut(&mut profiles),
+                args,
+                pending.data,
+                pending.paused,
+            )
+            .await?
+        };
         let Some(mut callbacks) =
             RustCallbacks::new_for_window(application_context.clone(), window).await?
         else {
@@ -383,15 +382,21 @@ async fn run_rust_game_active(
     // auto-detection.
     let replay_data = requested_replay_data(args)?;
     if let Some(data) = replay_data {
-        let (replay_campaign, idx, location, replay_args, rng_seed, sim_config) =
-            crate::game_session::prepare_replay_launch(
-                &application_context,
-                std::sync::Arc::make_mut(&mut profiles),
-                args,
-                data,
-                false,
-            )
-            .await?;
+        let PreparedReplayLaunch {
+            campaign: replay_campaign,
+            mission_idx: idx,
+            location,
+            launch: replay_args,
+            rng_seed,
+            sim_config,
+        } = crate::game_session::prepare_replay_launch(
+            &application_context,
+            std::sync::Arc::make_mut(&mut profiles),
+            args,
+            data,
+            false,
+        )
+        .await?;
         let Some(mut callbacks) =
             RustCallbacks::new_for_window(application_context.clone(), window).await?
         else {
@@ -1028,9 +1033,14 @@ async fn run_rust_game_headless_active(
             replay_paused,
         )
         .await?;
-        campaign = prepared.0;
-        prepared_args = Some(prepared.3);
-        Some((prepared.1, prepared.2, prepared.4, prepared.5))
+        campaign = prepared.campaign;
+        prepared_args = Some(prepared.launch);
+        Some((
+            prepared.mission_idx,
+            prepared.location,
+            prepared.rng_seed,
+            prepared.sim_config,
+        ))
     } else if let Some((idx, location)) = force_mission_launch(
         &mut campaign,
         &mut profiles,
