@@ -910,7 +910,6 @@ fn build_ctx(
 /// Returns `false` only when the transition is impossible (e.g.
 /// attempting to raise the shield while it's already raised with no
 /// exit path).
-#[allow(clippy::too_many_arguments)]
 fn make_action_transition_actor(
     engine: &mut EngineInner,
     seq_id: SequenceId,
@@ -1310,7 +1309,6 @@ fn dispatch_make_action_transition(
 /// (`SITTING`), Human (`LEISURE`), Soldier (`LEANING_OUT`), and PC
 /// (carry/spy/beggar/archer/tree/on-shoulders) — which delegate to
 /// this base for every posture they don't handle.
-#[allow(clippy::too_many_arguments)]
 fn make_posture_transition_actor(
     engine: &mut EngineInner,
     seq_id: SequenceId,

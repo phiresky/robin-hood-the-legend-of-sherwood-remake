@@ -140,7 +140,6 @@ pub(crate) fn debug_view_radius_cache_event(
 /// Trace the exact per-target decisions around a non-Enemy view-radius call.
 /// This deliberately shares VRCACHE's master/frame gate so a disabled build
 /// neither inspects additional world state nor allocates diagnostic values.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn debug_view_radius_target_event(
     stage: &str,
     frame: u32,
@@ -1116,7 +1115,6 @@ fn night_fog_shadow_sector_indices(
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 fn debug_night_fog_shadow_sector_candidates(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     layer: u16,
@@ -1222,7 +1220,6 @@ fn debug_night_fog_shadow_sector_candidates(
 ///
 /// The original game's per-frame cache is
 /// intentionally skipped — we recompute once per call.
-#[allow(clippy::too_many_arguments)]
 #[track_caller]
 pub fn compute_view_radius(
     eye_world: WorldPoint3D,
@@ -1534,7 +1531,6 @@ pub fn los_clear_spatial(
 /// Caller is responsible for the eye-blind / viewer-in-building /
 /// target-in-building short-circuits; those depend on state outside
 /// the raw inputs.
-#[allow(clippy::too_many_arguments)]
 #[track_caller]
 pub fn is_detecting_target(
     viewer_los: MapPoint,

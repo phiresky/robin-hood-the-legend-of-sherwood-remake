@@ -1480,7 +1480,6 @@ impl PublicationFixture {
         let status_root = self.status_root.clone();
         let status_path = self.status_path.clone();
         let first = published.first.clone();
-        let status = published.status.clone();
         let status_bytes = published.status_bytes.clone();
         let first_manifest = published.first_manifest.clone();
         let canonical_lock = backup_root.join(".backup-operation.lock");
@@ -2027,7 +2026,6 @@ impl PublicationFixture {
         let mut config = self.config.clone();
         let restore_sources = self.restore_sources.clone();
         let first = published.first.clone();
-        let status = published.status.clone();
         let first_manifest = &published.first_manifest;
         let archived_units = first_manifest
             .files
@@ -2067,7 +2065,7 @@ impl PublicationFixture {
                     maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                 },
                 BackupHooks {
-                    publish_status: |_, _| anyhow::bail!(
+                    publish_status: |_: &Path, _: &[u8]| anyhow::bail!(
                         "injected definite pre-rename publication failure"
                     ),
                     before_install: || Ok(()),
@@ -2158,7 +2156,7 @@ impl PublicationFixture {
                     maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                 },
                 BackupHooks {
-                    publish_status: |_, _| anyhow::bail!(
+                    publish_status: |_: &Path, _: &[u8]| anyhow::bail!(
                         "injected failed replacement before status publication"
                     ),
                     before_install: || Ok(()),
@@ -2192,7 +2190,9 @@ impl PublicationFixture {
                     maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                 },
                 BackupHooks {
-                    publish_status: |path, bytes| match publish_private_atomic(path, bytes)? {
+                    publish_status: |path: &Path, bytes: &[u8]| match publish_private_atomic(
+                        path, bytes
+                    )? {
                         StatusPublicationOutcome::Published => {
                             Ok(StatusPublicationOutcome::PublishedButIdentityUncertain(
                                 anyhow::anyhow!(

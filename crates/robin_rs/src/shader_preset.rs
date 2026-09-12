@@ -137,7 +137,6 @@ impl ShaderPresetRenderer {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         mode: TextureScaleMode,
@@ -242,7 +241,6 @@ impl ShaderPresetRenderer {
         Err("RetroArch preset support is unavailable in this build; rebuild with --features retroarch-shaders".to_string())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         _mode: TextureScaleMode,

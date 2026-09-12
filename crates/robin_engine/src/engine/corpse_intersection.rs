@@ -294,7 +294,6 @@ impl EngineInner {
         out
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn is_intersecting_corpse_candidate(
         &self,
         candidate: EntityId,

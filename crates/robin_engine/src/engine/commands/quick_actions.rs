@@ -147,7 +147,6 @@ impl EngineInner {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn record_resolved_group_move_step_in_store(
         &mut self,
         recording_pc: EntityId,

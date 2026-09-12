@@ -5667,7 +5667,6 @@ fn drunken_deviation_direction(direction: i16) -> [f32; 2] {
     crate::position_interface::sector_to_vector_iso(direction)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_path_deviation(
     sim: &crate::sim_rng::SimulationContext,
 
@@ -5744,7 +5743,6 @@ pub(super) fn apply_drunken_path_deviation(
 /// already inserted startup/end transitions. Walk only the remaining upright
 /// movement orders and insert deviated copies immediately before them, leaving
 /// transition geometry untouched.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_order_deviation(
     sim: &crate::sim_rng::SimulationContext,
     element: &mut crate::sequence::SequenceElement,

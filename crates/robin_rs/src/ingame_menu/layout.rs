@@ -735,7 +735,6 @@ fn measure_text_height_in_box_by(
     height
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn render_text_in_box_font(
     renderer: &mut Renderer,
     font: &Font,
@@ -762,7 +761,6 @@ pub fn render_text_in_box_font(
 }
 
 /// Render text around a drop cap, returning the remainder for pagination.
-#[allow(clippy::too_many_arguments)]
 pub fn render_text_in_box_with_drop_cap_font(
     renderer: &mut Renderer,
     font: &Font,
@@ -809,7 +807,6 @@ pub fn render_text_in_box_with_drop_cap_font(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn render_text_in_box_aligned_font(
     renderer: &mut Renderer,
     font: &Font,
@@ -835,7 +832,6 @@ pub fn render_text_in_box_aligned_font(
 }
 
 /// Shared box geometry and placement; the caller retains its narrow-wrap policy.
-#[allow(clippy::too_many_arguments)]
 fn render_text_in_box_by(
     text: &str,
     [box_x, box_y, box_w, box_h]: [i32; 4],

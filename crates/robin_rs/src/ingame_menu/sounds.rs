@@ -62,7 +62,6 @@ const SOUND_SLIDERS: [(SoundSetting, usize); 5] = [
 /// (`RHWIDGETNOISY_SLIDER << 16 | *`) as the user hovers, drags, and
 /// releases a volume slider. When any of them is `None` (e.g. the main-
 /// menu entry path has no live `SoundManager`), the slider is silent.
-#[allow(clippy::too_many_arguments)]
 pub async fn show_sounds(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
@@ -457,7 +456,6 @@ fn is_slider_id(id: u32) -> bool {
 /// `}`-boundary, which lets the borrow-checker accept multiple
 /// back-to-back dispatches (buttons + sliders) within the same
 /// iteration.
-#[allow(clippy::too_many_arguments)]
 fn dispatch_noise(
     events: &[UiEvent],
     noisy_id: u32,

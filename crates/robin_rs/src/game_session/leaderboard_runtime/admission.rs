@@ -1589,7 +1589,6 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn fetch_campaign_authority(
     api: &LeaderboardApi,
     metadata: &LeaderboardMetadataV1,
@@ -1873,7 +1872,6 @@ async fn fetch_and_validate_ruleset_candidate<'a>(
     Ok((facet, rules_config, published_ruleset))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_single_player_authority(
     mission_id: &str,
     sim_config: robin_engine::engine::SimConfig,

@@ -546,7 +546,6 @@ pub(crate) fn clear_matching_retranslated_shot(
 /// Returns [`BeginShotResult::Started`] if the shooter has been queued
 /// to play the shoot animation; [`BeginShotResult::Impossible`] if the
 /// shooter or target is not in a valid state.
-#[allow(clippy::too_many_arguments)]
 pub fn begin_bow_shot(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,

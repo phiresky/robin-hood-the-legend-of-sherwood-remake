@@ -597,7 +597,6 @@ pub(super) async fn run_client_io_async(
     endpoint.close().await;
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_client_io_inner(
     endpoint: &Endpoint,
     durable_ranked_key: Option<SecretKey>,

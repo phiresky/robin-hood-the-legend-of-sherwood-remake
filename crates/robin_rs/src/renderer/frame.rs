@@ -444,7 +444,6 @@ impl FrameState {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn encode_presentation(
         &self,
         gpu: &GpuContext,
@@ -812,7 +811,6 @@ impl FrameState {
         self.frozen_scene = None;
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         gpu: &GpuContext,
         resources: &GpuResources,

@@ -757,7 +757,6 @@ fn path_similarity(
 // ─── Helper checks ───────────────────────────────────────────────────────
 
 /// Detect a single full circle (`THRUST_H`) or its mirror (`THRUST_I`).
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::nonminimal_bool)]
 fn check_thrust_hi(
     _pt_p: ScreenPoint,

@@ -215,7 +215,6 @@ impl SaveGameManager {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn write_special_save_background(
         &mut self,
         filename: &str,
@@ -361,7 +360,6 @@ impl SaveGameManager {
     /// The caller must supply the live engine; the engine must have an
     /// active campaign (panics otherwise).  If `thumbnail` is `Some`, it
     /// is also written to the sibling thumb file alongside the payload.
-    #[allow(clippy::too_many_arguments)]
     pub fn write_save_from_engine(
         &mut self,
         host: &mut Host,
@@ -380,7 +378,6 @@ impl SaveGameManager {
 
     /// Write a local multiplayer diagnostic. It is deliberately tagged in
     /// both the payload and slot index and is never suitable as session state.
-    #[allow(clippy::too_many_arguments)]
     pub fn write_multiplayer_diagnostic_from_engine(
         &mut self,
         host: &mut Host,
@@ -397,7 +394,6 @@ impl SaveGameManager {
         .map(|(committed, _)| committed)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn write_save_from_engine_with_diagnostic(
         &mut self,
         host: &mut Host,

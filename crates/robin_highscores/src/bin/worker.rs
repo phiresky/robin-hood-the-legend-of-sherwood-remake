@@ -711,7 +711,6 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn process_job(
     worker: &WorkerConfig,
     server: &ServerConfig,

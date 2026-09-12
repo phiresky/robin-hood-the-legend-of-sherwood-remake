@@ -165,7 +165,6 @@ impl DrawManager {
     ///
     /// `start` is the distance from `a` to the first dot (updated on return).
     /// `spacing` is the distance between dots.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_dotted_line(
         &self,
         renderer: &mut Renderer,

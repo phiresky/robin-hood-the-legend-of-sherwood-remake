@@ -3345,7 +3345,6 @@ impl EngineInner {
     /// This reads chunk-based binary files: the proto-level contains
     /// geometry (motion, sight, patches, etc.) and the mission file
     /// contains actors, scripts, and gameplay data.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn initialize_from_mission(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

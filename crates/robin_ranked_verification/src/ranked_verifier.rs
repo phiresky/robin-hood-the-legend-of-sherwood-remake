@@ -124,7 +124,6 @@ impl ReplayCampaignApprovedContentResolver for ApprovedResolver {
 }
 
 /// Load and seal the exact engine which may execute a ranked replay.
-#[allow(clippy::too_many_arguments)]
 pub fn prepare_ranked_replay_mission(
     raw_content_root: &Path,
     starting_campaign_bytes: &[u8],
@@ -443,7 +442,6 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepare_fixture_projection(
         campaign: &Campaign,
         profiles: &robin_engine::profiles::ProfileManager,
@@ -511,7 +509,6 @@ mod tests {
         (manifest, documents, seal)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepare_through_adapter(
         root: &Path,
         campaign: &Campaign,

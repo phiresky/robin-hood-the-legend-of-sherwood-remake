@@ -2439,7 +2439,6 @@ fn both_sword_ranges_contain_distance(
 /// tolerance-compared dot product against the movement increment, and a step
 /// deviated around another actor both leaves that line and rebuilds the
 /// increment it is measured against.
-#[allow(clippy::too_many_arguments)]
 fn projected_step_reaches_goal(
     position_iface: &crate::position_interface::PositionInterface,
     mover_snapshot: Option<&super::anti_collision::ActorSnapshot>,
@@ -4095,7 +4094,6 @@ fn group_move_route_source(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn find_group_move_gate_path(
     doors: &[crate::gate::Door],
     owner: EntityId,
@@ -4156,7 +4154,6 @@ fn find_group_move_gate_path(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn find_ai_move_gate_path(
     doors: &[crate::gate::Door],
     source: MapPoint,
@@ -4366,7 +4363,6 @@ pub(in crate::engine) fn assign_circular_dispatch_candidates(
 /// contain an `AssertPosition` and a complete gate path.  Keeping only the
 /// post-arrival elements here prevents callers from accidentally replacing
 /// that route with one direct, potentially blocked movement segment.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_line_jump_click_tail(
     owner: EntityId,
     action: OrderType,
@@ -4687,7 +4683,6 @@ fn door_transition_completion_crossing_candidate(
 /// A free function rather than a method: at both call sites the mover is
 /// held as a live `&mut` borrow out of the entity table, so `self` cannot
 /// be borrowed as a whole.
-#[allow(clippy::too_many_arguments)]
 fn apply_prepared_anti_collision_step(
     frame: u32,
     mover_snap: &super::anti_collision::ActorSnapshot,
@@ -7410,7 +7405,6 @@ impl EngineInner {
     }
 
     /// Rider charge owns Execute completely; retain its callback/identity ordering.
-    #[allow(clippy::too_many_arguments)]
     fn tick_movement_rider_charge(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -7497,7 +7491,6 @@ impl EngineInner {
     /// actor-id collection filters the entity table down to `actor_id ==
     /// owner`, so this runs at most once per `tick_entity_movement_owner`
     /// call; every early `return` is a per-actor "done" exit.
-    #[allow(clippy::too_many_arguments)]
     fn tick_one_movement_actor(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -10175,7 +10168,6 @@ impl EngineInner {
     /// Returns whether movement aborted; arrival and START remain caller-owned.
     // Disjoint world/AI borrows remain explicit rather than introducing another
     // runtime owner or copying collision state into a temporary context.
-    #[allow(clippy::too_many_arguments)]
     fn commit_ordinary_movement_step(
         entity: &mut crate::element::Entity,
         selected_order: SelectedMovementOrder,
@@ -10404,7 +10396,6 @@ impl EngineInner {
     /// Commit the first fast-motion call before the second turn samples its
     /// position and increment. Stairs may snap here; wall/ladder steps may not.
     // These are disjoint engine borrows, not a second movement-state owner.
-    #[allow(clippy::too_many_arguments)]
     fn commit_first_fast_movement_step(
         sprite: &mut crate::sprite::Sprite,
         selected_order: SelectedMovementOrder,
@@ -10524,7 +10515,6 @@ impl EngineInner {
 
     /// Settle a reached ordinary waypoint. Breaking exits this actor immediately;
     /// continuing leaves crossing and deferred START callbacks to the caller.
-    #[allow(clippy::too_many_arguments)]
     fn settle_movement_waypoint(
         entity: &mut crate::element::Entity,
         orders: &mut super::state::OrderRuntime,

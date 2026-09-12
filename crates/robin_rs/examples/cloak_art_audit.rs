@@ -90,7 +90,6 @@ fn audit_datadir(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn audit_track(
     scriptor: &mut SpriteScriptor,
     data: &Path,

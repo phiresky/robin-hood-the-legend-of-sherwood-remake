@@ -6,7 +6,6 @@ use super::*;
 /// state machine. `weapon_*`, shooting, and endurance come from the physical
 /// actor profile, allowing PCs to keep their actual character combat data
 /// while borrowing only decision personality from a soldier profile.
-#[allow(clippy::too_many_arguments)]
 fn configure_enemy_ai_profile(
     ai: &mut crate::ai_enemy::EnemyAi,
     behavior: &crate::profiles::SoldierProfile,

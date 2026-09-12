@@ -178,7 +178,6 @@ impl EngineInner {
     /// launching movement. Automatic Shift queue
     /// capture uses this read-only boundary rather than arming the manual
     /// recorder or applying the nested live `GroupMove`.
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine) fn plan_recorded_group_move(
         &self,
         assets: &LevelAssets,
@@ -430,7 +429,6 @@ impl EngineInner {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine) fn perform_group_move_with_destinations(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

@@ -66,7 +66,6 @@ pub enum InvitationUse {
 }
 
 impl BrowserJoinTicket {
-    #[allow(clippy::too_many_arguments)]
     pub fn issue(
         host_key: &SecretKey,
         endpoint_addr: &EndpointAddr,

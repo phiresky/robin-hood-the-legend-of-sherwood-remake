@@ -235,7 +235,6 @@ fn refresh_dot(
         .expect("mission dot must belong to the live renderer");
 }
 
-#[allow(clippy::too_many_arguments)]
 fn refresh_dot_alpha(
     dots: &[Option<SpriteSurface>],
     mm: &engine_minimap::MinimapState,

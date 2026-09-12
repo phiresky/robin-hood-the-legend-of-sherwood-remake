@@ -348,7 +348,6 @@ impl LegacyLineTopology {
     /// reciprocal owner-side line. A shifted combined-line ordinal is not an
     /// identity, so equal-distance candidates are rejected rather than using
     /// runtime load order as an accidental tie-break.
-    #[allow(clippy::too_many_arguments)]
     pub fn resolve_enemy_jump_line(
         &self,
         field: &'static str,

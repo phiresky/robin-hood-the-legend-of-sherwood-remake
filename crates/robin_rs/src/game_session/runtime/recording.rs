@@ -214,7 +214,6 @@ impl ReplayLifecycle {
         Ok(super::ReplayStepAdmission::Recorded(recorded))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_playback_boundary(
         &mut self,
         ordinal: ReplayFrameOrdinal,
@@ -359,7 +358,6 @@ impl ReplayLifecycle {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn write_frame(
         &mut self,
         ordinal: ReplayFrameOrdinal,

@@ -17,7 +17,6 @@ use robin_engine::player_command::{FrameCommands, PlayerCommand};
 
 /// Translate persistent physical input only while gameplay owns the input
 /// surface. Suspension retains held hardware state but emits no world effects.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_gamepad_events(
     host: &mut Host,
     manager: &engine_manager_api::EngineManager,
@@ -99,7 +98,6 @@ pub(super) fn handle_gamepad_events(
 /// the buffer hasn't accumulated any history yet.
 ///
 /// Returns `true` when a rewind step fired this frame.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_hold_to_rewind(
     manager: &mut engine_manager_api::EngineManager,
     assets: &engine_api::LevelAssets,
@@ -155,7 +153,6 @@ pub(super) fn handle_hold_to_rewind(
 /// selection / movement actions).  Mouse events still pass
 /// through so the player can pan/click while the console is
 /// up — the game keeps running underneath.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_console_overlay_events(
     console_overlay: &mut ConsoleOverlay,
     engine: &mut Engine,

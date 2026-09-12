@@ -231,7 +231,6 @@ impl SavedRequest {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn convert_request(
     engine: &EngineInner,
     assets: &LevelAssets,

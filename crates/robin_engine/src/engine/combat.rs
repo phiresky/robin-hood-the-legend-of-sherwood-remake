@@ -2007,7 +2007,6 @@ impl EngineInner {
     /// otherwise it stays in world with `taken = true` set.  Returns
     /// `true` iff the PC consumed the object (inventory-full ammo
     /// bonuses return `false` so the caller can skip the taken-flip).
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_pc_take_object(
         &mut self,
         assets: &LevelAssets,
@@ -6045,7 +6044,6 @@ impl EngineInner {
     }
 
     // Sequence identity and the pre-tick freeze sample belong to this exact DONE edge.
-    #[allow(clippy::too_many_arguments)]
     fn apply_ability_strangle_setup_done(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

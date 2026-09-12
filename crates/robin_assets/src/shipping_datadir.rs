@@ -38,8 +38,6 @@ pub use codec::{
     encode_native, zstd_compress_with_window, zstd_max_compress,
 };
 use codec::{decode_native, zstd_decompress};
-#[cfg(test)]
-use runtime::audio_lookup_keys;
 pub use runtime::{
     is_locale_overlay_key, is_optional_english_fallback_key, is_required_locale_key,
 };

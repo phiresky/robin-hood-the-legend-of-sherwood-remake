@@ -452,7 +452,6 @@ fn y_for_right(v: [f32; 2], y_min: f32, y_max: f32) -> f32 {
 /// `tint` — RGB 0..255 to blend pixels towards.  For the PC overlay
 /// this is effectively black; for NPCs it uses the alert-status colour.
 /// `alpha` — tint strength 0 (invisible) .. 255 (opaque).
-#[allow(clippy::too_many_arguments)]
 pub fn render_darken_inside(
     renderer: &mut Renderer,
     view_rect: &MapBBox,
@@ -490,7 +489,6 @@ pub fn render_darken_inside(
 
 /// GPU path for `render_darken_inside`: the CPU builds scanline span geometry
 /// and mask exclusions; the actual tint/fade blend is done by GPU quads.
-#[allow(clippy::too_many_arguments)]
 fn render_darken_inside_gpu_spans(
     renderer: &mut Renderer,
     view_rect: &MapBBox,
