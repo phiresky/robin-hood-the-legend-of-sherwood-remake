@@ -1097,14 +1097,13 @@ impl EngineInner {
             return false;
         };
         let Some(profile) = profiles.get_character(pc.profile_index) else {
+            tracing::warn!(profile_index = ?pc.profile_index, "PC action selection references a missing character profile");
             return false;
         };
         let Some(idx) = crate::inventory::find_action_slot(profile, action) else {
             return false;
         };
-        let disabled_persistent = pc.disabled_actions.get(idx).copied().unwrap_or(false);
-        let disabled_temp = pc.disabled_actions_temp.get(idx).copied().unwrap_or(false);
-        !(disabled_persistent || disabled_temp)
+        !pc.action_slot_disabled(idx)
     }
 
     pub(crate) fn select_pc_action_by_index_from_message(
