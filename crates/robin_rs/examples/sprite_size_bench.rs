@@ -1475,12 +1475,23 @@ fn run_codec_command(command: &mut Command, codec: &str, input: &Path, out: &Pat
         "{codec} output {} is not a file",
         out.display()
     );
+    anyhow::ensure!(
+        metadata.len() > 0,
+        "{codec} output {} for {} is empty",
+        out.display(),
+        input.display()
+    );
     Ok(metadata.len())
 }
 
 fn append_encoded_artifact(stream: &mut Vec<u8>, path: &Path) -> Result<()> {
     let bytes = fs::read(path)
         .with_context(|| format!("read encoded comparison artifact {}", path.display()))?;
+    anyhow::ensure!(
+        !bytes.is_empty(),
+        "encoded comparison artifact {} is empty",
+        path.display()
+    );
     stream.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
     stream.extend_from_slice(&bytes);
     Ok(())
@@ -1500,6 +1511,26 @@ mod codec_measurement_tests {
         let error = format!("{error:#}");
         for expected in [
             "fixture codec",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+        ] {
+            assert!(error.contains(expected), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_command_with_empty_output_is_not_a_measurement() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.png");
+        let output = directory.path().join("empty.jxl");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", ": > \"$1\"", "fixture"]).arg(&output);
+        let error = run_codec_command(&mut command, "fixture codec", &input, &output).unwrap_err();
+        let error = error.to_string();
+        for expected in [
+            "fixture codec",
+            "is empty",
             input.to_str().unwrap(),
             output.to_str().unwrap(),
         ] {
@@ -1570,6 +1601,11 @@ mod codec_measurement_tests {
             stream, expected,
             "failed read must not append a partial frame"
         );
+        fs::write(&path, []).unwrap();
+        let error = append_encoded_artifact(&mut stream, &path).unwrap_err();
+        assert!(error.to_string().contains("is empty"));
+        assert!(error.to_string().contains(path.to_str().unwrap()));
+        assert_eq!(stream, expected, "empty artifact must not append a frame");
     }
 }
 
