@@ -959,7 +959,7 @@ pub struct ReconsiderSwordfightObservationFighter {
     pub is_able_to_fight: bool,
     pub is_soldier: bool,
     pub primary_target: Option<AiEntityHandle>,
-    pub current_substate: u32,
+    pub current_substate: Substate,
 }
 
 /// Per-tick analysis data computed by the engine's detection loop.
