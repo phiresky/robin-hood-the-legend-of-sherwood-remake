@@ -1581,7 +1581,7 @@ fn push_damage_virtual_say_ouch_is_silent_for_pc() {
         victim,
         attacker,
         &PushStrikeInfo { repulsion: 100 },
-        combat::SwordDamageResult::NO_DAMAGE_PARRIED,
+        crate::combat::SwordDamageResult::NO_DAMAGE_PARRIED,
         (sequence_id, 0),
         false,
     ));
@@ -1641,7 +1641,7 @@ fn push_damage_command_disables_direction_on_fall_and_successors() {
         victim,
         attacker,
         &PushStrikeInfo { repulsion: 100 },
-        combat::SwordDamageResult::STUNNING_DAMAGE,
+        crate::combat::SwordDamageResult::STUNNING_DAMAGE,
         (sequence, 0),
         false,
     ));

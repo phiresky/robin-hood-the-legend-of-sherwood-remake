@@ -87,6 +87,7 @@ case "$1" in
         # Curated fixture-free tests: never discover arbitrary scripts that may
         # capture real game sessions or operate a deployed service.
         python3 scripts/test_quality_suites.py
+        python3 scripts/test_workspace_hygiene.py
         python3 scripts/release/test_author_leaderboard_release.py
         npm --prefix scripts/release run verify
         test -f scripts/test_portable_linker.py

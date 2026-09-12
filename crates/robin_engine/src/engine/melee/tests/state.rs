@@ -2419,7 +2419,7 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
         victim,
         attacker,
         &PushStrikeInfo { repulsion: 100 },
-        combat::SwordDamageResult::STUNNING_DAMAGE,
+        crate::combat::SwordDamageResult::STUNNING_DAMAGE,
         (sequence, 0),
         false,
     ));
@@ -3612,7 +3612,7 @@ fn apply_concussion_uses_pc_profile_wake_up() {
     // healing-timeout init.
     let outcome =
         engine.apply_concussion(&crate::sim_rng::test_context(), &assets, pc_id, 100, false);
-    assert_eq!(outcome, combat::ConcussionOutcome::WentUnconscious);
+    assert_eq!(outcome, crate::combat::ConcussionOutcome::WentUnconscious);
 
     let timeout = engine
         .get_entity(pc_id)

@@ -22,9 +22,8 @@
 
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
-    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementBonus,
-    ElementData, ElementKind, Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, PcData,
-    Posture, SoldierData,
+    ActorCivilian, ActorData, AiBrain, CivilianData, ElementBonus, ElementData, ElementKind,
+    Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, Posture,
 };
 use crate::engine::EngineInner;
 use crate::engine::test_support::asm::*;

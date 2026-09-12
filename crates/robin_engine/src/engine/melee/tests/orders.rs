@@ -831,7 +831,7 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
         victim,
         attacker,
         &PushStrikeInfo { repulsion: 100 },
-        combat::SwordDamageResult::STUNNING_DAMAGE,
+        crate::combat::SwordDamageResult::STUNNING_DAMAGE,
         (sequence, 0),
         true,
     ));
