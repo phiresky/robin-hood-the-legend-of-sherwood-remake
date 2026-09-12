@@ -1682,19 +1682,8 @@ mod parity_tests {
     #[test]
     fn pending_move_condolation_owns_failure_before_engine_completion_surface() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let sequence = engine.orders.sequence_manager.launch_element(
@@ -1751,19 +1740,8 @@ mod parity_tests {
     #[test]
     fn selected_move_preflight_failure_has_condolation_provenance() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let sequence = engine.orders.sequence_manager.launch_element(
@@ -1810,19 +1788,8 @@ mod parity_tests {
     #[test]
     fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let ai = engine
@@ -1879,19 +1846,8 @@ mod parity_tests {
     #[test]
     fn engine_deferred_completion_preserves_recursive_think_depth_until_success() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
@@ -1963,19 +1919,8 @@ mod parity_tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
@@ -2039,19 +1984,8 @@ mod parity_tests {
     #[test]
     fn detached_goto_tail_does_not_turn_an_absent_verdict_into_success() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
 
@@ -2110,19 +2044,8 @@ mod parity_tests {
     #[test]
     fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
         let mut engine = EngineInner::new();
-        let mut soldier = crate::element::ActorSoldier {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorSoldier;
-                initial_element
-            },
-            actor: Default::default(),
-            human: Default::default(),
-            npc: Default::default(),
-            soldier: Default::default(),
-        };
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_test_entity(Entity::Soldier(soldier));
         let ai = engine
@@ -4209,35 +4132,18 @@ fn unique_gate_endpoint_sector(
 #[cfg(test)]
 mod ai_view_position_sector_tests {
     use super::*;
-    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::coordinates::MapPoint;
     use crate::fast_find_grid::{GridSector, SectorIndex};
     use crate::gate::Door;
-    use crate::sector::{SectorNumber, SectorType};
+    use crate::sector::SectorNumber;
 
     fn square_sector(number: i16, layer: u16, min: f32, max: f32) -> GridSector {
-        GridSector {
-            points: vec![
-                MapPoint::new(min, min),
-                MapPoint::new(max, min),
-                MapPoint::new(max, max),
-                MapPoint::new(min, max),
-            ],
-            bounding_box: MapBBox::from_coords(min, min, max, max),
-            sector_type: SectorType::MOTION | SectorType::AREA,
+        crate::engine::test_support::square_sector(
+            number,
             layer,
-            sector_number: SectorNumber::new(number),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
-        }
+            MapPoint::new(min, min),
+            MapPoint::new(max, max),
+        )
     }
 
     #[test]

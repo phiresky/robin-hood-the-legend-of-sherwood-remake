@@ -2,6 +2,39 @@
 pub(crate) mod actors;
 pub(crate) mod asm;
 
+/// Axis-aligned walkable test geometry, with stable counter-clockwise vertices.
+pub(crate) fn square_sector(
+    number: i16,
+    layer: u16,
+    min: crate::coordinates::MapPoint,
+    max: crate::coordinates::MapPoint,
+) -> crate::fast_find_grid::GridSector {
+    use crate::coordinates::{MapBBox, MapPoint};
+    crate::fast_find_grid::GridSector {
+        points: vec![
+            min,
+            MapPoint::new(max.x, min.y),
+            max,
+            MapPoint::new(min.x, max.y),
+        ],
+        bounding_box: MapBBox::from_coords(min.x, min.y, max.x, max.y),
+        sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+        layer,
+        sector_number: crate::sector::SectorNumber::new(number),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    }
+}
+
 /// Supply explicit ordinary topology for fixtures that query only sector
 /// metadata. No polygon is invented: geometric routing tests must install
 /// their real geometry separately. Existing canonical sectors are preserved.

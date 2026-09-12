@@ -1309,12 +1309,13 @@ impl EngineInner {
 #[cfg(test)]
 mod exact_ai_goto_source_tests {
     use super::*;
-    use crate::coordinates::{MapBBox, MapPoint};
+    use crate::coordinates::MapPoint;
     use crate::element::{ActorSoldier, AiBrain, ElementData, ElementKind, Entity, Posture};
-    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::engine::test_support::square_sector;
+    use crate::fast_find_grid::SectorIndex;
     use crate::gate::{Door, GatePathStep};
     use crate::position_interface::{DoorHandle, SectorHandle};
-    use crate::sector::{SectorNumber, SectorType};
+    use crate::sector::SectorNumber;
 
     fn minimal_mission() -> crate::engine::MissionScript {
         use crate::scb::{ClassEntry, Function};
@@ -1349,32 +1350,6 @@ mod exact_ai_goto_source_tests {
             }],
         })
         .expect("minimal mission")
-    }
-
-    fn square_sector(number: i16, layer: u16, min: MapPoint, max: MapPoint) -> GridSector {
-        GridSector {
-            points: vec![
-                min,
-                MapPoint::new(max.x, min.y),
-                max,
-                MapPoint::new(min.x, max.y),
-            ],
-            bounding_box: MapBBox::from_coords(min.x, min.y, max.x, max.y),
-            sector_type: SectorType::MOTION | SectorType::AREA,
-            layer,
-            sector_number: SectorNumber::new(number),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
-        }
     }
 
     #[test]

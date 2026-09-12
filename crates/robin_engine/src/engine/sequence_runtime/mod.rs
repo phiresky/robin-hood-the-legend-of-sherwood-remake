@@ -2877,43 +2877,26 @@ mod sequence_phase_context_tests {
 
     fn shield_pc(action_state: crate::element::ActionState) -> Entity {
         Entity::Pc(crate::element::ActorPc {
-            element: {
-                let mut initial_element = crate::element::ElementData::from_initial_posture(
-                    crate::element::Posture::Upright,
-                );
-                initial_element.kind = crate::element::ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
             actor: crate::element::ActorData {
                 action_state,
                 ..Default::default()
             },
-            human: crate::element::HumanData::default(),
             pc: crate::element::PcData {
                 life_points: crate::combat::LIFEPOINTS_PC,
                 ..Default::default()
             },
+            ..crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright)
         })
     }
 
     fn object_interaction_soldier(direction_goal: i16) -> Entity {
-        let mut element = {
-            let mut initial_element =
-                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
-            initial_element.kind = crate::element::ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
-        element.set_direction_goal(direction_goal);
-        Entity::Soldier(crate::element::ActorSoldier {
-            element,
-            actor: crate::element::ActorData::default(),
-            human: crate::element::HumanData::default(),
-            npc: crate::element::NpcData::default(),
-            soldier: crate::element::SoldierData::default(),
-        })
+        let mut soldier =
+            crate::engine::test_support::actors::unbound_soldier(crate::element::Posture::Upright);
+        soldier
+            .element
+            .set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
+        soldier.element.set_direction_goal(direction_goal);
+        Entity::Soldier(soldier)
     }
 
     fn unconscious_lying_soldier() -> Entity {
@@ -3162,28 +3145,21 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn upright_dead_wait_keeps_base_upright_follow_up_after_emergency_fall() {
-        use crate::element::{ActionState, ActorSoldier, ElementData, ElementKind, Posture};
+        use crate::element::{ActionState, ActorSoldier, Posture};
         use crate::order::OrderType;
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-                initial_element.kind = ElementKind::ActorSoldier;
-                initial_element.active = true;
-                initial_element
-            },
             actor: crate::element::ActorData {
                 action_state: ActionState::Moving,
                 ..Default::default()
             },
-            human: Default::default(),
             npc: crate::element::NpcData {
                 life_points: 0,
                 ..Default::default()
             },
-            soldier: Default::default(),
+            ..crate::engine::test_support::actors::unbound_soldier(Posture::Upright)
         }));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::Upright;
@@ -3255,28 +3231,21 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn plain_dead_back_wait_retains_base_actor_direction_computation() {
-        use crate::element::{ActionState, ActorSoldier, ElementData, ElementKind, Posture};
+        use crate::element::{ActionState, ActorSoldier, Posture};
         use crate::order::OrderType;
         use crate::sequence::SequenceElement;
 
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::DeadBack);
-                initial_element.kind = ElementKind::ActorSoldier;
-                initial_element.active = true;
-                initial_element
-            },
             actor: crate::element::ActorData {
                 action_state: ActionState::Waiting,
                 ..Default::default()
             },
-            human: Default::default(),
             npc: crate::element::NpcData {
                 life_points: 0,
                 ..Default::default()
             },
-            soldier: Default::default(),
+            ..crate::engine::test_support::actors::unbound_soldier(Posture::DeadBack)
         }));
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::DeadBack;
