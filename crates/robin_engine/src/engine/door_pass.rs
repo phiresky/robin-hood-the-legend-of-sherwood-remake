@@ -11,6 +11,10 @@ use crate::order::OrderType;
 use crate::sector::LiftType;
 use std::collections::VecDeque;
 
+mod steps;
+mod transitions;
+pub(super) use steps::*;
+
 // ─── Step construction helpers ──────────────────────────────────────
 
 fn walk(dest: MapPoint, action: OrderType) -> DoorPassStep {
