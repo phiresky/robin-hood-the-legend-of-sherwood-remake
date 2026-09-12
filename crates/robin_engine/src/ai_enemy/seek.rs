@@ -467,21 +467,20 @@ impl EnemyAi {
         let current_frame = ctx.frame;
         if seek_area_selection_debug_matches(ctx.frame, ctx.original_creation_order) {
             for (i, sp) in global.seek_points.iter().enumerate() {
-                eprintln!(
-                    "SEEKAREA {{\"event\":\"point_dump\",\"frame\":{},\"index\":{},\"id\":{},\"x\":{},\"y\":{},\"level\":{},\"center\":[{},{},{}],\"norm\":{},\"norm_bits\":{},\"near\":{},\"frame_when_full_interest\":{}}}",
-                    ctx.frame,
-                    i,
-                    sp.id,
-                    sp.position.x,
-                    sp.position.y,
-                    sp.position.level,
-                    center.x,
-                    center.y,
-                    center.level,
-                    square_norms[i],
-                    square_norms[i].to_bits(),
-                    near_sorted.contains(&i),
-                    sp.frame_when_full_interest,
+                crate::ai_enemy::parity_trace::seekarea_point_dump(
+                    &(ctx.frame),
+                    &(i),
+                    &(sp.id),
+                    &(sp.position.x),
+                    &(sp.position.y),
+                    &(sp.position.level),
+                    &(center.x),
+                    &(center.y),
+                    &(center.level),
+                    &(square_norms[i]),
+                    &(square_norms[i].to_bits()),
+                    &(near_sorted.contains(&i)),
+                    &(sp.frame_when_full_interest),
                 );
             }
         }
@@ -634,64 +633,61 @@ impl EnemyAi {
                 let optional_usize = |value: Option<usize>| {
                     value.map_or_else(|| "null".to_owned(), |value| value.to_string())
                 };
-                eprintln!(
-                    "SEEKAREA {{\"event\":\"phase4_candidate\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"candidate_ordinal\":{},\"point_id\":{},\"point_index\":{},\"norm\":{},\"norm_bits\":{},\"frame_when_full_interest\":{},\"interest\":{},\"attempt_raw\":{},\"attempt_mod\":{},\"attempt_result\":{},\"insertion_raw\":{},\"insertion_index\":{},\"accumulator_before_bits\":{},\"accumulator_after_bits\":{}}}",
-                    ctx.frame,
-                    self.base.me,
-                    optional_u32(ctx.original_creation_order),
-                    phase4_attempts,
-                    global.seek_points[idx].id,
-                    idx,
-                    square_norms[idx],
-                    square_norms[idx].to_bits(),
-                    global.seek_points[idx].frame_when_full_interest,
-                    interest,
-                    optional_u32(attempt_raw),
-                    attempt,
-                    accepted,
-                    optional_u32(insertion_raw),
-                    optional_usize(insertion_index),
-                    accumulator_before_bits,
-                    count_f.to_bits(),
+                crate::ai_enemy::parity_trace::seekarea_phase4_candidate(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(optional_u32(ctx.original_creation_order)),
+                    &(phase4_attempts),
+                    &(global.seek_points[idx].id),
+                    &(idx),
+                    &(square_norms[idx]),
+                    &(square_norms[idx].to_bits()),
+                    &(global.seek_points[idx].frame_when_full_interest),
+                    &(interest),
+                    &(optional_u32(attempt_raw)),
+                    &(attempt),
+                    &(accepted),
+                    &(optional_u32(insertion_raw)),
+                    &(optional_usize(insertion_index)),
+                    &(accumulator_before_bits),
+                    &(count_f.to_bits()),
                 );
             }
         }
 
         if debug_selection {
-            eprintln!(
-                "SEEKAREA {{\"event\":\"selection_summary\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"standard_radius\":{},\"near_points\":{},\"expected_for_one\":{},\"visible_friends\":{},\"clears_help\":{},\"expected_before_help_random\":{},\"expected_points\":{},\"phase4_attempts\":{},\"phase4_accepts\":{},\"preselection_rng_draws\":{},\"phase4_rng_draws\":{},\"selection_rng_draws\":{},\"accepted_interest_sum\":{}}}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                center.x,
-                center.y,
-                standard_radius,
-                near_sorted.len(),
-                expected_points_for_one,
-                tick.visible_seeking_friends,
-                tick.friend_seek_clears_help_flag,
-                expected_points_before_help_random,
-                expected_points,
-                phase4_attempts,
-                phase4_accepts,
-                preselection_rng_draws,
-                phase4_attempts + phase4_accepts,
-                preselection_rng_draws + phase4_attempts + phase4_accepts,
-                count_f,
+            crate::ai_enemy::parity_trace::seekarea_selection_summary(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(center.x),
+                &(center.y),
+                &(standard_radius),
+                &(near_sorted.len()),
+                &(expected_points_for_one),
+                &(tick.visible_seeking_friends),
+                &(tick.friend_seek_clears_help_flag),
+                &(expected_points_before_help_random),
+                &(expected_points),
+                &(phase4_attempts),
+                &(phase4_accepts),
+                &(preselection_rng_draws),
+                &(phase4_attempts + phase4_accepts),
+                &(preselection_rng_draws + phase4_attempts + phase4_accepts),
+                &(count_f),
             );
-            eprintln!(
-                "SEEKAREA {{\"event\":\"selection_extra\",\"frame\":{},\"owner_creation_order\":{:?},\"flags\":{},\"seek_direction\":{},\"center_level\":{},\"obligatory\":{:?},\"obligatory2\":{:?},\"selected_random\":{:?}}}",
-                ctx.frame,
-                ctx.original_creation_order,
-                flags.bits(),
-                seek_direction,
-                center.level,
-                obligatory_idx.map(|i| global.seek_points[i].id),
-                obligatory2_idx.map(|i| global.seek_points[i].id),
-                selected_random
+            crate::ai_enemy::parity_trace::seekarea_selection_extra(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(flags.bits()),
+                &(seek_direction),
+                &(center.level),
+                &(obligatory_idx.map(|i| global.seek_points[i].id)),
+                &(obligatory2_idx.map(|i| global.seek_points[i].id)),
+                &(selected_random
                     .iter()
                     .map(|&i| global.seek_points[i].id)
-                    .collect::<Vec<_>>(),
+                    .collect::<Vec<_>>()),
             );
         }
 
@@ -715,36 +711,35 @@ impl EnemyAi {
 
         let debug_phase6 = seek_area_phase6_debug_matches(ctx.frame, ctx.original_creation_order);
         if debug_phase6 {
-            eprintln!(
-                "SEEKAREA {{\"event\":\"phase6_before\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"flags\":{},\"seek_direction\":{},\"list_size\":{},\"list_empty\":{},\"location_first\":{},\"location_end\":{},\"personal1_constructor\":\"{}\"}}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order
-                    .expect("phase6 diagnostic matched an owner without creation order"),
-                self.base.current_state as u32,
-                self.base.current_substate as u32,
-                flags.bits(),
-                seek_direction,
-                self.my_seek_points.len(),
-                self.my_seek_points.is_empty(),
-                flags.contains(SeekFlags::LOCATION_FIRST),
-                flags.contains(SeekFlags::LOCATION_END),
-                if !flags.contains(SeekFlags::LOCATION_FIRST) {
+            crate::ai_enemy::parity_trace::seekarea_phase6_before(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx
+                    .original_creation_order
+                    .expect("phase6 diagnostic matched an owner without creation order")),
+                &(self.base.current_state as u32),
+                &(self.base.current_substate as u32),
+                &(flags.bits()),
+                &(seek_direction),
+                &(self.my_seek_points.len()),
+                &(self.my_seek_points.is_empty()),
+                &(flags.contains(SeekFlags::LOCATION_FIRST)),
+                &(flags.contains(SeekFlags::LOCATION_END)),
+                &(if !flags.contains(SeekFlags::LOCATION_FIRST) {
                     "none"
                 } else if seek_direction == UNDEFINED_DIRECTION {
                     "position"
                 } else {
                     "direction"
-                },
+                }),
             );
-            eprintln!(
-                "SEEKAREA {{\"event\":\"phase6_center\",\"frame\":{},\"owner_creation_order\":{:?},\"center\":[{},{}],\"seek_position\":[{},{}]}}",
-                ctx.frame,
-                ctx.original_creation_order,
-                self.seek_center.x,
-                self.seek_center.y,
-                self.base.seek_position.x,
-                self.base.seek_position.y,
+            crate::ai_enemy::parity_trace::seekarea_phase6_center(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(self.seek_center.x),
+                &(self.seek_center.y),
+                &(self.base.seek_position.x),
+                &(self.base.seek_position.y),
             );
         }
 
@@ -782,17 +777,17 @@ impl EnemyAi {
             self.personal_seek_point_1 = Some(sp);
             self.my_seek_points.insert(0, 1111);
             if debug_phase6 {
-                eprintln!(
-                    "SEEKAREA {{\"event\":\"phase6_personal1\",\"frame\":{},\"owner_creation_order\":{},\"constructor\":\"{}\",\"inserted_id\":1111,\"list_size\":{}}}",
-                    ctx.frame,
-                    ctx.original_creation_order
-                        .expect("phase6 diagnostic matched an owner without creation order"),
-                    if seek_direction == UNDEFINED_DIRECTION {
+                crate::ai_enemy::parity_trace::seekarea_phase6_personal1(
+                    &(ctx.frame),
+                    &(ctx
+                        .original_creation_order
+                        .expect("phase6 diagnostic matched an owner without creation order")),
+                    &(if seek_direction == UNDEFINED_DIRECTION {
                         "position"
                     } else {
                         "direction"
-                    },
-                    self.my_seek_points.len(),
+                    }),
+                    &(self.my_seek_points.len()),
                 );
             }
         }
@@ -808,14 +803,14 @@ impl EnemyAi {
             self.my_seek_points.push(2222);
         }
         if debug_phase6 {
-            eprintln!(
-                "SEEKAREA {{\"event\":\"phase6_after\",\"frame\":{},\"owner_creation_order\":{},\"personal2_inserted\":{},\"personal2_constructor\":\"{}\",\"list_size\":{}}}",
-                ctx.frame,
-                ctx.original_creation_order
-                    .expect("phase6 diagnostic matched an owner without creation order"),
-                insert_personal2,
-                if insert_personal2 { "position" } else { "none" },
-                self.my_seek_points.len(),
+            crate::ai_enemy::parity_trace::seekarea_phase6_after(
+                &(ctx.frame),
+                &(ctx
+                    .original_creation_order
+                    .expect("phase6 diagnostic matched an owner without creation order")),
+                &(insert_personal2),
+                &(if insert_personal2 { "position" } else { "none" }),
+                &(self.my_seek_points.len()),
             );
         }
     }
@@ -1030,9 +1025,11 @@ impl EnemyAi {
         // acceptance draw. The recursive entry still unlocks it above.
         if is_locked {
             if debug_next_point {
-                eprintln!(
-                    "SEEKAREA {{\"event\":\"next_point_locked\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"point_id\":{}}}",
-                    ctx.frame, self.base.me, ctx.original_creation_order, next_id,
+                crate::ai_enemy::parity_trace::seekarea_next_point_locked(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(ctx.original_creation_order),
+                    &(next_id),
                 );
             }
             self.seek_next_point(sim, global, ctx, tick);
@@ -1052,16 +1049,15 @@ impl EnemyAi {
         let acceptance_roll =
             crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100);
         if debug_next_point {
-            eprintln!(
-                "SEEKAREA {{\"event\":\"next_point_roll\",\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{:?},\"point_id\":{},\"interest\":{},\"roll\":{},\"accepted\":{},\"remaining\":{:?}}}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                next_id,
-                interest,
-                acceptance_roll,
-                acceptance_roll < interest,
-                self.my_seek_points,
+            crate::ai_enemy::parity_trace::seekarea_next_point_roll(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(next_id),
+                &(interest),
+                &(acceptance_roll),
+                &(acceptance_roll < interest),
+                &(self.my_seek_points),
             );
         }
         if acceptance_roll >= interest {

@@ -2041,13 +2041,12 @@ impl EnemyAi {
                         ctx.original_creation_order,
                     )
                 {
-                    eprintln!(
-                        "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"couldnt_reach_emergency\",\"stimulus\":\"event_couldnt_reach_point\"}}",
-                        ctx.frame,
-                        self.base.me,
-                        ctx.original_creation_order.expect(
-                            "phase6 caller diagnostic matched an owner without creation order"
-                        ),
+                    crate::ai_enemy::parity_trace::seekarea_caller_couldnt_reach_emergency(
+                        &(ctx.frame),
+                        &(self.base.me),
+                        &(ctx.original_creation_order.expect(
+                            "phase6 caller diagnostic matched an owner without creation order",
+                        )),
                     );
                 }
                 self.seek_area(
@@ -2789,15 +2788,14 @@ impl EnemyAi {
         let will_say = self.base.current_substate == Substate::AttackingSwordfightSpecialStrike;
         let debug = good_strike_lifecycle_debug_matches(ctx);
         if debug {
-            eprintln!(
-                "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=think_entry state={:?} substate={:?} will_say={} vip={}]",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                self.base.current_state,
-                self.base.current_substate,
-                will_say,
-                self.is_vip,
+            crate::ai_enemy::parity_trace::good_strike_think_entry(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(will_say),
+                &(self.is_vip),
             );
         }
         if will_say {
@@ -2808,9 +2806,11 @@ impl EnemyAi {
             };
             self.base.say(remark);
             if debug {
-                eprintln!(
-                    "[GOOD_STRIKE frame={} owner={} owner_co={:?} phase=say_queued remark={:?}]",
-                    ctx.frame, self.base.me, ctx.original_creation_order, remark,
+                crate::ai_enemy::parity_trace::good_strike_say_queued(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(ctx.original_creation_order),
+                    &(remark),
                 );
             }
         }

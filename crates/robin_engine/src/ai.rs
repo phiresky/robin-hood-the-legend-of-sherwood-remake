@@ -33,6 +33,7 @@ pub(crate) fn legacy_nearest_door_distance(
     distance
 }
 
+pub(crate) mod parity_trace;
 mod types;
 pub(crate) use types::optional_ai_handle;
 pub use types::{

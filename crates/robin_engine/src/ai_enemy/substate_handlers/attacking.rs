@@ -563,18 +563,18 @@ impl EnemyAi {
         let debug_decision_path = super::super::decision_path_debug_enabled()
             && super::super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=reactiontime_running_event stimulus={stimulus_type:?} state={:?}/{:?} primary={:?} rider={} couldnt={} already={} owner_work_before={:?}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                self.base.current_state,
-                self.base.current_substate,
-                self.base.primary_target,
-                ctx.self_is_rider,
-                self.base.couldnt_reachpoint,
-                self.base.already_on_point,
-                self.base.outbox.reentrant.owner_work,
+            crate::ai_enemy::parity_trace::aidecision_reactiontime_running_event(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(self.base.primary_target),
+                &(ctx.self_is_rider),
+                &(self.base.couldnt_reachpoint),
+                &(self.base.already_on_point),
+                &(self.base.outbox.reentrant.owner_work),
+                &(stimulus_type),
             );
         }
         if stimulus_type == StimulusType::EventTimer
@@ -587,16 +587,15 @@ impl EnemyAi {
             );
             self.battle_decisions(sim, global, ctx, tick, grid);
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=reactiontime_running_done state={:?}/{:?} primary={:?} couldnt={} already={} owner_work_after={:?}",
-                    ctx.frame,
-                    self.base.me,
-                    self.base.current_state,
-                    self.base.current_substate,
-                    self.base.primary_target,
-                    self.base.couldnt_reachpoint,
-                    self.base.already_on_point,
-                    self.base.outbox.reentrant.owner_work,
+                crate::ai_enemy::parity_trace::aidecision_reactiontime_running_done(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(self.base.current_state),
+                    &(self.base.current_substate),
+                    &(self.base.primary_target),
+                    &(self.base.couldnt_reachpoint),
+                    &(self.base.already_on_point),
+                    &(self.base.outbox.reentrant.owner_work),
                 );
             }
         }
@@ -807,9 +806,11 @@ impl EnemyAi {
                 || ctx.original_creation_order,
                 || self.base.me,
             ) {
-                eprintln!(
-                    "[RECONSIDER_STIMULUS] frame={} owner={} creation_order={:?} stimulus={stimulus_type:?}",
-                    ctx.frame, self.base.me, ctx.original_creation_order,
+                crate::ai_enemy::parity_trace::reconsider_stimulus(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(ctx.original_creation_order),
+                    &(stimulus_type),
                 );
             }
             // Clear the emoticon.
@@ -1391,13 +1392,12 @@ impl EnemyAi {
             StimulusType::EventTimer => {
                 // Re-evaluate: normally shoot at primary target.
                 if super::super::them_lifecycle_debug_matches(ctx) {
-                    eprintln!(
-                        "[THEM frame={} co={:?} me={} phase=timer_entry state={:?} substate={:?} route=bow_behind_shield]",
-                        ctx.frame,
-                        ctx.original_creation_order,
-                        self.base.me,
-                        self.base.current_state,
-                        self.base.current_substate,
+                    crate::ai_enemy::parity_trace::them_timer_entry_bow_behind_shield(
+                        &(ctx.frame),
+                        &(ctx.original_creation_order),
+                        &(self.base.me),
+                        &(self.base.current_state),
+                        &(self.base.current_substate),
                     );
                 }
                 self.reinitialize_them_list(ctx, tick);
@@ -1461,13 +1461,12 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if super::super::them_lifecycle_debug_matches(ctx) {
-                eprintln!(
-                    "[THEM frame={} co={:?} me={} phase=timer_entry state={:?} substate={:?} route=officer_orders_waiting]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    self.base.current_state,
-                    self.base.current_substate,
+                crate::ai_enemy::parity_trace::them_timer_entry_officer_orders_waiting(
+                    &(ctx.frame),
+                    &(ctx.original_creation_order),
+                    &(self.base.me),
+                    &(self.base.current_state),
+                    &(self.base.current_substate),
                 );
             }
             // Original resumes a door fight through battle-overview evaluation: it
@@ -1501,18 +1500,18 @@ impl EnemyAi {
                     )
                 });
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                eprintln!(
-                    "SHIELD_TIMER frame={} me={} action={:?} shield={} left={:?} right={:?} archer_behind={:?} target={:?} target_action={:?}",
-                    ctx.frame,
-                    self.base.me,
-                    my_action,
-                    my_action.is_shield(),
-                    self.left_combat_neighbour,
-                    self.right_combat_neighbour,
-                    self.archer_behind_me,
-                    self.base.primary_target,
-                    self.find_fighter(self.base.primary_target, tick)
-                        .map(|f| f.action_state),
+                crate::ai_enemy::parity_trace::shield_timer(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(my_action),
+                    &(my_action.is_shield()),
+                    &(self.left_combat_neighbour),
+                    &(self.right_combat_neighbour),
+                    &(self.archer_behind_me),
+                    &(self.base.primary_target),
+                    &(self
+                        .find_fighter(self.base.primary_target, tick)
+                        .map(|f| f.action_state)),
                 );
             }
 
@@ -1740,15 +1739,14 @@ impl EnemyAi {
                 );
                 let phalanx_debug = crate::ai_enemy::battle_decision_debug_enabled();
                 if phalanx_debug {
-                    eprintln!(
-                        "PHALANX_TIMER frame={} me={} action={:?} left={:?} right={:?} target={:?} archer_behind={:?}",
-                        ctx.frame,
-                        self.base.me,
-                        my_action,
-                        self.left_combat_neighbour,
-                        self.right_combat_neighbour,
-                        self.base.primary_target,
-                        self.archer_behind_me
+                    crate::ai_enemy::parity_trace::phalanx_timer(
+                        &(ctx.frame),
+                        &(self.base.me),
+                        &(my_action),
+                        &(self.left_combat_neighbour),
+                        &(self.right_combat_neighbour),
+                        &(self.base.primary_target),
+                        &(self.archer_behind_me),
                     );
                 }
                 if !my_action.is_shield() && self.base.primary_target.is_some() {
@@ -1791,9 +1789,10 @@ impl EnemyAi {
                 }
                 // else: reconsider_phalanx changed substate
                 if phalanx_debug {
-                    eprintln!(
-                        "PHALANX_TIMER_EXIT frame={} me={} substate={:?}",
-                        ctx.frame, self.base.me, self.base.current_substate
+                    crate::ai_enemy::parity_trace::phalanx_timer_exit(
+                        &(ctx.frame),
+                        &(self.base.me),
+                        &(self.base.current_substate),
                     );
                 }
             }
