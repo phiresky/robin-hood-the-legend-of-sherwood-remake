@@ -85,159 +85,241 @@ pub async fn show_shortcuts(
     mut audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) -> bool {
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
+    let transform = MenuTransform::centered(
+        renderer.screen_width() as i32,
+        renderer.screen_height() as i32,
+    );
+    let input_state = ModalInputState::from_window(event_pump, transform);
+    let mut screen = ShortcutsScreen::new(resources, active, input_state);
+    while !screen.done {
+        screen.tick(
+            widget_bridge::ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor: cursor.as_ref(),
+            },
+            custom,
+            &mut sound,
+            &mut audio_backend,
+            sample_loader,
+        );
+        // Preserve the original final-frame presentation and sleep on close.
+        crate::window::sleep_ui_frame().await;
+    }
+    screen.finish(active, custom)
+}
 
-    let mut working = active.clone();
-    // Tracks single-key edits since menu open OR last preset switch —
-    // reset whenever a preset is loaded.
-    let mut working_dirty = false;
+/// Live modal owner: keyboard capture and widget interaction state cannot be
+/// restored from serialization. Edited configuration remains ordinary data.
+struct ShortcutsScreen {
+    working: KeyConfig,
+    working_dirty: bool,
+    menu_buttons: Vec<super::layout::MenuButton>,
+    frame: FrameWnd,
+    focused_row: Option<usize>,
+    rebinding_row: Option<usize>,
+    reserved_overlay: bool,
+    focused_button: Option<usize>,
+    done: bool,
+    accepted: bool,
+    keyboard_button_activation: Option<u32>,
+    input_state: ModalInputState,
+    row_height: i32,
+    scroll_view: ScrollView,
+}
 
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let ok_label = resources.menu_text.get(MT_BTN_OK);
-    let default1_label = resources.menu_text.get(MT_BTN_DEFAULT_1);
-    let default2_label = resources.menu_text.get(MT_BTN_DEFAULT_2);
-    let user_label = resources.menu_text.get(MT_BTN_USER_DEFINED);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let labels: &[(&str, bool)] = &[
-        (&ok_label, true),
-        (&default1_label, true),
-        (&default2_label, true),
-        (&user_label, true),
-        (&cancel_label, true),
-    ];
-    let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
+impl ShortcutsScreen {
+    fn new(
+        resources: &IngameMenuResources,
+        active: &KeyConfig,
+        input_state: ModalInputState,
+    ) -> Self {
+        let working = active.clone();
+        // Tracks single-key edits since menu open OR last preset switch —
+        // reset whenever a preset is loaded.
+        let working_dirty = false;
 
-    // Build FrameWnd with the five buttons.
-    let mut frame = FrameWnd::interactive();
-    for (i, mb) in menu_buttons.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
-            i as u32, &mb.label, mb.x, mb.y, mb.w, mb.h,
-        ));
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let ok_label = resources.menu_text.get(MT_BTN_OK);
+        let default1_label = resources.menu_text.get(MT_BTN_DEFAULT_1);
+        let default2_label = resources.menu_text.get(MT_BTN_DEFAULT_2);
+        let user_label = resources.menu_text.get(MT_BTN_USER_DEFINED);
+        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+        let labels: &[(&str, bool)] = &[
+            (&ok_label, true),
+            (&default1_label, true),
+            (&default2_label, true),
+            (&user_label, true),
+            (&cancel_label, true),
+        ];
+        let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
+
+        // Build FrameWnd with the five buttons.
+        let mut frame = FrameWnd::interactive();
+        for (i, mb) in menu_buttons.iter().enumerate() {
+            frame.add_widget_absolute(widget_bridge::make_button(
+                i as u32, &mb.label, mb.x, mb.y, mb.w, mb.h,
+            ));
+        }
+
+        let focused_row: Option<usize> = None;
+        let rebinding_row: Option<usize> = None;
+        // True when the user pressed a reserved key during the current
+        // rebind — shows the localised "Reserved" string in place of the
+        // "<Press a key>" prompt while edit mode stays open.  Cleared on
+        // any non-reserved keydown (which assigns and exits edit mode) and
+        // when the rebind target changes via mouse click.
+        let reserved_overlay = false;
+        // Tab cycles focus between the listbox and the button group; arrow
+        // keys navigate within whichever group is active.  `None` = listbox,
+        // `Some(idx)` = the button at index `idx` in `menu_buttons`.
+        let focused_button: Option<usize> = None;
+        let done = false;
+        let accepted = false;
+        // Pending button activation triggered by Return/Space while a button
+        // is keyboard-focused.  Drained next to the click-driven activation
+        // path so all five buttons share one handler.
+        let keyboard_button_activation: Option<u32> = None;
+
+        // Row height from the default list font.
+        let row_height = resources
+            .list_font(false, false)
+            .map(|f| f.height() as i32)
+            .unwrap_or(FALLBACK_ROW_HEIGHT)
+            .max(1);
+        let mut scroll_view = ScrollView::new(
+            [LIST_RECT.x, LIST_RECT.y + 4, LIST_RECT.w, LIST_RECT.h - 8],
+            row_height,
+            resources,
+        );
+        scroll_view.set_wheel_step(1);
+        scroll_view.set_total(REAL_KEY_COUNT as usize);
+
+        Self {
+            working,
+            working_dirty,
+            menu_buttons,
+            frame,
+            focused_row,
+            rebinding_row,
+            reserved_overlay,
+            focused_button,
+            done,
+            accepted,
+            keyboard_button_activation,
+            input_state,
+            row_height,
+            scroll_view,
+        }
     }
 
-    let mut focused_row: Option<usize> = None;
-    let mut rebinding_row: Option<usize> = None;
-    // True when the user pressed a reserved key during the current
-    // rebind — shows the localised "Reserved" string in place of the
-    // "<Press a key>" prompt while edit mode stays open.  Cleared on
-    // any non-reserved keydown (which assigns and exits edit mode) and
-    // when the rebind target changes via mouse click.
-    let mut reserved_overlay = false;
-    // Tab cycles focus between the listbox and the button group; arrow
-    // keys navigate within whichever group is active.  `None` = listbox,
-    // `Some(idx)` = the button at index `idx` in `menu_buttons`.
-    let mut focused_button: Option<usize> = None;
-    let mut done = false;
-    let mut accepted = false;
-    // Pending button activation triggered by Return/Space while a button
-    // is keyboard-focused.  Drained next to the click-driven activation
-    // path so all five buttons share one handler.
-    let mut keyboard_button_activation: Option<u32> = None;
-    let mut input_state = ModalInputState::from_window(event_pump, transform);
-
-    // Row height from the default list font.
-    let row_height = resources
-        .list_font(false, false)
-        .map(|f| f.height() as i32)
-        .unwrap_or(FALLBACK_ROW_HEIGHT)
-        .max(1);
-    let mut scroll_view = ScrollView::new(
-        [LIST_RECT.x, LIST_RECT.y + 4, LIST_RECT.w, LIST_RECT.h - 8],
-        row_height,
-        resources,
-    );
-    scroll_view.set_wheel_step(1);
-    scroll_view.set_total(REAL_KEY_COUNT as usize);
-
-    while !done {
+    fn tick(
+        &mut self,
+        io: widget_bridge::ModalScreenIo<'_, '_>,
+        custom: &mut KeyConfig,
+        sound: &mut Option<&mut SoundManager>,
+        audio_backend: &mut Option<&mut dyn AudioBackend>,
+        sample_loader: Option<&SampleLoader>,
+    ) {
+        let widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor,
+        } = io;
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input_state.update_from_event(&event, transform);
-            if scroll_view.handle_event(
+            self.input_state.update_from_event(&event, transform);
+            if self.scroll_view.handle_event(
                 &event,
                 transform,
-                (input_state.virt_x as i32, input_state.virt_y as i32),
+                (
+                    self.input_state.virt_x as i32,
+                    self.input_state.virt_y as i32,
+                ),
             ) {
                 continue;
             }
             match event {
-                GameEvent::Quit => done = true,
+                GameEvent::Quit => self.done = true,
                 GameEvent::KeyDown {
                     keycode,
                     physical_key,
                 } => {
-                    if let Some(row) = rebinding_row {
+                    if let Some(row) = self.rebinding_row {
                         if keycode == Keycode::Escape || physical_key.is_none_or(is_reserved_key) {
                             // Pressing a reserved key shows the localised
                             // "Reserved" string in the row and *stays* in
                             // edit mode for another attempt.  Surfaced via
                             // an overlay flag and a noise cue.
-                            reserved_overlay = true;
-                            play_rebind_noise(&mut sound, &mut audio_backend, sample_loader);
+                            self.reserved_overlay = true;
+                            play_rebind_noise(sound, audio_backend, sample_loader);
                         } else {
                             assign_key_with_conflict_resolution(
-                                &mut working,
+                                &mut self.working,
                                 row as u16,
                                 physical_key,
                             );
-                            working_dirty = true;
-                            rebinding_row = None;
-                            reserved_overlay = false;
+                            self.working_dirty = true;
+                            self.rebinding_row = None;
+                            self.reserved_overlay = false;
                             // Plays the listbox noisy bank's ACTIVATED slot
                             // on every successful rebind.
-                            play_rebind_noise(&mut sound, &mut audio_backend, sample_loader);
+                            play_rebind_noise(sound, audio_backend, sample_loader);
                         }
                     } else {
-                        match (keycode, focused_button) {
+                        match (keycode, self.focused_button) {
                             // Tab/Shift+Tab cycles between list and button group.
                             (Keycode::Tab, _) => {
-                                focused_button = match focused_button {
+                                self.focused_button = match self.focused_button {
                                     None => Some(0),
-                                    Some(i) if i + 1 < menu_buttons.len() => Some(i + 1),
+                                    Some(i) if i + 1 < self.menu_buttons.len() => Some(i + 1),
                                     Some(_) => None,
                                 };
                             }
                             // While a button is focused: Left/Right cycle
                             // within the group; Return/Space activates it.
                             (Keycode::Left, Some(i)) => {
-                                focused_button = Some(if i == 0 {
-                                    menu_buttons.len() - 1
+                                self.focused_button = Some(if i == 0 {
+                                    self.menu_buttons.len() - 1
                                 } else {
                                     i - 1
                                 });
                             }
                             (Keycode::Right, Some(i)) => {
-                                focused_button = Some((i + 1) % menu_buttons.len());
+                                self.focused_button = Some((i + 1) % self.menu_buttons.len());
                             }
                             (Keycode::Return | Keycode::KpEnter | Keycode::Space, Some(i)) => {
-                                keyboard_button_activation = Some(i as u32);
+                                self.keyboard_button_activation = Some(i as u32);
                             }
                             // List focus (focused_button == None): keep the
                             // pre-existing keyboard map for the listbox.
-                            (Keycode::Escape, _) => done = true,
+                            (Keycode::Escape, _) => self.done = true,
                             (Keycode::Return | Keycode::KpEnter, None) => {
                                 // Return on a focused list row is equivalent
                                 // to a left-click on that row: enter rebind
                                 // mode.  If no row is focused yet, fall
                                 // through to the OK accept path.
-                                if let Some(row) = focused_row {
-                                    rebinding_row = Some(row);
+                                if let Some(row) = self.focused_row {
+                                    self.rebinding_row = Some(row);
                                 } else {
-                                    accepted = true;
-                                    done = true;
+                                    self.accepted = true;
+                                    self.done = true;
                                 }
                             }
                             (Keycode::Up, None) => {
-                                focused_row = Some(focused_row.map_or(0, |f| f.saturating_sub(1)));
-                                scroll_view.reveal(focused_row.expect("focused row was set"));
+                                self.focused_row =
+                                    Some(self.focused_row.map_or(0, |f| f.saturating_sub(1)));
+                                self.scroll_view
+                                    .reveal(self.focused_row.expect("focused row was set"));
                             }
                             (Keycode::Down, None) => {
                                 let max = (REAL_KEY_COUNT as usize).saturating_sub(1);
-                                focused_row =
-                                    Some(focused_row.map(|f| (f + 1).min(max)).unwrap_or(0));
-                                scroll_view.reveal(focused_row.expect("focused row was set"));
+                                self.focused_row =
+                                    Some(self.focused_row.map(|f| (f + 1).min(max)).unwrap_or(0));
+                                self.scroll_view
+                                    .reveal(self.focused_row.expect("focused row was set"));
                             }
                             (
                                 key @ (Keycode::PageUp
@@ -246,7 +328,7 @@ pub async fn show_shortcuts(
                                 | Keycode::End),
                                 None,
                             ) => {
-                                scroll_view.navigate(key);
+                                self.scroll_view.navigate(key);
                             }
                             _ => {}
                         }
@@ -255,10 +337,10 @@ pub async fn show_shortcuts(
                 // List row click handling (not through widgets).
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if let Some(row) = scroll_view.row_at(vx, vy) {
-                        focused_row = Some(row);
-                        rebinding_row = Some(row);
-                        reserved_overlay = false;
+                    if let Some(row) = self.scroll_view.row_at(vx, vy) {
+                        self.focused_row = Some(row);
+                        self.rebinding_row = Some(row);
+                        self.reserved_overlay = false;
                     }
                 }
                 _ => {}
@@ -266,30 +348,31 @@ pub async fn show_shortcuts(
         }
 
         // Widget input for buttons.
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
 
         // Both mouse-driven (find_activated) and keyboard-driven
         // (Tab+Return) activations route through the same handler.
-        let activated_id = widget_bridge::find_activated(&events).or(keyboard_button_activation);
-        keyboard_button_activation = None;
+        let activated_id =
+            widget_bridge::find_activated(&events).or(self.keyboard_button_activation);
+        self.keyboard_button_activation = None;
         if let Some(id) = activated_id {
             match id {
                 ID_OK => {
-                    accepted = true;
-                    done = true;
+                    self.accepted = true;
+                    self.done = true;
                 }
                 ID_DEFAULT1 => {
-                    set_to_preset(&mut working, custom, &mut working_dirty, 0);
+                    set_to_preset(&mut self.working, custom, &mut self.working_dirty, 0);
                 }
                 ID_DEFAULT2 => {
-                    set_to_preset(&mut working, custom, &mut working_dirty, 1);
+                    set_to_preset(&mut self.working, custom, &mut self.working_dirty, 1);
                 }
                 ID_USER => {
-                    apply_user_defined(&mut working, custom, &mut working_dirty);
+                    apply_user_defined(&mut self.working, custom, &mut self.working_dirty);
                 }
-                ID_CANCEL => done = true,
+                ID_CANCEL => self.done = true,
                 _ => {}
             }
         }
@@ -310,30 +393,30 @@ pub async fn show_shortcuts(
         // (centered).  The row width subtracts the scrollbar gutter so
         // text doesn't run under the scrollbar.
         let text_x = LIST_RECT.x + 10;
-        let text_w = (scroll_view.content_width() - 20).max(0);
+        let text_w = (self.scroll_view.content_width() - 20).max(0);
         let split = (text_w as f32 * COLUMN_SPLIT_RATIO) as i32;
         let key_name_x = text_x;
         let key_value_x = text_x + split;
         let key_value_w = text_w - split;
-        for row_index in scroll_view.visible_range() {
-            let row_top = scroll_view.row_y(row_index);
+        for row_index in self.scroll_view.visible_range() {
+            let row_top = self.scroll_view.row_y(row_index);
             let action_label = match u16::try_from(row_index).expect("shortcut row fits u16") {
                 PLAN_QUICK_ACTIONS_INDEX => "Plan Quick Actions".to_owned(),
                 TOGGLE_CLOAK_INDEX => "Toggle Cloak".to_owned(),
                 _ => resources.menu_text.get(MT_STR_SHORTCUT_00 + row_index),
             };
-            let key_value = working.get_key_by_index(row_index as u16);
+            let key_value = self.working.get_key_by_index(row_index as u16);
             let key_label = key_display_name(&resources.menu_text, key_value);
 
-            let is_focused = focused_row == Some(row_index);
-            let is_rebinding = rebinding_row == Some(row_index);
+            let is_focused = self.focused_row == Some(row_index);
+            let is_rebinding = self.rebinding_row == Some(row_index);
             // `alternate=false` — shortcuts never flags rows as alternate
             // (see note on the const block above).
             let font = resources.list_font(is_focused, is_rebinding);
             let Some(font) = font else { continue };
 
             // Vertically centre the glyphs inside the row box.
-            let text_y = row_top + (row_height - font.height() as i32) / 2;
+            let text_y = row_top + (self.row_height - font.height() as i32) / 2;
 
             // Left column: "<action> : ", left-aligned within the 70% box.
             let name_with_sep = format!("{action_label} : ");
@@ -351,7 +434,7 @@ pub async fn show_shortcuts(
             // show the localised "Reserved" string instead of the rebind
             // prompt.
             let display = if is_rebinding {
-                if reserved_overlay {
+                if self.reserved_overlay {
                     resources.menu_text.get(MT_STR_KEY_RESERVED)
                 } else {
                     "<Press a key>".to_string()
@@ -364,14 +447,15 @@ pub async fn show_shortcuts(
             render_text_virt_font(renderer, font, transform, &display, val_x, text_y);
         }
 
-        scroll_view.draw_scrollbar(renderer, transform, resources);
+        self.scroll_view
+            .draw_scrollbar(renderer, transform, resources);
 
         // Buttons via widget bridge.
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
 
         // Keyboard-focus outline around the focused button (Tab cycle).
-        if let Some(idx) = focused_button
-            && let Some(mb) = menu_buttons.get(idx)
+        if let Some(idx) = self.focused_button
+            && let Some(mb) = self.menu_buttons.get(idx)
         {
             let (sx, sy) = transform.to_screen(mb.x, mb.y);
             let (ex, ey) = transform.to_screen(mb.x + mb.w, mb.y + mb.h);
@@ -385,18 +469,23 @@ pub async fn show_shortcuts(
         }
 
         if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
+            c.draw(renderer, transform, &self.input_state);
         }
 
         renderer.present();
-        crate::window::sleep_ui_frame().await;
     }
 
-    if accepted {
-        crate::options_model::promote_shortcut_edits(&working, custom, &mut working_dirty);
-        *active = working;
+    fn finish(mut self, active: &mut KeyConfig, custom: &mut KeyConfig) -> bool {
+        if self.accepted {
+            crate::options_model::promote_shortcut_edits(
+                &self.working,
+                custom,
+                &mut self.working_dirty,
+            );
+            *active = self.working;
+        }
+        self.accepted
     }
-    accepted
 }
 
 /// Apply a Default1 / Default2 click.
@@ -590,6 +679,52 @@ fn key_display_name(menu_text: &MenuText, key: Option<KeyCode>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_finish_keeps_cancelled_active_keys_and_existing_preset_promotion() {
+        for accepted in [false, true] {
+            let mut active = KeyConfig::default_preset();
+            let before = crate::options_model::shortcut_keys(&active);
+            let mut custom = active.clone();
+            let mut screen = ShortcutsScreen {
+                working: active.clone(),
+                working_dirty: false,
+                menu_buttons: Vec::new(),
+                frame: FrameWnd::interactive(),
+                focused_row: None,
+                rebinding_row: None,
+                reserved_overlay: false,
+                focused_button: None,
+                done: true,
+                accepted,
+                keyboard_button_activation: None,
+                input_state: ModalInputState::new(),
+                row_height: 20,
+                scroll_view: ScrollView::with_geometry([0, 0, 200, 200], 20, 10, 10, false),
+            };
+            screen.working.set_key_by_index(0, Some(KeyCode::F3));
+            screen.working_dirty = true;
+            // Preset selection promotes the prior edit immediately, even if
+            // the user later cancels this screen's active-key transaction.
+            set_to_preset(
+                &mut screen.working,
+                &mut custom,
+                &mut screen.working_dirty,
+                1,
+            );
+            assert_eq!(custom.get_key_by_index(0), Some(KeyCode::F3));
+            screen.working.set_key_by_index(0, Some(KeyCode::F4));
+            screen.working_dirty = true;
+            assert_eq!(screen.finish(&mut active, &mut custom), accepted);
+            if accepted {
+                assert_eq!(active.get_key_by_index(0), Some(KeyCode::F4));
+                assert_eq!(custom.get_key_by_index(0), Some(KeyCode::F4));
+            } else {
+                assert_eq!(crate::options_model::shortcut_keys(&active), before);
+                assert_eq!(custom.get_key_by_index(0), Some(KeyCode::F3));
+            }
+        }
+    }
 
     #[test]
     fn set_to_preset_load_mode_promotes_dirty_edits_into_custom() {
