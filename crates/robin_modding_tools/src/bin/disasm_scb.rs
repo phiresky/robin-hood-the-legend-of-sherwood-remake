@@ -120,8 +120,15 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
     for (path, stem, out_path) in planned {
         // Missing-mission errors from the profile lookup are non-fatal here —
         // fall through and decompile without names.
-        let names =
-            load_actor_names(args.datadir.as_deref(), Some(&stem), path).unwrap_or_default();
+        let names = match load_actor_names(args.datadir.as_deref(), Some(&stem), path) {
+            Ok(names) => names,
+            Err(_) => {
+                tracing::warn!(
+                    "{path}: continuing decompilation without actor names after lookup failure"
+                );
+                None
+            }
+        };
         let scb = match robin_assets::scb::parse_file(path) {
             Ok(s) => s,
             Err(e) => {
@@ -177,12 +184,17 @@ fn load_actor_names(
     let Some(dd) = datadir else {
         return Ok(None);
     };
-    let m = mission.map(str::to_owned).unwrap_or_else(|| {
+    let m = mission.or_else(|| {
         Path::new(scb_path)
             .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default()
+            .and_then(|stem| stem.to_str())
     });
+    let Some(m) = m.filter(|name| !name.is_empty()) else {
+        tracing::error!(
+            "{scb_path}: cannot derive a nonempty UTF-8 mission name; supply --mission"
+        );
+        return Err(std::process::ExitCode::FAILURE);
+    };
     match robin_assets::actor_names::load_from_datadir(Path::new(dd), &m) {
         Ok(n) => Ok(Some(n)),
         Err(e) => {

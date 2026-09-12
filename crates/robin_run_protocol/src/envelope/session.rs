@@ -408,11 +408,7 @@ impl ReplaySessionGenesisV1 {
 impl Validate for ReplaySessionGenesisV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.host_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "session_genesis.host_signature",
-            });
-        }
+        crate::validation::nonzero("session_genesis.host_signature", &self.host_signature)?;
         Ok(())
     }
 }
@@ -498,11 +494,7 @@ impl NamedSeatJoinAttestationV1 {
 impl Validate for NamedSeatJoinAttestationV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "named_seat_join.signature",
-            });
-        }
+        crate::validation::nonzero("named_seat_join.signature", &self.signature)?;
         Ok(())
     }
 }

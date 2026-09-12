@@ -52,11 +52,7 @@ fn emit_source_digest(variable: &str, root: &Path, mut files: Vec<PathBuf>) {
         digest.update(bytes);
     }
     let digest: [u8; 32] = digest.finalize().into();
-    let mut hex = String::with_capacity(64);
-    use std::fmt::Write as _;
-    for byte in digest {
-        write!(&mut hex, "{byte:02x}").unwrap();
-    }
+    let hex = hex::encode(digest);
     println!("cargo::rustc-env={variable}={hex}");
 }
 

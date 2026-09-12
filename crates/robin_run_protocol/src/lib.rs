@@ -5,21 +5,23 @@
 //! canonical documents which those components exchange.  In particular, it
 //! never treats a client claim as a verified game result.
 
-mod authentication;
+#[cfg(feature = "authentication")]
+pub mod authentication;
 pub mod bitcode_value;
-mod canonical;
-mod digest;
-mod envelope;
-mod manifest;
-mod moderation;
-mod offer_binding;
-mod query;
-mod rejection_code;
+pub mod canonical;
+pub mod digest;
+pub mod envelope;
+pub mod manifest;
+pub mod moderation;
+pub mod offer_binding;
+pub mod query;
+pub mod rejection_code;
 pub mod strict_json;
-mod validation;
-mod verification_result;
-mod verifier_job;
+pub mod validation;
+pub mod verification_result;
+pub mod verifier_job;
 
+#[cfg(feature = "authentication")]
 pub use authentication::{SignatureVerificationError, verify_ed25519_strict};
 pub use offer_binding::validate_offer_binding;
 

@@ -419,11 +419,10 @@ impl Validate for MissionFacetV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::text("mission_facet.mission_id", &self.mission_id, 256)?;
         crate::validation::text("mission_facet.display_name", &self.display_name, 100)?;
-        if self.content_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "mission_facet.content_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "mission_facet.content_manifest_sha256",
+            &self.content_manifest_sha256,
+        )?;
         Ok(())
     }
 }
@@ -584,11 +583,10 @@ impl Validate for CompetitionManifestV1 {
                 field: "competition.multiplayer.max_concurrent_players",
             });
         }
-        if self.competition_run_grant_public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "competition.competition_run_grant_public_key",
-            });
-        }
+        crate::validation::nonzero(
+            "competition.competition_run_grant_public_key",
+            &self.competition_run_grant_public_key,
+        )?;
         if self.starts_at_unix_ms == 0 || self.ends_at_unix_ms <= self.starts_at_unix_ms {
             return Err(ValidationError::CountOutOfRange {
                 field: "competition.starts_at_unix_ms/ends_at_unix_ms",
@@ -858,11 +856,7 @@ impl Validate for PublicParticipantV1 {
                 field: "public_participant.seat",
             });
         }
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "public_participant.public_key",
-            });
-        }
+        crate::validation::nonzero("public_participant.public_key", &self.public_key)?;
         crate::validation::text("public_participant.username", &self.username, 48)?;
         crate::validation::text(
             "public_participant.public_key_fingerprint",
@@ -892,11 +886,7 @@ pub struct AggregatePublicParticipantV1 {
 
 impl Validate for AggregatePublicParticipantV1 {
     fn validate(&self) -> Result<(), ValidationError> {
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "aggregate_public_participant.public_key",
-            });
-        }
+        crate::validation::nonzero("aggregate_public_participant.public_key", &self.public_key)?;
         crate::validation::text(
             "aggregate_public_participant.current_display_name",
             &self.current_display_name,
@@ -959,11 +949,10 @@ pub struct PlayerRunHistoryFilterV1 {
 impl Validate for PlayerRunHistoryFilterV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("PlayerRunHistoryFilterV1", self.schema_version)?;
-        if self.player_public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "player_run_history_filter.player_public_key",
-            });
-        }
+        crate::validation::nonzero(
+            "player_run_history_filter.player_public_key",
+            &self.player_public_key,
+        )?;
         if !(1..=100).contains(&self.limit) {
             return Err(ValidationError::CountOutOfRange {
                 field: "player_run_history_filter.limit",
@@ -1011,11 +1000,10 @@ pub struct PlayerRunHistoryEntryV1 {
 
 impl Validate for PlayerRunHistoryEntryV1 {
     fn validate(&self) -> Result<(), ValidationError> {
-        if self.player_public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "player_run_history_entry.player_public_key",
-            });
-        }
+        crate::validation::nonzero(
+            "player_run_history_entry.player_public_key",
+            &self.player_public_key,
+        )?;
         self.run.validate()?;
         if self.verified_at_unix_ms == 0 {
             return Err(ValidationError::Zero {

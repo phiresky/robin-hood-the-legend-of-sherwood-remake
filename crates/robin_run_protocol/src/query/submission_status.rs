@@ -31,11 +31,10 @@ impl Validate for SubmissionOwnerStatusChallengeRequestV1 {
             "SubmissionOwnerStatusChallengeRequestV1",
             self.schema_version,
         )?;
-        if self.controller_public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "submission_owner_status_challenge_request.controller_public_key",
-            });
-        }
+        crate::validation::nonzero(
+            "submission_owner_status_challenge_request.controller_public_key",
+            &self.controller_public_key,
+        )?;
         Ok(())
     }
 }
@@ -57,21 +56,19 @@ pub struct SubmissionOwnerStatusChallengeV1 {
 impl Validate for SubmissionOwnerStatusChallengeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("SubmissionOwnerStatusChallengeV1", self.schema_version)?;
-        if self.owner_status_challenge_nonce.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "submission_owner_status_challenge.nonce",
-            });
-        }
+        crate::validation::nonzero(
+            "submission_owner_status_challenge.nonce",
+            &self.owner_status_challenge_nonce,
+        )?;
         if self.expires_at_unix_ms == 0 {
             return Err(ValidationError::Zero {
                 field: "submission_owner_status_challenge.expires_at_unix_ms",
             });
         }
-        if self.controller_public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "submission_owner_status_challenge.controller_public_key",
-            });
-        }
+        crate::validation::nonzero(
+            "submission_owner_status_challenge.controller_public_key",
+            &self.controller_public_key,
+        )?;
         Ok(())
     }
 }
@@ -122,11 +119,7 @@ impl SubmissionOwnerStatusEnvelopeV1 {
 impl Validate for SubmissionOwnerStatusEnvelopeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.validate_signing_claim()?;
-        if self.signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "submission_owner_status.signature",
-            });
-        }
+        crate::validation::nonzero("submission_owner_status.signature", &self.signature)?;
         Ok(())
     }
 }
