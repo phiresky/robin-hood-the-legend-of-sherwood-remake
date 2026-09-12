@@ -325,11 +325,12 @@ impl EngineInner {
         entity_id: EntityId,
         assets: &LevelAssets,
     ) {
-        let opponents: Vec<EntityId> = match self.get_entity(entity_id).and_then(|e| e.human_data())
-        {
-            Some(h) => h.opponents.ids(),
-            None => return,
-        };
+        let opponents: Vec<EntityId> = self
+            .expect_entity(entity_id, "swordfight evaluation owner")
+            .human_data()
+            .expect("swordfight evaluation owner must be human")
+            .opponents
+            .ids();
 
         let own_ability = self
             .get_entity(entity_id)
@@ -500,16 +501,16 @@ impl EngineInner {
                         "swordfight evaluation distance owner {entity_id:?} references missing jump line {jl_idx:?}"
                     )
                 });
-            let dest = match find_position_for_table_swordfight(
+            let Some(dest) = find_position_for_table_swordfight(
                 &self.world.entities,
                 my_pos_map,
                 my_sector,
                 entity_id,
                 principal_id,
                 &jump_line,
-            ) {
-                Some(p) => p,
-                None => return false,
+            ) else {
+                // No geometric solution is a normal refusal to reposition.
+                return false;
             };
             // 1-unit maximum-norm dead-zone — skip if barely displaced.
             let dx = dest.x - my_pos_map.x;
@@ -2289,10 +2290,12 @@ impl EngineInner {
             )
         };
 
-        let victim_profile = match assets.profile_manager.get_hth_weapon(victim_weapon_id) {
-            Some(p) => p,
-            None => return,
-        };
+        let victim_profile = assets
+            .profile_manager
+            .get_hth_weapon(victim_weapon_id)
+            .unwrap_or_else(|| {
+                panic!("parade victim has missing weapon profile {victim_weapon_id}")
+            });
 
         // Collect nearby entities for strike damage estimation
         // (victim's perspective).  Y is stretched by
@@ -2941,10 +2944,7 @@ impl EngineInner {
         // Dispatch to nearby friendly soldiers if this was a circular hit
         if dispatch_to_all && is_circular {
             let (camp, my_pos) = {
-                let entity = match self.get_entity(soldier_id) {
-                    Some(e) => e,
-                    None => return,
-                };
+                let entity = self.expect_entity(soldier_id, "circular-hit dispatch soldier");
                 match entity {
                     Entity::Soldier(s) => {
                         (s.soldier.cached_camp, entity.element_data().position_map())

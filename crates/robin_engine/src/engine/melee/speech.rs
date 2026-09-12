@@ -65,10 +65,7 @@ impl EngineInner {
         }
 
         let (owner, position, is_dead, is_unconscious, is_npc_busy) = {
-            let entity = match self.get_entity(entity_id) {
-                Some(e) => e,
-                None => return,
-            };
+            let entity = self.expect_entity(entity_id, "smalltalk speech owner");
             let pos = entity.element_data().position_map();
             let dead = entity.is_dead();
             let unc = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
@@ -334,10 +331,7 @@ impl EngineInner {
 
         // Check forbidden list on PC
         let (profile_id, position, is_forbidden) = {
-            let entity = match self.get_entity(pc_id) {
-                Some(e) => e,
-                None => return,
-            };
+            let entity = self.expect_entity(pc_id, "PC speech owner");
             match entity {
                 Entity::Pc(pc) => {
                     let profile = assets
