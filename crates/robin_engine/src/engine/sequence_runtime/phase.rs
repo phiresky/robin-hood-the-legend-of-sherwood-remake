@@ -513,12 +513,14 @@ impl EngineInner {
                     if self.try_dispatch_cross_sector_entity_seek(
                         sim,
                         assets,
-                        owner,
-                        sequence_id,
-                        element_index,
-                        target,
-                        action,
-                        flags,
+                        crate::engine::refresh_seek::EntitySeekRequest {
+                            owner,
+                            sequence_id,
+                            element_index,
+                            target,
+                            action,
+                            flags,
+                        },
                         seek_distance,
                     ) {
                         return OwnerActionBarrier::Skip;
@@ -656,17 +658,19 @@ impl EngineInner {
             && self.try_dispatch_cross_sector_point_seek(
                 sim,
                 assets,
-                owner,
-                sequence_id,
-                element_index,
-                destination,
-                goal_sector,
-                goal_layer,
-                action,
-                flags,
-                tolerance,
-                recorded_gate_path,
-                point_seek_route_provenance,
+                crate::engine::refresh_seek::PointSeekRequest {
+                    owner,
+                    sequence_id,
+                    element_index,
+                    destination,
+                    goal_sector,
+                    goal_layer,
+                    action,
+                    flags,
+                    seek_distance: tolerance,
+                    recorded_gate_path,
+                    route_provenance: point_seek_route_provenance,
+                },
             )
         {
             return OwnerActionBarrier::Skip;

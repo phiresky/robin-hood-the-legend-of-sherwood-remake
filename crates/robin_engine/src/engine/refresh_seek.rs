@@ -37,6 +37,37 @@ use crate::sequence::{
     CascadeFlags, MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceId,
 };
 use crate::sprite::MotionState;
+use serde::{Deserialize, Serialize};
+
+/// Identity and movement policy shared by initial entity-seek lowering and
+/// subsequent refreshes. This is data only: callers retain simulation/assets
+/// borrows, and dispatch still resolves the target at its live owner slot.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(super) struct EntitySeekRequest {
+    pub(super) owner: EntityId,
+    pub(super) sequence_id: SequenceId,
+    pub(super) element_index: usize,
+    pub(super) target: EntityId,
+    pub(super) action: OrderType,
+    pub(super) flags: MoveFlags,
+}
+
+/// An admitted point-seek route attempt. Recorded outcomes travel by value so
+/// the dispatcher consumes exactly the evidence supplied by this attempt.
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct PointSeekRequest {
+    pub(super) owner: EntityId,
+    pub(super) sequence_id: SequenceId,
+    pub(super) element_index: usize,
+    pub(super) destination: MapPoint,
+    pub(super) goal_sector: Option<crate::position_interface::SectorHandle>,
+    pub(super) goal_layer: u16,
+    pub(super) action: OrderType,
+    pub(super) flags: MoveFlags,
+    pub(super) seek_distance: f32,
+    pub(super) recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    pub(super) route_provenance: crate::sequence::PointSeekRouteProvenance,
+}
 
 #[inline]
 fn seek_refresh_wait_elapsed(wait: u32) -> bool {
@@ -369,12 +400,14 @@ impl crate::engine::EngineInner {
         self.apply_seek_refresh(
             sim,
             assets,
-            owner,
-            seq_id,
-            elem_idx,
-            target,
-            action,
-            flags,
+            EntitySeekRequest {
+                owner,
+                sequence_id: seq_id,
+                element_index: elem_idx,
+                target,
+                action,
+                flags,
+            },
             target_position,
         );
         Some(MotionState::InProgress)
@@ -597,12 +630,14 @@ impl crate::engine::EngineInner {
         self.apply_seek_refresh(
             sim,
             assets,
-            owner,
-            seq_id,
-            elem_idx,
-            target,
-            action,
-            flags,
+            EntitySeekRequest {
+                owner,
+                sequence_id: seq_id,
+                element_index: elem_idx,
+                target,
+                action,
+                flags,
+            },
             new_target_pos,
         );
         true
@@ -708,19 +743,21 @@ impl crate::engine::EngineInner {
     /// reusable from same-tick refresh callers (the
     /// transition-animation refresh check in
     /// [`EngineInner::process_per_tick_movement`]).
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_seek_refresh(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        target: EntityId,
-        action: crate::order::OrderType,
-        flags: MoveFlags,
+        request: EntitySeekRequest,
         new_target_pos: crate::coordinates::MapPoint,
     ) {
+        let EntitySeekRequest {
+            owner,
+            sequence_id: seq_id,
+            element_index: elem_idx,
+            target,
+            action,
+            flags,
+        } = request;
         let seek_distance = self
             .get_entity(owner)
             .and_then(|entity| entity.actor_data())
@@ -750,17 +787,7 @@ impl crate::engine::EngineInner {
             actor.seek_refresh_wait = 25;
         }
 
-        if self.try_dispatch_cross_sector_entity_seek(
-            sim,
-            assets,
-            owner,
-            seq_id,
-            elem_idx,
-            target,
-            action,
-            flags,
-            seek_distance,
-        ) {
+        if self.try_dispatch_cross_sector_entity_seek(sim, assets, request, seek_distance) {
             return;
         }
 
@@ -869,19 +896,21 @@ impl crate::engine::EngineInner {
     /// Returns `true` when the current Seek was fully consumed: either
     /// replaced by a gate/lift/jump traversal sequence or marked
     /// impossible after an authorized-position / gate-path failure.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn try_dispatch_cross_sector_entity_seek(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        target: EntityId,
-        action: OrderType,
-        flags: MoveFlags,
+        request: EntitySeekRequest,
         seek_distance: f32,
     ) -> bool {
+        let EntitySeekRequest {
+            owner,
+            sequence_id: seq_id,
+            element_index: elem_idx,
+            target,
+            action,
+            flags,
+        } = request;
         let (owner_pos, owner_sector, door_source) = match self.get_entity(owner) {
             Some(e) => {
                 let elem = e.element_data();
@@ -1033,23 +1062,25 @@ impl crate::engine::EngineInner {
     ///
     /// Returns `true` when the gate route (or its failure) has consumed the
     /// element, leaving nothing for the flat relaunch to do.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn try_dispatch_cross_sector_point_seek(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-        destination: MapPoint,
-        goal_sector: Option<crate::position_interface::SectorHandle>,
-        goal_layer: u16,
-        action: OrderType,
-        flags: MoveFlags,
-        seek_distance: f32,
-        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
-        route_provenance: crate::sequence::PointSeekRouteProvenance,
+        request: PointSeekRequest,
     ) -> bool {
+        let PointSeekRequest {
+            owner,
+            sequence_id: seq_id,
+            element_index: elem_idx,
+            destination,
+            goal_sector,
+            goal_layer,
+            action,
+            flags,
+            seek_distance,
+            recorded_gate_path,
+            route_provenance,
+        } = request;
         let Some(goal_sector) = goal_sector else {
             return false;
         };

@@ -6898,12 +6898,14 @@ impl EngineInner {
                 self.apply_seek_refresh(
                     sim,
                     assets,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                    target,
-                    action,
-                    flags,
+                    crate::engine::refresh_seek::EntitySeekRequest {
+                        owner,
+                        sequence_id: seq_id,
+                        element_index: elem_idx,
+                        target,
+                        action,
+                        flags,
+                    },
                     new_target_pos,
                 );
                 refreshed_seek_in_progress = true;

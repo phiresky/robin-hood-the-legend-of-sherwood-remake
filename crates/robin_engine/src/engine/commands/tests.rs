@@ -2941,22 +2941,24 @@ fn point_seek_expansion_compares_goal_after_dispatch_time_door_adaptation() {
     assert!(engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &assets,
-        pc_id,
-        sequence_id,
-        0,
-        destination,
-        Some(raw_goal),
-        2,
-        crate::order::OrderType::WalkingUpright,
-        crate::sequence::MoveFlags::SEEK,
-        0.0,
-        Some(crate::gate::RecordedGatePath {
-            source_sector: crate::sector::SectorNumber::new(133),
-            source_sector_index: None,
-            source_layer: 11,
-            outcome: crate::gate::RecordedGateOutcome::Failure,
-        }),
-        crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        crate::engine::refresh_seek::PointSeekRequest {
+            owner: pc_id,
+            sequence_id,
+            element_index: 0,
+            destination,
+            goal_sector: Some(raw_goal),
+            goal_layer: 2,
+            action: crate::order::OrderType::WalkingUpright,
+            flags: crate::sequence::MoveFlags::SEEK,
+            seek_distance: 0.0,
+            recorded_gate_path: Some(crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(133),
+                source_sector_index: None,
+                source_layer: 11,
+                outcome: crate::gate::RecordedGateOutcome::Failure,
+            }),
+            route_provenance: crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        },
     ));
 }
 
@@ -2999,22 +3001,24 @@ fn point_seek_expansion_validates_recorded_source_before_adapted_same_sector_ret
     engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &assets,
-        pc_id,
-        sequence_id,
-        0,
-        destination,
-        Some(raw_goal),
-        2,
-        crate::order::OrderType::WalkingUpright,
-        crate::sequence::MoveFlags::SEEK,
-        0.0,
-        Some(crate::gate::RecordedGatePath {
-            source_sector: crate::sector::SectorNumber::new(133),
-            source_sector_index: None,
-            source_layer: 11,
-            outcome: crate::gate::RecordedGateOutcome::Failure,
-        }),
-        crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        crate::engine::refresh_seek::PointSeekRequest {
+            owner: pc_id,
+            sequence_id,
+            element_index: 0,
+            destination,
+            goal_sector: Some(raw_goal),
+            goal_layer: 2,
+            action: crate::order::OrderType::WalkingUpright,
+            flags: crate::sequence::MoveFlags::SEEK,
+            seek_distance: 0.0,
+            recorded_gate_path: Some(crate::gate::RecordedGatePath {
+                source_sector: crate::sector::SectorNumber::new(133),
+                source_sector_index: None,
+                source_layer: 11,
+                outcome: crate::gate::RecordedGateOutcome::Failure,
+            }),
+            route_provenance: crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        },
     );
 }
 
