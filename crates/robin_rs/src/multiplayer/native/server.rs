@@ -502,7 +502,7 @@ pub fn start_server_with_key(
 /// [`start_server_in_campaign`].
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn start_server_with_key_and_content(
+pub(in crate::multiplayer) fn start_server_with_key_and_content(
     key: SecretKey,
     host_nickname: String,
     mission_id: String,
