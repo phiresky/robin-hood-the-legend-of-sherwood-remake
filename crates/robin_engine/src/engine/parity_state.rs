@@ -2,6 +2,13 @@
 
 use super::*;
 
+#[path = "parity_state/projections.rs"]
+mod projections;
+
+#[cfg(test)]
+#[path = "parity_state/tests.rs"]
+mod tests;
+
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ParityEntityKind {
@@ -23,6 +30,11 @@ struct ParityEntityReference {
 }
 
 fn parity_entity_reference(id: EntityId) -> serde_json::Value {
+    serde_json::to_value(typed_entity_reference(id))
+        .expect("typed parity entity reference must serialize")
+}
+
+fn typed_entity_reference(id: EntityId) -> ParityEntityReference {
     use crate::element::EntityIdKind;
     let kind = match id.kind() {
         EntityIdKind::Pc => ParityEntityKind::Pc,
@@ -35,11 +47,10 @@ fn parity_entity_reference(id: EntityId) -> serde_json::Value {
         EntityIdKind::Projectile => ParityEntityKind::Projectile,
         EntityIdKind::Net => ParityEntityKind::Net,
     };
-    serde_json::to_value(ParityEntityReference {
+    ParityEntityReference {
         kind,
         index: id.index(),
-    })
-    .expect("typed parity entity reference must serialize")
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -66,11 +77,14 @@ struct ParityMessengerState {
 }
 
 fn parity_float(value: f32) -> serde_json::Value {
-    serde_json::to_value(ParityFloat {
+    serde_json::to_value(typed_float(value)).expect("typed parity float must serialize")
+}
+
+fn typed_float(value: f32) -> ParityFloat {
+    ParityFloat {
         bits: value.to_bits(),
         value,
-    })
-    .expect("typed parity float must serialize")
+    }
 }
 
 fn into_projection_fields(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
@@ -107,10 +121,16 @@ impl Engine {
         } else {
             entity.gameplay_sprite_position()
         };
-        let float = parity_float;
-        let point2 = |x: f32, y: f32| json!({ "x": float(x), "y": float(y) });
-        let point3 =
-            |x: f32, y: f32, z: f32| json!({ "x": float(x), "y": float(y), "z": float(z) });
+        let float = typed_float;
+        let point2 = |x: f32, y: f32| projections::Point2 {
+            x: float(x),
+            y: float(y),
+        };
+        let point3 = |x: f32, y: f32, z: f32| projections::Point3 {
+            x: float(x),
+            y: float(y),
+            z: float(z),
+        };
         let jump_line = |index: Option<u32>| -> Value {
             let Some(index) = index else {
                 return Value::Null;
@@ -128,15 +148,14 @@ impl Engine {
                 "b": point2(line.point_b.x, line.point_b.y),
             })
         };
-        let bbox = |bbox: crate::coordinates::MapBBox| match bbox.0 {
-            Some(rect) => json!({
-                "min": point2(rect.min().x, rect.min().y),
-                "max": point2(rect.max().x, rect.max().y),
-            }),
-            None => Value::Null,
+        let bbox = |bbox: crate::coordinates::MapBBox| {
+            bbox.0.map(|rect| projections::Bounds2 {
+                min: point2(rect.min().x, rect.min().y),
+                max: point2(rect.max().x, rect.max().y),
+            })
         };
         let sector = |handle: Option<crate::position_interface::SectorHandle>| {
-            handle.map_or(Value::Null, |handle| {
+            handle.map(|handle| {
                 let level = &self.inner.world.fast_grid.level;
                 let arena_index = handle.arena_index().map_or_else(
                     || {
@@ -160,11 +179,11 @@ impl Engine {
                     "parity position for {id:?} sector arena index {arena_index} has public number {}, expected {handle}",
                     sector.sector_number.get(),
                 );
-                json!(sector.sector_number.get())
+                sector.sector_number.get()
             })
         };
-        let target = position.target_element.map_or(Value::Null, entity_ref);
-        let door = position.door.map_or(Value::Null, |door_handle| {
+        let target = position.target_element.map(typed_entity_reference);
+        let door = position.door.map(|door_handle| {
             let index = usize::from(door_handle);
             let door = self
                 .inner
@@ -178,17 +197,17 @@ impl Engine {
                 crate::gate::GateType::Jump => "jump",
                 crate::gate::GateType::None => "gate",
             };
-            json!({
-                "kind": kind,
-                "sector_out": door.sector_out.get(),
-                "sector_in": door.sector_in.get(),
-                "layer_out": door.layer_out,
-                "layer_in": door.layer_in,
-                "point_out": point2(door.point_out.x, door.point_out.y),
-                "point_in": point2(door.point_in.x, door.point_in.y),
-            })
+            projections::Door {
+                kind: kind.to_owned(),
+                sector_out: door.sector_out.get(),
+                sector_in: door.sector_in.get(),
+                layer_out: door.layer_out,
+                layer_in: door.layer_in,
+                point_out: point2(door.point_out.x, door.point_out.y),
+                point_in: point2(door.point_in.x, door.point_in.y),
+            }
         });
-        let obstacle = position.obstacle.map_or(Value::Null, |handle| {
+        let obstacle = position.obstacle.map(|handle| {
             let handle = usize::from(handle);
             let obstacle = assets
                 .environment
@@ -212,9 +231,15 @@ impl Engine {
                         layer.get()
                     );
                 }
-                json!({ "kind": "projection", "index": index })
+                projections::Obstacle {
+                    kind: "projection".to_owned(),
+                    index,
+                }
             } else {
-                json!({ "kind": "sight", "index": obstacle.id })
+                projections::Obstacle {
+                    kind: "sight".to_owned(),
+                    index: usize::try_from(obstacle.id).expect("obstacle ID exceeds usize"),
+                }
             }
         });
         if sprite.anims_to_be_replaced.len() != sprite.replacing_anims.len() {
@@ -228,72 +253,96 @@ impl Engine {
             .anims_to_be_replaced
             .iter()
             .zip(&sprite.replacing_anims)
-            .map(|(&from, &to)| json!({ "from": from as u32, "to": to as u32 }))
+            .map(|(&from, &to)| projections::AnimationReplacement {
+                from: from as u32,
+                to: to as u32,
+            })
             .collect::<Vec<_>>();
 
-        // Keep these in bounded chunks: a single `json!` object containing
-        // the entire serialized position frontier exceeds the macro's normal
-        // recursion limit.
-        let mut position_state = json!({
-                "computed_position": position.computed_position.bits(),
-                "computed_increment": position.computed_increment.bits(),
-                "material": position.material,
-                "posture": position.posture as u32,
-                "old_posture": position.old_posture as u32,
-                "direction": i16::from(position.direction),
-                "direction_goal": i16::from(position.direction_goal),
-                "slow_turn_count": position.slow_turn_count,
-                "direction_count": position.direction_count,
-                "layer": position.layer.map(crate::position_interface::Layer::get),
-                "layer_goal": position.layer_goal.map(crate::position_interface::Layer::get),
-                "tolerance": float(position.tolerance),
-                "directional_tolerance": position.directional_tolerance,
-                "accumulate_movement_map": position.accumulate_movement_map,
-                "anti_collision_on": position.anti_collision_on,
-                "goal_next_valid": position.goal_next_valid,
-                "deviated": position.deviated,
-                "door_direction": position.door_direction,
-                "reversed_movement": position.reversed_movement,
-                "blocked_count": position.blocked_count,
-                "radius": float(position.radius),
-                "emergency_lying_box": position.use_emergency_lying_box,
-                "sector": sector(position.sector), "sector_goal": sector(position.sector_goal),
-                "door": door, "obstacle": obstacle, "target": target,
-        });
-        position_state
-            .as_object_mut()
-            .expect("parity position chunk must be an object")
-            .extend(into_projection_fields(json!({
-                "world": point3(position.position.x, position.position.y, position.position.z),
-                "map": point2(position.map.x, position.map.y),
-                "sprite": point2(current_sprite.x, current_sprite.y),
-                "old_world": point3(position.old_position.x, position.old_position.y, position.old_position.z),
-                "old_map": point2(position.old_map.x, position.old_map.y),
-                "old_sprite": point2(position.old_sprite.x, position.old_sprite.y),
-                "goal_map": point2(position.goal_map.x, position.goal_map.y),
-                "goal_next_map": point2(position.goal_next_map.x, position.goal_next_map.y),
-                "goal_world": point3(position.goal.x, position.goal.y, position.goal.z),
-                "increment": point3(position.increment.x, position.increment.y, position.increment.z),
-                "increment_map": point2(position.increment_map.x, position.increment_map.y),
-                "accumulated_movement_map": point2(position.accumulated_movement_map.x, position.accumulated_movement_map.y),
-                "forecasted_movement": point3(position.forecasted_movement.x, position.forecasted_movement.y, position.forecasted_movement.z),
-                "move_box": bbox(position.move_box_map), "blocked_box": bbox(position.blocked_box),
-                })));
-        let sprite_state = json!({
-                "row": sprite.current_row, "frame": sprite.current_frame,
-                "frame_count": sprite.frame_count,
-                "flight_countdown": sprite.flight_frame_countdown,
-                "width": sprite.current_width, "height": sprite.current_height,
-                "last_action": sprite.last_action as u32,
-                "last_processed_order_id": sprite.last_processed_order_id,
-                "masked": sprite.masked, "alternate_profile": sprite.use_alternate_profile,
-                "action_done_frame": sprite.action_done_frame,
-                "action_done_counter": sprite.action_done_counter,
-                "last_sound_id": sprite.last_sound_id,
-                "behind_display_order_reference": sprite.behind_display_order_ref,
-                "display_order_reference": sprite.display_order_ref.map_or(Value::Null, entity_ref),
-                "replacements": replacements,
-        });
+        let position_state = projections::Position {
+            computed_position: position.computed_position.bits(),
+            computed_increment: position.computed_increment.bits(),
+            material: position.material,
+            posture: position.posture as u32,
+            old_posture: position.old_posture as u32,
+            direction: i16::from(position.direction),
+            direction_goal: i16::from(position.direction_goal),
+            slow_turn_count: position.slow_turn_count,
+            direction_count: position.direction_count,
+            layer: position.layer.map(crate::position_interface::Layer::get),
+            layer_goal: position
+                .layer_goal
+                .map(crate::position_interface::Layer::get),
+            tolerance: float(position.tolerance),
+            directional_tolerance: position.directional_tolerance,
+            accumulate_movement_map: position.accumulate_movement_map,
+            anti_collision_on: position.anti_collision_on,
+            goal_next_valid: position.goal_next_valid,
+            deviated: position.deviated,
+            door_direction: position.door_direction,
+            reversed_movement: position.reversed_movement,
+            blocked_count: position.blocked_count,
+            radius: float(position.radius),
+            emergency_lying_box: position.use_emergency_lying_box,
+            sector: sector(position.sector),
+            sector_goal: sector(position.sector_goal),
+            door: door,
+            obstacle: obstacle,
+            target: target,
+
+            world: point3(
+                position.position.x,
+                position.position.y,
+                position.position.z,
+            ),
+            map: point2(position.map.x, position.map.y),
+            sprite: point2(current_sprite.x, current_sprite.y),
+            old_world: point3(
+                position.old_position.x,
+                position.old_position.y,
+                position.old_position.z,
+            ),
+            old_map: point2(position.old_map.x, position.old_map.y),
+            old_sprite: point2(position.old_sprite.x, position.old_sprite.y),
+            goal_map: point2(position.goal_map.x, position.goal_map.y),
+            goal_next_map: point2(position.goal_next_map.x, position.goal_next_map.y),
+            goal_world: point3(position.goal.x, position.goal.y, position.goal.z),
+            increment: point3(
+                position.increment.x,
+                position.increment.y,
+                position.increment.z,
+            ),
+            increment_map: point2(position.increment_map.x, position.increment_map.y),
+            accumulated_movement_map: point2(
+                position.accumulated_movement_map.x,
+                position.accumulated_movement_map.y,
+            ),
+            forecasted_movement: point3(
+                position.forecasted_movement.x,
+                position.forecasted_movement.y,
+                position.forecasted_movement.z,
+            ),
+            move_box: bbox(position.move_box_map),
+            blocked_box: bbox(position.blocked_box),
+        };
+        let sprite_state = projections::Sprite {
+            row: sprite.current_row,
+            frame: sprite.current_frame,
+            frame_count: sprite.frame_count,
+            flight_countdown: sprite.flight_frame_countdown,
+            width: sprite.current_width,
+            height: sprite.current_height,
+            last_action: sprite.last_action as u32,
+            last_processed_order_id: sprite.last_processed_order_id,
+            masked: sprite.masked,
+            alternate_profile: sprite.use_alternate_profile,
+            action_done_frame: sprite.action_done_frame,
+            action_done_counter: sprite.action_done_counter,
+            last_sound_id: sprite.last_sound_id,
+            behind_display_order_reference: sprite.behind_display_order_ref,
+            display_order_reference: sprite.display_order_ref.map(typed_entity_reference),
+            replacements: replacements,
+        };
 
         let projectile_state = |projectile: &crate::element::ProjectileData| {
             let trajectory = projectile
