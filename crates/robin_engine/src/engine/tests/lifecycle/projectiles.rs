@@ -1189,7 +1189,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         .element_in_progress(sequence, 0);
 
     for _ in 0..10 {
-        let mut positions_before_movement = engine.boundary_positions_snapshot();
+        let positions_before_movement = engine.boundary_positions_snapshot();
         let mut display = CameraDisplayState::default();
         engine.tick_actor_owner_envelopes_with_display(
             &sim,

@@ -1120,7 +1120,7 @@ fn optical_ai_position_uses_carrier_boundary_but_detects_the_target_world_point(
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     let Entity::Pc(carrier_pc) = engine.get_entity_mut(carrier).expect("carrier PC remains") else {
         panic!("carrier changed kind")
     };

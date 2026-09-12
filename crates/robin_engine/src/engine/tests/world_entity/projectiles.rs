@@ -740,7 +740,7 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     let (optical_ai_position, optical_point) =
         engine.enemy_optical_geometry_at_owner_for_test(&assets, self_id, &positions, target_id);
     assert_eq!(optical_ai_position.x, 120.0);

@@ -287,7 +287,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
 
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
-        let mut positions = engine.boundary_positions_snapshot();
+        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0xA013_0015, |sim| {
             engine.tick_actor_owner_envelopes(sim, &assets, &positions)
         });
@@ -344,7 +344,7 @@ fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
         ai.macro_timer_is_running = false;
     }
 
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_7A11, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
@@ -700,7 +700,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         let observer_order = engine.world.original_creation_order(observer_id);
         engine.control.frame_counter = (8 - (observer_order % 8)) % 8;
 
-        let mut positions_before_movement = engine.boundary_positions_snapshot();
+        let positions_before_movement = engine.boundary_positions_snapshot();
 
         crate::sim_rng::with_seed(0xA013_0B0D, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(
@@ -805,7 +805,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
 
     engine.tick_ai_pending_resurrection_and_eyes_for_npc(recovering_id);
 
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     crate::sim_rng::with_seed(0x0A01_35A6, |sim| {
         engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
     });
@@ -1336,7 +1336,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
             ..Detectable::default()
         });
 
-        let mut positions = engine.boundary_positions_snapshot();
+        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0xA013, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
         });

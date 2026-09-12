@@ -843,7 +843,7 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
             vec![StimulusType::EventFitAgain]
         );
 
-        let mut positions = engine.boundary_positions_snapshot();
+        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0x0A01_3F17, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
         });
@@ -951,7 +951,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
         pc.element.set_position_map(MapPoint::new(5_000.0, 0.0));
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
-        let mut positions = engine.boundary_positions_snapshot();
+        let positions = engine.boundary_positions_snapshot();
         let mut spawned = None;
         crate::sim_rng::with_seed(0x0B0A_00CB, |sim| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
