@@ -111,9 +111,7 @@ pub async fn show_shortcuts(
     let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
 
     // Build FrameWnd with the five buttons.
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (i, mb) in menu_buttons.iter().enumerate() {
         frame.add_widget_absolute(widget_bridge::make_button(
             i as u32, &mb.label, mb.x, mb.y, mb.w, mb.h,
@@ -138,8 +136,7 @@ pub async fn show_shortcuts(
     // is keyboard-focused.  Drained next to the click-driven activation
     // path so all five buttons share one handler.
     let mut keyboard_button_activation: Option<u32> = None;
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
 
     // Row height from the default list font.
     let row_height = resources

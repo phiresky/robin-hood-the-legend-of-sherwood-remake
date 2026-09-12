@@ -3708,7 +3708,7 @@ mod capture_tests {
             .parent()
             .unwrap();
         std::env::set_current_dir(root).unwrap();
-        let data = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        let data = robin_test_support::original_data::data_directory("");
         let output =
             std::env::var("ROBIN_UI_CAPTURE_DIR").unwrap_or_else(|_| "target/campaign-ui".into());
         std::fs::create_dir_all(&output).unwrap();

@@ -17,11 +17,12 @@ use robin_engine::engine::{
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_engine::replay::state_hash;
-use robin_rs::Host;
-use robin_rs::sim_timeline::{
+use robin_engine::sim_timeline::{
     ReplayError, ReplayFrameResult, SimSnapshot, replay_authoritative_frame,
-    replay_authoritative_frame_profiled, replay_frames_to_frame, run_engine_frame_core,
+    replay_authoritative_frame_profiled, replay_frames_to_frame,
 };
+use robin_rs::Host;
+use robin_rs::sim_timeline::run_engine_frame_core;
 
 // Low-level mutation access is checked by the compiler in Engine's doctests,
 // backed by engine_facade_contract's AST allowlist (including future methods).

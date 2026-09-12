@@ -178,9 +178,7 @@ pub(crate) async fn show_multiplayer_menu(
     let (btn_w, btn_h) = resources.button_dimensions();
     let btn_x = MENU_W - btn_w - 10;
     let btn_y_base = MENU_H - btn_h - 10;
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (id, y) in [
         (ID_JOIN, btn_y_base - 3 * (btn_h + 2)),
         (ID_CREATE, btn_y_base - 2 * (btn_h + 2)),

@@ -65,6 +65,15 @@ impl Default for FrameWnd {
 }
 
 impl FrameWnd {
+    /// Empty frame ready to receive modal input.
+    pub fn interactive() -> Self {
+        Self {
+            enabled: true,
+            input_enabled: true,
+            ..Self::default()
+        }
+    }
+
     /// Create a new frame window.
     pub fn new(title: &str, bbox: ScreenBBox, flags: u32) -> Self {
         Self {

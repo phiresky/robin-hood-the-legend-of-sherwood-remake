@@ -118,24 +118,7 @@ pub enum MissionDescriptionButton {
     ConvertMission,
 }
 
-/// Horizontal placement for a row of buttons.
-///
-/// Given a list of button widths, returns the left-edge x of each button
-/// so the whole row is centered within the window (width `window_w`) with
-/// `gap` pixels between neighbours.
-pub fn center_horizontally_x(widths: &[i32], window_w: i32, gap: i32) -> Vec<i32> {
-    if widths.is_empty() {
-        return Vec::new();
-    }
-    let total: i32 = widths.iter().copied().sum::<i32>() + gap * (widths.len() as i32 - 1).max(0);
-    let mut x = (window_w - total) / 2;
-    let mut xs = Vec::with_capacity(widths.len());
-    for &w in widths {
-        xs.push(x);
-        x += w + gap;
-    }
-    xs
-}
+pub use crate::ingame_menu::layout::center_horizontally_x;
 
 /// State for the pre-mission description screen.
 ///

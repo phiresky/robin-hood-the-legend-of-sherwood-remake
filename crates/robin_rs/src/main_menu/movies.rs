@@ -66,9 +66,7 @@ pub(crate) async fn show_movies(
     loop {
         // Build the frame fresh each frame so state changes are picked up
         // (matches the pattern other in-place sub-menus use).
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
             ID_INTRO,
             &intro_label,

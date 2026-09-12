@@ -15,6 +15,7 @@
 //! Buttons are driven by the [`crate::widget`] system via the
 //! [`super::widget_bridge`].
 
+use crate::ingame_menu::resources::SealButton;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::player_command as engine_player_command;
@@ -230,13 +231,11 @@ impl PopupScrollModalState {
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
 
-        let (btn_w, btn_h) = resources.ok_button_dimensions();
+        let (btn_w, btn_h) = resources.seal_button_dimensions(SealButton::Ok);
         let bx = virt_x + (WIN_W - btn_w) / 2;
         let by = virt_y + BTN_Y;
 
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         frame.add_widget_absolute(widget_bridge::make_button_with_resource(
             BTN_OK_ID,
             "",
@@ -254,8 +253,7 @@ impl PopupScrollModalState {
         }
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
 
         let mut state = Self {
             title,

@@ -79,9 +79,7 @@ pub async fn show_language(
     let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
     let bottom = align_bottom_right(&[(apply_label, true), (&cancel_label, true)], btn_w, btn_h);
 
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (index, _) in choices.iter().enumerate() {
         let column = index / rows_per_column;
         let row = index % rows_per_column;
@@ -115,8 +113,7 @@ pub async fn show_language(
         .port_text(PortTextKey::Language)
         .unwrap_or_else(|error| panic!("Language screen lost localized text: {error}"));
     let mut error_message: Option<String> = None;
-    let mut input = ModalInputState::new();
-    input.seed_mouse_from_window(event_pump, transform);
+    let mut input = ModalInputState::from_window(event_pump, transform);
 
     loop {
         let mut apply = false;
@@ -137,8 +134,7 @@ pub async fn show_language(
                 _ => {}
             }
         }
-        let events = frame.process_input(&input.as_widget_input());
-        input.end_frame();
+        let events = input.process_frame(&mut frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_APPLY => apply = true,
