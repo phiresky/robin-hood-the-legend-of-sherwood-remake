@@ -21,7 +21,7 @@ use crate::ingame_menu::layout::{
     MENU_W, MenuTransform, align_bottom_right, dim_screen, elide_text_to_width_by,
     enter_modal_gpu_phase, render_text_virt_font, wrap_text_for_box_font,
 };
-use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
+use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mission_roots};
 use crate::renderer::Renderer;
 use crate::scroll_view::ScrollView;
@@ -94,117 +94,204 @@ pub(crate) async fn show_custom_missions(
     mods_root: &Path,
     files: &robin_engine::sbfile::SbFileSystem,
 ) -> Option<CustomMissionChoice> {
-    let mods = scan_mission_roots(mods_root, crate::main_entry::overlay_mods_dir().as_deref());
-    let entries = enumerate_missions(&mods, files);
-    if entries.is_empty() {
-        tracing::info!(
-            "Custom missions: no mods discovered under {} — picker would be empty, returning to main menu",
-            mods_root.display()
-        );
+    let Some(mut state) =
+        CustomMissionsState::new(event_pump, renderer, resources, mods_root, files)
+    else {
         return None;
-    }
-
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let play_label = "Play".to_string();
-    let cancel_label = "Cancel".to_string();
-    let labels: &[(&str, bool)] = &[(&play_label, false), (&cancel_label, true)];
-    let positions = align_bottom_right(labels, btn_w, btn_h);
-    let btn_positions: [(u32, String, i32, i32); 2] = [
-        (ID_PLAY, play_label.clone(), positions[0].x, positions[0].y),
-        (
-            ID_CANCEL,
-            cancel_label.clone(),
-            positions[1].x,
-            positions[1].y,
-        ),
-    ];
-    // Default selection: first launchable row if any, otherwise the
-    // first row (which will be broken — at least the user can read why).
-    let mut selected: usize = entries.iter().position(|e| e.status.is_ok()).unwrap_or(0);
-    let mut list_view = ScrollView::new(
-        [LIST_X + 4, LIST_Y + 4, LIST_W - 8, LIST_H - 8],
-        ROW_HEIGHT,
+    };
+    let mut io = ModalScreenIo {
+        window: event_pump,
+        renderer,
         resources,
-    );
-    list_view.set_total(entries.len());
-    list_view.reveal(selected);
-    let visible_rows = list_view.visible_count();
-    let font = resources
-        .menu_text_font_any()
-        .expect("custom missions requires a body font");
-    let detail_line_h = (font.height() as i32).max(12) + 2;
-    let mut detail_view = ScrollView::new(
-        [DETAIL_X + 8, DETAIL_Y + 8, DETAIL_W - 16, DETAIL_H - 16],
-        detail_line_h,
-        resources,
-    );
-    let mut detail_lines =
-        mission_detail_lines(font, &entries[selected], detail_view.content_width() - 4);
-    detail_view.set_total(detail_lines.len());
-
-    let mut input_state = ModalInputState::from_window(event_pump, transform);
-
-    // FrameWnd holds widget state (Focused/Pushed/Activated) across
-    // frames — menu buttons take multiple ticks to traverse the state
-    // machine, so the frame must be persistent. Rebuilding it every
-    // iteration would reset every button to Default and clicks would
-    // never register. Enablement is updated in-place each frame on the
-    // existing widgets below.
-    let mut frame = FrameWnd::interactive();
-    for (id, label, x, y) in &btn_positions {
-        frame.add_widget_absolute(widget_bridge::make_button_enabled(
-            *id, label, true, *x, *y, btn_w, btn_h,
-        ));
-    }
-
+        cursor: Some(&cursor),
+    };
     loop {
+        match state.tick(&mut io, mods_root) {
+            CustomMissionsTick::Closed(choice) => return choice,
+            CustomMissionsTick::Retry => continue,
+            CustomMissionsTick::Presented => crate::window::sleep_ui_frame().await,
+        }
+    }
+}
+
+enum CustomMissionsTick {
+    Presented,
+    Retry,
+    Closed(Option<CustomMissionChoice>),
+}
+
+/// Runtime widget/scroll state; resources and filesystem authority stay borrowed.
+struct CustomMissionsState {
+    entries: Vec<MissionEntry>,
+    selected: usize,
+    list_view: ScrollView,
+    detail_view: ScrollView,
+    detail_lines: Vec<String>,
+    visible_rows: usize,
+    input_state: ModalInputState,
+    frame: FrameWnd,
+}
+impl CustomMissionsState {
+    fn initial_selection(entries: &[MissionEntry]) -> usize {
+        assert!(
+            !entries.is_empty(),
+            "custom mission selection requires rows"
+        );
+        entries
+            .iter()
+            .position(|entry| entry.status.is_ok())
+            .unwrap_or(0)
+    }
+
+    fn new(
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+        mods_root: &Path,
+        files: &robin_engine::sbfile::SbFileSystem,
+    ) -> Option<Self> {
+        let mods = scan_mission_roots(mods_root, crate::main_entry::overlay_mods_dir().as_deref());
+        let entries = enumerate_missions(&mods, files);
+        if entries.is_empty() {
+            tracing::info!(
+                "Custom missions: no mods discovered under {} — picker would be empty, returning to main menu",
+                mods_root.display()
+            );
+            return None;
+        }
+
+        let sw = renderer.screen_width() as i32;
+        let sh = renderer.screen_height() as i32;
+        let transform = MenuTransform::centered(sw, sh);
+
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let play_label = "Play".to_string();
+        let cancel_label = "Cancel".to_string();
+        let labels: &[(&str, bool)] = &[(&play_label, false), (&cancel_label, true)];
+        let positions = align_bottom_right(labels, btn_w, btn_h);
+        let btn_positions: [(u32, String, i32, i32); 2] = [
+            (ID_PLAY, play_label.clone(), positions[0].x, positions[0].y),
+            (
+                ID_CANCEL,
+                cancel_label.clone(),
+                positions[1].x,
+                positions[1].y,
+            ),
+        ];
+        // Default selection: first launchable row if any, otherwise the
+        // first row (which will be broken — at least the user can read why).
+        let selected = Self::initial_selection(&entries);
+        let mut list_view = ScrollView::new(
+            [LIST_X + 4, LIST_Y + 4, LIST_W - 8, LIST_H - 8],
+            ROW_HEIGHT,
+            resources,
+        );
+        list_view.set_total(entries.len());
+        list_view.reveal(selected);
+        let visible_rows = list_view.visible_count();
+        let font = resources
+            .menu_text_font_any()
+            .expect("custom missions requires a body font");
+        let detail_line_h = (font.height() as i32).max(12) + 2;
+        let mut detail_view = ScrollView::new(
+            [DETAIL_X + 8, DETAIL_Y + 8, DETAIL_W - 16, DETAIL_H - 16],
+            detail_line_h,
+            resources,
+        );
+        let detail_lines =
+            mission_detail_lines(font, &entries[selected], detail_view.content_width() - 4);
+        detail_view.set_total(detail_lines.len());
+
+        let input_state = ModalInputState::from_window(event_pump, transform);
+
+        // FrameWnd holds widget state (Focused/Pushed/Activated) across
+        // frames — menu buttons take multiple ticks to traverse the state
+        // machine, so the frame must be persistent. Rebuilding it every
+        // iteration would reset every button to Default and clicks would
+        // never register. Enablement is updated in-place each frame on the
+        // existing widgets below.
+        let mut frame = FrameWnd::interactive();
+        for (id, label, x, y) in &btn_positions {
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                *id, label, true, *x, *y, btn_w, btn_h,
+            ));
+        }
+
+        Some(Self {
+            entries,
+            selected,
+            list_view,
+            detail_view,
+            detail_lines,
+            visible_rows,
+            input_state,
+            frame,
+        })
+    }
+    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>, mods_root: &Path) -> CustomMissionsTick {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let font = resources
+            .menu_text_font_any()
+            .expect("custom missions requires a body font");
+
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
         let (events, transform) =
             crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            let previous_selected = selected;
-            input_state.update_from_event(&event, transform);
-            let pointer = (input_state.virt_x as i32, input_state.virt_y as i32);
-            if list_view.handle_event(&event, transform, pointer)
-                || detail_view.handle_event(&event, transform, pointer)
+            let previous_selected = self.selected;
+            self.input_state.update_from_event(&event, transform);
+            let pointer = (
+                self.input_state.virt_x as i32,
+                self.input_state.virt_y as i32,
+            );
+            if self.list_view.handle_event(&event, transform, pointer)
+                || self.detail_view.handle_event(&event, transform, pointer)
             {
                 continue;
             }
             match event {
                 GameEvent::Quit => activated = Some(ID_CANCEL),
                 GameEvent::KeyDown { keycode, .. } => {
-                    if let Some(action) =
-                        mission_key_action(keycode, &mut selected, &entries, visible_rows)
-                    {
+                    if let Some(action) = mission_key_action(
+                        keycode,
+                        &mut self.selected,
+                        &self.entries,
+                        self.visible_rows,
+                    ) {
                         activated = Some(action);
                     }
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if let Some(target) = list_view.row_at(vx, vy) {
+                    if let Some(target) = self.list_view.row_at(vx, vy) {
                         // Single click selects; double click of the
                         // same row launches (when launchable).
-                        let dbl = input_state
+                        let dbl = self
+                            .input_state
                             .buttons
                             .contains(MouseButtons::LEFT_DOUBLE_CLICK);
-                        if target == selected && dbl && entries[selected].status.is_ok() {
+                        if target == self.selected
+                            && dbl
+                            && self.entries[self.selected].status.is_ok()
+                        {
                             activated = Some(ID_PLAY);
                         }
-                        selected = target;
+                        self.selected = target;
                     }
                 }
                 _ => {}
             }
-            if selected != previous_selected {
-                detail_lines =
-                    mission_detail_lines(font, &entries[selected], detail_view.content_width() - 4);
-                detail_view.set_total(detail_lines.len());
-                detail_view.reset();
+            if self.selected != previous_selected {
+                self.detail_lines = mission_detail_lines(
+                    font,
+                    &self.entries[self.selected],
+                    self.detail_view.content_width() - 4,
+                );
+                self.detail_view.set_total(self.detail_lines.len());
+                self.detail_view.reset();
             }
             // Only keyboard navigation reveals selection; wheel/drag scrolling
             // must remain independent of the currently selected mission.
@@ -220,35 +307,37 @@ pub(crate) async fn show_custom_missions(
                     ..
                 }
             ) {
-                list_view.reveal(selected);
+                self.list_view.reveal(self.selected);
             }
         }
 
         // Selection may have changed during this event batch. Update enablement
         // before widget processing and drawing, without resetting button state.
-        frame
+        self.frame
             .widget_mut(ID_PLAY)
             .expect("picker always has a Play button")
             .base_mut()
-            .enabled = entries[selected].status.is_ok();
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+            .enabled = self.entries[self.selected].status.is_ok();
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
         if let Some(id) = widget_bridge::find_activated(&events) {
             activated = Some(id);
         }
 
         if let Some(id) = activated {
             match id {
-                ID_CANCEL => return None,
+                ID_CANCEL => return CustomMissionsTick::Closed(None),
                 ID_PLAY => {
-                    let e = &entries[selected];
+                    let e = &self.entries[self.selected];
                     if let MissionStatus::Ok { map_filename } = &e.status {
                         if e.hackable {
-                            return Some(CustomMissionChoice::Hackable {
-                                mission: e.rhm_basename.clone(),
-                                title: e.mod_title.clone(),
-                            });
+                            return CustomMissionsTick::Closed(Some(
+                                CustomMissionChoice::Hackable {
+                                    mission: e.rhm_basename.clone(),
+                                    title: e.mod_title.clone(),
+                                },
+                            ));
                         }
                         #[cfg(not(target_arch = "wasm32"))]
                         let installed_source =
@@ -263,26 +352,28 @@ pub(crate) async fn show_custom_missions(
                                         archive = %e.version_zip.display(),
                                         "CustomMission: cannot retain installed source: {error}"
                                     );
-                                    continue;
+                                    return CustomMissionsTick::Retry;
                                 }
                             };
                         #[cfg(target_arch = "wasm32")]
                         let installed_source = None;
-                        return Some(CustomMissionChoice::Mod(CustomMissionLaunch {
-                            slug: e.mod_slug.clone(),
-                            mod_title: e.mod_title.clone(),
-                            claimed_author: e.author.clone(),
-                            version: e.version_label.clone(),
-                            source_url: e.source_url.clone(),
-                            license: e.license.clone(),
-                            version_zip: e.version_zip.clone(),
-                            installed_source,
-                            version_zip_bytes: None,
-                            rhm_zip_entry: e.rhm_zip_entry.clone(),
-                            rhm_basename: e.rhm_basename.clone(),
-                            map_filename: map_filename.clone(),
-                            requires_spellforge: e.requires_spellforge,
-                        }));
+                        return CustomMissionsTick::Closed(Some(CustomMissionChoice::Mod(
+                            CustomMissionLaunch {
+                                slug: e.mod_slug.clone(),
+                                mod_title: e.mod_title.clone(),
+                                claimed_author: e.author.clone(),
+                                version: e.version_label.clone(),
+                                source_url: e.source_url.clone(),
+                                license: e.license.clone(),
+                                version_zip: e.version_zip.clone(),
+                                installed_source,
+                                version_zip_bytes: None,
+                                rhm_zip_entry: e.rhm_zip_entry.clone(),
+                                rhm_basename: e.rhm_basename.clone(),
+                                map_filename: map_filename.clone(),
+                                requires_spellforge: e.requires_spellforge,
+                            },
+                        )));
                     }
                 }
                 _ => {}
@@ -299,13 +390,27 @@ pub(crate) async fn show_custom_missions(
 
         draw_title(renderer, resources, transform);
         draw_list(
-            renderer, resources, transform, &entries, selected, &list_view,
+            renderer,
+            resources,
+            transform,
+            &self.entries,
+            self.selected,
+            &self.list_view,
         );
-        draw_detail_pane(renderer, resources, transform, &detail_lines, &detail_view);
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
-        cursor.draw(renderer, transform, &input_state);
+        draw_detail_pane(
+            renderer,
+            resources,
+            transform,
+            &self.detail_lines,
+            &self.detail_view,
+        );
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
+        if let Some(cursor) = io.cursor {
+            cursor.draw(renderer, transform, &self.input_state);
+        }
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+
+        CustomMissionsTick::Presented
     }
 }
 
@@ -506,6 +611,21 @@ fn mission_detail_lines(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_picker_selection_prefers_launchable_but_keeps_broken_rows_visible() {
+        let mut entries = vec![mission_entry(), mission_entry(), mission_entry()];
+        assert_eq!(CustomMissionsState::initial_selection(&entries), 0);
+        entries[2].status = MissionStatus::Ok {
+            map_filename: "last.level".into(),
+        };
+        assert_eq!(CustomMissionsState::initial_selection(&entries), 2);
+        entries[1].status = MissionStatus::Ok {
+            map_filename: "first.level".into(),
+        };
+        assert_eq!(CustomMissionsState::initial_selection(&entries), 1);
+        assert_eq!(entries.len(), 3);
+    }
 
     fn mission_entry() -> MissionEntry {
         MissionEntry {
