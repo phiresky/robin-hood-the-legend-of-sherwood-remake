@@ -2112,7 +2112,7 @@ fn render_overlay_pass(
         if alpha > 0 {
             let sw = renderer.screen_width() as i32;
             let sh = renderer.screen_height() as i32;
-            renderer.render_gpu_rect(0, 0, sw, sh, 0, 0, 0, alpha);
+            renderer.render_gpu_rect(0, 0, sw, sh, [0, 0, 0, alpha]);
         }
     }
 
@@ -2141,7 +2141,7 @@ pub(super) fn draw_rewind_icon(
     let sz = size as f32;
     let total_width = (2.0 * width) as i32;
     // Semi-opaque dark backdrop for contrast.
-    renderer.render_gpu_rect(x - 6, y - 4, total_width + 12, size + 8, 0, 0, 0, 140);
+    renderer.render_gpu_rect(x - 6, y - 4, total_width + 12, size + 8, [0, 0, 0, 140]);
     for triangle_idx in 0..2 {
         let tri_x = x as f32 + triangle_idx as f32 * width;
         let ty = y as f32;
@@ -2151,10 +2151,7 @@ pub(super) fn draw_rewind_icon(
                 (tri_x + width, ty),      // base top-right
                 (tri_x + width, ty + sz), // base bottom-right
             ],
-            255,
-            255,
-            255,
-            220,
+            [255, 255, 255, 220],
         );
     }
 }
