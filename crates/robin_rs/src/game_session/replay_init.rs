@@ -462,12 +462,30 @@ pub(super) fn init_replay_and_rollback(
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn recording_archive_creation_failure_rejects_mission_initialization() {
         let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Recording Failure Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let application_context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            Default::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
         let blocker = directory.path().join("not-a-directory");
         std::fs::write(&blocker, b"occupied").unwrap();
         let args = crate::main_entry::MissionLaunch {
+            global_options: application_context,
             config: crate::main_entry::CliArgs {
                 record: Some(blocker.join("recording").to_string_lossy().into_owned()),
                 ..Default::default()
