@@ -139,7 +139,7 @@ pub(super) fn finish_verified_conversion(
 ) -> TraceStorageResult<usize> {
     storage_ensure!(
         (verified.source_path) == (quarantine_path),
-        "native trace invariant failed: assert_eq"
+        "verified source path does not match conversion quarantine"
     );
     storage_ensure!(
         (trace_source_fingerprint(quarantine_path)?) == (verified.source_fingerprint),
@@ -362,13 +362,14 @@ pub(super) fn cleanup_native_reblock_orphans(native_path: &Path) -> TraceStorage
         })?;
         removed += 1;
     }
-    Ok(if removed > 0 {
+    if removed > 0 {
         sync_directory(parent, "native reblock orphan cleanup")?;
         eprintln!(
             "removed {removed} orphaned temporary file(s) for {}",
             native_path.display()
         );
-    })
+    }
+    Ok(())
 }
 
 pub(super) fn native_reblock_canonical_path(native_path: &Path) -> TraceStorageResult<PathBuf> {
@@ -404,9 +405,7 @@ pub(super) fn native_reblock_file_identity(
 pub(super) fn native_reblock_semantic_identity(
     path: &Path,
 ) -> TraceStorageResult<(u64, u64, String)> {
-    Ok(native_reblock_semantic_identity_with_version_policy(
-        path, true,
-    )?)
+    native_reblock_semantic_identity_with_version_policy(path, true)
 }
 
 pub(super) fn native_reblock_semantic_identity_with_version_policy(
@@ -421,7 +420,7 @@ pub(super) fn native_reblock_semantic_identity_with_version_policy(
         digest_and_validate_native_trace_with_version_policy(path, normalize_container_version)?;
     storage_ensure!(
         (frame_count) == (footer.frame_count),
-        "native trace invariant failed: assert_eq"
+        "decoded frame count disagrees with fixed native footer"
     );
     Ok((frame_count, footer.final_frame, sha256_hex(&digest)))
 }
@@ -580,17 +579,16 @@ pub(super) fn refresh_native_reblock_binding(
     source_path: &Path,
     mut binding: NativeReblockBinding,
 ) -> TraceStorageResult<NativeReblockBinding> {
-    validate_native_reblock_source_file_identity(source_path, &binding)
-        .map_err(|error| format!("{error}"))?;
+    validate_native_reblock_source_file_identity(source_path, &binding)?;
     let (frame_count, final_frame, semantic_sha256) =
         native_reblock_semantic_identity(source_path)?;
     storage_ensure!(
         (frame_count) == (binding.frame_count),
-        "native trace invariant failed: assert_eq"
+        "reblock source frame count disagrees with its authenticated binding"
     );
     storage_ensure!(
         (final_frame) == (binding.final_frame),
-        "native trace invariant failed: assert_eq"
+        "reblock source final frame disagrees with its authenticated binding"
     );
     if binding.version == TRACE_NATIVE_VERSION && binding.source_semantic_sha256 == semantic_sha256
     {
@@ -671,8 +669,7 @@ pub(super) fn prepare_native_reblock_source(
             native_path.parent().unwrap(),
             "native parity trace reblock source publication",
         )?;
-        validate_native_reblock_source_file_identity(source_path, &binding)
-            .map_err(|error| format!("{error}"))?;
+        validate_native_reblock_source_file_identity(source_path, &binding)?;
         return Ok(NativeReblockPreparation::Ready(binding));
     }
 
@@ -866,7 +863,7 @@ pub(super) fn reblock_native_trace(
             if let Some((terminal_frame_count, final_frame)) = terminal {
                 storage_ensure!(
                     (terminal_frame_count) == (frame_count),
-                    "native trace invariant failed: assert_eq"
+                    "terminator frame count disagrees with decoded frame count"
                 );
                 timeline
                     .validate_terminator(terminal_frame_count, final_frame)
@@ -902,7 +899,7 @@ pub(super) fn reblock_native_trace(
     let (decoded_frames, actual_digest) = digest_and_validate_native_trace(temporary.path())?;
     storage_ensure!(
         (decoded_frames) == (frame_count),
-        "native trace invariant failed: assert_eq"
+        "reblocked trace frame count changed during readback"
     );
     storage_ensure!(
         (actual_digest) == (expected_digest),
@@ -963,9 +960,7 @@ pub(super) fn validate_native_trace(trace_path: &Path) -> TraceStorageResult<()>
 pub(super) fn digest_and_validate_native_trace(
     path: &Path,
 ) -> TraceStorageResult<(u64, sha2::digest::Output<Sha256>)> {
-    Ok(digest_and_validate_native_trace_with_version_policy(
-        path, true,
-    )?)
+    digest_and_validate_native_trace_with_version_policy(path, true)
 }
 
 pub(super) fn digest_and_validate_native_trace_with_version_policy(
@@ -1015,7 +1010,7 @@ pub(super) fn digest_and_validate_native_trace_with_version_policy(
                     final_frame.storage_context("reblocked native trace lost final frame")?;
                 storage_ensure!(
                     (frame_count) == (decoded_frames),
-                    "native trace invariant failed: assert_eq"
+                    "terminator frame count disagrees with decoded frame count"
                 );
                 timeline
                     .validate_terminator(frame_count, final_frame)
@@ -1057,11 +1052,7 @@ pub(super) fn ensure_native_binary_trace(
     }
     let _generation_lock = lock_native_trace_generation(&native_path)?;
     let fingerprint = trace_source_fingerprint(trace_path)?;
-    Ok(ensure_native_binary_trace_locked(
-        trace_path,
-        &native_path,
-        fingerprint,
-    )?)
+    ensure_native_binary_trace_locked(trace_path, &native_path, fingerprint)
 }
 
 pub(super) fn ensure_native_binary_trace_locked(
@@ -1231,7 +1222,7 @@ pub(super) fn ensure_native_binary_trace_locked(
             let (terminal_frame_count, terminal_final_frame) = terminal_metadata.ok_or_else(|| format!("parity trace ended without an rng_suffix terminator; refusing to publish the native trace"))?;
             storage_ensure!(
                 (terminal_frame_count) == (frame_count),
-                "native trace invariant failed: assert_eq"
+                "terminator frame count disagrees with decoded frame count"
             );
             let final_frame = terminal_final_frame;
             write_binary_record(
@@ -1329,16 +1320,12 @@ impl BinaryTraceReader {
     }
 
     pub(super) fn read_header(&mut self) -> TraceStorageResult<BinaryTraceHeaderV68> {
-        Ok(
-            read_binary_trace_header_record(&mut self.reader, self.footer.version).map_err(
-                |error| {
-                    format!(
-                        "read native parity trace header {}: {error}",
-                        self.path.display()
-                    )
-                },
-            )?,
-        )
+        read_binary_trace_header_record(&mut self.reader, self.footer.version).map_err(|error| {
+            format!(
+                "read native parity trace header {}: {error}",
+                self.path.display()
+            )
+        })
     }
 
     pub(super) fn read_record(&mut self) -> TraceStorageResult<BinaryTraceRecord> {
@@ -1354,12 +1341,12 @@ impl BinaryTraceReader {
             },
         )?;
         self.pending.extend(block);
-        Ok(self.pending.pop_front().ok_or_else(|| {
+        self.pending.pop_front().ok_or_else(|| {
             format!(
                 "native parity trace {} contains an empty record block",
                 self.path.display()
             )
-        })?)
+        })
     }
 
     pub(super) fn validate_terminator(
@@ -1561,12 +1548,12 @@ pub(super) fn configure_cache_compression<W: Write>(
 pub(super) fn read_binary_trace_header(
     path: &std::path::Path,
 ) -> TraceStorageResult<BinaryTraceHeaderV68> {
-    Ok(try_read_binary_trace_header(path).map_err(|error| {
+    try_read_binary_trace_header(path).map_err(|error| {
         format!(
             "read native parity trace header {} after conversion: {error}",
             path.display()
         )
-    })?)
+    })
 }
 
 pub(super) fn write_binary_record<T: bitcode::Encode + ?Sized>(
@@ -1772,11 +1759,11 @@ pub(super) fn bench_trace_encodings(trace_path: &Path) -> TraceStorageResult<()>
                 measure_layout(&native_path, block, level)?;
             storage_ensure!(
                 (*frame_count.get_or_insert(measured_frames)) == (measured_frames),
-                "native trace invariant failed: assert_eq"
+                "benchmark layouts decoded different frame counts"
             );
             storage_ensure!(
                 (*raw_bytes.get_or_insert(measured_raw)) == (measured_raw),
-                "native trace invariant failed: assert_eq"
+                "benchmark compression levels encoded different uncompressed lengths"
             );
             compressed.push((level, size, time));
         }
@@ -1870,7 +1857,7 @@ pub(super) fn read_all_rng_draws(native_path: &std::path::Path) -> TraceStorageR
                     .ok_or_else(|| format!("parity cache RNG pre-scan found incomplete End"))?;
                 storage_ensure!(
                     (terminal_frame_count) == (frame_count),
-                    "native trace invariant failed: assert_eq"
+                    "RNG pre-scan terminator frame count disagrees with decoded frame count"
                 );
                 trace_timeline
                     .validate_terminator(terminal_frame_count, final_frame)

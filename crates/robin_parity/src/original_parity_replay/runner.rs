@@ -109,8 +109,8 @@ async fn capture_full_frame_zero_screenshot(
     options: Options,
     window: &mut robin_rs::window::GameWindow,
 ) -> TraceStorageResult<i32> {
-    let invocation_dir =
-        std::env::current_dir().expect("resolve invocation directory for frame-zero screenshot");
+    let invocation_dir = std::env::current_dir()
+        .storage_context("resolve invocation directory for frame-zero screenshot")?;
     let trace_path = canonicalize_trace_identity(&options.trace_path)?;
     let output_dir = options
         .frame_zero_screenshot_dir
@@ -186,9 +186,9 @@ pub(super) fn run_replay(
 ) -> TraceStorageResult<i32> {
     #[cfg(not(feature = "client"))]
     let timing = {
-        crate::prepare_core_audio_timing(&options.core_datadir).unwrap_or_else(|error| {
-            panic!("prepare replay core input (use --core-datadir for installed runners): {error}")
-        })
+        crate::prepare_core_audio_timing(&options.core_datadir).map_err(|error| {
+            format!("prepare replay core input (use --core-datadir for installed runners): {error}")
+        })?
     };
     let replay_started = Instant::now();
     let scan_all = options.scan_all;
@@ -200,11 +200,14 @@ pub(super) fn run_replay(
     let mut manual_pause = options.start_paused;
     let trace_path = canonicalize_trace_identity(&trace_path)?;
     let native_path = ensure_native_binary_trace(&trace_path)?;
-    let mut dump = options.dump.map(|options| {
-        let file = File::create(&options.path)
-            .unwrap_or_else(|e| panic!("create diagnostic dump {}: {e}", options.path.display()));
-        (options, BufWriter::new(file))
-    });
+    let mut dump = options
+        .dump
+        .map(|options| -> TraceStorageResult<_> {
+            let file = File::create(&options.path)
+                .map_err(|e| format!("create diagnostic dump {}: {e}", options.path.display()))?;
+            Ok((options, BufWriter::new(file)))
+        })
+        .transpose()?;
     let cached_header = read_binary_trace_header(&native_path)?;
     // Normally grow the replay RNG one frame at a time so loading the trace
     // does not decode every large frame twice. Zero-prefix loaded saves need
@@ -223,8 +226,8 @@ pub(super) fn run_replay(
     };
     let header = cached_header.trace;
     validate_trace_header(&header);
-    let footer = read_binary_trace_footer(&native_path)
-        .unwrap_or_else(|error| panic!("read result trace extent: {error}"));
+    let footer =
+        read_binary_trace_footer(&native_path).storage_context("read result trace extent")?;
     let executable = crate::result::executable_path();
     let mut result = crate::result::ReplayResult {
         result_version: crate::result::RESULT_VERSION,
@@ -254,7 +257,7 @@ pub(super) fn run_replay(
     let initial_save = decode_and_validate_initial_save(&header);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
-        std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
+        std::env::set_current_dir(&dir).storage_context("chdir to ROBINHOOD_DATA_DIR")?;
     }
     register_language_data_paths_for_tool();
 
@@ -533,7 +536,7 @@ pub(super) fn run_replay(
         }
         trace_timeline
             .observe(frame.frame_before, frame.frame_after)
-            .unwrap_or_else(|error| panic!("invalid parity frame timeline: {error}"));
+            .storage_context("invalid parity frame timeline")?;
         line_index += 1;
         #[cfg(feature = "client")]
         let mut http_frame_commands = robin_engine::player_command::FrameCommands::new();
@@ -1393,20 +1396,21 @@ pub(super) fn run_replay(
         } => {
             records
                 .validate_terminator(frame_count, final_frame)
-                .unwrap_or_else(|error| {
-                    panic!(
+                .map_err(|error| {
+                    format!(
                         "native parity trace {} has an invalid terminal record: {error}",
                         native_path.display()
                     )
-                });
-            assert_eq!(
-                frame_count,
-                u64::try_from(line_index).expect("parity frame count exceeds u64"),
+                })?;
+            storage_ensure!(
+                frame_count
+                    == u64::try_from(line_index)
+                        .storage_context("parity frame count exceeds u64")?,
                 "parity terminator frame_count disagrees with the frame stream"
             );
             trace_timeline
                 .validate_terminator(frame_count, final_frame)
-                .unwrap_or_else(|error| panic!("invalid parity terminator timeline: {error}"));
+                .storage_context("invalid parity terminator timeline")?;
             assert_eq!(
                 u64::from(engine.frame_counter()),
                 final_frame,
@@ -1417,9 +1421,9 @@ pub(super) fn run_replay(
             rng_suffix: None,
             final_frame: None,
             frame_count: None,
-        } => panic!("parity trace ended without a clean rng_suffix terminator"),
+        } => return Err("parity trace ended without a clean rng_suffix terminator".to_owned()),
         BinaryTraceRecord::End { .. } => {
-            panic!("native parity trace contains a partially populated terminator")
+            return Err("native parity trace contains a partially populated terminator".to_owned());
         }
         BinaryTraceRecord::Frame(_) => unreachable!("replay loop exits only on a terminator"),
     }
