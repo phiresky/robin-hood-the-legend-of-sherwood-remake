@@ -989,3 +989,84 @@ fn beggar_detour_retains_old_seek_point_for_second_unlock() {
     assert!(global.seek_points[1].locked);
     assert_eq!(ai.base.last_goto_destination, next_position);
 }
+
+#[test]
+fn area_candidates_preserve_distance_ties_and_strict_radius_boundaries() {
+    let global = AiGlobalState {
+        seek_points: [(10.0, 0), (-10.0, 0), (1_000.0, 0), (0.0, 1)]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (x, level))| SeekPoint {
+                position: Position {
+                    x,
+                    level,
+                    ..Position::default()
+                },
+                frame_when_full_interest: 0,
+                directions: vec![],
+                last_calculated_interest: 100,
+                locked: false,
+                id: index as u16,
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let candidates = SeekAreaCandidates::new(
+        SeekAreaSpec {
+            center: Position::default(),
+            standard_radius: 10,
+            flags: SeekFlags::empty(),
+            seek_direction: vec_to_sector(10.0, 0.0),
+        },
+        &global,
+    );
+
+    // Equal distances keep global-array order, including the layer penalty.
+    assert_eq!(candidates.square_norms, [100.0, 100.0, 1_000_000.0, 100.0]);
+    assert_eq!(candidates.near_sorted, [0, 1, 3]);
+    // Exactly on the standard radius does not increase the initial count.
+    assert_eq!(candidates.expected_points_for_one, 1);
+    assert_eq!(candidates.obligatory_idx, Some(0));
+}
+
+#[test]
+fn area_global_selection_keeps_first_insertion_draw_and_obligatory_duplicate() {
+    use crate::sim_rng::{RngSite, with_draw_trace};
+
+    let sim = crate::sim_rng::test_context();
+    let mut ai = EnemyAi::new(118);
+    let mut global = AiGlobalState {
+        seek_points: vec![SeekPoint {
+            position: Position {
+                x: 10.0,
+                ..Position::default()
+            },
+            frame_when_full_interest: 0,
+            directions: vec![],
+            last_calculated_interest: 7,
+            locked: false,
+            id: 0,
+        }],
+        ..Default::default()
+    };
+    let spec = SeekAreaSpec {
+        center: Position::default(),
+        standard_radius: 100,
+        flags: SeekFlags::empty(),
+        seek_direction: vec_to_sector(10.0, 0.0),
+    };
+    let ctx = AiContext {
+        frame: 500,
+        ..AiContext::test_fixture()
+    };
+    let (_, draws) = with_draw_trace(|| {
+        ai.append_global_area_seek_points(&sim, spec, &mut global, &ctx, &AiPerTickData::stub());
+    });
+
+    assert_eq!(
+        draws,
+        [RngSite::SeekPointSelection, RngSite::SeekPointSelection]
+    );
+    assert_eq!(ai.my_seek_points, [0, 0]);
+    assert_eq!(global.seek_points[0].last_calculated_interest, 100);
+}
