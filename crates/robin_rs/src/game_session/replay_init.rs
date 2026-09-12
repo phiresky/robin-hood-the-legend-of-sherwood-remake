@@ -196,8 +196,7 @@ pub(super) fn init_recording(
         match crate::replay_archive::browser_recording_directory() {
             Ok(path) => Some(path),
             Err(error) => {
-                tracing::error!("Browser replay storage is unavailable: {error:#}");
-                return None;
+                return Err(format!("Browser replay storage is unavailable: {error:#}"));
             }
         }
     };
