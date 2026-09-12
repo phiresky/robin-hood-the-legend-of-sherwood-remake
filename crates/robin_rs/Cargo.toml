@@ -79,15 +79,13 @@ web-time.workspace = true
 robin_spellforge.workspace = true
 unicode-segmentation.workspace = true
 
-# Native-only runtime integrations (Lua, filesystem/process services, and
+# Native-only runtime integrations (filesystem/process services and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 robin_replay_format = { workspace = true, features = ["native-admission"] }
 # OS data directories are standard for every native build.
 dirs = "7"
 robin_official_content = { workspace = true, optional = true }
-robin_lua = { workspace = true, optional = true }
-mlua = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }
 ogg = { version = "0.9.2", optional = true }
 # Keep Kira's complete native decoder/backend feature set. Native installs can
@@ -254,10 +252,11 @@ default = []
 desktop = ["audio", "dialogs", "gamepad", "hardware-info", "script-rpc"]
 script-rpc = ["dep:hyper", "dep:hyper-util"]
 # Packaged desktop builds retain the integrations they can currently ship.
-release = ["desktop", "lua", "multiplayer", "auto-update"]
-# Every supported native integration. FFmpeg packaging is not yet available on
-# every release target, so the release workflow uses `release` for now.
-full = ["release", "video", "retroarch-shaders"]
+release = ["desktop", "multiplayer", "auto-update"]
+# Every supported native integration plus the opt-in Lua comparison tests.
+# FFmpeg packaging is not yet available on every release target, so the release
+# workflow uses `release` for now. Lua itself is a dev-dependency only.
+full = ["release", "video", "retroarch-shaders", "lua"]
 # Native/browser iroh transport, signed join tickets, and DHT/gossip
 # matchmaking. Local play and rollback replay use only robin_engine channels.
 multiplayer = [
@@ -279,9 +278,10 @@ hardware-info = ["dep:sysinfo"]
 # features off and re-enable selectively. Android builds should do the
 # same for now; ffmpeg packaging is TODO once the native APK boots.
 video = ["dep:ffmpeg-next", "audio"]
-# Legacy native Luau tools/tests and the native host-session compatibility surface.
-# Gameplay Spellforge execution always uses robin_spellforge, with or without this feature.
-lua = ["dep:robin_lua", "dep:mlua"]
+# Enable native host-session comparison tests using the dev-dependencies above.
+# Gameplay always uses robin_spellforge; even `full` must not link a second VM.
+# Standalone Lua developer tools belong to the robin_lua package.
+lua = []
 # Closed, native-only feature for the reproducible official-content projection
 # executable. It intentionally stays out of every shipping client graph.
 projection-export = ["dep:robin_official_content"]
