@@ -8,7 +8,9 @@
 //! commands.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use robin_assets::resource_manager::ResourceManager;
@@ -20,7 +22,7 @@ use thiserror::Error;
 mod catalog;
 mod feature40_text;
 
-#[cfg(any(not(target_arch = "wasm32"), test))]
+#[cfg(not(target_arch = "wasm32"))]
 const PREFERENCES_FILE: &str = "language.json";
 #[cfg(target_arch = "wasm32")]
 const BROWSER_PREFERENCES_KEY: &str = "robin_hood.language.v1";
@@ -131,6 +133,7 @@ pub enum LocalizationError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum PreferenceStore {
+    #[cfg(not(target_arch = "wasm32"))]
     Native(PathBuf),
     #[cfg(target_arch = "wasm32")]
     Browser,
@@ -826,6 +829,7 @@ fn persist_preferences(
     let encoded = serde_json::to_string_pretty(preferences)
         .expect("LocalizationPreferences serialization cannot fail");
     match store {
+        #[cfg(not(target_arch = "wasm32"))]
         PreferenceStore::Native(path) => persist_native(path, encoded.as_bytes()),
         #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => {
@@ -841,6 +845,7 @@ fn persist_preferences(
 
 fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationError> {
     match store {
+        #[cfg(not(target_arch = "wasm32"))]
         PreferenceStore::Native(path) => match std::fs::read_to_string(path) {
             Ok(encoded) => Ok(Some(encoded)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -861,6 +866,7 @@ fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationErr
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
     crate::desktop_persistence::write_bytes(path, bytes).map_err(|source| {
         LocalizationError::PersistPreferences {
@@ -872,6 +878,7 @@ fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
 
 fn store_display_path(store: &PreferenceStore) -> PathBuf {
     match store {
+        #[cfg(not(target_arch = "wasm32"))]
         PreferenceStore::Native(path) => path.clone(),
         #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => PathBuf::from(BROWSER_PREFERENCES_KEY),
