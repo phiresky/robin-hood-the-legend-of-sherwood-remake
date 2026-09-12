@@ -1583,30 +1583,6 @@ impl AiController {
         self.outbox.actor.lower_shield = true;
     }
 
-    /// Shared fallback for `default_bored_standard_procedure` —
-    /// returns `false`.
-    ///
-    /// Used as a dispatch entry from base-level call sites that want to
-    /// give a subclass a chance to react to "I'm bored / nothing left
-    /// to do" — currently the macro-end branch of
-    /// [`Self::execute_next_macro_command`].
-    ///
-    /// Civilians/friendlies inherit this no-op. Soldiers override the
-    /// hook, but the override gates on `Substate::DefaultOnPost`; the
-    /// macro-end call site enters this hook with substate
-    /// `DefaultInMacro`, so the gate fails and the soldier override
-    /// observably returns false too. Returning false for everyone here
-    /// matches both subclasses' behaviour.
-    ///
-    /// The canonical soldier-side override lives at
-    /// `EnemyAi::default_bored_standard_procedure` and is invoked from
-    /// the bored-timer expiry path where the substate gate can actually
-    /// pass and the EnemyAi-specific `set_state` side effects
-    /// (archer/shield-bearer pairing teardown) are required.
-    pub fn default_bored_standard_procedure(&mut self, _ctx: &AiContext) -> bool {
-        false
-    }
-
     // -- Break macro --
 
     pub(crate) fn debug_macro_lifecycle(
@@ -2932,18 +2908,6 @@ impl AiController {
                 }
             } else {
                 // -- Out of macro bytes: path-advance branch. -------
-
-                // Hook for specialized responses to macro
-                // completion. Both subclasses' overrides gate on
-                // `DefaultOnPost`, which the macro-end branch can't
-                // enter (substate is `DefaultInMacro` here), so the
-                // call observably returns false today. The hook is
-                // wired anyway so a future override that doesn't share
-                // that gate will be invoked from this site.
-                if self.default_bored_standard_procedure(ctx) {
-                    self.break_macro_debug(ctx, "default_bored_standard_procedure");
-                    return;
-                }
 
                 let path_size = self.patrol_path.as_ref().map(|p| p.size).unwrap_or(0);
 

@@ -1003,6 +1003,18 @@ mod tests {
             .expect("set ROBINHOOD_DATA_DIR to demo_leicester_ecoste");
         let bytes =
             std::fs::read(std::path::Path::new(&root).join("DATA/Interface/DEFAULT.RES")).unwrap();
+        #[cfg(feature = "engine-adapters")]
+        let mut resources = {
+            let assets = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            assets
+                .install_preloaded_asset("portraits.res", bytes.clone())
+                .unwrap();
+            let files = std::sync::Arc::new(robin_data_io::sbfile::SbFileSystem::new(assets));
+            let mut resources = crate::resource_manager::ResourceManager::with_files(files);
+            resources.attach_resource_file("portraits.res").unwrap();
+            assert_eq!(resources.get_picture_count(267).unwrap(), 5);
+            resources
+        };
         let marker = [b'P', b'I', b'C', b'C', 11, 1, 0, 0];
         let start = bytes
             .windows(marker.len())
@@ -1011,7 +1023,7 @@ mod tests {
         let mut reader = Reader::new(&bytes[start + 8..]);
         assert_eq!(reader.u32("flags").unwrap(), 1);
         assert_eq!(reader.u32("count").unwrap(), 5);
-        for _ in 0..5 {
+        for frame_index in 0..5 {
             let start = reader.position();
             let header = reader.take(12, "header").unwrap();
             let packed = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
@@ -1023,6 +1035,23 @@ mod tests {
                 (120, 160, 38_400)
             );
             assert!(Picture::load_sixteen_from_bytes(frame).is_err());
+            assert_eq!(picture.pixel_format, PixelFormat::Rgb16);
+            let rgba = picture.to_rgba8888(Some(0x07C0));
+            assert_eq!(rgba.len(), 120 * 160 * 4);
+            assert!(rgba.chunks_exact(4).any(|pixel| pixel[3] != 0));
+            #[cfg(feature = "engine-adapters")]
+            {
+                let managed = resources.get_picture(267, frame_index).unwrap();
+                assert_eq!(
+                    (managed.width, managed.height),
+                    (picture.width, picture.height)
+                );
+                assert_eq!(managed.pixel_format, picture.pixel_format);
+                assert_eq!(managed.data, picture.data);
+                assert_eq!(managed.to_rgba8888(Some(0x07C0)), rgba);
+            }
+            #[cfg(not(feature = "engine-adapters"))]
+            let _ = frame_index;
         }
     }
 
@@ -1274,83 +1303,5 @@ mod tests {
 
         let rgba = pic.to_rgba8888(None);
         assert_eq!(rgba, vec![0x11, 0x22, 0x33, 0xFF]);
-    }
-
-    // -- Integration tests (require game data) --
-
-    #[cfg(feature = "engine-adapters")]
-    fn data_dir() -> Option<String> {
-        std::env::var("ROBINHOOD_DATA_DIR").ok()
-    }
-
-    #[test]
-    #[cfg(feature = "engine-adapters")]
-    fn test_load_res_file() {
-        let Some(dir) = data_dir() else {
-            eprintln!("ROBINHOOD_DATA_DIR not set, skipping integration test");
-            return;
-        };
-
-        use crate::resource_manager::ResourceManager;
-
-        let mut mgr = ResourceManager::legacy_tool();
-        let res_path = format!("{}/Data/menu.res", dir);
-        mgr.attach_resource_file(&res_path)
-            .expect("failed to load menu.res");
-
-        // menu.res should contain picture resources
-        // Resource ID 1 is typically the first resource
-        let count = mgr.get_picture_count(1);
-        assert!(count.is_ok(), "expected resource 1 to exist in menu.res");
-        let count = count.unwrap();
-        assert!(count > 0, "expected at least one sub-picture");
-
-        // Verify picture has reasonable dimensions
-        let pic = mgr.get_picture(1, 0).unwrap();
-        assert!(
-            pic.width > 0 && pic.width < 4096,
-            "width {} out of range",
-            pic.width
-        );
-        assert!(
-            pic.height > 0 && pic.height < 4096,
-            "height {} out of range",
-            pic.height
-        );
-        assert_eq!(pic.pixel_format, PixelFormat::Rgb16);
-        assert!(!pic.data.is_empty());
-    }
-
-    #[test]
-    #[cfg(feature = "engine-adapters")]
-    fn test_picture_to_rgba_from_res() {
-        let Some(dir) = data_dir() else {
-            return;
-        };
-
-        use crate::resource_manager::ResourceManager;
-
-        let mut mgr = ResourceManager::legacy_tool();
-        let res_path = format!("{}/Data/menu.res", dir);
-        mgr.attach_resource_file(&res_path).unwrap();
-
-        let pic = mgr.get_picture(1, 0).unwrap();
-        let rgba = pic.to_rgba8888(Some(0x07C0));
-
-        let expected_len = pic.width as usize * pic.height as usize * 4;
-        assert_eq!(
-            rgba.len(),
-            expected_len,
-            "RGBA buffer size mismatch: {} vs expected {}",
-            rgba.len(),
-            expected_len
-        );
-
-        // Should have some non-transparent pixels
-        let non_transparent = rgba.chunks(4).filter(|px| px[3] != 0).count();
-        assert!(
-            non_transparent > 0,
-            "picture should have at least some visible pixels"
-        );
     }
 }

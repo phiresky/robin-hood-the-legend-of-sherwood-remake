@@ -131,7 +131,10 @@ ROBINHOOD_DATA_DIR=/absolute/path/to/full-game bash scripts/check-quality.sh fix
 ```
 
 Each root must contain `Data/`. The demo suite checks the original profile,
-profile JSON round trip, font, sprite banks, and script decoding/manager fixtures. The
+profile JSON round trip, font, sprite banks, and script decoding/manager fixtures.
+It also checks the Ecoste demo's five dialogue portraits in
+`DATA/Interface/DEFAULT.RES` (resource 267), including archive loading and RGBA
+conversion; this fixture is explicitly selected with `engine-adapters`. The
 full-game suite checks its profile and script collection. Both suites explicitly
 run the converter's typed-edition tests; the demo also checks the English
 `1033/Data/Interface/Start.sxt` picture (using case-aware resolution). Its root
@@ -144,6 +147,28 @@ No licensed data is fetched or assumed present on public CI.
 
 The regular font tests read the checked-in Arial fixture relative to
 `CARGO_MANIFEST_DIR`, so their behavior does not depend on the shell directory.
+
+### Legacy Linux save fixtures
+
+The five Linux i386 v48 save-parser cases are ignored in the ordinary engine
+suite and explicitly selected by their own gate:
+
+```sh
+ROBINHOOD_DATA_DIR=/absolute/path/to/fullgame_linux bash scripts/check-quality.sh fixtures-legacy-linux
+```
+
+This requires `Data/Savegame/Profile_000/Restart` (the Lincoln golden save),
+`Data/Savegame/Profile_001/Continue`, and `Data/Configuration/profile.cpf`.
+Both campaign cases require the profile and run their bootstrap/history
+assertions; missing inputs fail rather than silently reducing coverage.
+Restart retains exact golden offsets/values; Continue is mutable profile state
+and retains its structural checks. An arbitrary full-game distribution or save
+is not a substitute for these fixtures, so this gate is separate from
+`fixtures-fullgame`.
+
+The two retail Windows v48 cases remain ordinary tests using the required,
+tracked `reference-saves/Savegame_SuN1Sh1nE/Profile_004/Savegame_005`. They do not
+use `ROBINHOOD_DATA_DIR` and fail if the checkout fixture is absent.
 
 ## GPU execution
 
