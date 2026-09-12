@@ -9,7 +9,7 @@ use super::door_pass::{
 };
 use super::*;
 use crate::coordinates::{MapBBox, MapPoint, MapVec};
-use crate::element::{ActiveDoorPass, EntityId};
+use crate::element::EntityId;
 use crate::entities::EntitySlots;
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;

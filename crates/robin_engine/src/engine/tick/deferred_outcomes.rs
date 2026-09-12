@@ -5,6 +5,7 @@
 //! it after the mutable actor borrow has ended.
 
 use super::*;
+use crate::engine::sequence_runtime::required_canonical_door_mut;
 
 impl EngineInner {
     pub(in crate::engine) fn drain_waiting_upright(&mut self, owners: Vec<EntityId>) {
