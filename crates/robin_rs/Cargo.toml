@@ -25,13 +25,13 @@ earcutr = "0.5"
 bitflags = { workspace = true, features = ["serde"] }
 enum-map = { workspace = true, features = ["serde"] }
 indexmap.workspace = true
-smallvec = "1.16"
+smallvec.workspace = true
 lru = { version = "0.18.4", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_urlencoded = "0.7"
 percent-encoding = "2.3"
-url = "2"
+url.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -40,22 +40,22 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 jiff = { version = "0.2", features = ["js"] }
 sys-locale = { version = "0.3", features = ["js"] }
 fastrand.workspace = true
-rand = "0.10"
+rand.workspace = true
 anyhow.workspace = true
 futures = "0.3"
-libc = "0.2"
+libc.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 # Playback needs demuxing/decoding, scaling, and resampling—not device capture
 # or filter graphs, whose native dependencies also burden isolated workers.
 ffmpeg-next = { version = "9", optional = true, default-features = false, features = ["format", "software-resampling", "software-scaling"] }
-png = "0.18"
+png.workspace = true
 bitcode.workspace = true
 zstd.workspace = true
-base64 = "0.23"
+base64.workspace = true
 sha2 = "0.11"
 hex = "0.4"
-ed25519-dalek = "3"
+ed25519-dalek.workspace = true
 # Zip-backed custom missions are compiled on wasm too. Browser builds do not
 # currently mount host paths, but the shared picker/launch code still needs the
 # archive reader and in-memory overlay types to type-check.
@@ -95,11 +95,11 @@ ogg = { version = "0.9.2", optional = true }
 kira = { version = "0.12", optional = true }
 # Spatial-audio coordinates for Kira. Web Audio uses StereoPannerNode.
 mint = { version = "0.5", optional = true }
-fs2 = "0.4"
+fs2.workspace = true
 librashader = { version = "0.12", default-features = false, features = ["presets", "runtime-wgpu", "stable"], optional = true }
 walkdir = { version = "2.5", optional = true }
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper = { version = "1", features = ["server", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 http-body-util = "0.1"
 # Multiplayer transport: peer-to-peer QUIC with relay fallback and
 # hole punching.  Peers are addressed by their public-key endpoint id,
@@ -128,16 +128,16 @@ rustls = { version = "0.23.44", default-features = false, features = ["ring", "s
 # Compile only the GPU backends usable on each native target. In particular,
 # Linux builds do not need the DX12/Metal/WebGPU feature graph.
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "wgsl", "glsl"] }
+wgpu = { workspace = true, default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "wgsl", "glsl"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "gles", "wgsl", "glsl", "static-dxc"] }
+wgpu = { workspace = true, default-features = false, features = ["std", "parking_lot", "dx12", "vulkan", "gles", "wgsl", "glsl", "static-dxc"] }
 # GUI-subsystem binaries have no console; re-attach to the parent process
 # console so logs still reach the terminal when launched from one.
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "metal", "gles", "wgsl", "glsl"] }
+wgpu = { workspace = true, default-features = false, features = ["std", "parking_lot", "metal", "gles", "wgsl", "glsl"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tiny_http = "0.12"
@@ -147,7 +147,7 @@ robin_lua.workspace = true
 mlua.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "=0.3.77"
+wasm-bindgen-test.workspace = true
 
 # Desktop installer/update lifecycle hooks. Keep this target-scoped so the
 # Android cdylib and browser build do not pull in desktop packaging support.
@@ -169,9 +169,9 @@ jni = "0.22.4"
 # The browser runtime explicitly requests the WebGL backend and all in-tree
 # shaders are WGSL. Avoid wgpu's defaults here: they also enable WebGPU and
 # native backend features that cannot be selected by this runtime.
-wgpu = { version = "30", default-features = false, features = ["std", "webgl", "wgsl"] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
+wgpu = { workspace = true, default-features = false, features = ["std", "webgl", "wgsl"] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
@@ -236,6 +236,7 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"], optional = true }
 
 [dev-dependencies]
+robin_test_support.workspace = true
 syn = { workspace = true, features = ["full", "visit"] }
 qoi = "0.4"
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
@@ -249,7 +250,8 @@ sha2.workspace = true
 # Bare builds are intentionally dependency-minimal. Opt into the normal native
 # game with `desktop`, or select individual integrations as needed.
 default = []
-desktop = ["audio", "dialogs", "gamepad", "hardware-info"]
+desktop = ["audio", "dialogs", "gamepad", "hardware-info", "script-rpc"]
+script-rpc = ["dep:hyper", "dep:hyper-util"]
 # Packaged desktop builds retain the integrations they can currently ship.
 release = ["desktop", "lua", "multiplayer", "auto-update"]
 # Every supported native integration. FFmpeg packaging is not yet available on
@@ -329,21 +331,15 @@ test = true
 name = "batch_run"
 test = true
 
-[[example]]
-name = "sprite_probe_rle_dict"
-test = true
-
-[[example]]
-name = "sprite_probe_experiments"
-test = true
-
+# Operational codec probes are built on demand. Run their tests explicitly
+# with --example rather than adding research code to the default client suite.
 [[example]]
 name = "sprite_size_bench"
-test = true
+test = false
 
 [[example]]
 name = "sprite_compression_probe"
-test = true
+test = false
 
 [[example]]
 name = "verify_rollback"

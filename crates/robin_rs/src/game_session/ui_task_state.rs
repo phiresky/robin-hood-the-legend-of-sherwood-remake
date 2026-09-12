@@ -2390,7 +2390,7 @@ mod tests {
             .parent()
             .unwrap();
         std::env::set_current_dir(root).unwrap();
-        let data = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        let data = robin_test_support::original_data::data_directory("");
         let (_, _, context) =
             crate::main_entry::rust_init_with_data_dir(Some(std::path::Path::new(&data)))
                 .expect("capture content");

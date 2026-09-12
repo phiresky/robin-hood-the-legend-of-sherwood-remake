@@ -61,40 +61,6 @@ pub(crate) fn listbox_scrollbar_thumb(
     (1 + top as i32, height as i32)
 }
 
-/// Draw an in-game listbox scrollbar from its three-slice track and
-/// three-slice thumb resources.
-///
-/// The thumb is placed using the same before/visible ratios as the original
-/// listbox renderer. Missing slices leave the scrollbar undrawn because a
-/// partial composite would be misleading.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_listbox_scrollbar(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    resources: &IngameMenuResources,
-    track_x: i32,
-    track_y: i32,
-    track_w: i32,
-    track_h: i32,
-    scroll_offset: usize,
-    visible_rows: usize,
-    total_rows: usize,
-) {
-    draw_scrollbar_slices(
-        renderer,
-        transform,
-        &resources.list_scrollbar,
-        track_x,
-        track_y,
-        track_w,
-        track_h,
-        scroll_offset,
-        visible_rows,
-        total_rows,
-        false,
-    );
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_scrollbar_slices(
     renderer: &mut Renderer,

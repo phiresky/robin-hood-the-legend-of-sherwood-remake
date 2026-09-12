@@ -46,8 +46,8 @@ mod tests {
     #[test]
     #[ignore = "requires original installation in ROBINHOOD_DATA_DIR"]
     fn original_missions_have_resolvable_actor_dependencies() {
-        let root = std::env::var_os("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
-        let data = find_data_dir(Path::new(&root)).unwrap();
+        let root = robin_test_support::original_data::data_directory("");
+        let data = find_data_dir(&root).unwrap();
         let cpf_path = resolve_data_file(&data, "Configuration/profile.cpf").expect("profile.cpf");
         let mut file = SbFile::open(&cpf_path.to_string_lossy()).unwrap();
         let mut profiles = ProfileManager::new();
