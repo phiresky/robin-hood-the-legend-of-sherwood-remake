@@ -1051,11 +1051,6 @@ pub struct IngameMenuResources {
     owners: Vec<OwnedSurface>,
 }
 
-pub(crate) struct PreparedMenuLocalization {
-    menu_text: MenuText,
-    fonts: MenuFonts,
-}
-
 impl IngameMenuResources {
     /// All uploads enter this private bank through renderer-checked loading or
     /// lazy lookup. One live owner therefore identifies its renderer in O(1);
@@ -1398,38 +1393,6 @@ impl IngameMenuResources {
             portrait_cache: HashMap::new(),
             owners,
         })
-    }
-
-    pub(crate) fn prepare_localized(
-        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-        files: std::sync::Arc<robin_engine::sbfile::SbFileSystem>,
-    ) -> anyhow::Result<PreparedMenuLocalization> {
-        let mut text_res = ResourceManager::with_files(files.clone());
-        let mut attached = false;
-        match text_res.attach_or_from_shipping("Data/Text/Level.res", shipping) {
-            Ok(()) => attached = true,
-            Err(error) => tracing::debug!("Localized Level.res unavailable: {error:#}"),
-        }
-        match text_res.attach_or_from_shipping("Data/Interface/Start.sxt", shipping) {
-            Ok(()) => attached = true,
-            Err(error) => tracing::debug!("Localized Start.sxt unavailable: {error:#}"),
-        }
-        anyhow::ensure!(
-            attached,
-            "neither localized Level.res nor Start.sxt could be loaded"
-        );
-        let menu_text = MenuText::load(&mut text_res, files.presentation_locale());
-        anyhow::ensure!(
-            menu_text.is_loaded(),
-            "localized resource files contain no recognized core menu table"
-        );
-        let fonts = MenuFonts::load(&files);
-        Ok(PreparedMenuLocalization { menu_text, fonts })
-    }
-
-    pub(crate) fn apply_localized(&mut self, prepared: PreparedMenuLocalization) {
-        self.menu_text = prepared.menu_text;
-        self.fonts = prepared.fonts;
     }
 
     pub fn button_dimensions(&self) -> (i32, i32) {

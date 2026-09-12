@@ -908,7 +908,9 @@ async fn prepare_direct_browser_launch(
         .to_owned());
     }
     let authenticated_offer = handle.content_offer();
-    let welcomed_mission = handle.mission_id();
+    let welcomed_mission = handle
+        .session_metadata()
+        .map(|metadata| metadata.mission_id);
     channels.attach_runtime(handle);
     channels.defer_events(probe_events);
 
