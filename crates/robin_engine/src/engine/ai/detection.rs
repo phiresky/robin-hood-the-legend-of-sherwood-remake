@@ -557,13 +557,11 @@ struct SoldierSightContext {
     view_radius: u16,
     eye_status: crate::element::EyeStatus,
     current_state: crate::ai::AiState,
-    current_substate: crate::ai::Substate,
     view_forward: (f32, f32),
     real_half_aperture: f32,
     /// Persisted lean-out view parameter. The original game uses this flag, not the
     /// actor's live posture, to select the detection sharpness multiplier.
     view_lean_out: bool,
-    action_state: crate::element::ActionState,
     sector: Option<crate::position_interface::SectorHandle>,
     alert_status: crate::ai::AlertLevel,
     blipped: bool,
@@ -694,14 +692,9 @@ impl SoldierSightContext {
             view_radius: npc.view_radius,
             eye_status: npc.eye_status,
             current_state: npc.ai_state(),
-            current_substate,
             view_forward: (npc.view_direction[0], npc.view_direction[1]),
             real_half_aperture: npc.real_half_aperture,
             view_lean_out: npc.view_lean_out,
-            action_state: entity
-                .actor_data()
-                .map(|actor| actor.action_state)
-                .unwrap_or(crate::element::ActionState::Waiting),
             sector: entity.element_data().sector(),
             // Visibility calculation's refresh-always gate reads the view
             // parameters, not the independently tracked music alert. Shadow
@@ -2385,7 +2378,7 @@ impl EngineInner {
         view_radius_cache: &OwnerViewRadiusCache,
     ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
-        use crate::element::{ActionState, Posture};
+        use crate::element::Posture;
 
         let pc_snapshots = world.pcs.as_slice();
         let soldier_snapshots = world.soldiers.as_slice();
@@ -2418,9 +2411,6 @@ impl EngineInner {
         let entity_sector = viewer.sector;
         let viewer_blipped = viewer.blipped;
         let me_ground_position = viewer.ground_position;
-        // Silence the "unused" warning on the `_action_state` slot
-        // we keep for readability of the destructure pattern.
-        let _ = ActionState::Waiting;
 
         // Resolve the viewer's building sector from the entity's
         // cached sector (set during door-pass transitions).  Used by
@@ -4439,14 +4429,7 @@ impl EngineInner {
         let view_forward = viewer.view_forward;
         let real_half_aperture = viewer.real_half_aperture;
         let view_lean_out = viewer.view_lean_out;
-        let current_substate = viewer.current_substate;
         let ignore_bodies = viewer.ignore_bodies;
-        let _ = (
-            current_substate,
-            viewer.blipped,
-            viewer.camp,
-            viewer.action_state,
-        ); // suppress unused-warning when individual gates not consulted
 
         let viewer_building_sector = self.entity_building_sector(viewer.sector);
         let viewer_in_building = viewer_building_sector.is_some();

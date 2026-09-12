@@ -1,41 +1,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applyReplayFromQuery, applyPreparedReplay, prepareReplay, prepareReplayWithRuntime, type RobinRpc } from './replay.ts';
-
-function installLocation(url: string): void {
-    Object.defineProperty(globalThis, 'window', {
-        configurable: true,
-        value: { location: new URL(url) },
-    });
-}
+import { applyPreparedReplay, prepareReplay, prepareReplayWithRuntime, replayFromQuery, type RobinRpc } from './replay.ts';
 
 test('cold public playback validates the exact compact bytes before loading', async () => {
     const compact = 'rhrec-0123456789ab-canonical_payload';
-    installLocation(`https://game.example/play?replay=${encodeURIComponent(compact)}`);
+    const query = replayFromQuery(new URLSearchParams({ replay: compact }));
+    const buildBase = 'https://game.example/builds/selected';
     const calls: string[] = [];
+    const runtime = { ready: true };
     const rpc: RobinRpc = async <T>(method: string, params?: unknown): Promise<T> => {
         calls.push(`rpc:${method}:${JSON.stringify(params)}`);
         return undefined as T;
     };
 
-    const loaded = await applyReplayFromQuery(
-        rpc,
-        {
-            validate: async (content) => {
-                assert.equal(content, compact);
-                calls.push('worker-accepted');
-            },
-            markValidated: (content) => {
-                assert.equal(content, compact);
-                calls.push('proof-installed');
-            },
-        },
-    );
+    const prepared = await prepareReplayWithRuntime(query, buildBase,
+        async () => { calls.push('runtime-loaded'); return runtime; },
+        async content => {
+            assert.equal(content, compact);
+            calls.push('worker-accepted');
+        }, new AbortController().signal);
+    assert.equal(prepared.runtime, runtime);
+    assert.deepEqual(prepared.replay, { content: compact, paused: true, buildBase });
+    calls.push('runtime-and-admission-ready');
+    const loaded = await applyPreparedReplay(rpc, content => {
+        assert.equal(content, compact);
+        calls.push('proof-installed');
+    }, prepared.replay, buildBase);
 
     assert.equal(loaded, true);
     assert.deepEqual(calls, [
+        'runtime-loaded',
         'worker-accepted',
+        'runtime-and-admission-ready',
         'proof-installed',
         `rpc:load-replay:${JSON.stringify({ data: compact, paused: true })}`,
     ]);
@@ -43,7 +40,9 @@ test('cold public playback validates the exact compact bytes before loading', as
 
 test('cold public playback never installs a proof or calls the game after rejection', async () => {
     const compact = 'rhrec-0123456789ab-malformed';
-    installLocation(`https://game.example/play?replay=${encodeURIComponent(compact)}&paused=0`);
+    const query = replayFromQuery(new URLSearchParams({ replay: compact, paused: '0' }));
+    assert.deepEqual(query, { content: compact, paused: false });
+    const buildBase = 'https://game.example/builds/selected';
     let marked = false;
     let rpcCalled = false;
     const rpc: RobinRpc = async <T>(): Promise<T> => {
@@ -51,22 +50,40 @@ test('cold public playback never installs a proof or calls the game after reject
         return undefined as T;
     };
 
-    await assert.rejects(
-        applyReplayFromQuery(
-            rpc,
-            {
-                validate: async () => {
-                    throw new Error('isolated rejection');
-                },
-                markValidated: () => {
-                    marked = true;
-                },
-            },
-        ),
-        /isolated rejection/,
-    );
+    await assert.rejects(async () => {
+        const prepared = await prepareReplayWithRuntime(query, buildBase,
+            async () => 'runtime',
+            async () => { throw new Error('isolated rejection'); },
+            new AbortController().signal);
+        await applyPreparedReplay(rpc, () => { marked = true; }, prepared.replay, buildBase);
+    }, /isolated rejection/);
     assert.equal(marked, false);
     assert.equal(rpcCalled, false);
+});
+
+test('replay query defaults and absence survive the prepared loading path', async () => {
+    for (const paused of ['0', 'false', 'NO', 'off']) {
+        assert.deepEqual(replayFromQuery(new URLSearchParams({ replay: 'bytes', paused })),
+            { content: 'bytes', paused: false });
+    }
+    for (const paused of ['', '1', 'true']) {
+        assert.deepEqual(replayFromQuery(new URLSearchParams({ replay: 'bytes', paused })),
+            { content: 'bytes', paused: true });
+    }
+    for (const params of [new URLSearchParams(), new URLSearchParams({ replay: '' })]) {
+        const query = replayFromQuery(params);
+        assert.equal(query, null);
+        const buildBase = 'https://game.example/builds/selected';
+        const prepared = await prepareReplayWithRuntime(query, buildBase, async () => 'runtime',
+            async () => { assert.fail('absent replay must not request validation'); },
+            new AbortController().signal);
+        assert.equal(prepared.runtime, 'runtime');
+        assert.equal(prepared.replay, null);
+        assert.equal(await applyPreparedReplay(
+            async () => { assert.fail('absent replay must not call RPC'); },
+            () => { assert.fail('absent replay must not install proof'); },
+            prepared.replay, buildBase), false);
+    }
 });
 
 function deferred<T>() {
