@@ -2217,6 +2217,53 @@ pub struct HackablePc {
     pub playable: bool,
 }
 
+/// The one defaulting policy shared by descriptor validation and construction.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct ResolvedHackablePcPolicy {
+    decision_policy: DecisionPolicy,
+    command_interface: CommandInterface,
+    combat_stance: CombatStance,
+    mission_role: MissionRole,
+}
+
+impl HackablePc {
+    fn resolved_policy(&self) -> ResolvedHackablePcPolicy {
+        let decision_policy = self
+            .decision_policy
+            .unwrap_or(if self.autonomous.unwrap_or(false) {
+                DecisionPolicy::EnemyAi
+            } else if self.playable {
+                DecisionPolicy::PlayerDirected
+            } else {
+                DecisionPolicy::Scripted
+            });
+        ResolvedHackablePcPolicy {
+            decision_policy,
+            command_interface: self.command_interface.unwrap_or(
+                if decision_policy == DecisionPolicy::PlayerDirected || self.playable {
+                    CommandInterface::HeroActions
+                } else {
+                    CommandInterface::None
+                },
+            ),
+            combat_stance: self.combat_stance.unwrap_or(
+                if self.aggressive_combat.unwrap_or(false) {
+                    CombatStance::Aggressive
+                } else {
+                    CombatStance::Defensive
+                },
+            ),
+            mission_role: self.mission_role.unwrap_or(if self.playable {
+                MissionRole::PlayerParty
+            } else if decision_policy == DecisionPolicy::EnemyAi {
+                MissionRole::Combatant
+            } else {
+                MissionRole::RescueTarget
+            }),
+        }
+    }
+}
+
 const fn default_scripted_decision_policy() -> DecisionPolicy {
     DecisionPolicy::Scripted
 }
@@ -2304,22 +2351,11 @@ impl LoadedLevel {
                     "pcs[{index}] has conflicting combat_stance and deprecated aggressive_combat fields"
                 ));
             }
-            let policy = pc
-                .decision_policy
-                .unwrap_or(if pc.autonomous.unwrap_or(false) {
-                    DecisionPolicy::EnemyAi
-                } else if pc.playable {
-                    DecisionPolicy::PlayerDirected
-                } else {
-                    DecisionPolicy::Scripted
-                });
-            let commands = pc.command_interface.unwrap_or(
-                if policy == DecisionPolicy::PlayerDirected || pc.playable {
-                    CommandInterface::HeroActions
-                } else {
-                    CommandInterface::None
-                },
-            );
+            let ResolvedHackablePcPolicy {
+                decision_policy: policy,
+                command_interface: commands,
+                ..
+            } = pc.resolved_policy();
             let valid_pair = matches!(
                 (policy, commands),
                 (
@@ -2352,7 +2388,7 @@ impl LoadedLevel {
             }
         }
 
-        let mut level = Self::empty_for_test();
+        let mut level = Self::empty();
         level.diplomacy = descriptor.diplomacy.clone();
         level.mission.reserve_null_ai_handle = true;
         level.proto.grid_chunk_order = vec![ProtoGridChunk::Sight, ProtoGridChunk::Motion];
@@ -2502,35 +2538,12 @@ impl LoadedLevel {
             .pcs
             .into_iter()
             .map(|pc| {
-                let legacy_autonomous = pc.autonomous.unwrap_or(false);
-                let decision_policy = pc.decision_policy.unwrap_or(if legacy_autonomous {
-                    DecisionPolicy::EnemyAi
-                } else if pc.playable {
-                    DecisionPolicy::PlayerDirected
-                } else {
-                    DecisionPolicy::Scripted
-                });
-                let command_interface = pc.command_interface.unwrap_or(
-                    if decision_policy == DecisionPolicy::PlayerDirected || pc.playable {
-                        CommandInterface::HeroActions
-                    } else {
-                        CommandInterface::None
-                    },
-                );
-                let combat_stance =
-                    pc.combat_stance
-                        .unwrap_or(if pc.aggressive_combat.unwrap_or(false) {
-                            CombatStance::Aggressive
-                        } else {
-                            CombatStance::Defensive
-                        });
-                let mission_role = pc.mission_role.unwrap_or(if pc.playable {
-                    MissionRole::PlayerParty
-                } else if decision_policy == DecisionPolicy::EnemyAi {
-                    MissionRole::Combatant
-                } else {
-                    MissionRole::RescueTarget
-                });
+                let ResolvedHackablePcPolicy {
+                    decision_policy,
+                    command_interface,
+                    combat_stance,
+                    mission_role,
+                } = pc.resolved_policy();
                 RawPcRescue {
                     position_x: pc.position.0,
                     position_y: pc.position.1,
@@ -2558,8 +2571,8 @@ impl LoadedLevel {
         Ok(level)
     }
 
-    /// Produce an empty `LoadedLevel` suitable for unit tests that
-    /// need to drive `Engine::new` without hitting disk.  All
+    /// Produce an empty `LoadedLevel` for authored construction or isolated tests
+    /// without reading game data.  All
     /// `Vec`/`Option` fields are empty; scalar fields are zero.
     ///
     /// The engine initialisation runs through every level-load phase
@@ -2569,7 +2582,7 @@ impl LoadedLevel {
     /// the previous generation of tests wanted from the old blank
     /// `Engine::new(EngineArgs { ..Default::default() })` path, so
     /// it slots in cleanly.
-    pub fn empty_for_test() -> Self {
+    pub fn empty() -> Self {
         Self {
             proto: LoadedProtoLevel {
                 format: LevelFormat::Fullgame,

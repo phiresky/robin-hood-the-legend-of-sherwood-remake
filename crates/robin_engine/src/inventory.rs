@@ -487,7 +487,6 @@ pub fn can_use_action(status: &PcStatus, action: Action) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::ObjectTypeExt;
     fn test_profile() -> CharacterProfile {
         CharacterProfile {
             actions: [Action::Bow, Action::Apple, Action::Purse],
@@ -848,7 +847,7 @@ mod tests {
 
     #[test]
     fn bonus_to_action_conversions() {
-        use crate::element::{BonusItemType, BonusItemTypeExt};
+        use crate::element::BonusItemType;
         assert_eq!(BonusItemType::Arrow.to_action(), Action::Bow);
         assert_eq!(BonusItemType::Plant.to_action(), Action::Heal);
         assert_eq!(BonusItemType::Lamb.to_action(), Action::Eat);

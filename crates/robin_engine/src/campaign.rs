@@ -514,6 +514,29 @@ pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapsh
 pub type CampaignSnapshot = Campaign<()>;
 
 impl<S: robin_util::state_hash::StateHash> Campaign<S> {
+    /// Borrow admission-relevant state without cloning campaign collections.
+    pub fn validation_view(&self) -> CampaignPracticeReturnView<'_> {
+        CampaignPracticeReturnView {
+            ares: self.ares,
+            missions: &self.missions,
+            accessible_mission_indices: &self.accessible_mission_indices,
+            pending_accessible_mission_indices: &self.pending_accessible_mission_indices,
+            last_mission_idx: self.last_mission_idx,
+            current_mission_idx: self.current_mission_idx,
+            next_mission_idx: self.next_mission_idx,
+            blazon_mission_idx: self.blazon_mission_idx,
+            mission_attempt_sequence: self.mission_attempt_sequence,
+            campaign_history_run_id: self.campaign_history_run_id,
+            characters: &self.characters,
+            gang_indices: &self.gang_indices,
+            reservist_indices: &self.reservist_indices,
+            mission_team_indices: &self.mission_team_indices,
+            peasant_names: &self.peasant_names,
+            collected_relics: &self.collected_relics,
+            production_sectors: &self.production_sectors,
+        }
+    }
+
     pub(crate) fn replace_snapshot<T: robin_util::state_hash::StateHash>(
         self,
         pre_mission_snapshot: T,
@@ -1381,8 +1404,8 @@ impl Campaign {
             };
             let is_vip = profiles
                 .get_character(cpi)
-                .map(|cp| cp.vip)
-                .unwrap_or(false);
+                .expect("campaign character references missing profile")
+                .vip;
             if is_vip {
                 continue;
             }
@@ -1582,8 +1605,8 @@ impl Campaign {
         // Skip VIPs already in the gang.
         let is_vip = profiles
             .get_character(profile_idx)
-            .map(|cp| cp.vip)
-            .unwrap_or(false);
+            .expect("campaign character references missing profile")
+            .vip;
         if is_vip && self.is_in_gang(profile_idx) {
             return true;
         }
@@ -1908,8 +1931,8 @@ impl Campaign {
             let fulfilled = team_profile_ids.iter().any(|&pid| {
                 profiles
                     .get_character(pid)
-                    .map(|cp| cp.has_action(action))
-                    .unwrap_or(false)
+                    .expect("campaign team member references missing profile")
+                    .has_action(action)
             });
             if !fulfilled {
                 return false;

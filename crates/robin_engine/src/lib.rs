@@ -54,7 +54,6 @@ pub mod legacy_save;
 pub mod level_data;
 pub mod macro_store;
 pub mod mask;
-pub mod md5;
 pub mod messenger;
 pub mod mission;
 pub mod mission_assets;

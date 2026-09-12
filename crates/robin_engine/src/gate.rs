@@ -1281,13 +1281,13 @@ impl Default for GateSearchState {
 /// scores. A binary search is invalid here and can leave an improved gate
 /// behind a more expensive goal node.
 fn add_to_open_gates_original(
-    open: &mut Vec<DoorIndex>,
+    open: &mut std::collections::VecDeque<DoorIndex>,
     state: &[GateSearchState],
     gate: DoorIndex,
 ) {
     let score = state[usize::from(gate)].score;
     if open.is_empty() {
-        open.push(gate);
+        open.push_back(gate);
         return;
     }
 
@@ -1385,6 +1385,46 @@ pub fn find_path_gates_with_sector_indices(
     if source_key == goal_key {
         return Some(Vec::new());
     }
+    gate_astar(
+        doors,
+        source,
+        source_key,
+        goal,
+        GateSearchGoal::Sector(goal_key),
+        auth,
+        allow_leave_map,
+        building_is_authorized,
+        sector_lift_type,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum GateSearchGoal {
+    Sector(GateSectorKey),
+    Door(DoorIndex),
+}
+
+impl GateSearchGoal {
+    fn reached(self, door: DoorIndex, exit: GateSectorKey) -> bool {
+        match self {
+            Self::Sector(goal) => exit == goal,
+            Self::Door(goal) => door == goal,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gate_astar(
+    doors: &[Door],
+    source: MapPoint,
+    source_key: GateSectorKey,
+    goal: MapPoint,
+    search_goal: GateSearchGoal,
+    auth: Option<&ActorAuthInfo>,
+    allow_leave_map: bool,
+    building_is_authorized: &impl Fn(SectorNumber) -> bool,
+    sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
+) -> Option<Vec<GatePathStep>> {
     if doors.is_empty() {
         return None;
     }
@@ -1394,7 +1434,7 @@ pub fn find_path_gates_with_sector_indices(
     // Open list: indices of gates to expand. Original inserts by a linear scan
     // over live scores; decreasing an already-queued gate can temporarily make
     // older entries unsorted.
-    let mut open: Vec<DoorIndex> = Vec::new();
+    let mut open = std::collections::VecDeque::new();
 
     // ── Seed: gates touching the source sector ──
     for (idx, door) in doors.iter().enumerate() {
@@ -1452,9 +1492,7 @@ pub fn find_path_gates_with_sector_indices(
         return None;
     }
     // ── A* main loop ──
-    while let Some(current_idx) = open.first().copied() {
-        open.remove(0);
-
+    while let Some(current_idx) = open.pop_front() {
         let current = &doors[usize::from(current_idx)];
         let cur_state = state[usize::from(current_idx)];
 
@@ -1471,7 +1509,7 @@ pub fn find_path_gates_with_sector_indices(
         };
         let exit_key = GateSectorKey::new(exit_sector, exit_sector_index);
         let entry_key = GateSectorKey::new(entry_sector, entry_sector_index);
-        if exit_key == goal_key {
+        if search_goal.reached(current_idx, exit_key) {
             // Gate-node pathfinding returns the first goal gate
             // removed from the score-ordered open list.  This is also
             // significant when a restored actor's source point is qNaN: the
@@ -1548,8 +1586,12 @@ pub fn find_path_gates_with_sector_indices(
                 continue;
             }
 
-            let new_dist_from_source =
-                cur_state.distance_from_source + link.distance + current.penalty;
+            let new_dist_from_source = match search_goal {
+                GateSearchGoal::Sector(_) => {
+                    cur_state.distance_from_source + link.distance + current.penalty
+                }
+                GateSearchGoal::Door(_) => cur_state.distance_from_source + link.distance,
+            };
 
             let next_state = state[usize::from(next_idx)];
             // Preserve Original's literal
@@ -1667,180 +1709,17 @@ pub fn find_path_into_door_with_sector_index(
     // gates, and with them the building-exit WAIT_TIMER/CHANGE_POSITION
     // sub-sequences and their two
     // `rand() & 15` draws.
-    if doors.is_empty() {
-        return None;
-    }
-
-    let n = doors.len();
-    let mut state: Vec<GateSearchState> = vec![GateSearchState::default(); n];
-    let mut open: Vec<DoorIndex> = Vec::new();
-
-    // Seed gates touching source sector — heuristic uses goal door
-    // mid-point.
-    for (idx, door) in doors.iter().enumerate() {
-        if !door.active {
-            continue;
-        }
-        if let Some(a) = auth {
-            let direct_candidate =
-                GateSectorKey::new(door.sector_out, door.sector_out_index) == source_key;
-            // Seed pass tests building capacity.
-            if !is_actor_authorized_for_gate(
-                door,
-                direct_candidate,
-                a,
-                building_has_capacity(door, direct_candidate, building_is_authorized),
-                allow_leave_map,
-                sector_lift_type,
-            ) {
-                continue;
-            }
-        }
-
-        let (direct, from_pt, heuristic_pt) =
-            if GateSectorKey::new(door.sector_out, door.sector_out_index) == source_key {
-                (true, door.point_out, door.point_in)
-            } else if GateSectorKey::new(door.sector_in, door.sector_in_index) == source_key {
-                (false, door.point_in, door.point_out)
-            } else {
-                continue;
-            };
-
-        let d_from_src = dist(source, from_pt);
-        let d_to_goal = dist(heuristic_pt, goal_mid);
-        let score = d_from_src + d_to_goal + door.penalty;
-
-        state[idx] = GateSearchState {
-            visited: true,
-            direct,
-            distance_from_source: d_from_src,
-            score,
-            prev_gate: None,
-        };
-        add_to_open_gates_original(
-            &mut open,
-            &state,
-            DoorIndex::new(idx as u32).expect("valid door index"),
-        );
-    }
-
-    if open.is_empty() {
-        return None;
-    }
-    // A* main loop.  Goal-test is identity against goal door; heuristic
-    // uses distance-to-mid.
-    let mut found: Option<DoorIndex> = None;
-
-    while let Some(current_idx) = open.first().copied() {
-        open.remove(0);
-
-        if current_idx == goal_door_index {
-            found = Some(current_idx);
-            break;
-        }
-
-        let current = &doors[usize::from(current_idx)];
-        let cur_state = state[usize::from(current_idx)];
-        let (exit_sector, exit_sector_index) = if cur_state.direct {
-            (current.sector_in, current.sector_in_index)
-        } else {
-            (current.sector_out, current.sector_out_index)
-        };
-        let (entry_sector, entry_sector_index) = if cur_state.direct {
-            (current.sector_out, current.sector_out_index)
-        } else {
-            (current.sector_in, current.sector_in_index)
-        };
-        let exit_key = GateSectorKey::new(exit_sector, exit_sector_index);
-        let entry_key = GateSectorKey::new(entry_sector, entry_sector_index);
-        for link in &current.gate_links {
-            // The spatial grid selects linked gates by direction: after
-            // traversing the current gate, only links in the sector on the
-            // exit side are reachable.
-            let link_key = GateSectorKey::new(link.via_sector, link.via_sector_index);
-            if link_key != exit_key {
-                continue;
-            }
-            let next_idx = link.other_door;
-            if Some(next_idx) == cur_state.prev_gate {
-                continue;
-            }
-            let next = match doors.get(usize::from(next_idx)) {
-                Some(d) if d.active => d,
-                _ => continue,
-            };
-            if let Some(a) = auth {
-                let next_direct =
-                    GateSectorKey::new(next.sector_out, next.sector_out_index) == link_key;
-                if !is_actor_authorized_for_gate(
-                    next,
-                    next_direct,
-                    a,
-                    building_has_capacity(next, next_direct, building_is_authorized),
-                    allow_leave_map,
-                    sector_lift_type,
-                ) {
-                    continue;
-                }
-            }
-
-            let (next_direct, next_exit_pt, _next_entry_pt) =
-                if GateSectorKey::new(next.sector_out, next.sector_out_index) == link_key {
-                    (true, next.point_in, next.point_out)
-                } else if GateSectorKey::new(next.sector_in, next.sector_in_index) == link_key {
-                    (false, next.point_out, next.point_in)
-                } else {
-                    continue;
-                };
-            // Original: do not use a link that immediately returns to the
-            // sector from which the current gate was entered.
-            let next_exit_key = if next_direct {
-                GateSectorKey::new(next.sector_in, next.sector_in_index)
-            } else {
-                GateSectorKey::new(next.sector_out, next.sector_out_index)
-            };
-            if next_exit_key == entry_key {
-                continue;
-            }
-
-            // Penalty is NOT accumulated into g(n) for door-targeted A*
-            // (sector-targeted A* does add penalty into g(n)).
-            let new_dist_from_source = cur_state.distance_from_source + link.distance;
-
-            let next_state = state[usize::from(next_idx)];
-            // Match Original's ordered comparison exactly; see the
-            // sector-targeted search above for the NaN-sensitive rationale.
-            if next_state.visited && !(new_dist_from_source < next_state.distance_from_source) {
-                continue;
-            }
-
-            let d_to_goal = dist(next_exit_pt, goal_mid);
-            let new_score = new_dist_from_source + d_to_goal + next.penalty;
-
-            state[usize::from(next_idx)] = GateSearchState {
-                visited: true,
-                direct: next_direct,
-                distance_from_source: new_dist_from_source,
-                score: new_score,
-                prev_gate: Some(current_idx),
-            };
-            add_to_open_gates_original(&mut open, &state, next_idx);
-        }
-    }
-
-    let goal_idx = found?;
-    let mut path: Vec<GatePathStep> = Vec::new();
-    let mut current = Some(goal_idx);
-    while let Some(idx) = current {
-        let s = state[usize::from(idx)];
-        path.push(GatePathStep {
-            door_index: idx,
-            direct: s.direct,
-        });
-        current = s.prev_gate;
-    }
-    path.reverse();
-    Some(path)
+    gate_astar(
+        doors,
+        source,
+        source_key,
+        goal_mid,
+        GateSearchGoal::Door(goal_door_index),
+        auth,
+        allow_leave_map,
+        building_is_authorized,
+        sector_lift_type,
+    )
 }
 
 /// Walk-to-door variant: finds a path into `goal_door_index`, pops
@@ -2063,10 +1942,10 @@ mod tests {
         let mut state = vec![GateSearchState::default(); 3];
         state[0].score = 654.0; // Goal gate currently at the front.
         state[1].score = 672.0; // Gate already queued behind it.
-        let mut open = vec![
+        let mut open = std::collections::VecDeque::from([
             DoorIndex::new(0).expect("valid door index"),
             DoorIndex::new(1).expect("valid door index"),
-        ];
+        ]);
 
         // Relaxing gate 1 mutates the shared score in place, making `open`
         // temporarily unsorted: [654, 570]. Original linearly scans that live

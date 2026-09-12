@@ -36,7 +36,6 @@ bitflags = { workspace = true, features = ["serde"] }
 num_enum = "0.7"
 strum = "0.28.0"
 strum_macros = "0.28.0"
-md5_crate = { package = "md-5", version = "0.11" }
 geo = { workspace = true, features = ["serde"] }
 i_overlay = "8.1.1"
 robin_util.workspace = true

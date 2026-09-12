@@ -154,6 +154,8 @@ pub enum ObjectId {
 /// while still retaining the raw table index needed by script handles.
 #[derive(
     Debug,
+    PartialEq,
+    Eq,
     Clone,
     Copy,
     Serialize,
@@ -173,14 +175,6 @@ pub enum EntityId {
     Projectile(ProjectileId),
     Net(NetId),
 }
-
-impl PartialEq for EntityId {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind() == other.kind() && self.index() == other.index()
-    }
-}
-
-impl Eq for EntityId {}
 
 macro_rules! entity_id_partial_eq {
     ($($id:ty),+ $(,)?) => {
