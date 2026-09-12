@@ -1071,9 +1071,7 @@ impl EngineInner {
         // The widget enable bit is gated on **both** `disabled_actions` and
         // `disabled_actions_temp` being clear, so OR the persistent and temp
         // masks together.
-        let disabled_persistent = pc.disabled_actions.get(idx).copied().unwrap_or(false);
-        let disabled_temp = pc.disabled_actions_temp.get(idx).copied().unwrap_or(false);
-        !(disabled_persistent || disabled_temp)
+        !pc.action_slot_disabled(idx)
     }
 
     /// Whether `action` is in `pc_id`'s profile and currently enabled.
@@ -1125,10 +1123,7 @@ impl EngineInner {
             .get(idx)
             .copied()
             .unwrap_or(Action::NoAction);
-        if action == Action::NoAction
-            || pc.disabled_actions.get(idx).copied().unwrap_or(false)
-            || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false)
-        {
+        if action == Action::NoAction || pc.action_slot_disabled(idx) {
             return false;
         }
         self.set_pc_action_from_message(assets, seat, pc_id, action);
