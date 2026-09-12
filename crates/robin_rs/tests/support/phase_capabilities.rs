@@ -2,19 +2,13 @@
 //! exercised by the public compiler-negative tests. This structural assertion
 //! avoids pretending that an inaccessible private type is a capability proof.
 
+use super::source_syntax::{item_fn, item_struct, parsed};
 use syn::visit::{self, Visit};
 
 #[test]
 fn rendering_entrypoint_requires_the_explicit_presentation_view() {
-    let syntax = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
-    let render = syntax
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(item) if item.sig.ident == "render_frame" => Some(item),
-            _ => None,
-        })
-        .expect("production render entrypoint");
+    let syntax = parsed(include_str!("../../src/game_session/render.rs"));
+    let render = item_fn(&syntax, "render_frame").expect("production render entrypoint");
     struct ViewArgument {
         found: bool,
     }
@@ -40,15 +34,9 @@ fn rendering_entrypoint_requires_the_explicit_presentation_view() {
 
 #[test]
 fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
-    let syntax = syn::parse_file(include_str!("../../src/game_session/interactive.rs")).unwrap();
-    let owner = syntax
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "NativeRefreshInterpolation" => Some(item),
-            _ => None,
-        })
-        .expect("native interpolation owner");
+    let syntax = parsed(include_str!("../../src/game_session/interactive.rs"));
+    let owner =
+        item_struct(&syntax, "NativeRefreshInterpolation").expect("native interpolation owner");
     struct Storage {
         presentation_count: usize,
     }
@@ -76,15 +64,8 @@ fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
 
 #[test]
 fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
-    let syntax = syn::parse_file(include_str!("../../src/game_session/runtime/frame.rs")).unwrap();
-    let frame = syntax
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "MissionFrame" => Some(item),
-            _ => None,
-        })
-        .expect("live frame transaction");
+    let syntax = parsed(include_str!("../../src/game_session/runtime/frame.rs"));
+    let frame = item_struct(&syntax, "MissionFrame").expect("live frame transaction");
     for attribute in &frame.attrs {
         if attribute.path().is_ident("derive") {
             let derives = attribute
@@ -122,20 +103,14 @@ fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
 
 #[test]
 fn ready_context_is_not_a_deserializable_data_wrapper() {
-    let syntax = syn::parse_file(include_str!("../../src/application.rs")).unwrap();
+    let syntax = parsed(include_str!("../../src/application.rs"));
     for name in [
         "ApplicationContext",
         "ReadyApplicationContext",
         "ApplicationServices",
     ] {
-        let owner = syntax
-            .items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Struct(item) if item.ident == name => Some(item),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("missing live owner {name}"));
+        let owner =
+            item_struct(&syntax, name).unwrap_or_else(|| panic!("missing live owner {name}"));
         for attribute in &owner.attrs {
             if attribute.path().is_ident("derive") {
                 let derives = attribute
@@ -157,7 +132,7 @@ fn ready_context_is_not_a_deserializable_data_wrapper() {
 
 #[test]
 fn application_composition_is_separate_from_mission_host() {
-    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    let host = parsed(include_str!("../../src/host.rs"));
     assert!(!host.items.iter().any(|item| matches!(
         item,
         syn::Item::Struct(item)
@@ -184,7 +159,7 @@ fn application_composition_is_separate_from_mission_host() {
             syn::visit::visit_item_impl(self, item);
         }
     }
-    let application = syn::parse_file(include_str!("../../src/application.rs")).unwrap();
+    let application = parsed(include_str!("../../src/application.rs"));
     let mut assemblies = ServiceAssemblies(0);
     assemblies.visit_file(&application);
     assert_eq!(
@@ -213,15 +188,8 @@ fn mission_journals_and_sprite_publication_are_private() {
             &["frame_holder", "frame_holder_opacity"][..],
         ),
     ] {
-        let syntax = syn::parse_file(source).unwrap();
-        let owner = syntax
-            .items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Struct(item) if item.ident == owner_name => Some(item),
-                _ => None,
-            })
-            .expect("capability owner");
+        let syntax = parsed(source);
+        let owner = item_struct(&syntax, owner_name).expect("capability owner");
         for name in fields {
             let field = owner
                 .fields
@@ -283,7 +251,7 @@ fn ordinary_tick_effects_do_not_receive_aggregate_host_authority() {
         include_str!("../../src/sim_timeline.rs"),
         include_str!("../../src/game.rs"),
     ] {
-        signatures.visit_file(&syn::parse_file(source).unwrap());
+        signatures.visit_file(&parsed(source));
     }
     assert_eq!(signatures.0, 5);
 }
@@ -303,26 +271,17 @@ fn replay_authority_has_no_process_singleton() {
             visit::visit_item_fn(self, item);
         }
     }
-    ReplayStatics
-        .visit_file(&syn::parse_file(include_str!("../../src/replay_service.rs")).unwrap());
-    ReplayStatics
-        .visit_file(&syn::parse_file(include_str!("../../src/mission_replays.rs")).unwrap());
-    ReplayStatics.visit_file(
-        &syn::parse_file(include_str!("../../src/game_session/replay_init.rs")).unwrap(),
-    );
+    ReplayStatics.visit_file(&parsed(include_str!("../../src/replay_service.rs")));
+    ReplayStatics.visit_file(&parsed(include_str!("../../src/mission_replays.rs")));
+    ReplayStatics.visit_file(&parsed(include_str!(
+        "../../src/game_session/replay_init.rs"
+    )));
 }
 
 #[test]
 fn timeline_reconciliation_and_history_are_private_owners() {
-    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
-    let owner = runtime
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "TimelineRuntime" => Some(item),
-            _ => None,
-        })
-        .expect("timeline runtime");
+    let runtime = parsed(include_str!("../../src/game_session/runtime.rs"));
+    let owner = item_struct(&runtime, "TimelineRuntime").expect("timeline runtime");
     for name in [
         "network",
         "history",
@@ -384,8 +343,7 @@ fn http_transport_does_not_own_replay_storage() {
             visit::visit_item_struct(self, item);
         }
     }
-    StorageDeclarations
-        .visit_file(&syn::parse_file(include_str!("../../src/http_server.rs")).unwrap());
+    StorageDeclarations.visit_file(&parsed(include_str!("../../src/http_server.rs")));
 }
 
 #[test]
@@ -415,7 +373,7 @@ fn diagnostic_and_image_builders_do_not_own_rpc_lifetimes() {
         include_str!("../../src/rpc_diagnostics.rs"),
         include_str!("../../src/rpc_screenshot.rs"),
     ] {
-        Boundaries.visit_file(&syn::parse_file(source).unwrap());
+        Boundaries.visit_file(&parsed(source));
     }
 }
 
@@ -482,23 +440,17 @@ fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
         include_str!("../../src/game_session/frame_simulate.rs"),
         include_str!("../../src/game_session/runtime.rs"),
     ] {
-        signatures.visit_file(&syn::parse_file(source).unwrap());
+        signatures.visit_file(&parsed(source));
     }
     assert!(signatures.found_advance && signatures.found_rpc);
 }
 
 #[test]
 fn scripted_modal_helpers_borrow_engine_without_timeline_authority() {
-    let source = syn::parse_file(include_str!("../../src/game_session/frame_simulate.rs")).unwrap();
+    let source = parsed(include_str!("../../src/game_session/frame_simulate.rs"));
     for name in ["drive_scripted_modal_lanes", "drive_leave_mission_prompt"] {
-        let function = source
-            .items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("missing modal helper {name}"));
+        let function =
+            item_fn(&source, name).unwrap_or_else(|| panic!("missing modal helper {name}"));
         struct Arguments;
         impl<'ast> Visit<'ast> for Arguments {
             fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
@@ -542,15 +494,8 @@ fn scripted_modal_helpers_borrow_engine_without_timeline_authority() {
 
 #[test]
 fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
-    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
-    let owner = runtime
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "MissionRuntime" => Some(item),
-            _ => None,
-        })
-        .expect("mission runtime");
+    let runtime = parsed(include_str!("../../src/game_session/runtime.rs"));
+    let owner = item_struct(&runtime, "MissionRuntime").expect("mission runtime");
     let ingress = owner
         .fields
         .iter()
@@ -591,9 +536,9 @@ fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
         include_str!("../../src/http_server.rs"),
         include_str!("../../src/http_server/ingress.rs"),
     ] {
-        let syntax = syn::parse_file(source).unwrap();
+        let syntax = parsed(source);
         StaticTypes.visit_file(&syntax);
-        for item in syntax.items {
+        for item in &syntax.items {
             if let syn::Item::Static(item) = item {
                 let name = item.ident.to_string();
                 assert!(
@@ -613,16 +558,9 @@ fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
 
 #[test]
 fn frontend_policy_and_observation_owners_remain_private() {
-    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
-    let structure = |name: &str| {
-        host.items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Struct(item) if item.ident == name => Some(item),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("missing owner {name}"))
-    };
+    let host = parsed(include_str!("../../src/host.rs"));
+    let structure =
+        |name: &str| item_struct(&host, name).unwrap_or_else(|| panic!("missing owner {name}"));
     let frontend = structure("HostFrontend");
     for (owner, fields) in [
         (
@@ -666,14 +604,8 @@ fn frontend_policy_and_observation_owners_remain_private() {
             );
         }
     }
-    let input = syn::parse_file(include_str!("../../src/frontend_input.rs")).unwrap();
-    let pointer_sequence = input
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "FrontendPointerSequence" => Some(item),
-            _ => None,
-        })
+    let input = parsed(include_str!("../../src/frontend_input.rs"));
+    let pointer_sequence = item_struct(&input, "FrontendPointerSequence")
         .expect("pointer sequence owns capture and gesture together");
     assert!(
         pointer_sequence
@@ -713,15 +645,8 @@ fn frontend_policy_and_observation_owners_remain_private() {
             "{name} must expose operations, not writable fields"
         );
     }
-    let diagnostics = syn::parse_file(include_str!("../../src/frontend_diagnostics.rs")).unwrap();
-    let owner = diagnostics
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "FrontendDiagnostics" => Some(item),
-            _ => None,
-        })
-        .expect("diagnostics owner");
+    let diagnostics = parsed(include_str!("../../src/frontend_diagnostics.rs"));
+    let owner = item_struct(&diagnostics, "FrontendDiagnostics").expect("diagnostics owner");
     assert!(
         owner
             .fields
@@ -839,8 +764,8 @@ fn phase_guard_distinguishes_shared_queries_from_mutation_escapes() {
 
 #[test]
 fn production_render_and_audio_capabilities_exclude_broad_authority() {
-    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
-    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    let runtime = parsed(include_str!("../../src/game_session/runtime.rs"));
+    let host = parsed(include_str!("../../src/host.rs"));
     for (syntax, name, expected) in [
         (
             &runtime,
@@ -853,14 +778,7 @@ fn production_render_and_audio_capabilities_exclude_broad_authority() {
             vec!["frontend", "sound", "options", "local_seat", "application"],
         ),
     ] {
-        let view = syntax
-            .items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Struct(view) if view.ident == name => Some(view),
-                _ => None,
-            })
-            .expect("production capability exists");
+        let view = item_struct(&syntax, name).expect("production capability exists");
         let fields: Vec<_> = view
             .fields
             .iter()
@@ -918,7 +836,7 @@ fn render_consumers_cannot_request_a_whole_host() {
         include_str!("../../src/game_render/minimap.rs"),
         include_str!("../../src/game_session/render.rs"),
     ] {
-        let syntax = syn::parse_file(source).unwrap();
+        let syntax = parsed(source);
         for item in &syntax.items {
             let syn::Item::Fn(function) = item else {
                 continue;
@@ -952,15 +870,9 @@ fn render_consumers_cannot_request_a_whole_host() {
 
 #[test]
 fn draw_capability_has_no_mutable_frontend_or_application_authority() {
-    let syntax = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
-    let view = syntax
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(view) if view.ident == "HostDraw" => Some(view),
-            _ => None,
-        })
-        .expect("production immutable draw capability exists");
+    let syntax = parsed(include_str!("../../src/host.rs"));
+    let view =
+        item_struct(&syntax, "HostDraw").expect("production immutable draw capability exists");
     let fields: Vec<_> = view
         .fields
         .iter()
@@ -1018,15 +930,8 @@ fn draw_capability_has_no_mutable_frontend_or_application_authority() {
         assert!(matches!(&method.sig.output, syn::ReturnType::Type(_, ty)
             if readonly_reference_to(ty, expected)));
     }
-    let render = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
-    let draw = render
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == "render_frame" => Some(function),
-            _ => None,
-        })
-        .expect("production render entry point exists");
+    let render = parsed(include_str!("../../src/game_session/render.rs"));
+    let draw = item_fn(&render, "render_frame").expect("production render entry point exists");
     assert!(draw.sig.inputs.iter().any(|input| matches!(input,
         syn::FnArg::Typed(argument) if readonly_reference_to(&argument.ty, "HostDraw"))));
     for input in &draw.sig.inputs {
@@ -1054,15 +959,8 @@ fn draw_capability_has_no_mutable_frontend_or_application_authority() {
 
 #[test]
 fn hud_draw_context_receives_decisions_not_mutable_hover_clocks() {
-    let syntax = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
-    let context = syntax
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Struct(view) if view.ident == "RenderContext" => Some(view),
-            _ => None,
-        })
-        .expect("production draw context exists");
+    let syntax = parsed(include_str!("../../src/game_session/render.rs"));
+    let context = item_struct(&syntax, "RenderContext").expect("production draw context exists");
     let field = |name: &str| {
         context
             .fields
@@ -1111,14 +1009,8 @@ pub(super) fn assert_production_views_are_readonly() {
     ] {
         let source = std::fs::read_to_string(root.join(file)).expect("read phase definition");
         let syntax = syn::parse_file(&source).expect("parse phase definition");
-        let view = syntax
-            .items
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Struct(view) if view.ident == name => Some(view),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("missing production phase {name}"));
+        let view =
+            item_struct(&syntax, name).unwrap_or_else(|| panic!("missing production phase {name}"));
         assert!(
             violations(view, presentation).is_empty(),
             "{name}: {:?}",

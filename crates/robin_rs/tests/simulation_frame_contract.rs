@@ -32,6 +32,8 @@ use robin_rs::sim_timeline::run_engine_frame_core;
 mod phase_capabilities;
 #[path = "support/reconstruction_contract.rs"]
 mod reconstruction_contract;
+#[path = "support/source_syntax.rs"]
+mod source_syntax;
 
 #[test]
 fn production_input_and_presentation_views_only_borrow_engine_queries() {
