@@ -4,6 +4,14 @@ use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile, Replay
 use robin_replay_format::native_admission::{self, AdmissionError, HELPER_NAME};
 use robin_replay_format::{ENGINE_VERSION_HASH, LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS};
 
+// Serialize every test that copies or spawns helpers, not just the copier.
+// Admission's pre_exec containment requires fork: a concurrent fork could
+// inherit the copier's writable destination descriptor until the child execs.
+// Closing the parent's descriptor alone would then leave the installed helper
+// temporarily non-executable (ETXTBSY). This prevents that race; it does not
+// establish it as the cause of any particular transient failure.
+static HELPER_FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn replay() -> ReplayFile {
     ReplayFile {
         header: ReplayHeader {
@@ -36,6 +44,9 @@ fn compact(file: ReplayFile) -> String {
 
 #[test]
 fn cargo_and_installed_helpers_accept_exact_current_artifacts() {
+    let _fixture_guard = HELPER_FIXTURE_LOCK
+        .lock()
+        .expect("helper fixture lock poisoned");
     let input = compact(replay());
     native_admission::validate_in_native_child(&input).unwrap();
     let install = tempfile::tempdir().unwrap();
@@ -49,6 +60,9 @@ fn cargo_and_installed_helpers_accept_exact_current_artifacts() {
 
 #[test]
 fn hostile_transport_and_oversized_input_fail_closed() {
+    let _fixture_guard = HELPER_FIXTURE_LOCK
+        .lock()
+        .expect("helper fixture lock poisoned");
     assert!(matches!(
         native_admission::validate_in_native_child(
             &"x".repeat(LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_input_bytes + 1)
@@ -65,6 +79,9 @@ fn hostile_transport_and_oversized_input_fail_closed() {
 
 #[test]
 fn helper_rejects_wire_valid_packages_for_a_different_spellforge_vm() {
+    let _fixture_guard = HELPER_FIXTURE_LOCK
+        .lock()
+        .expect("helper fixture lock poisoned");
     let mut file = replay();
     use robin_engine::mission_assets::*;
     file.header.mission_assets = MissionAssetDescriptor::archive(
@@ -116,6 +133,9 @@ fn helper_rejects_wire_valid_packages_for_a_different_spellforge_vm() {
 
 #[test]
 fn an_unrelated_executable_is_not_an_admission_helper() {
+    let _fixture_guard = HELPER_FIXTURE_LOCK
+        .lock()
+        .expect("helper fixture lock poisoned");
     let install = tempfile::tempdir().unwrap();
     std::fs::copy("/bin/true", install.path().join(HELPER_NAME)).unwrap();
     assert!(
