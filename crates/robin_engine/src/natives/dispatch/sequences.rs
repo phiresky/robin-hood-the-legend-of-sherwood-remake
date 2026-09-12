@@ -619,8 +619,9 @@ impl NativeContext<'_, '_> {
                 // `direction == -1` means "use actor's current direction".
                 let actor_dir = self
                     .get_entity(actor)
-                    .map(|e| e.element_data().direction())
-                    .unwrap_or(0);
+                    .expect("validated RecordLeaveGame actor is missing")
+                    .element_data()
+                    .direction();
                 let effective_dir = if direction == -1 {
                     actor_dir
                 } else {
