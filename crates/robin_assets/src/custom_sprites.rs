@@ -1,5 +1,6 @@
 //! Custom sprite manifests and portable encoding, independent of game sessions.
 //! Disposable cache persistence and live installation remain client responsibilities.
+mod admission;
 pub mod family;
 pub mod shipping;
 use crate::frame_holder as assets_frame_holder;
