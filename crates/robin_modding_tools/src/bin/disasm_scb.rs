@@ -88,6 +88,26 @@ fn run_single(path: &str, args: &Args) -> std::process::ExitCode {
 
 fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
     let out_dir = Path::new(out_dir);
+    // Validate the complete output plan before touching the destination.
+    // Different directories (or a repeated input) can share one stem; writing
+    // both would silently overwrite an output and misreport the batch count.
+    let mut outputs = HashMap::new();
+    let mut planned = Vec::with_capacity(args.paths.len());
+    for path in &args.paths {
+        let stem = Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        let out_path = out_dir.join(format!("{stem}.ts"));
+        if let Some(previous) = outputs.insert(out_path.clone(), path) {
+            tracing::error!(
+                "batch inputs {previous:?} and {path:?} both target {}",
+                out_path.display()
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+        planned.push((path, stem, out_path));
+    }
     if let Err(e) = std::fs::create_dir_all(out_dir) {
         tracing::error!("create {}: {e}", out_dir.display());
         return std::process::ExitCode::FAILURE;
@@ -97,12 +117,7 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
     let mut ok = 0usize;
     let mut failed = false;
 
-    for path in &args.paths {
-        let stem = Path::new(path)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.clone());
-
+    for (path, stem, out_path) in planned {
         // Missing-mission errors from the profile lookup are non-fatal here —
         // fall through and decompile without names.
         let names =
@@ -125,7 +140,6 @@ fn run_batch(out_dir: &str, args: &Args) -> std::process::ExitCode {
             }
         }
 
-        let out_path = out_dir.join(format!("{stem}.ts"));
         if let Err(e) = std::fs::write(&out_path, text) {
             tracing::error!("write {}: {e}", out_path.display());
             failed = true;
@@ -376,6 +390,56 @@ mod tests {
                 .iter()
                 .map(|path| path.to_str().unwrap().to_owned())
                 .collect(),
+        }
+    }
+
+    #[test]
+    fn colliding_batch_outputs_fail_before_creating_or_modifying_destination() {
+        for repeated_input in [false, true] {
+            for existing_destination in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let first_dir = directory.path().join("first");
+                let second_dir = directory.path().join("second");
+                std::fs::create_dir(&first_dir).unwrap();
+                std::fs::create_dir(&second_dir).unwrap();
+                let first = first_dir.join("mission.scb");
+                let second = second_dir.join("mission.scb");
+                let unique = directory.path().join("unique.scb");
+                for path in [&first, &second, &unique] {
+                    write_script(path);
+                }
+                let out = directory.path().join("out");
+                if existing_destination {
+                    std::fs::create_dir(&out).unwrap();
+                    std::fs::write(out.join("mission.ts"), b"previous output").unwrap();
+                    std::fs::write(out.join("_duplicates.md"), b"previous summary").unwrap();
+                }
+                let conflicting = if repeated_input { &first } else { &second };
+                assert_eq!(
+                    run_batch(
+                        out.to_str().unwrap(),
+                        &batch_args(&[&unique, &first, conflicting]),
+                    ),
+                    std::process::ExitCode::FAILURE
+                );
+                assert!(!out.join("unique.ts").exists());
+                if existing_destination {
+                    assert_eq!(
+                        std::fs::read(out.join("mission.ts")).unwrap(),
+                        b"previous output"
+                    );
+                    assert_eq!(
+                        std::fs::read(out.join("_duplicates.md")).unwrap(),
+                        b"previous summary"
+                    );
+                    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2);
+                } else {
+                    assert!(
+                        !out.exists(),
+                        "collision preflight must not create a destination"
+                    );
+                }
+            }
         }
     }
 

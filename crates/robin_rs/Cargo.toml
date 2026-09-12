@@ -339,3 +339,7 @@ test = true
 [[example]]
 name = "sprite_compression_probe"
 test = true
+
+[[example]]
+name = "verify_rollback"
+test = true

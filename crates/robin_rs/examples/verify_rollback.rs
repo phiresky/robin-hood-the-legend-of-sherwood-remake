@@ -14,7 +14,9 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use std::collections::VecDeque;
+use std::path::Path;
 
+use anyhow::Context;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::replay::state_hash;
 use robin_rs::Host;
@@ -23,7 +25,7 @@ const WARMUP_FRAMES: u32 = 30;
 const TOTAL_FRAMES: u32 = 100;
 const WINDOW: usize = 25;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
@@ -88,21 +90,10 @@ fn main() {
     });
     if let Some(name) = mission_name {
         let path = format!("Data/Levels/{name}.scb");
-        let resolved = robin_engine::sbfile::resolve_case_insensitive(std::path::Path::new(&path))
-            .unwrap_or_else(|| std::path::PathBuf::from(&path));
-        if let Ok(b) = std::fs::read(&resolved)
-            && let Ok(scb) = robin_assets::scb::parse_bytes(&b)
-        {
-            let mut m = std::collections::BTreeMap::new();
-            m.insert(
-                name,
-                std::sync::Arc::new(
-                    robin_engine::script_manager::ScriptProgram::from_scb(scb)
-                        .expect("prepare mission script bytecode"),
-                ),
-            );
-            assets.scripts.mission_programs = std::sync::Arc::new(m);
-        }
+        let program = load_mission_program(Path::new(&path))?;
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(name, std::sync::Arc::new(program));
+        assets.scripts.mission_programs = std::sync::Arc::new(m);
     }
 
     let loaded = robin_engine::engine::level_loading::load_mission_for_campaign(
@@ -203,6 +194,26 @@ fn main() {
     if desyncs != 0 {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+fn load_mission_program(
+    path: &Path,
+) -> anyhow::Result<robin_engine::script_manager::ScriptProgram> {
+    let resolved =
+        robin_engine::sbfile::resolve_case_insensitive(path).unwrap_or_else(|| path.to_path_buf());
+    let scb = robin_assets::scb::parse_file(&resolved)
+        .with_context(|| format!("load mission script {}", resolved.display()))?;
+    robin_engine::script_manager::ScriptProgram::from_scb(scb)
+        .with_context(|| format!("prepare mission script bytecode {}", resolved.display()))
+}
+
+fn diagnostic_preview(value: &str) -> String {
+    if value.len() <= 80 {
+        return value.to_owned();
+    }
+    let end = value.floor_char_boundary(80);
+    format!("{}…", &value[..end])
 }
 
 /// Walk two JSON values in parallel and log every leaf where they
@@ -245,17 +256,65 @@ fn diff_json(path: &str, a: &serde_json::Value, b: &serde_json::Value) {
         _ => {
             let sa = a.to_string();
             let sb = b.to_string();
-            let sa = if sa.len() > 80 {
-                format!("{}…", &sa[..80])
-            } else {
-                sa
-            };
-            let sb = if sb.len() > 80 {
-                format!("{}…", &sb[..80])
-            } else {
-                sb
-            };
+            let sa = diagnostic_preview(&sa);
+            let sb = diagnostic_preview(&sb);
             tracing::warn!("DIFF {path}: live={sa} replayed={sb}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_mission_script_reports_path_and_io_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.scb");
+        let error = load_mission_program(&path).unwrap_err();
+        assert!(error.to_string().contains(&path.display().to_string()));
+        match error.downcast_ref::<robin_assets::scb::Error>().unwrap() {
+            robin_assets::scb::Error::Io(cause) => {
+                assert_eq!(cause.kind(), std::io::ErrorKind::NotFound);
+            }
+            other => panic!("expected file read failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_mission_script_reports_resolved_path_and_parse_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let actual = dir.path().join("Mission.SCB");
+        std::fs::write(&actual, b"not-scb!").unwrap();
+        let requested = dir.path().join("mission.scb");
+        let error = load_mission_program(&requested).unwrap_err();
+        assert!(error.to_string().contains(&actual.display().to_string()));
+        assert!(matches!(
+            error.downcast_ref::<robin_assets::scb::Error>(),
+            Some(robin_assets::scb::Error::BadMagic { .. })
+        ));
+        assert!(format!("{error:#}").contains("not a .scb file"));
+    }
+
+    #[test]
+    fn diagnostic_preview_preserves_short_text_and_ascii_byte_limit() {
+        for value in ["", "Robin", "é"] {
+            assert_eq!(diagnostic_preview(value), value);
+        }
+        let boundary = "a".repeat(80);
+        assert_eq!(diagnostic_preview(&boundary), boundary);
+        assert_eq!(diagnostic_preview(&"a".repeat(81)), format!("{boundary}…"));
+    }
+
+    #[test]
+    fn diagnostic_preview_does_not_split_multibyte_text_at_byte_eighty() {
+        let prefix = "a".repeat(79);
+        assert_eq!(
+            diagnostic_preview(&format!("{prefix}é!")),
+            format!("{prefix}…")
+        );
+        // JSON adds an opening quote, putting the multibyte character across byte 80.
+        let live = serde_json::json!(format!("{}é!", "a".repeat(78)));
+        diff_json("text", &live, &serde_json::json!("different"));
     }
 }
