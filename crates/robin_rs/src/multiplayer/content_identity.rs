@@ -479,7 +479,9 @@ mod tests {
         let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         ));
-        assert_eq!(files.add_overlay_path(overlay.path().to_str().unwrap()), 0);
+        files
+            .add_overlay_path(overlay.path().to_str().unwrap())
+            .expect("mount fixture asset directory");
         let error = super::active_content_identity(&files).unwrap_err();
         assert!(error.contains("unsupported overlay is active"), "{error}");
     }

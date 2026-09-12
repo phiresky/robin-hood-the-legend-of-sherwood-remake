@@ -458,7 +458,9 @@ mod tests {
             assert_eq!(music, Path::new("Data/Music/reader.ogg"));
             assert!(load_streaming_sound(&files, &music).is_ok());
             let old_key = sample_cache_key(&files, &sample);
-            files.set_locale_paths(Some("other-locale"), None);
+            files
+                .set_locale_paths(Some("other-locale"), None)
+                .expect("change fixture audio locale");
             assert_ne!(sample_cache_key(&files, &sample), old_key);
         }
     }
@@ -470,7 +472,9 @@ mod tests {
         let path = root.path().join("sample.wav");
         std::fs::write(&path, one_second_wav()).unwrap();
         let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-        files.lock_ranked_verifier_primary_path(root.path());
+        files
+            .lock_ranked_verifier_primary_path(root.path())
+            .expect("confine fixture playback decoders");
         assert!(load_static_sound(&files, Path::new("sample.wav")).is_ok());
         assert!(load_streaming_sound(&files, Path::new("sample.wav")).is_ok());
         assert!(load_static_sound(&files, &path).is_err());
@@ -643,7 +647,9 @@ mod tests {
         let files = Arc::new(SbFileSystem::new(Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         )));
-        files.lock_ranked_verifier_primary_path(root.path());
+        files
+            .lock_ranked_verifier_primary_path(root.path())
+            .expect("confine fixture sample loader");
         let loader = create_sample_loader_with_files(PathBuf::new(), files.clone(), None);
         assert_eq!(loader("sample.wav").unwrap().2, 1000);
         assert!(loader(path.to_str().unwrap()).is_none());
