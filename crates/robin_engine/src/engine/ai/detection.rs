@@ -5930,7 +5930,7 @@ fn build_enemy_detection_tick_data(
                 archer_behind_me: me_snap.archer_behind_me,
                 ai_state: me_snap.ai_state,
                 shield_bearer_before_me: me_snap.shield_bearer_before_me,
-                current_substate: me_snap.ai_substate as u32,
+                current_substate: me_snap.ai_substate,
                 hth_weapon_id: me_snap.hth_weapon_id,
                 action_state: me_snap.action_state,
                 shield_bearer_direction: me_snap.shield_bearer_direction,
@@ -6010,7 +6010,7 @@ fn build_enemy_detection_tick_data(
                 archer_behind_me: ss.archer_behind_me,
                 ai_state: ss.ai_state,
                 shield_bearer_before_me: ss.shield_bearer_before_me,
-                current_substate: ss.ai_substate as u32,
+                current_substate: ss.ai_substate,
                 hth_weapon_id: ss.hth_weapon_id,
                 action_state: ss.action_state,
                 shield_bearer_direction: ss.shield_bearer_direction,
@@ -6096,7 +6096,7 @@ fn build_enemy_detection_tick_data(
                 shield_bearer_before_me: None,
                 // PCs aren't AI-driven, so the substate
                 // concept doesn't apply — leave it 0.
-                current_substate: 0,
+                current_substate: crate::ai::Substate::default(),
                 hth_weapon_id: pc.hth_weapon_id,
                 action_state: pc.action_state,
                 shield_bearer_direction: 0,

@@ -1657,7 +1657,7 @@ impl EngineInner {
                 in_sword_action_state: s.actor.action_state.is_sword(),
                 elevation: s.element.position().z,
                 seek_position,
-                current_substate: s.npc.ai_substate() as u32,
+                current_substate: s.npc.ai_substate(),
                 archer_behind_me: enemy_ai_other.archer_behind_me,
                 ai_state: s.npc.ai_state(),
                 shield_bearer_before_me: enemy_ai_other.shield_bearer_before_me,
@@ -1786,8 +1786,8 @@ impl EngineInner {
                     .pc
                     .ai
                     .as_deref()
-                    .map(|ai| ai.ai_substate() as u32)
-                    .unwrap_or(0),
+                    .map(crate::element::AiActorData::ai_substate)
+                    .unwrap_or_default(),
                 archer_behind_me: None,
                 ai_state: pc
                     .pc
