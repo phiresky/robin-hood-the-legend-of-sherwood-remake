@@ -595,6 +595,10 @@ impl EngineInner {
     ///
     /// Notifications are queued (rather than fired inline) to avoid
     /// re-entrant borrows; this method drains the queue.
+    /// Cascading state changes can cross owners, including after an NPC Think
+    /// call. Filtering by the originating NPC would strand nested removal
+    /// notifications until later in the frame, so this global synchronous
+    /// boundary drains all queued cards depth-first.
     pub(super) fn dispatch_condolations(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -688,20 +692,6 @@ impl EngineInner {
             }
         }
         Ok(())
-    }
-
-    /// Complete pending condolence stack frames after an NPC Think call.
-    /// Cascading state changes can cross owners, so filtering by the
-    /// originating NPC would strand a nested removal notification until
-    /// later in the frame.  Once this synchronous boundary is entered, all
-    /// queued cards must therefore drain depth-first.
-    pub(super) fn dispatch_condolations_for_npc(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        _npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.dispatch_condolations(sim, assets);
     }
 
     /// Close terminal cards for one live actor owner, then follow newly

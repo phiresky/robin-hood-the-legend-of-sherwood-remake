@@ -1039,7 +1039,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
         .orders
         .sequence_manager
         .element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
-    engine.dispatch_condolations_for_npc(sim, first, &LevelAssets::new());
+    engine.dispatch_condolations(sim, &LevelAssets::new());
 
     for (idx, owner) in [(1, second), (2, third)] {
         assert_eq!(

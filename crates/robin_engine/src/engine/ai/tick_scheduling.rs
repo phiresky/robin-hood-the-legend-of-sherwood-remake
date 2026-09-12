@@ -294,7 +294,7 @@ impl EngineInner {
             // selected-element cleanup.
             for _ in 0..halt_count {
                 self.halt_actor(npc_id);
-                self.dispatch_condolations_for_npc(sim, npc_id, assets);
+                self.dispatch_condolations(sim, assets);
             }
         }
 
@@ -361,7 +361,7 @@ impl EngineInner {
             // quit replaces a selected command, its removal-notification
             // callback therefore re-enters the decision tick before swordfight exit
             // returns to its caller.
-            self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            self.dispatch_condolations(sim, assets);
         }
 
         // Process stop_menace — the explicit `STOP_MENACE` element

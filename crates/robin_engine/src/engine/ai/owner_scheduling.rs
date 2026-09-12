@@ -267,7 +267,7 @@ impl EngineInner {
             launched_moves.extend(self.drain_pending_move_requests_for_owner(sim, npc_id));
             self.surface_synchronous_completion_events_for_owner(npc_id);
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
-            self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            self.dispatch_condolations(sim, assets);
         }
 
         let finish_macro = self
@@ -1111,7 +1111,7 @@ impl EngineInner {
             // All foreign cards that predated this direct boundary are held
             // aside above. Any foreign-owner card visible here was therefore
             // produced causally on this call stack and must close now.
-            self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            self.dispatch_condolations(sim, assets);
             let has_self_stimuli = {
                 let ai = self
                     .world
@@ -1180,7 +1180,7 @@ impl EngineInner {
 
         self.drain_ai_owner_work_for(sim, assets, npc_id);
         self.apply_pending_ai_halt(npc_id);
-        self.dispatch_condolations_for_npc(sim, npc_id, assets);
+        self.dispatch_condolations(sim, assets);
 
         self.orders
             .sequence_manager
