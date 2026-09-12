@@ -643,16 +643,6 @@ pub fn global() -> &'static Arc<AssetVfs> {
     GLOBAL.get_or_init(|| Arc::new(AssetVfs::new()))
 }
 
-/// Install the shipping bundle at the highest regular-mount priority.
-pub fn install_bundle(bundle: Arc<Bundle>) -> Result<(), AssetError> {
-    global().mount_bundle_first(bundle)
-}
-
-/// Replace the process runtime's current language overlay.
-pub fn install_locale_bundle(bundle: Option<Arc<Bundle>>) -> Result<(), AssetError> {
-    global().set_locale_bundle(bundle)
-}
-
 pub fn is_required_locale_key(key: &str) -> bool {
     key == "text" || key.starts_with("text/") || key.eq_ignore_ascii_case("interface/start.sxt")
 }
@@ -673,10 +663,6 @@ pub fn is_locale_overlay_key(key: &str) -> bool {
         || is_optional_english_fallback_key(key)
 }
 
-/// Install an engine-owned overlay ahead of mission and shipping assets.
-pub fn install_overlay_bundle(bundle: Arc<Bundle>) -> Result<(), AssetError> {
-    global().mount_overlay_bundle(bundle)
-}
 /// Install or replace one host-preloaded asset.
 pub fn install_preloaded_asset<P: AsRef<Path>>(path: P, bytes: Vec<u8>) -> Result<(), AssetError> {
     global().install_preloaded_asset(path, bytes)

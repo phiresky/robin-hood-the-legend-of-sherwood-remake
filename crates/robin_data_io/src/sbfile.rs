@@ -510,8 +510,6 @@ pub struct SbFile {
     /// filesystem *or* the shipping-datadir byte store hosted in
     /// `robin_util::asset_fs` without a type split.
     file: Cursor<AssetBytes>,
-    size: u64,
-    position: u64,
     last_error: i32,
     /// Logical path requested by the caller. Typed legacy readers surface it
     /// in field-level parse errors even when bytes came from an overlay.
@@ -1177,11 +1175,8 @@ impl SbFile {
 
     fn from_bytes(bytes: impl Into<AssetBytes>, path: String) -> Self {
         let bytes = bytes.into();
-        let size = bytes.len() as u64;
         SbFile {
             file: Cursor::new(bytes),
-            size,
-            position: 0,
             last_error: SBFILE_NO_ERROR,
             path,
         }
@@ -1207,7 +1202,6 @@ impl SbFile {
     pub fn read(&mut self, buf: &mut [u8]) -> i32 {
         match self.file.read_exact(buf) {
             Ok(()) => {
-                self.position += buf.len() as u64;
                 self.last_error = SBFILE_NO_ERROR;
                 SBFILE_NO_ERROR
             }
@@ -1229,8 +1223,7 @@ impl SbFile {
             }
         };
         match self.file.seek(seek_from) {
-            Ok(pos) => {
-                self.position = pos;
+            Ok(_) => {
                 self.last_error = SBFILE_NO_ERROR;
                 SBFILE_NO_ERROR
             }
@@ -1242,19 +1235,14 @@ impl SbFile {
     }
 
     pub fn tell(&mut self) -> u64 {
-        self.file.stream_position().unwrap_or(self.position)
+        self.file.position()
     }
     pub fn get_size(&self) -> u64 {
-        self.size
+        self.file.get_ref().len() as u64
     }
     pub fn path(&self) -> &str {
         &self.path
     }
-    /// True once the cursor has reached the end of the in-memory buffer.
-    pub fn is_eof(&self) -> bool {
-        self.position >= self.size
-    }
-
     // ── Binary readers ───────────────────────────────────────────
 
     // Scalar and authored-format parsing live in legacy_io::LegacyReader.
@@ -1385,12 +1373,6 @@ impl SbFile {
     /// retain the returned instance instead of consulting global mounts.
     pub fn snapshot_legacy_file_system() -> SbFileSystem {
         global_file_system().snapshot()
-    }
-
-    pub fn official_projection_lookup_is_strict() -> bool {
-        global_file_system()
-            .official_projection_strict
-            .load(Ordering::Acquire)
     }
 
     /// Atomically install the only source, locale, and built-in overlay roots
@@ -2464,6 +2446,61 @@ mod tests {
     }
 
     #[test]
+    fn read_positions_and_partial_failure_match_the_backing_cursor() {
+        let bytes = b"Hello".to_vec();
+        let mut expected = Cursor::new(bytes.clone());
+        let mut file = SbFile::from_owned_bytes(bytes, "cursor fixture");
+        // The oversized read starts with some bytes still available. Compare
+        // both its destination and cursor against Read::read_exact rather
+        // than maintaining a second, potentially stale position counter.
+        for count in [2, 4, 1, 0] {
+            let mut actual_bytes = vec![0xaa; count];
+            let mut expected_bytes = actual_bytes.clone();
+            let expected_code = if expected.read_exact(&mut expected_bytes).is_ok() {
+                SBFILE_NO_ERROR
+            } else {
+                SBFILE_ERROR_READ
+            };
+            assert_eq!(file.read(&mut actual_bytes), expected_code);
+            assert_eq!(file.last_error, expected_code);
+            assert_eq!(actual_bytes, expected_bytes);
+            assert_eq!(file.tell(), expected.position());
+            assert_eq!(file.get_size(), 5);
+        }
+        assert_eq!(file.into_bytes(), b"Hello");
+    }
+
+    #[test]
+    fn seeks_preserve_error_codes_positions_and_backing_size() {
+        let mut file = SbFile::from_owned_bytes(b"Hello".to_vec(), "seek fixture");
+        assert_eq!(file.skip(-1, 1), SBFILE_ERROR_SEEK);
+        assert_eq!(file.last_error, SBFILE_ERROR_SEEK);
+        assert_eq!(file.tell(), 0);
+        assert_eq!(file.skip(-6, 2), SBFILE_ERROR_SEEK);
+        assert_eq!(file.tell(), 0);
+        assert_eq!(file.skip(2, 0), SBFILE_NO_ERROR);
+        assert_eq!(file.last_error, SBFILE_NO_ERROR);
+        assert_eq!(file.skip(-3, 1), SBFILE_ERROR_SEEK);
+        assert_eq!(file.tell(), 2);
+        assert_eq!(file.skip(10, 0), SBFILE_NO_ERROR);
+        assert_eq!(file.tell(), 10);
+        assert_eq!(file.get_size(), 5);
+        assert_eq!(file.read(&mut [0; 1]), SBFILE_ERROR_READ);
+        assert_eq!(file.tell(), 10);
+        assert_eq!(file.skip(-1, 2), SBFILE_NO_ERROR);
+        let mut last = [0];
+        assert_eq!(file.read(&mut last), SBFILE_NO_ERROR);
+        assert_eq!(last, *b"o");
+        assert_eq!(file.tell(), 5);
+        // Preserve the legacy absolute-seek cast and overflow handling.
+        assert_eq!(file.skip(-1, 0), SBFILE_NO_ERROR);
+        assert_eq!(file.tell(), u64::MAX);
+        assert_eq!(file.skip(1, 1), SBFILE_ERROR_SEEK);
+        assert_eq!(file.tell(), u64::MAX);
+        assert_eq!(file.get_size(), 5);
+    }
+
+    #[test]
     fn deserialize_u32_le() {
         let dir = std::env::temp_dir().join("sbfile_ro_u32");
         let _ = fs::create_dir_all(&dir);
@@ -3234,6 +3271,10 @@ mod tests {
         let mut prefix = [0; 2];
         assert_eq!(stream.read(&mut prefix), SBFILE_NO_ERROR);
         assert_eq!(prefix, *b"sh");
+        assert_eq!(stream.skip(100, 0), SBFILE_NO_ERROR);
+        assert_eq!(stream.read(&mut prefix), SBFILE_ERROR_READ);
+        assert_eq!(stream.tell(), 100);
+        assert_eq!(stream.get_size(), source.len() as u64);
         let backing = stream.into_shared_bytes();
         assert_eq!(backing.as_ref(), b"shared bytes");
         assert_eq!(backing.as_ptr(), source.as_ptr());
