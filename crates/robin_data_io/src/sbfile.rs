@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use std::fs;
@@ -65,23 +65,80 @@ pub struct SbFileSystem {
     #[cfg(not(target_arch = "wasm32"))]
     working_directory: Option<PathBuf>,
     assets: Arc<robin_util::asset_fs::AssetVfs>,
-    alternate_paths: Mutex<Vec<String>>,
-    /// The selected locale root, fallback root, and presentation language.
-    /// Keeping them behind
-    /// one mutex makes a runtime language switch atomic: readers can observe
-    /// either the old pair or the new pair, never a selected locale from one
-    /// configuration and a fallback from another.
-    locale_paths: Mutex<LocaleLookup>,
-    overlay_paths: Mutex<Vec<OverlayRoot>>,
-    primary_path: Mutex<Option<PathBuf>>,
-    /// Irreversible one-job verifier confinement. When set, every legacy
-    /// lookup bypasses overlays, locales, embedded VFS data, the process
-    /// working directory, and alternate paths, and resolves only below this
-    /// canonical root.
-    ranked_verifier_primary_path: Mutex<Option<PathBuf>>,
-    /// One-way closed lookup mode used only by the private official exporter.
-    /// Direct host-CWD and unrooted alternate fallthrough are forbidden.
-    official_projection_strict: AtomicBool,
+    // One immutable lookup generation, replaced under one lock. Readers clone
+    // only the Arc; writes copy a generation if an in-flight lookup retains it.
+    mounts: Mutex<Arc<MountState>>,
+}
+
+/// Runtime mount authority is not a persisted document. Snapshots expose only
+/// the explicit diagnostic SbFileMountSnapshot rather than serializing handles.
+#[derive(Clone, Default)]
+struct MountState {
+    alternate_paths: Vec<String>,
+    locale_paths: LocaleLookup,
+    overlay_paths: Vec<OverlayRoot>,
+    primary_path: Option<PathBuf>,
+    ranked_verifier_primary_path: Option<PathBuf>,
+    official_projection_strict: bool,
+}
+
+impl MountState {
+    fn ensure_mutable(&self, operation: &str) -> Result<(), SbFileError> {
+        if self.ranked_verifier_primary_path.is_some() {
+            tracing::warn!("ranked verifier filesystem rejected {operation}");
+            return Err(SbFileError::Sealed);
+        }
+        if self.official_projection_strict {
+            tracing::warn!("sealed filesystem rejected {operation}");
+            return Err(SbFileError::Sealed);
+        }
+        Ok(())
+    }
+
+    fn ranked_confined_candidates(&self, root: &Path, normalised: &str) -> Vec<PathBuf> {
+        let mut candidates = Vec::with_capacity(2);
+        if is_locale_overlay_path(normalised)
+            && let Some(locale) = self.locale_paths().0
+        {
+            candidates.push(root.join(locale).join(normalised));
+            if is_required_locale_path(normalised) {
+                return candidates;
+            }
+        }
+        candidates.push(root.join(normalised));
+        candidates
+    }
+
+    fn locale_path_snapshot_for(&self, path: &str) -> Vec<String> {
+        // A language pack is presentation data. Never allow an installed
+        // locale directory to replace levels, scripts, gameplay profiles, or
+        // any other simulation input merely because it contains a matching
+        // Data/ subtree.
+        if !is_locale_overlay_path(path) {
+            return Vec::new();
+        }
+        let (selected, fallback) = self.locale_paths();
+        let mut paths = Vec::with_capacity(2);
+        if let Some(selected) = selected {
+            paths.push(selected);
+        }
+        if let Some(fallback) = fallback
+            && is_optional_english_fallback_path(path)
+            && !paths
+                .iter()
+                .any(|selected| selected.eq_ignore_ascii_case(&fallback))
+        {
+            paths.push(fallback);
+        }
+        paths
+    }
+
+    fn locale_paths(&self) -> (Option<String>, Option<String>) {
+        (
+            self.locale_paths.selected.clone(),
+            self.locale_paths.fallback.clone(),
+        )
+    }
 }
 
 /// Presentation language identity travels with its lookup roots, including in
@@ -111,6 +168,10 @@ pub struct SbFileMountSnapshot {
 }
 
 impl SbFileSystem {
+    fn mount_state(&self) -> Arc<MountState> {
+        self.mounts.lock().unwrap().clone()
+    }
+
     /// The application-owned VFS used to configure this reader before mission
     /// snapshotting. Prepared readers must not be reconfigured after capture.
     pub fn asset_vfs(&self) -> &Arc<robin_util::asset_fs::AssetVfs> {
@@ -143,12 +204,7 @@ impl SbFileSystem {
             #[cfg(not(target_arch = "wasm32"))]
             working_directory: None,
             assets,
-            alternate_paths: Mutex::new(Vec::new()),
-            locale_paths: Mutex::new(LocaleLookup::default()),
-            overlay_paths: Mutex::new(Vec::new()),
-            primary_path: Mutex::new(None),
-            ranked_verifier_primary_path: Mutex::new(None),
-            official_projection_strict: AtomicBool::new(false),
+            mounts: Mutex::new(Arc::new(MountState::default())),
         }
     }
 }
@@ -702,9 +758,9 @@ impl SbFileSystem {
     /// Overlay mount identities in application order, including archives.
     /// Use these with `read_overlay` and `list_overlay_dir`, never as OS paths.
     pub fn overlay_sources(&self) -> Vec<String> {
-        self.overlay_paths
-            .lock()
-            .unwrap()
+        let mounts = self.mount_state();
+        mounts
+            .overlay_paths
             .iter()
             .map(|root| root.display_path().into_owned())
             .collect()
@@ -712,19 +768,17 @@ impl SbFileSystem {
 
     /// Optional physical directory, solely for disposable cache persistence.
     pub fn overlay_directory(&self, source: &str) -> Option<PathBuf> {
-        self.overlay_paths
-            .lock()
-            .unwrap()
-            .iter()
-            .find_map(|root| match root {
-                OverlayRoot::Directory(path) if root.display_path() == source => Some(path.clone()),
-                _ => None,
-            })
+        let mounts = self.mount_state();
+        mounts.overlay_paths.iter().find_map(|root| match root {
+            OverlayRoot::Directory(path) if root.display_path() == source => Some(path.clone()),
+            _ => None,
+        })
     }
 
     pub fn read_overlay(&self, source: &str, path: &str) -> Result<Option<Vec<u8>>, SbFileError> {
+        let mounts = self.mount_state();
         let path = checked_overlay_relative(path)?;
-        let roots = self.overlay_paths.lock().unwrap();
+        let roots = &mounts.overlay_paths;
         let root = roots
             .iter()
             .find(|root| root.display_path() == source)
@@ -739,8 +793,9 @@ impl SbFileSystem {
         source: &str,
         path: &str,
     ) -> Result<Vec<OverlayEntry>, SbFileError> {
+        let mounts = self.mount_state();
         let path = checked_overlay_relative(path)?;
-        let roots = self.overlay_paths.lock().unwrap();
+        let roots = &mounts.overlay_paths;
         let root = roots
             .iter()
             .find(|root| root.display_path() == source)
@@ -802,8 +857,9 @@ impl SbFileSystem {
     }
 
     pub fn resolve_data_dir_layers(&self, rel_dir: &str) -> Vec<PathBuf> {
+        let mounts = self.mount_state();
         let normalised = rel_dir.replace('\\', "/");
-        if let Some(root) = self.ranked_verifier_primary_path.lock().unwrap().clone() {
+        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
             let requested = Path::new(&normalised);
             if requested.is_absolute()
                 || requested
@@ -812,13 +868,13 @@ impl SbFileSystem {
             {
                 return Vec::new();
             }
-            return self
+            return mounts
                 .ranked_confined_candidates(&root, &normalised)
                 .into_iter()
                 .filter_map(|candidate| resolve_contained_directory(&root, &candidate))
                 .collect();
         }
-        let official_strict = self.official_projection_strict.load(Ordering::Acquire);
+        let official_strict = mounts.official_projection_strict;
         let requested = Path::new(&normalised);
         if official_strict
             && (requested.is_absolute()
@@ -831,7 +887,7 @@ impl SbFileSystem {
         }
         let mut candidates: Vec<PathBuf> = Vec::new();
         {
-            let overlays = self.overlay_paths.lock().unwrap();
+            let overlays = &mounts.overlay_paths;
             for overlay in overlays.iter().rev() {
                 #[allow(irrefutable_let_patterns)] // wasm has no Zip variant
                 if let OverlayRoot::Directory(dir) = overlay {
@@ -839,8 +895,8 @@ impl SbFileSystem {
                 }
             }
         }
-        let primary = self.primary_path.lock().unwrap().clone();
-        for locale_root in self.locale_path_snapshot_for(&normalised) {
+        let primary = mounts.primary_path.clone();
+        for locale_root in mounts.locale_path_snapshot_for(&normalised) {
             if !Path::new(&locale_root).is_absolute()
                 && let Some(primary) = &primary
             {
@@ -850,7 +906,8 @@ impl SbFileSystem {
                 candidates.push(Path::new(&locale_root).join(&normalised));
             }
         }
-        let strict_locale = self.locale_paths().0.is_some() && is_required_locale_path(&normalised);
+        let strict_locale =
+            mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised);
         if !strict_locale {
             if let Some(primary) = &primary {
                 candidates.push(primary.join(&normalised));
@@ -858,7 +915,7 @@ impl SbFileSystem {
             if !official_strict {
                 candidates.push(PathBuf::from(&normalised));
             }
-            for alt in self.alternate_paths.lock().unwrap().iter() {
+            for alt in mounts.alternate_paths.iter() {
                 if let Some(primary) = &primary {
                     candidates.push(primary.join(alt).join(&normalised));
                 }
@@ -880,21 +937,22 @@ impl SbFileSystem {
     }
 
     pub fn resolve_data_path(&self, path: &str) -> Option<PathBuf> {
+        let mounts = self.mount_state();
         let normalised = path.replace('\\', "/");
         let p = Path::new(&normalised);
-        if let Some(root) = self.ranked_verifier_primary_path.lock().unwrap().clone() {
+        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
             if p.is_absolute()
                 || p.components()
                     .any(|component| !matches!(component, std::path::Component::Normal(_)))
             {
                 return None;
             }
-            return self
+            return mounts
                 .ranked_confined_candidates(&root, &normalised)
                 .into_iter()
                 .find_map(|candidate| resolve_contained_file(&root, &candidate));
         }
-        let official_strict = self.official_projection_strict.load(Ordering::Acquire);
+        let official_strict = mounts.official_projection_strict;
         if official_strict && p.is_absolute() {
             tracing::warn!("official projection rejected absolute data path {normalised:?}");
             return None;
@@ -908,7 +966,7 @@ impl SbFileSystem {
         }
 
         // Overlay paths intentionally take precedence over the primary datadir.
-        let overlay_paths = self.overlay_paths.lock().unwrap();
+        let overlay_paths = &mounts.overlay_paths;
         // Overlays form a stack: the most recently mounted mission/package
         // must win over the core overlay and over any shared library mounted
         // underneath it.  Walking in insertion order made a local/core file
@@ -923,10 +981,9 @@ impl SbFileSystem {
                 return Some(resolved);
             }
         }
-        drop(overlay_paths);
 
-        let primary = self.primary_path.lock().unwrap().clone();
-        for locale_root in self.locale_path_snapshot_for(&normalised) {
+        let primary = mounts.primary_path.clone();
+        for locale_root in mounts.locale_path_snapshot_for(&normalised) {
             if !Path::new(&locale_root).is_absolute()
                 && let Some(primary) = &primary
             {
@@ -945,7 +1002,7 @@ impl SbFileSystem {
             }
         }
 
-        if self.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
+        if mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
             return None;
         }
 
@@ -965,7 +1022,7 @@ impl SbFileSystem {
         }
 
         // Alternate paths
-        let alt_paths = self.alternate_paths.lock().unwrap();
+        let alt_paths = &mounts.alternate_paths;
         for alt in alt_paths.iter() {
             if let Some(primary) = &primary {
                 let full = primary.join(alt).join(&normalised);
@@ -1122,9 +1179,10 @@ impl SbFile {
 
 impl SbFileSystem {
     pub fn open(&self, path: &str) -> Result<SbFile, SbFileError> {
+        let mounts = self.mount_state();
         let normalised = path.replace('\\', "/");
         let requested = Path::new(&normalised);
-        if let Some(root) = self.ranked_verifier_primary_path.lock().unwrap().clone() {
+        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
             if requested.is_absolute()
                 || requested
                     .components()
@@ -1133,7 +1191,7 @@ impl SbFileSystem {
                 return Err(SbFileError::Read);
             }
             let mut resolved = None;
-            for candidate in self.ranked_confined_candidates(&root, &normalised) {
+            for candidate in mounts.ranked_confined_candidates(&root, &normalised) {
                 if let Some(path) = try_resolve_contained_file(&root, &candidate)? {
                     resolved = Some(path);
                     break;
@@ -1149,7 +1207,7 @@ impl SbFileSystem {
             })?;
             return Ok(SbFile::from_bytes(bytes, normalised));
         }
-        let official_strict = self.official_projection_strict.load(Ordering::Acquire);
+        let official_strict = mounts.official_projection_strict;
         if requested.is_absolute() {
             if official_strict {
                 tracing::warn!("official projection rejected absolute open path {normalised:?}");
@@ -1166,16 +1224,15 @@ impl SbFileSystem {
             tracing::warn!("SbFile::open: rejected escaping path {normalised}");
             return Err(SbFileError::Read);
         }
-        let overlay_paths = self.overlay_paths.lock().unwrap();
+        let overlay_paths = &mounts.overlay_paths;
         for overlay in overlay_paths.iter().rev() {
             if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
                 return Ok(SbFile::from_bytes(bytes, normalised.clone()));
             }
         }
-        drop(overlay_paths);
 
-        let primary = self.primary_path.lock().unwrap().clone();
-        for locale_root in self.locale_path_snapshot_for(&normalised) {
+        let primary = mounts.primary_path.clone();
+        for locale_root in mounts.locale_path_snapshot_for(&normalised) {
             if !Path::new(&locale_root).is_absolute()
                 && let Some(primary) = &primary
                 && let Some(bytes) = try_read(
@@ -1198,7 +1255,7 @@ impl SbFileSystem {
             }
         }
 
-        if self.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
+        if mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
             tracing::warn!(
                 "SbFile::open: required localized asset {normalised} is absent from the selected pack"
             );
@@ -1229,7 +1286,7 @@ impl SbFileSystem {
         if let Some(bytes) = try_read(self, &normalised)? {
             return Ok(SbFile::from_bytes(bytes, normalised.clone()));
         }
-        let alt_paths = self.alternate_paths.lock().unwrap();
+        let alt_paths = &mounts.alternate_paths;
         for alt in alt_paths.iter() {
             if let Some(primary) = &primary
                 && let Some(bytes) =
@@ -1243,7 +1300,7 @@ impl SbFileSystem {
         }
         tracing::warn!(
             "SbFile::open: {normalised} not found (tried {} locale + direct + {} alternate paths)",
-            self.locale_path_snapshot_for(&normalised).len(),
+            mounts.locale_path_snapshot_for(&normalised).len(),
             alt_paths.len(),
         );
         Err(SbFileError::NotFound)
@@ -1268,15 +1325,18 @@ impl SbFileSystem {
             return Err(SbFileError::Read);
         }
         let base = self.snapshot();
-        base.overlay_paths.lock().unwrap().clear();
+        let mounts = base.mount_state();
+        Arc::make_mut(&mut base.mounts.lock().unwrap())
+            .overlay_paths
+            .clear();
         let mut layers = Vec::new();
         if base.try_exists(&normalised)? {
             layers.push(base.read_all(&normalised)?);
         }
-        if self.ranked_verifier_primary_path.lock().unwrap().is_some() {
+        if mounts.ranked_verifier_primary_path.is_some() {
             return Ok(layers);
         }
-        for overlay in self.overlay_paths.lock().unwrap().iter() {
+        for overlay in mounts.overlay_paths.iter() {
             if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
                 layers.push(bytes.into_vec());
             }
@@ -1453,14 +1513,15 @@ impl SbFile {
 impl SbFileSystem {
     /// Freeze lookup configuration for a prepared resource environment.
     /// Call at the host's mount-change boundary, not concurrently with mount
-    /// publication. Concurrent configuration mutation during capture is unsupported:
-    /// the individual configuration locks do not form a multi-field transaction.
+    /// publication. Mount configuration is captured as one immutable generation;
+    /// application-owned VFS publication must still use the host boundary.
     /// After capture, mutable mount/locale/VFS selections are not shared.
     /// This pins configuration and immutable in-memory archive bytes, not
     /// every native disk byte; native content may still require digest checks.
     /// Native relative lookup pins the current working directory as well.
     /// Panics if the host cannot capture that directory (no ambient fallback).
     pub fn snapshot(&self) -> Self {
+        let mounts = self.mount_state();
         Self {
             origin_identity: self.origin_identity,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1468,40 +1529,30 @@ impl SbFileSystem {
                 std::env::current_dir().expect("cannot capture prepared resource working directory")
             })),
             assets: Arc::new(self.assets.snapshot()),
-            alternate_paths: Mutex::new(self.alternate_paths.lock().unwrap().clone()),
-            locale_paths: Mutex::new(self.locale_paths.lock().unwrap().clone()),
-            overlay_paths: Mutex::new(self.overlay_paths.lock().unwrap().clone()),
-            primary_path: Mutex::new(self.primary_path.lock().unwrap().clone()),
-            ranked_verifier_primary_path: Mutex::new(
-                self.ranked_verifier_primary_path.lock().unwrap().clone(),
-            ),
-            official_projection_strict: AtomicBool::new(
-                self.official_projection_strict.load(Ordering::Acquire),
-            ),
+            mounts: Mutex::new(mounts),
         }
     }
 
     pub fn mount_snapshot(&self) -> SbFileMountSnapshot {
-        let (selected_locale, fallback_locale) = self.locale_paths();
+        let mounts = self.mount_state();
+        let (selected_locale, fallback_locale) = mounts.locale_paths();
         SbFileMountSnapshot {
             #[cfg(not(target_arch = "wasm32"))]
             working_directory: self.working_directory.clone(),
             #[cfg(target_arch = "wasm32")]
             working_directory: None,
-            alternate_paths: self.alternate_paths.lock().unwrap().clone(),
+            alternate_paths: mounts.alternate_paths.clone(),
             selected_locale,
             fallback_locale,
-            overlay_paths: self
+            overlay_paths: mounts
                 .overlay_paths
-                .lock()
-                .unwrap()
                 .iter()
                 .map(|overlay| overlay.display_path().into_owned())
                 .collect(),
-            primary_path: self.primary_path.lock().unwrap().clone(),
-            ranked_verifier_primary_path: self.ranked_verifier_primary_path.lock().unwrap().clone(),
+            primary_path: mounts.primary_path.clone(),
+            ranked_verifier_primary_path: mounts.ranked_verifier_primary_path.clone(),
             asset_vfs: self.assets.authority_snapshot(),
-            official_projection_strict: self.official_projection_strict.load(Ordering::Acquire),
+            official_projection_strict: mounts.official_projection_strict,
         }
     }
 
@@ -1545,31 +1596,30 @@ impl SbFileSystem {
         }
         let source_root = exact_directory(source_root, "official source root")?;
         let core_overlay_root = exact_directory(core_overlay_root, "official core overlay root")?;
-        let snapshot = self.mount_snapshot();
-        if !snapshot.alternate_paths.is_empty()
-            || snapshot.selected_locale.is_some()
-            || snapshot.fallback_locale.is_some()
-            || self.presentation_locale().is_some()
-            || !snapshot.overlay_paths.is_empty()
-            || snapshot.primary_path.is_some()
-            || !snapshot.asset_vfs.is_empty()
-            || snapshot.official_projection_strict
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        if !mounts.alternate_paths.is_empty()
+            || mounts.locale_paths.selected.is_some()
+            || mounts.locale_paths.fallback.is_some()
+            || mounts.locale_paths.language.is_some()
+            || !mounts.overlay_paths.is_empty()
+            || mounts.primary_path.is_some()
+            || mounts.ranked_verifier_primary_path.is_some()
+            || !self.assets.authority_snapshot().is_empty()
+            || mounts.official_projection_strict
         {
-            return Err(format!(
-                "filesystem/VFS authorities were installed before official projection: {snapshot:?}"
-            ));
+            return Err(
+                "filesystem/VFS authorities were installed before official projection".to_owned(),
+            );
         }
-        self.official_projection_strict
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| "official projection lookup mode was already configured".to_owned())?;
-        *self.primary_path.lock().unwrap() = Some(source_root);
-        *self.locale_paths.lock().unwrap() = LocaleLookup {
+        mounts.official_projection_strict = true;
+        mounts.primary_path = Some(source_root);
+        mounts.locale_paths = LocaleLookup {
             selected: Some(resource_locale_root.to_owned()),
             ..LocaleLookup::default()
         };
-        self.overlay_paths
-            .lock()
-            .unwrap()
+        mounts
+            .overlay_paths
             .push(OverlayRoot::Directory(core_overlay_root));
         Ok(())
     }
@@ -1604,9 +1654,10 @@ impl SbFileSystem {
     }
 
     pub fn try_exists(&self, path: &str) -> Result<bool, SbFileError> {
+        let mounts = self.mount_state();
         let normalised = path.replace('\\', "/");
         let requested = Path::new(&normalised);
-        if let Some(root) = self.ranked_verifier_primary_path.lock().unwrap().clone() {
+        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
             if requested.is_absolute()
                 || requested
                     .components()
@@ -1614,14 +1665,14 @@ impl SbFileSystem {
             {
                 return Err(SbFileError::Read);
             }
-            for candidate in self.ranked_confined_candidates(&root, &normalised) {
+            for candidate in mounts.ranked_confined_candidates(&root, &normalised) {
                 if path_exists_contained(&root, &candidate)? {
                     return Ok(true);
                 }
             }
             return Ok(false);
         }
-        let official_strict = self.official_projection_strict.load(Ordering::Acquire);
+        let official_strict = mounts.official_projection_strict;
         if official_strict && requested.is_absolute() {
             tracing::warn!("official projection rejected absolute existence path {normalised:?}");
             return Err(SbFileError::Read);
@@ -1635,7 +1686,7 @@ impl SbFileSystem {
         }
 
         if !requested.is_absolute() {
-            let overlays = self.overlay_paths.lock().unwrap();
+            let overlays = &mounts.overlay_paths;
             for overlay in overlays.iter().rev() {
                 match overlay {
                     OverlayRoot::Directory(root) => {
@@ -1649,9 +1700,9 @@ impl SbFileSystem {
             }
         }
 
-        let primary = self.primary_path.lock().unwrap().clone();
+        let primary = mounts.primary_path.clone();
         if !requested.is_absolute() {
-            for locale_root in self.locale_path_snapshot_for(&normalised) {
+            for locale_root in mounts.locale_path_snapshot_for(&normalised) {
                 if !Path::new(&locale_root).is_absolute()
                     && let Some(primary) = &primary
                     && path_exists_contained(
@@ -1670,7 +1721,7 @@ impl SbFileSystem {
                 }
             }
 
-            if self.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
+            if mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
                 return Ok(false);
             }
 
@@ -1693,7 +1744,7 @@ impl SbFileSystem {
         }
 
         if !requested.is_absolute() {
-            let alternate_paths = self.alternate_paths.lock().unwrap();
+            let alternate_paths = &mounts.alternate_paths;
             for alternate in alternate_paths.iter() {
                 if let Some(primary) = &primary
                     && path_exists_contained(primary, &primary.join(alternate).join(&normalised))?
@@ -1713,23 +1764,12 @@ impl SbFileSystem {
     }
 
     /// Mutating a sealed lookup graph is an error, never a successful no-op.
-    fn ensure_mutable(&self, operation: &str) -> Result<(), SbFileError> {
-        if self.ranked_verifier_primary_path.lock().unwrap().is_some() {
-            tracing::warn!("ranked verifier filesystem rejected {operation}");
-            return Err(SbFileError::Sealed);
-        }
-        if self.official_projection_strict.load(Ordering::Acquire) {
-            tracing::warn!("sealed filesystem rejected {operation}");
-            return Err(SbFileError::Sealed);
-        }
-        Ok(())
-    }
 
     pub fn add_alternate_path(&self, path: &str) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("add_alternate_path") {
-            return Err(error);
-        }
-        let mut paths = self.alternate_paths.lock().unwrap();
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("add_alternate_path")?;
+        let paths = &mut mounts.alternate_paths;
         if paths.iter().any(|candidate| candidate == path) {
             return Err(SbFileError::PathAlreadyPresent);
         }
@@ -1760,9 +1800,9 @@ impl SbFileSystem {
         fallback: Option<&str>,
         language: Option<&str>,
     ) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("set_presentation_locale") {
-            return Err(error);
-        }
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("set_presentation_locale")?;
         let selected = match selected.map(normalise_locale_root).transpose() {
             Ok(path) => path,
             Err(error) => return Err(error),
@@ -1771,7 +1811,7 @@ impl SbFileSystem {
             Ok(path) => path,
             Err(error) => return Err(error),
         };
-        let mut locale_paths = self.locale_paths.lock().unwrap();
+        let locale_paths = &mut mounts.locale_paths;
         *locale_paths = LocaleLookup {
             selected,
             fallback,
@@ -1782,59 +1822,24 @@ impl SbFileSystem {
     }
 
     pub fn locale_paths(&self) -> (Option<String>, Option<String>) {
-        let locale = self.locale_paths.lock().unwrap();
+        let mounts = self.mount_state();
+        let locale = &mounts.locale_paths;
         (locale.selected.clone(), locale.fallback.clone())
     }
 
     /// Language of this reader's presentation resources, not process state.
     pub fn presentation_locale(&self) -> Option<String> {
-        self.locale_paths.lock().unwrap().language.clone()
-    }
-
-    fn ranked_confined_candidates(&self, root: &Path, normalised: &str) -> Vec<PathBuf> {
-        let mut candidates = Vec::with_capacity(2);
-        if is_locale_overlay_path(normalised)
-            && let Some(locale) = self.locale_paths().0
-        {
-            candidates.push(root.join(locale).join(normalised));
-            if is_required_locale_path(normalised) {
-                return candidates;
-            }
-        }
-        candidates.push(root.join(normalised));
-        candidates
+        let mounts = self.mount_state();
+        mounts.locale_paths.language.clone()
     }
 
     /// Snapshot the roots in lookup order, suppressing a duplicate fallback.
-    fn locale_path_snapshot_for(&self, path: &str) -> Vec<String> {
-        // A language pack is presentation data. Never allow an installed
-        // locale directory to replace levels, scripts, gameplay profiles, or
-        // any other simulation input merely because it contains a matching
-        // Data/ subtree.
-        if !is_locale_overlay_path(path) {
-            return Vec::new();
-        }
-        let (selected, fallback) = self.locale_paths();
-        let mut paths = Vec::with_capacity(2);
-        if let Some(selected) = selected {
-            paths.push(selected);
-        }
-        if let Some(fallback) = fallback
-            && is_optional_english_fallback_path(path)
-            && !paths
-                .iter()
-                .any(|selected| selected.eq_ignore_ascii_case(&fallback))
-        {
-            paths.push(fallback);
-        }
-        paths
-    }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn add_overlay_path(&self, path: &str) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("add_overlay_path") {
-            return Err(error);
-        }
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("add_overlay_path")?;
         let canonical = match fs::canonicalize(path) {
             Ok(path) if path.is_dir() => path,
             Ok(_) => {
@@ -1846,7 +1851,7 @@ impl SbFileSystem {
                 return Err(SbFileError::NotFound);
             }
         };
-        let mut paths = self.overlay_paths.lock().unwrap();
+        let paths = &mut mounts.overlay_paths;
         if paths
             .iter()
             .any(|candidate| candidate.display_path() == canonical.to_string_lossy())
@@ -1883,11 +1888,11 @@ impl SbFileSystem {
         zip_path: &str,
         rhm_entry: Option<&str>,
     ) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("add_overlay_zip_inner") {
-            return Err(error);
-        }
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("add_overlay_zip_inner")?;
         #[allow(unused_mut)]
-        let mut paths = self.overlay_paths.lock().unwrap();
+        let paths = &mut mounts.overlay_paths;
         if paths
             .iter()
             .any(|candidate| candidate.display_path() == zip_path)
@@ -1918,14 +1923,14 @@ impl SbFileSystem {
         bytes: Arc<[u8]>,
         rhm_entry: Option<&str>,
     ) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("add_overlay_zip_bytes_for_mission") {
-            return Err(error);
-        }
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("add_overlay_zip_bytes_for_mission")?;
         if mount_id.trim().is_empty() {
             tracing::warn!("SbFileSystem::add_overlay_zip_bytes: empty mount id");
             return Err(SbFileError::NoFile);
         }
-        let mut paths = self.overlay_paths.lock().unwrap();
+        let paths = &mut mounts.overlay_paths;
         if paths
             .iter()
             .any(|candidate| candidate.display_path() == mount_id)
@@ -1945,14 +1950,14 @@ impl SbFileSystem {
     }
 
     pub fn remove_overlay(&self, path: &str) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("remove_overlay") {
-            return Err(error);
-        }
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("remove_overlay")?;
         #[cfg(not(target_arch = "wasm32"))]
         let requested = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
         #[cfg(target_arch = "wasm32")]
         let requested = PathBuf::from(path);
-        let mut paths = self.overlay_paths.lock().unwrap();
+        let paths = &mut mounts.overlay_paths;
         if let Some(index) = paths.iter().position(|candidate| {
             candidate.display_path() == path
                 || candidate.display_path() == requested.to_string_lossy()
@@ -1966,9 +1971,9 @@ impl SbFileSystem {
     }
 
     pub fn overlay_paths(&self) -> Vec<String> {
-        self.overlay_paths
-            .lock()
-            .unwrap()
+        let mounts = self.mount_state();
+        mounts
+            .overlay_paths
             .iter()
             .filter_map(|overlay| match overlay {
                 OverlayRoot::Directory(path) => Some(path.to_string_lossy().into_owned()),
@@ -1978,17 +1983,17 @@ impl SbFileSystem {
     }
 
     pub fn has_zip_overlays(&self) -> bool {
-        self.overlay_paths
-            .lock()
-            .unwrap()
+        let mounts = self.mount_state();
+        mounts
+            .overlay_paths
             .iter()
             .any(|overlay| matches!(overlay, OverlayRoot::Zip(_)))
     }
 
     pub fn set_primary_path(&self, path: &str) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("set_primary_path") {
-            return Err(error);
-        }
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("set_primary_path")?;
         #[cfg(not(target_arch = "wasm32"))]
         let path = match fs::canonicalize(path) {
             Ok(path) if path.is_dir() => path,
@@ -2006,7 +2011,7 @@ impl SbFileSystem {
         };
         #[cfg(target_arch = "wasm32")]
         let path = PathBuf::from(path);
-        let mut primary = self.primary_path.lock().unwrap();
+        let primary = &mut mounts.primary_path;
         *primary = Some(path);
         self.assets.invalidate_content(false);
         Ok(())
@@ -2038,6 +2043,8 @@ impl SbFileSystem {
         path: &Path,
         resource_locale_root: Option<&str>,
     ) -> Result<(), SbFileError> {
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
         let canonical = match fs::canonicalize(path) {
             Ok(path) if path.is_dir() => path,
             Ok(_) => return Err(SbFileError::NoFile),
@@ -2056,9 +2063,9 @@ impl SbFileSystem {
                 return Err(SbFileError::Read);
             }
         }
-        let mut locked = self.ranked_verifier_primary_path.lock().unwrap();
+        let locked = &mut mounts.ranked_verifier_primary_path;
         if let Some(existing) = locked.as_ref() {
-            let locale = self.locale_paths.lock().unwrap();
+            let locale = &mounts.locale_paths;
             return if existing == &canonical
                 && locale.selected.as_deref() == resource_locale_root
                 && locale.fallback.is_none()
@@ -2069,11 +2076,11 @@ impl SbFileSystem {
             };
         }
         let locale_is_empty = {
-            let locale = self.locale_paths.lock().unwrap();
+            let locale = &mounts.locale_paths;
             locale.selected.is_none() && locale.fallback.is_none() && locale.language.is_none()
         };
-        if !self.overlay_paths.lock().unwrap().is_empty()
-            || !self.alternate_paths.lock().unwrap().is_empty()
+        if !mounts.overlay_paths.is_empty()
+            || !mounts.alternate_paths.is_empty()
             || !locale_is_empty
         {
             tracing::warn!(
@@ -2081,8 +2088,8 @@ impl SbFileSystem {
             );
             return Err(SbFileError::Read);
         }
-        *self.primary_path.lock().unwrap() = Some(canonical.clone());
-        *self.locale_paths.lock().unwrap() = LocaleLookup {
+        mounts.primary_path = Some(canonical.clone());
+        mounts.locale_paths = LocaleLookup {
             selected: resource_locale_root.map(str::to_owned),
             ..LocaleLookup::default()
         };
@@ -2091,10 +2098,10 @@ impl SbFileSystem {
     }
 
     pub fn remove_alternate_path(&self, path: &str) -> Result<(), SbFileError> {
-        if let Err(error) = self.ensure_mutable("remove_alternate_path") {
-            return Err(error);
-        }
-        let mut paths = self.alternate_paths.lock().unwrap();
+        let mut guard = self.mounts.lock().unwrap();
+        let mounts = Arc::make_mut(&mut guard);
+        mounts.ensure_mutable("remove_alternate_path")?;
+        let paths = &mut mounts.alternate_paths;
         if let Some(index) = paths.iter().position(|candidate| candidate == path) {
             paths.remove(index);
             Ok(())
@@ -2246,6 +2253,54 @@ fn checked_overlay_relative(path: &str) -> Result<String, SbFileError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retained_mount_generations_are_immutable_and_copy_on_write() {
+        let source = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        source.add_alternate_path("original").unwrap();
+        let retained = source.mount_state();
+        let frozen = source.snapshot();
+        assert!(Arc::ptr_eq(&retained, &frozen.mount_state()));
+
+        source.add_alternate_path("new").unwrap();
+        assert_eq!(retained.alternate_paths, ["original"]);
+        assert_eq!(frozen.mount_snapshot().alternate_paths, ["original"]);
+        assert_eq!(source.mount_snapshot().alternate_paths, ["original", "new"]);
+        assert!(!Arc::ptr_eq(&retained, &source.mount_state()));
+    }
+
+    #[test]
+    fn sealing_and_mutation_are_one_transaction() {
+        let root = tempfile::tempdir().unwrap();
+        for _ in 0..64 {
+            let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let mutation = scope.spawn(|| {
+                    barrier.wait();
+                    files.add_alternate_path("ambient")
+                });
+                barrier.wait();
+                let sealing = files.lock_ranked_verifier_primary_path(root.path());
+                let mutation = mutation.join().unwrap();
+                match (sealing, mutation) {
+                    (Ok(()), Err(SbFileError::Sealed)) => {
+                        let state = files.mount_snapshot();
+                        assert!(state.alternate_paths.is_empty());
+                        assert!(state.ranked_verifier_primary_path.is_some());
+                    }
+                    (Err(SbFileError::Read), Ok(())) => {
+                        let state = files.mount_snapshot();
+                        assert_eq!(state.alternate_paths, ["ambient"]);
+                        assert!(state.ranked_verifier_primary_path.is_none());
+                    }
+                    outcome => {
+                        panic!("sealing and mutation were not mutually exclusive: {outcome:?}")
+                    }
+                }
+            });
+        }
+    }
+
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
