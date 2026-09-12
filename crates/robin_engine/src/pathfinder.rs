@@ -39,7 +39,7 @@ use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBoxHalfDiagonal};
 use crate::element::EntityId;
 use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d;
-use robin_util::static_arc::StaticArc;
+use crate::static_arc::StaticArc;
 
 // ─── Geometry helpers ────────────────────────────────────────────
 
