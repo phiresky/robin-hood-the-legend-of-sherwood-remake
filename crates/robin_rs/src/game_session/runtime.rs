@@ -723,20 +723,8 @@ pub(super) struct TimelineRuntime {
 
 /// Network admission state for the deterministic mission timeline.
 ///
-/// The transport owns handshakes and wire delivery; this state machine owns
-/// the point at which a loaded mission may begin advancing simulation. Keeping
-/// it in `TimelineRuntime` also keeps snapshot adoption ahead of replay and
-/// rollback frame capture for both graphical and true-headless drivers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum MultiplayerAdmission {
-    NotRequired,
-    HostWaitingForBegin,
-    HostWaitingForResyncBegin { snapshot_frame: u32 },
-    PeerWaitingForSnapshot,
-    PeerWaitingForBegin { snapshot_frame: u32 },
-    WaitingForStart { frame: u32, start_epoch_ms: u64 },
-    Running,
-}
+mod admission;
+pub(super) use admission::MultiplayerAdmission;
 
 impl TimelineRuntime {
     pub(super) fn new(
@@ -1078,7 +1066,7 @@ impl TimelineRuntime {
     pub(super) fn apply_multiplayer_admission_events(
         &mut self,
         events: &[MultiplayerAdmissionEvent],
-    ) {
+    ) -> Result<(), super::multiplayer::MultiplayerSessionError> {
         for event in events {
             if matches!(event, MultiplayerAdmissionEvent::HostResynchronizing { .. }) {
                 self.network.clear_hashes();
@@ -1091,57 +1079,9 @@ impl TimelineRuntime {
             ) {
                 self.network.clear_local_hashes();
             }
-            self.mp_admission = match (self.mp_admission, *event) {
-                (
-                    MultiplayerAdmission::Running | MultiplayerAdmission::WaitingForStart { .. },
-                    MultiplayerAdmissionEvent::HostResynchronizing { frame },
-                ) => MultiplayerAdmission::HostWaitingForResyncBegin {
-                    snapshot_frame: frame,
-                },
-                (
-                    MultiplayerAdmission::HostWaitingForResyncBegin { snapshot_frame },
-                    MultiplayerAdmissionEvent::BeginSim {
-                        frame,
-                        start_epoch_ms,
-                    },
-                ) if snapshot_frame == frame => MultiplayerAdmission::WaitingForStart {
-                    frame,
-                    start_epoch_ms,
-                },
-                (_, MultiplayerAdmissionEvent::Disconnected) => {
-                    MultiplayerAdmission::PeerWaitingForSnapshot
-                }
-                (
-                    MultiplayerAdmission::PeerWaitingForSnapshot,
-                    MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame },
-                ) => MultiplayerAdmission::PeerWaitingForBegin {
-                    snapshot_frame: frame,
-                },
-                (
-                    MultiplayerAdmission::PeerWaitingForBegin { snapshot_frame },
-                    MultiplayerAdmissionEvent::BeginSim {
-                        frame,
-                        start_epoch_ms,
-                    },
-                ) if frame == snapshot_frame => MultiplayerAdmission::WaitingForStart {
-                    frame,
-                    start_epoch_ms,
-                },
-                (
-                    MultiplayerAdmission::HostWaitingForBegin,
-                    MultiplayerAdmissionEvent::BeginSim {
-                        frame,
-                        start_epoch_ms,
-                    },
-                ) => MultiplayerAdmission::WaitingForStart {
-                    frame,
-                    start_epoch_ms,
-                },
-                (state, event) => panic!(
-                    "invalid multiplayer admission ordering: state {state:?}, event {event:?}"
-                ),
-            };
+            self.mp_admission.apply(*event)?;
         }
+        Ok(())
     }
 
     /// Advance the wall-clock release gate and report whether simulation must
@@ -3784,10 +3724,12 @@ mod tests {
         );
         assert!(timeline.multiplayer_admission_paused(500));
 
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
-            frame: 0,
-            start_epoch_ms: 1_000,
-        }]);
+        timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+                frame: 0,
+                start_epoch_ms: 1_000,
+            }])
+            .expect("valid multiplayer admission");
 
         assert!(timeline.multiplayer_admission_paused(999));
         assert!(!timeline.multiplayer_admission_paused(1_000));
@@ -3802,13 +3744,15 @@ mod tests {
             MultiplayerAdmission::PeerWaitingForSnapshot
         );
 
-        timeline.apply_multiplayer_admission_events(&[
-            MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 37 },
-            MultiplayerAdmissionEvent::BeginSim {
-                frame: 37,
-                start_epoch_ms: 2_000,
-            },
-        ]);
+        timeline
+            .apply_multiplayer_admission_events(&[
+                MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 37 },
+                MultiplayerAdmissionEvent::BeginSim {
+                    frame: 37,
+                    start_epoch_ms: 2_000,
+                },
+            ])
+            .expect("valid multiplayer admission");
 
         assert_eq!(
             timeline.mp_admission,
@@ -3830,9 +3774,11 @@ mod tests {
                 timeline.adopt_frame(TimelineFrame::from_wire(25));
                 timeline.sample_host_state_hash(|| 1);
                 if from_network {
-                    timeline.apply_multiplayer_admission_events(&[
-                        MultiplayerAdmissionEvent::HostResynchronizing { frame: 25 },
-                    ]);
+                    timeline
+                        .apply_multiplayer_admission_events(&[
+                            MultiplayerAdmissionEvent::HostResynchronizing { frame: 25 },
+                        ])
+                        .expect("valid multiplayer admission");
                 } else {
                     timeline.begin_synchronized_step_resync();
                 }
@@ -3856,36 +3802,50 @@ mod tests {
         assert!(!timeline.has_local_mp_hash(25));
         assert!(timeline.take_due_mp_hash_comparisons().is_empty());
         assert!(timeline.multiplayer_admission_paused(99));
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
-            frame: 35,
-            start_epoch_ms: 100,
-        }]);
+        timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+                frame: 35,
+                start_epoch_ms: 100,
+            }])
+            .expect("valid multiplayer admission");
         assert!(timeline.multiplayer_admission_paused(99));
         assert!(!timeline.multiplayer_admission_paused(100));
     }
 
     #[test]
-    #[should_panic(expected = "invalid multiplayer admission ordering")]
     fn running_host_rejects_unsolicited_begin() {
         let mut timeline = multiplayer_timeline(true);
         timeline.mp_admission = MultiplayerAdmission::Running;
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
-            frame: 35,
-            start_epoch_ms: 100,
-        }]);
+        let error = timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+                frame: 35,
+                start_epoch_ms: 100,
+            }])
+            .expect_err("invalid remote ordering must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid multiplayer admission ordering")
+        );
     }
 
     #[test]
-    #[should_panic(expected = "invalid multiplayer admission ordering")]
     fn resynchronizing_host_rejects_wrong_snapshot_frame() {
         let mut timeline = multiplayer_timeline(true);
         timeline.mp_admission = MultiplayerAdmission::Running;
         timeline.adopt_frame(TimelineFrame::from_wire(35));
         timeline.begin_synchronized_step_resync();
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
-            frame: 36,
-            start_epoch_ms: 100,
-        }]);
+        let error = timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+                frame: 36,
+                start_epoch_ms: 100,
+            }])
+            .expect_err("invalid remote ordering must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid multiplayer admission ordering")
+        );
     }
 
     #[test]
@@ -3918,7 +3878,9 @@ mod tests {
         }
         assert!(!timeline.has_local_mp_hash(43));
         assert!(timeline.has_local_mp_hash(44));
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected]);
+        timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected])
+            .expect("valid multiplayer admission");
         assert!((0..300).all(|frame| !timeline.has_local_mp_hash(frame)));
     }
 
@@ -3939,13 +3901,15 @@ mod tests {
     fn host_horizon_resync_event_rearms_only_its_exact_snapshot_barrier() {
         let mut timeline = multiplayer_timeline(true);
         timeline.mp_admission = MultiplayerAdmission::Running;
-        timeline.apply_multiplayer_admission_events(&[
-            MultiplayerAdmissionEvent::HostResynchronizing { frame: 50 },
-            MultiplayerAdmissionEvent::BeginSim {
-                frame: 50,
-                start_epoch_ms: 100,
-            },
-        ]);
+        timeline
+            .apply_multiplayer_admission_events(&[
+                MultiplayerAdmissionEvent::HostResynchronizing { frame: 50 },
+                MultiplayerAdmissionEvent::BeginSim {
+                    frame: 50,
+                    start_epoch_ms: 100,
+                },
+            ])
+            .expect("valid multiplayer admission");
         assert!(timeline.multiplayer_admission_paused(99));
         assert!(!timeline.multiplayer_admission_paused(100));
     }
@@ -3953,17 +3917,19 @@ mod tests {
     #[test]
     fn host_can_rearm_a_released_barrier_before_its_future_start_time() {
         let mut timeline = multiplayer_timeline(true);
-        timeline.apply_multiplayer_admission_events(&[
-            MultiplayerAdmissionEvent::BeginSim {
-                frame: 0,
-                start_epoch_ms: 100,
-            },
-            MultiplayerAdmissionEvent::HostResynchronizing { frame: 0 },
-            MultiplayerAdmissionEvent::BeginSim {
-                frame: 0,
-                start_epoch_ms: 200,
-            },
-        ]);
+        timeline
+            .apply_multiplayer_admission_events(&[
+                MultiplayerAdmissionEvent::BeginSim {
+                    frame: 0,
+                    start_epoch_ms: 100,
+                },
+                MultiplayerAdmissionEvent::HostResynchronizing { frame: 0 },
+                MultiplayerAdmissionEvent::BeginSim {
+                    frame: 0,
+                    start_epoch_ms: 200,
+                },
+            ])
+            .expect("valid multiplayer admission");
         assert!(timeline.multiplayer_admission_paused(100));
         assert!(!timeline.multiplayer_admission_paused(200));
     }
@@ -3971,16 +3937,20 @@ mod tests {
     #[test]
     fn disconnect_returns_running_peer_to_snapshot_admission() {
         let mut timeline = multiplayer_timeline(false);
-        timeline.apply_multiplayer_admission_events(&[
-            MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 0 },
-            MultiplayerAdmissionEvent::BeginSim {
-                frame: 0,
-                start_epoch_ms: 10,
-            },
-        ]);
+        timeline
+            .apply_multiplayer_admission_events(&[
+                MultiplayerAdmissionEvent::InitialSnapshotAdopted { frame: 0 },
+                MultiplayerAdmissionEvent::BeginSim {
+                    frame: 0,
+                    start_epoch_ms: 10,
+                },
+            ])
+            .expect("valid multiplayer admission");
         assert!(!timeline.multiplayer_admission_paused(10));
 
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected]);
+        timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected])
+            .expect("valid multiplayer admission");
 
         assert_eq!(
             timeline.mp_admission,
@@ -3990,13 +3960,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invalid multiplayer admission ordering")]
     fn joining_peer_rejects_begin_before_snapshot() {
         let mut timeline = multiplayer_timeline(false);
-        timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
-            frame: 0,
-            start_epoch_ms: 10,
-        }]);
+        let error = timeline
+            .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
+                frame: 0,
+                start_epoch_ms: 10,
+            }])
+            .expect_err("invalid remote ordering must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid multiplayer admission ordering")
+        );
     }
 
     #[test]
