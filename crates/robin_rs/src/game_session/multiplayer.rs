@@ -838,7 +838,7 @@ pub(super) fn drain_mission_network(
     } else if drain.rewrote_sim_state {
         timeline.clear_local_mp_hashes();
     }
-    timeline.apply_multiplayer_admission_events(&drain.admission_events);
+    timeline.apply_multiplayer_admission_events(&drain.admission_events)?;
     if let Some(frame) = drain.adopted_frame {
         timeline.adopt_frame(super::runtime::TimelineFrame::from_wire(frame));
     }

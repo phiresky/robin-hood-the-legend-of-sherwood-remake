@@ -1649,7 +1649,6 @@ fn render_frame_with_hud(
             crate::ui_panel::draw_requirements_bar(
                 renderer,
                 portrait_cache,
-                campaign,
                 &assets.profile_manager,
                 &req,
             );
