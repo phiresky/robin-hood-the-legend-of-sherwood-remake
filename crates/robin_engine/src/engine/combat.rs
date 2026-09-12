@@ -3575,7 +3575,6 @@ impl EngineInner {
         };
         let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_existing_projectile_in_actor_order(
-            sim,
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
@@ -3604,7 +3603,6 @@ impl EngineInner {
         };
         let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
-            sim,
             &mut self.world.entities,
             sight_obstacles,
             Some(&obstacle_check),
